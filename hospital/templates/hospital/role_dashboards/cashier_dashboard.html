@@ -1,0 +1,364 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Cashier Dashboard{% endblock %}
+
+{% block extra_css %}
+<style>
+    .dashboard-card {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        padding: 24px;
+        margin-bottom: 24px;
+        border-left: 4px solid #28a745;
+    }
+    
+    .stat-card {
+        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    
+    .stat-number {
+        font-size: 2.5rem;
+        font-weight: bold;
+        margin-bottom: 8px;
+    }
+    
+    .stat-label {
+        font-size: 0.9rem;
+        opacity: 0.9;
+    }
+    
+    .payment-card {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        border-left: 4px solid #28a745;
+    }
+    
+    .transaction-card {
+        background: white;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        transition: all 0.3s ease;
+    }
+    
+    .transaction-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transform: translateY(-2px);
+    }
+    
+    .amount-high { border-left-color: #dc3545; }
+    .amount-medium { border-left-color: #ffc107; }
+    .amount-low { border-left-color: #28a745; }
+    
+    .action-btn {
+        background: #28a745;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        text-decoration: none;
+        display: inline-block;
+        margin: 4px;
+        transition: all 0.3s ease;
+    }
+    
+    .action-btn:hover {
+        background: #1e7e34;
+        color: white;
+        text-decoration: none;
+        transform: translateY(-1px);
+    }
+    
+    .btn-success { background: #28a745; }
+    .btn-warning { background: #ffc107; color: #212529; }
+    .btn-primary { background: #007bff; }
+    .btn-danger { background: #dc3545; }
+    .btn-info { background: #17a2b8; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2 class="mb-1">
+                            <i class="bi bi-cash-stack me-2"></i>
+                            Cashier Dashboard
+                        </h2>
+                        <p class="text-muted mb-0">
+                            Welcome back, {{ staff.user.get_full_name|default:staff.user.username }}
+                        </p>
+                    </div>
+                    <div class="text-end">
+                        <span class="badge bg-success fs-6">{{ staff.get_profession_display }}</span>
+                        <br>
+                        <small class="text-muted">{{ staff.department.name }}</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-number">{{ stats.pending_payments }}</div>
+                <div class="stat-label">Pending Payments</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #17a2b8 0%, #6f42c1 100%);">
+                <div class="stat-number">{{ stats.today_transactions }}</div>
+                <div class="stat-label">Today's Transactions</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%);">
+                <div class="stat-number">{{ stats.outstanding_bills }}</div>
+                <div class="stat-label">Outstanding Bills</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #6f42c1 0%, #e83e8c 100%);">
+                <div class="stat-number">GHS {{ stats.today_revenue|floatformat:2 }}</div>
+                <div class="stat-label">Today's Revenue</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Pending Payments -->
+        <div class="col-md-6">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-hourglass-split me-2"></i>
+                    Pending Payments
+                </h5>
+                {% if pending_payments %}
+                    {% for payment in pending_payments %}
+                    <div class="payment-card">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">
+                                    <a href="{% url 'hospital:patient_detail' payment.patient.pk %}" class="text-decoration-none">
+                                        {{ payment.patient.full_name }}
+                                    </a>
+                                </h6>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-receipt me-1"></i>
+                                    Invoice: {{ payment.invoice.invoice_number }}
+                                </p>
+                                <small class="text-muted">
+                                    Amount: GHS {{ payment.amount|floatformat:2 }}
+                                </small>
+                                <br>
+                                <small class="text-muted">
+                                    Requested: {{ payment.created|date:"M d, Y g:i A" }}
+                                </small>
+                            </div>
+                            <div>
+                                <a href="{% url 'hospital:process_payment_request' payment.pk %}" class="action-btn btn-warning">
+                                    <i class="bi bi-credit-card me-1"></i>Process
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-check-circle text-success" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No pending payments</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Today's Transactions -->
+        <div class="col-md-6">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-arrow-repeat me-2"></i>
+                    Today's Transactions
+                </h5>
+                {% if today_transactions %}
+                    {% for transaction in today_transactions %}
+                    <div class="transaction-card">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">
+                                    <a href="{% url 'hospital:patient_detail' transaction.patient.pk %}" class="text-decoration-none">
+                                        {{ transaction.patient.full_name }}
+                                    </a>
+                                </h6>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-{{ transaction.payment_method|default:'credit-card' }} me-1"></i>
+                                    {{ transaction.get_payment_method_display }}
+                                </p>
+                                <small class="text-muted">
+                                    Amount: GHS {{ transaction.amount|floatformat:2 }}
+                                </small>
+                                <br>
+                                <small class="text-muted">
+                                    Time: {{ transaction.transaction_date|time:"g:i A" }}
+                                </small>
+                            </div>
+                            <div>
+                                <span class="badge bg-success">Completed</span>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-arrow-repeat text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No transactions today</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Outstanding Bills -->
+        <div class="col-md-8">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    Outstanding Bills
+                </h5>
+                {% if outstanding_bills %}
+                    {% for bill in outstanding_bills %}
+                    <div class="transaction-card amount-{% if bill.patient_portion > 1000 %}high{% elif bill.patient_portion > 500 %}medium{% else %}low{% endif %}">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">
+                                    <a href="{% url 'hospital:patient_detail' bill.patient.pk %}" class="text-decoration-none">
+                                        {{ bill.patient.full_name }}
+                                    </a>
+                                </h6>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-receipt me-1"></i>
+                                    Bill: {{ bill.bill_number }}
+                                </p>
+                                <small class="text-muted">
+                                    Amount: GHS {{ bill.patient_portion|floatformat:2 }}
+                                </small>
+                                <br>
+                                <small class="text-muted">
+                                    Status: {{ bill.get_status_display }}
+                                </small>
+                            </div>
+                            <div>
+                                <a href="{% url 'hospital:process_payment_bill' bill.pk %}" class="action-btn">
+                                    <i class="bi bi-credit-card me-1"></i>Collect
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-check-circle text-success" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No outstanding bills</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Quick Stats -->
+        <div class="col-md-4">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-graph-up me-2"></i>
+                    Quick Stats
+                </h5>
+                <div class="row text-center">
+                    <div class="col-12 mb-3">
+                        <div class="stat-number text-success">GHS {{ stats.today_revenue|floatformat:2 }}</div>
+                        <div class="stat-label text-muted">Today's Revenue</div>
+                    </div>
+                    <div class="col-6">
+                        <div class="stat-number text-primary">{{ stats.today_transactions }}</div>
+                        <div class="stat-label text-muted">Transactions</div>
+                    </div>
+                    <div class="col-6">
+                        <div class="stat-number text-warning">{{ stats.pending_payments }}</div>
+                        <div class="stat-label text-muted">Pending</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="row">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-lightning me-2"></i>
+                    Quick Actions
+                </h5>
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="{% url 'hospital:cashier_dashboard' %}" class="action-btn">
+                        <i class="bi bi-house me-1"></i>Main Dashboard
+                    </a>
+                    <a href="{% url 'hospital:cashier_bills' %}" class="action-btn">
+                        <i class="bi bi-receipt me-1"></i>View Bills
+                    </a>
+                    <a href="{% url 'hospital:cashier_invoices' %}" class="action-btn">
+                        <i class="bi bi-file-text me-1"></i>View Invoices
+                    </a>
+                    <a href="{% url 'hospital:customer_debt' %}" class="action-btn btn-warning">
+                        <i class="bi bi-exclamation-triangle me-1"></i>Customer Debt
+                    </a>
+                    <a href="#" class="action-btn btn-success">
+                        <i class="bi bi-printer me-1"></i>Print Receipt
+                    </a>
+                    <a href="{% url 'hospital:global_search' %}" class="action-btn">
+                        <i class="bi bi-search me-1"></i>Search
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

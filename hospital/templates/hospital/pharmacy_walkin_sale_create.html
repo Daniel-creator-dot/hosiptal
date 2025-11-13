@@ -1,0 +1,373 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <h2 style="font-weight: 700; color: #1f2937;">💊 New Walk-in Sale</h2>
+            <p class="text-muted">Sell medication directly to customers (no prescription required)</p>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-8">
+            <!-- Sale Form -->
+            <div class="card shadow-sm mb-4">
+                <div class="card-body">
+                    <h5 class="card-title mb-4">Customer Information</h5>
+                    
+                    <form id="walkInSaleForm" method="post">
+                        {% csrf_token %}
+                        
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Customer Type</label>
+                                <select class="form-select" name="customer_type" id="customerType" required>
+                                    <option value="walkin" selected>Walk-in Customer</option>
+                                    <option value="registered">Registered Patient</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- Walk-in Customer Fields -->
+                        <div id="walkinFields">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Customer Name *</label>
+                                    <input type="text" class="form-control" name="customer_name" id="customerName" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Phone Number</label>
+                                    <input type="text" class="form-control" name="customer_phone" id="customerPhone" placeholder="+233...">
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Address (Optional)</label>
+                                <textarea class="form-control" name="customer_address" id="customerAddress" rows="2"></textarea>
+                            </div>
+                        </div>
+                        
+                        <!-- Registered Patient Search -->
+                        <div id="registeredPatientFields" style="display: none;">
+                            <div class="mb-3">
+                                <label class="form-label">Search Patient</label>
+                                <input type="text" class="form-control" id="patientSearch" placeholder="Search by name, MRN, or phone">
+                                <input type="hidden" name="patient_id" id="patientId">
+                                <div id="patientSearchResults" class="list-group mt-2" style="max-height: 200px; overflow-y: auto;"></div>
+                            </div>
+                        </div>
+                        
+                        <hr class="my-4">
+                        
+                        <h5 class="card-title mb-3">Add Medications</h5>
+                        
+                        <!-- Drug Search -->
+                        <div class="mb-3">
+                            <label class="form-label">Search Medication</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="drugSearch" placeholder="Search by drug name or generic name">
+                                <button class="btn btn-outline-secondary" type="button" id="searchDrugBtn">
+                                    <i class="bi bi-search"></i> Search
+                                </button>
+                            </div>
+                            <div id="drugSearchResults" class="list-group mt-2" style="max-height: 300px; overflow-y: auto;"></div>
+                        </div>
+                        
+                        <!-- Selected Items -->
+                        <div class="card bg-light mb-3">
+                            <div class="card-body">
+                                <h6 class="mb-3">Selected Items</h6>
+                                <div id="selectedItems">
+                                    <p class="text-muted text-center">No items added yet</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <input type="hidden" name="items" id="itemsData">
+                        
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
+                                <i class="bi bi-check-circle"></i> Create Sale
+                            </button>
+                            <a href="{% url 'hospital:pharmacy_walkin_sales_list' %}" class="btn btn-outline-secondary btn-lg">
+                                <i class="bi bi-x-circle"></i> Cancel
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <!-- Sale Summary -->
+            <div class="card shadow-sm sticky-top" style="top: 20px;">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">Sale Summary</h5>
+                    
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between mb-2">
+                            <span>Items:</span>
+                            <strong><span id="itemCount">0</span></strong>
+                        </div>
+                        <div class="d-flex justify-content-between mb-2">
+                            <span>Subtotal:</span>
+                            <strong>GHS <span id="subtotal">0.00</span></strong>
+                        </div>
+                        <hr>
+                        <div class="d-flex justify-content-between">
+                            <span class="h5 mb-0">Total:</span>
+                            <strong class="h5 mb-0 text-primary">GHS <span id="total">0.00</span></strong>
+                        </div>
+                    </div>
+                    
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>Note:</strong> Customer must pay at cashier before medication can be dispensed.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let selectedItems = [];
+
+// Customer Type Toggle
+document.getElementById('customerType').addEventListener('change', function() {
+    if (this.value === 'registered') {
+        document.getElementById('walkinFields').style.display = 'none';
+        document.getElementById('registeredPatientFields').style.display = 'block';
+        document.getElementById('customerName').required = false;
+    } else {
+        document.getElementById('walkinFields').style.display = 'block';
+        document.getElementById('registeredPatientFields').style.display = 'none';
+        document.getElementById('customerName').required = true;
+    }
+});
+
+// Patient Search
+let patientSearchTimeout;
+document.getElementById('patientSearch').addEventListener('input', function() {
+    clearTimeout(patientSearchTimeout);
+    const query = this.value.trim();
+    
+    if (query.length < 2) {
+        document.getElementById('patientSearchResults').innerHTML = '';
+        return;
+    }
+    
+    patientSearchTimeout = setTimeout(() => {
+        fetch(`{% url 'hospital:api_patient_search' %}?q=${encodeURIComponent(query)}`)
+            .then(r => r.json())
+            .then(data => {
+                const results = document.getElementById('patientSearchResults');
+                if (data.patients.length === 0) {
+                    results.innerHTML = '<div class="list-group-item text-muted">No patients found</div>';
+                    return;
+                }
+                
+                results.innerHTML = data.patients.map(p => `
+                    <a href="#" class="list-group-item list-group-item-action patient-select" 
+                       data-id="GHS {p.id}" data-name="GHS {p.name}" data-phone="GHS {p.phone}">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <strong>${p.name}</strong><br>
+                                <small class="text-muted">MRN: ${p.mrn}</small>
+                            </div>
+                            <div class="text-end">
+                                <small>${p.phone}</small>
+                            </div>
+                        </div>
+                    </a>
+                `).join('');
+                
+                // Add click handlers
+                document.querySelectorAll('.patient-select').forEach(el => {
+                    el.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        document.getElementById('patientId').value = this.dataset.id;
+                        document.getElementById('customerName').value = this.dataset.name;
+                        document.getElementById('customerPhone').value = this.dataset.phone;
+                        document.getElementById('patientSearch').value = this.dataset.name;
+                        document.getElementById('patientSearchResults').innerHTML = '';
+                    });
+                });
+            });
+    }, 300);
+});
+
+// Drug Search
+let drugSearchTimeout;
+document.getElementById('drugSearch').addEventListener('input', function() {
+    clearTimeout(drugSearchTimeout);
+    const query = this.value.trim();
+    
+    if (query.length < 2) {
+        document.getElementById('drugSearchResults').innerHTML = '';
+        return;
+    }
+    
+    drugSearchTimeout = setTimeout(() => {
+        fetch(`{% url 'hospital:api_search_drugs' %}?q=${encodeURIComponent(query)}`)
+            .then(r => r.json())
+            .then(data => {
+                const results = document.getElementById('drugSearchResults');
+                if (data.drugs.length === 0) {
+                    results.innerHTML = '<div class="list-group-item text-muted">No drugs found</div>';
+                    return;
+                }
+                
+                results.innerHTML = data.drugs.map(d => `
+                    <a href="#" class="list-group-item list-group-item-action drug-select" data-drug='GHS {JSON.stringify(d)}'>
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <strong>${d.name}</strong> ${d.strength} ${d.form}<br>
+                                <small class="text-muted">${d.generic_name}</small><br>
+                                <span class="badge bg-success">Stock: ${d.stock_available}</span>
+                            </div>
+                            <div class="text-end">
+                                <strong class="text-primary">GHS ${d.unit_price}</strong>
+                            </div>
+                        </div>
+                    </a>
+                `).join('');
+                
+                // Add click handlers
+                document.querySelectorAll('.drug-select').forEach(el => {
+                    el.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        const drug = JSON.parse(this.dataset.drug);
+                        addItemToSale(drug);
+                        document.getElementById('drugSearch').value = '';
+                        document.getElementById('drugSearchResults').innerHTML = '';
+                    });
+                });
+            });
+    }, 300);
+});
+
+function addItemToSale(drug) {
+    // Check if already added
+    if (selectedItems.find(i => i.drug_id === drug.id)) {
+        alert('This medication is already added. You can change the quantity below.');
+        return;
+    }
+    
+    selectedItems.push({
+        drug_id: drug.id,
+        name: drug.name,
+        strength: drug.strength,
+        form: drug.form,
+        unit_price: parseFloat(drug.unit_price),
+        quantity: 1,
+        stock_available: drug.stock_available,
+        dosage_instructions: ''
+    });
+    
+    renderSelectedItems();
+}
+
+function renderSelectedItems() {
+    const container = document.getElementById('selectedItems');
+    
+    if (selectedItems.length === 0) {
+        container.innerHTML = '<p class="text-muted text-center">No items added yet</p>';
+        updateSummary();
+        return;
+    }
+    
+    container.innerHTML = selectedItems.map((item, index) => `
+        <div class="card mb-2">
+            <div class="card-body p-3">
+                <div class="row align-items-center">
+                    <div class="col-md-5">
+                        <strong>${item.name}</strong><br>
+                        <small class="text-muted">${item.strength} ${item.form}</small><br>
+                        <small class="badge bg-info">Stock: ${item.stock_available}</small>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small mb-1">Quantity</label>
+                        <input type="number" class="form-control form-control-sm" 
+                               value="GHS {item.quantity}" min="1" max="GHS {item.stock_available}"
+                               onchange="updateQuantity(${index}, this.value)">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small mb-1">Total</label>
+                        <div class="fw-bold text-primary">GHS ${(item.quantity * item.unit_price).toFixed(2)}</div>
+                    </div>
+                    <div class="col-md-1">
+                        <button type="button" class="btn btn-sm btn-danger" onclick="removeItem(${index})">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="mt-2">
+                    <label class="form-label small mb-1">Dosage Instructions</label>
+                    <input type="text" class="form-control form-control-sm" 
+                           placeholder="E.g., Take 1 tablet twice daily after meals"
+                           value="GHS {item.dosage_instructions}"
+                           onchange="updateInstructions(${index}, this.value)">
+                </div>
+            </div>
+        </div>
+    `).join('');
+    
+    updateSummary();
+}
+
+function updateQuantity(index, quantity) {
+    selectedItems[index].quantity = parseInt(quantity) || 1;
+    renderSelectedItems();
+}
+
+function updateInstructions(index, instructions) {
+    selectedItems[index].dosage_instructions = instructions;
+}
+
+function removeItem(index) {
+    selectedItems.splice(index, 1);
+    renderSelectedItems();
+}
+
+function updateSummary() {
+    const itemCount = selectedItems.length;
+    const subtotal = selectedItems.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
+    
+    document.getElementById('itemCount').textContent = itemCount;
+    document.getElementById('subtotal').textContent = subtotal.toFixed(2);
+    document.getElementById('total').textContent = subtotal.toFixed(2);
+}
+
+// Form submission
+document.getElementById('walkInSaleForm').addEventListener('submit', function(e) {
+    if (selectedItems.length === 0) {
+        e.preventDefault();
+        alert('Please add at least one medication to the sale.');
+        return;
+    }
+    
+    document.getElementById('itemsData').value = JSON.stringify(selectedItems);
+});
+</script>
+
+<style>
+.sticky-top {
+    position: -webkit-sticky;
+    position: sticky;
+}
+</style>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+

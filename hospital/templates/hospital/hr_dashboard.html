@@ -1,0 +1,187 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}HR Dashboard - HMS{% endblock %}
+{% block page_title %}HR Dashboard{% endblock %}
+{% block page_subtitle %}Staff & Payroll Management{% endblock %}
+
+{% block content %}
+<!-- Statistics -->
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="stat-card-modern" style="background: linear-gradient(135deg, var(--primary), var(--secondary));">
+            <div style="font-size: 32px; font-weight: 800; color: white;">
+                {{ total_staff }}
+            </div>
+            <div style="color: rgba(255,255,255,0.9);">Total Staff</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card-modern" style="background: white; border: 2px solid var(--primary);">
+            <div style="font-size: 32px; font-weight: 800; color: var(--primary);">
+                {{ total_contracts }}
+            </div>
+            <div style="color: var(--gray);">Active Contracts</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card-modern" style="background: white; border: 2px solid var(--success);">
+            <div style="font-size: 32px; font-weight: 800; color: var(--success);">
+                GHS {{ total_payroll|floatformat:0|intcomma }}
+            </div>
+            <div style="color: var(--gray);">Payroll Total</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card-modern" style="background: white; border: 2px solid var(--warning);">
+            <div style="font-size: 32px; font-weight: 800; color: var(--warning);">
+                {{ pending_leaves }}
+            </div>
+            <div style="color: var(--gray);">Pending Leaves</div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Quick Actions -->
+    <div class="col-md-4">
+        <div class="modern-card mb-4">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Quick Actions</h6>
+            <div class="d-grid gap-2">
+                <a href="{% url 'hospital:create_leave_for_staff' %}" class="btn btn-warning btn-modern" style="font-weight: 600;">
+                    <i class="bi bi-person-fill-add"></i> Put Staff on Leave
+                </a>
+                <a href="{% url 'hospital:leave_approval_list' %}" class="btn btn-primary btn-modern">
+                    <i class="bi bi-clipboard-check"></i> Approve Leave Requests
+                </a>
+                <a href="{% url 'hospital:hr_reports_dashboard' %}" class="btn btn-success btn-modern" style="font-weight: 600;">
+                    <i class="bi bi-file-earmark-bar-graph"></i> HR Reports & Analytics
+                </a>
+                <hr class="my-2">
+                <a href="{% url 'hospital:staff_list' %}" class="btn btn-outline-primary btn-modern">
+                    <i class="bi bi-people"></i> Manage Staff
+                </a>
+                <a href="{% url 'hospital:payroll_list' %}" class="btn btn-outline-primary btn-modern">
+                    <i class="bi bi-cash-stack"></i> Payroll
+                </a>
+                <a href="{% url 'hospital:staff_create' %}" class="btn btn-outline-primary btn-modern">
+                    <i class="bi bi-person-plus"></i> Add Staff
+                </a>
+                <a href="{% url 'hospital:staff_shift_list' %}" class="btn btn-outline-primary btn-modern">
+                    <i class="bi bi-calendar"></i> Manage Shifts
+                </a>
+                <a href="{% url 'hospital:leave_request_list' %}" class="btn btn-outline-primary btn-modern">
+                    <i class="bi bi-calendar-range"></i> All Leave Requests
+                </a>
+                <a href="{% url 'hospital:payroll_settings' %}" class="btn btn-outline-secondary btn-modern">
+                    <i class="bi bi-gear"></i> Payroll Settings
+                </a>
+                {% if current_period and not current_period.is_processed %}
+                <a href="{% url 'hospital:process_payroll' current_period.pk %}" class="btn btn-success btn-modern">
+                    <i class="bi bi-play-circle"></i> Process Payroll
+                </a>
+                {% endif %}
+            </div>
+        </div>
+        
+        {% if current_period %}
+        <div class="modern-card">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Current Payroll Period</h6>
+            <p><strong>{{ current_period.period_name }}</strong></p>
+            <p style="font-size: 13px; color: var(--gray);">
+                {{ current_period.start_date|date:"M d" }} - {{ current_period.end_date|date:"M d, Y" }}<br>
+                Pay Date: {{ current_period.pay_date|date:"M d, Y" }}
+            </p>
+            {% if current_period.is_processed %}
+            <span class="badge-modern badge-success">Processed</span>
+            {% else %}
+            <span class="badge-modern badge-warning">Pending</span>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Recent Payrolls -->
+    <div class="col-md-8">
+        <div class="modern-card mb-4">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Recent Payrolls</h6>
+            {% if recent_payrolls %}
+            <div class="table-responsive">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Staff</th>
+                            <th>Period</th>
+                            <th class="text-end">Net Pay</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for payroll in recent_payrolls %}
+                        <tr>
+                            <td>{{ payroll.staff.user.get_full_name|default:payroll.staff.user.username }}</td>
+                            <td>{{ payroll.period.period_name }}</td>
+                            <td class="text-end"><strong>GHS {{ payroll.net_pay|floatformat:2|intcomma }}</strong></td>
+                            <td>
+                                {% if payroll.payment_status == 'paid' %}
+                                <span class="badge-modern badge-success">Paid</span>
+                                {% elif payroll.payment_status == 'processed' %}
+                                <span class="badge-modern badge-info">Processed</span>
+                                {% else %}
+                                <span class="badge-modern badge-warning">Pending</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted text-center py-4">No payrolls found</p>
+            {% endif %}
+        </div>
+        
+        <!-- Recent Leave Requests -->
+        <div class="modern-card">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Recent Leave Requests</h6>
+            {% if recent_leaves %}
+            <div class="table-responsive">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Staff</th>
+                            <th>Type</th>
+                            <th>Start Date</th>
+                            <th>End Date</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for leave in recent_leaves %}
+                        <tr>
+                            <td>{{ leave.staff.user.get_full_name|default:leave.staff.user.username }}</td>
+                            <td>{{ leave.get_leave_type_display }}</td>
+                            <td>{{ leave.start_date|date:"M d, Y" }}</td>
+                            <td>{{ leave.end_date|date:"M d, Y" }}</td>
+                            <td>
+                                {% if leave.status == 'approved' %}
+                                <span class="badge-modern badge-success">Approved</span>
+                                {% elif leave.status == 'rejected' %}
+                                <span class="badge-modern badge-danger">Rejected</span>
+                                {% else %}
+                                <span class="badge-modern badge-warning">Pending</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted text-center py-4">No leave requests</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+

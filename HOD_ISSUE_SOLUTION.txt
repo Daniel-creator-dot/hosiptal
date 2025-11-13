@@ -1,0 +1,105 @@
+===================================================================
+HOD SCHEDULING - ISSUE FOUND & SOLUTION
+===================================================================
+
+PROBLEM IDENTIFIED:
+-------------------
+Users clicking the "HOD Scheduling" tile on the dashboard are being
+redirected back because they don't have:
+1. A Staff profile linked to their user account
+2. OR a HeadOfDepartment designation
+
+CURRENT STATUS:
+---------------
+- Only 1 user has HOD access: rebecca.
+- 30+ other staff members exist but NO staff profiles linked to user accounts
+- 15 departments with only 1 HOD assigned (Emergency Department)
+
+SOLUTION - Option 1: Make Existing User an HOD (Quick)
+-------------------------------------------------------
+1. Go to Django Admin: http://localhost:8000/admin/
+
+2. Navigate to: Hospital > Heads of Department
+
+3. Click "Add Head of Department"
+
+4. Select:
+   - Staff: Choose from the 31 existing staff (rebecca, dorcas.adjei, mavis.ananga, etc.)
+   - Department: Choose department to manage
+   - Can manage schedules: YES
+   - Is active: YES
+
+5. Save
+
+6. That user can now access HOD Scheduling!
+
+SOLUTION - Option 2: Quick Script (Python)
+-------------------------------------------
+Run this in Django shell (python manage.py shell):
+
+from hospital.models import Staff
+from hospital.models_hod_simple import HeadOfDepartment
+
+# Choose a staff member (replace username)
+staff = Staff.objects.get(user__username='dorcas.adjei')  # Change this!
+
+# Make them HOD
+HeadOfDepartment.objects.create(
+    staff=staff,
+    department=staff.department,
+    can_manage_schedules=True,
+    is_active=True
+)
+
+print(f"Made {staff.user.get_full_name()} an HOD!")
+
+SOLUTION - Option 3: Make Superuser (For Testing)
+--------------------------------------------------
+Any superuser automatically has HOD access.
+
+python manage.py shell
+
+from django.contrib.auth.models import User
+user = User.objects.get(username='YOUR_USERNAME')
+user.is_superuser = True
+user.is_staff = True
+user.save()
+
+VERIFICATION:
+-------------
+After granting HOD access, log in as that user and click the 
+"HOD Scheduling" tile on the dashboard.
+
+You should see:
+- HOD Scheduling Dashboard
+- Department staff list
+- Weekly shifts
+- Create shift/template buttons
+
+CURRENTLY WORKING:
+------------------
+- User: rebecca. (username: rebecca.)
+- Department: Emergency Department
+- Access: Full HOD scheduling access
+
+Try logging in as rebecca. to test the HOD interface!
+
+===================================================================
+QUICK FIX COMMANDS:
+===================================================================
+
+1. List all staff with departments:
+   python manage.py shell -c "from hospital.models import Staff; [print(f'{s.user.username} - {s.department.name if s.department else \"No Dept\"}') for s in Staff.objects.filter(is_active=True)[:20]]"
+
+2. Make first staff member HOD:
+   python manage.py shell -c "from hospital.models import Staff; from hospital.models_hod_simple import HeadOfDepartment; staff=Staff.objects.filter(department__isnull=False, is_active=True).first(); HeadOfDepartment.objects.get_or_create(staff=staff, defaults={'department': staff.department, 'can_manage_schedules': True, 'is_active': True}); print(f'Made {staff.user.username} HOD of {staff.department.name}')"
+
+===================================================================
+
+
+
+
+
+
+
+

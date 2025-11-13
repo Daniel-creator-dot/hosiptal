@@ -1,0 +1,88 @@
+{% extends 'hospital/base.html' %}
+
+{% block title %}Referrals - HMS{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>
+        {% if referral_type == 'received' %}
+            Referrals Received
+        {% else %}
+            Referrals Made
+        {% endif %}
+    </h1>
+    <div class="btn-group" role="group">
+        <a href="?status=" class="btn btn-outline-secondary {% if not status_filter %}active{% endif %}">All</a>
+        <a href="?status=pending" class="btn btn-outline-warning {% if status_filter == 'pending' %}active{% endif %}">Pending</a>
+        <a href="?status=accepted" class="btn btn-outline-info {% if status_filter == 'accepted' %}active{% endif %}">Accepted</a>
+        <a href="?status=completed" class="btn btn-outline-success {% if status_filter == 'completed' %}active{% endif %}">Completed</a>
+    </div>
+</div>
+
+{% if referrals %}
+<div class="card">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        {% if referral_type == 'received' %}
+                        <th>Referring Doctor</th>
+                        {% else %}
+                        <th>Specialist</th>
+                        {% endif %}
+                        <th>Patient</th>
+                        <th>Specialty</th>
+                        <th>Reason</th>
+                        <th>Priority</th>
+                        <th>Status</th>
+                        <th>Date</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for referral in referrals %}
+                    <tr>
+                        {% if referral_type == 'received' %}
+                        <td>{{ referral.referring_doctor.user.get_full_name }}</td>
+                        {% else %}
+                        <td>{{ referral.specialist.staff.user.get_full_name }}</td>
+                        {% endif %}
+                        <td>
+                            <a href="{% url 'hospital:patient_detail' referral.patient.pk %}">
+                                {{ referral.patient.full_name }}
+                            </a>
+                        </td>
+                        <td>{{ referral.specialty.name }}</td>
+                        <td>{{ referral.reason|truncatewords:10 }}</td>
+                        <td>
+                            <span class="badge bg-{% if referral.priority == 'stat' %}danger{% elif referral.priority == 'urgent' %}warning{% else %}secondary{% endif %}">
+                                {{ referral.get_priority_display }}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="badge bg-{% if referral.status == 'pending' %}warning{% elif referral.status == 'accepted' %}info{% elif referral.status == 'completed' %}success{% elif referral.status == 'declined' %}danger{% else %}secondary{% endif %}">
+                                {{ referral.get_status_display }}
+                            </span>
+                        </td>
+                        <td>{{ referral.referred_date|date:"M d, Y" }}</td>
+                        <td>
+                            <a href="{% url 'hospital:referral_detail' referral_id=referral.pk %}" class="btn btn-sm btn-primary">
+                                View
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-info">
+    <i class="bi bi-info-circle"></i> No referrals found.
+</div>
+{% endif %}
+{% endblock %}
+
+

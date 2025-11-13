@@ -1,0 +1,259 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Financial Statement - HMS{% endblock %}
+{% block page_title %}Financial Statement{% endblock %}
+
+{% block content %}
+<div class="modern-card mb-4">
+    <form method="get" class="row g-3 align-items-end">
+        <div class="col-md-3">
+            <label for="statement_type" class="form-label">Statement Type</label>
+            <select name="type" id="statement_type" class="form-select form-control-modern">
+                <option value="profit_loss" {% if statement_type == 'profit_loss' %}selected{% endif %}>Income Statement</option>
+                <option value="balance_sheet" {% if statement_type == 'balance_sheet' %}selected{% endif %}>Balance Sheet</option>
+                <option value="cashflow" {% if statement_type == 'cashflow' %}selected{% endif %}>Cash Flow</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label for="start_date" class="form-label">Start Date</label>
+            <input type="date" name="start_date" id="start_date" value="{{ start_date|date:'Y-m-d' }}" class="form-control form-control-modern">
+        </div>
+        <div class="col-md-3">
+            <label for="end_date" class="form-label">End Date</label>
+            <input type="date" name="end_date" id="end_date" value="{{ end_date|date:'Y-m-d' }}" class="form-control form-control-modern">
+        </div>
+        <div class="col-md-3">
+            <button type="submit" class="btn btn-primary-modern">Generate</button>
+            <a href="?export=pdf" class="btn btn-outline-secondary">Export PDF</a>
+        </div>
+    </form>
+</div>
+
+{% if statement_type == 'profit_loss' %}
+<div class="modern-card">
+    <h6 style="font-weight: 600; margin-bottom: 20px;">Income Statement ({{ start_date|date:"M d" }} - {{ end_date|date:"M d, Y" }})</h6>
+    
+    <div class="table-responsive">
+        <table class="table modern-table">
+            <thead>
+                <tr>
+                    <th>Revenue</th>
+                    <th class="text-end">Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Service Revenue</td>
+                    <td class="text-end">GHS {{ revenue|default:0|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr>
+                    <th>Total Revenue</th>
+                    <th class="text-end">GHS {{ revenue|default:0|floatformat:2|intcomma }}</th>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <div class="table-responsive mt-4">
+        <table class="table modern-table">
+            <thead>
+                <tr>
+                    <th>Expenses</th>
+                    <th class="text-end">Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Total Expenses</td>
+                    <td class="text-end">GHS {{ expenses|default:0|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr>
+                    <th>Total Expenses</th>
+                    <th class="text-end">GHS {{ expenses|default:0|floatformat:2|intcomma }}</th>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <div class="table-responsive mt-4">
+        <table class="table modern-table">
+            <tbody>
+                <tr>
+                    <th>Net Income</th>
+                    <th class="text-end">GHS {{ net_income|default:0|floatformat:2|intcomma }}</th>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% elif statement_type == 'balance_sheet' %}
+<div class="modern-card">
+    <h6 style="font-weight: 600; margin-bottom: 20px;">Balance Sheet as of {{ end_date|date:"F d, Y" }}</h6>
+    
+    <div class="row">
+        <!-- ASSETS -->
+        <div class="col-md-6">
+            <h6 style="color: var(--primary); font-weight: 600;">ASSETS</h6>
+            <div class="table-responsive">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Current Assets</th>
+                            <th class="text-end">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>&nbsp;&nbsp;Cash & Cash Equivalents</td>
+                            <td class="text-end">GHS {{ total_cash|default:0|floatformat:2|intcomma }}</td>
+                        </tr>
+                        <tr>
+                            <td>&nbsp;&nbsp;Accounts Receivable</td>
+                            <td class="text-end">GHS {{ total_ar|default:0|floatformat:2|intcomma }}</td>
+                        </tr>
+                        <tr class="table-active">
+                            <th>TOTAL ASSETS</th>
+                            <th class="text-end">GHS {{ total_assets|default:0|floatformat:2|intcomma }}</th>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- LIABILITIES & EQUITY -->
+        <div class="col-md-6">
+            <h6 style="color: var(--primary); font-weight: 600;">LIABILITIES & EQUITY</h6>
+            <div class="table-responsive">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Liabilities</th>
+                            <th class="text-end">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>&nbsp;&nbsp;Accounts Payable</td>
+                            <td class="text-end">GHS {{ total_liabilities|default:0|floatformat:2|intcomma }}</td>
+                        </tr>
+                        <tr class="table-secondary">
+                            <th>Total Liabilities</th>
+                            <th class="text-end">GHS {{ total_liabilities|default:0|floatformat:2|intcomma }}</th>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <table class="table modern-table mt-3">
+                    <thead>
+                        <tr>
+                            <th>Equity</th>
+                            <th class="text-end">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>&nbsp;&nbsp;Owner's Equity</td>
+                            <td class="text-end">GHS {{ total_equity|default:0|floatformat:2|intcomma }}</td>
+                        </tr>
+                        <tr>
+                            <td>&nbsp;&nbsp;Retained Earnings (Net Income)</td>
+                            <td class="text-end text-success"><strong>GHS {{ net_income|default:0|floatformat:2|intcomma }}</strong></td>
+                        </tr>
+                        <tr class="table-secondary">
+                            <th>Total Equity</th>
+                            <th class="text-end">GHS {{ total_equity_with_income|default:0|floatformat:2|intcomma }}</th>
+                        </tr>
+                        <tr class="table-active">
+                            <th>TOTAL LIABILITIES & EQUITY</th>
+                            <th class="text-end">GHS {{ total_liabilities|add:total_equity_with_income|default:0|floatformat:2|intcomma }}</th>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Accounting Equation Verification -->
+    <div class="alert {% if total_assets == total_liabilities|add:total_equity_with_income %}alert-success{% else %}alert-warning{% endif %} mt-4">
+        <strong>📊 Accounting Equation:</strong> 
+        Assets (GHS {{ total_assets|floatformat:2|intcomma }}) 
+        {% if total_assets == total_liabilities|add:total_equity_with_income %}
+        = ✅
+        {% else %}
+        ≠ ⚠️
+        {% endif %}
+        Liabilities + Equity (GHS {{ total_liabilities|add:total_equity_with_income|floatformat:2|intcomma }})
+    </div>
+</div>
+
+{% elif statement_type == 'cashflow' %}
+<div class="modern-card">
+    <h6 style="font-weight: 600; margin-bottom: 20px;">Cash Flow Statement ({{ start_date|date:"M d" }} - {{ end_date|date:"M d, Y" }})</h6>
+    
+    <!-- Operating Activities -->
+    <div class="table-responsive">
+        <table class="table modern-table">
+            <thead>
+                <tr>
+                    <th colspan="2" class="bg-light">Cash Flows from Operating Activities</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Cash Receipts from Customers</td>
+                    <td class="text-end text-success"><strong>GHS {{ cash_receipts|default:0|floatformat:2|intcomma }}</strong></td>
+                </tr>
+                <tr>
+                    <td>Cash Payments</td>
+                    <td class="text-end text-danger">(GHS {{ cash_payments|default:0|floatformat:2|intcomma }})</td>
+                </tr>
+                <tr class="table-active">
+                    <th>Net Cash from Operating Activities</th>
+                    <th class="text-end">
+                        <span class="{% if net_operating_cash >= 0 %}text-success{% else %}text-danger{% endif %}">
+                            GHS {{ net_operating_cash|default:0|floatformat:2|intcomma }}
+                        </span>
+                    </th>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Summary -->
+    <div class="table-responsive mt-4">
+        <table class="table modern-table">
+            <tbody>
+                <tr>
+                    <td><strong>Beginning Cash Balance</strong></td>
+                    <td class="text-end"><strong>GHS {{ beginning_cash|default:0|floatformat:2|intcomma }}</strong></td>
+                </tr>
+                <tr>
+                    <td>Net Change in Cash</td>
+                    <td class="text-end">
+                        <span class="{% if net_cash_flow >= 0 %}text-success{% else %}text-danger{% endif %}">
+                            GHS {{ net_cash_flow|default:0|floatformat:2|intcomma }}
+                        </span>
+                    </td>
+                </tr>
+                <tr class="table-active">
+                    <th>Ending Cash Balance</th>
+                    <th class="text-end">
+                        <span class="text-primary" style="font-size: 1.2em;">
+                            GHS {{ ending_cash|default:0|floatformat:2|intcomma }}
+                        </span>
+                    </th>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Cash Account Breakdown -->
+    <div class="alert alert-info mt-4">
+        <strong>ℹ️ Note:</strong> Cash includes: Cash on Hand (1010), Card Receipts (1020), Mobile Money (1030), and Bank Transfers (1040)
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+

@@ -1,0 +1,462 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize hospital_extras %}
+
+{% block title %}Pharmacy Procurement Requests - HMS{% endblock %}
+{% block page_title %}💊 Pharmacy Stock Requests{% endblock %}
+{% block page_subtitle %}Request supplies from central procurement{% endblock %}
+
+{% block extra_css %}
+<style>
+    .request-hero {
+        background: linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%);
+        color: white;
+        border-radius: 20px;
+        padding: 40px;
+        margin-bottom: 30px;
+        box-shadow: 0 10px 30px rgba(124, 58, 237, 0.3);
+    }
+
+    .request-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 20px;
+    }
+
+    .stat-card-request {
+        background: rgba(255,255,255,0.15);
+        backdrop-filter: blur(10px);
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        border: 2px solid rgba(255,255,255,0.2);
+    }
+
+    .stat-value-request {
+        font-size: 36px;
+        font-weight: 800;
+        margin-bottom: 8px;
+    }
+
+    .stat-label-request {
+        font-size: 12px;
+        opacity: 0.9;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .request-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+        border-left: 4px solid;
+        transition: all 0.3s;
+    }
+
+    .request-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    }
+
+    .request-card.draft { border-left-color: #6B7280; }
+    .request-card.submitted { border-left-color: #3B82F6; }
+    .request-card.approved { border-left-color: #10B981; }
+    .request-card.received { border-left-color: #8B5CF6; }
+    .request-card.cancelled { border-left-color: #EF4444; }
+
+    .request-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        margin-bottom: 16px;
+    }
+
+    .request-number {
+        font-size: 24px;
+        font-weight: 700;
+        color: #1F2937;
+    }
+
+    .status-badge-large {
+        padding: 8px 20px;
+        border-radius: 20px;
+        font-size: 13px;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+
+    .status-draft { background: #F3F4F6; color: #374151; }
+    .status-submitted { background: #DBEAFE; color: #1E40AF; }
+    .status-admin_approved { background: #D1FAE5; color: #065F46; }
+    .status-accounts_approved { background: #FEF3C7; color: #92400E; }
+    .status-received { background: #E9D5FF; color: #6B21A8; }
+    .status-cancelled { background: #FEE2E2; color: #991B1B; }
+
+    .request-meta {
+        display: flex;
+        gap: 24px;
+        flex-wrap: wrap;
+        color: #6B7280;
+        font-size: 14px;
+        margin-bottom: 16px;
+    }
+
+    .request-items-summary {
+        background: #F9FAFB;
+        border-radius: 12px;
+        padding: 16px;
+        margin-top: 16px;
+    }
+
+    .item-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .item-list li {
+        padding: 8px 0;
+        border-bottom: 1px solid #E5E7EB;
+    }
+
+    .item-list li:last-child {
+        border-bottom: none;
+    }
+
+    .request-actions {
+        display: flex;
+        gap: 12px;
+        margin-top: 16px;
+    }
+
+    .action-btn-request {
+        padding: 10px 20px;
+        border-radius: 8px;
+        border: none;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+    }
+
+    .btn-submit {
+        background: linear-gradient(135deg, #3B82F6, #2563EB);
+        color: white;
+    }
+
+    .btn-approve {
+        background: linear-gradient(135deg, #10B981, #059669);
+        color: white;
+    }
+
+    .btn-view-request {
+        background: #F3F4F6;
+        color: #374151;
+    }
+
+    .action-btn-request:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+
+    .workflow-tracker {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-top: 16px;
+    }
+
+    .workflow-steps {
+        display: flex;
+        justify-content: space-between;
+        position: relative;
+    }
+
+    .workflow-step {
+        flex: 1;
+        text-align: center;
+        position: relative;
+        z-index: 1;
+    }
+
+    .workflow-step-circle {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: #E5E7EB;
+        color: #6B7280;
+        margin: 0 auto 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 18px;
+        border: 3px solid white;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .workflow-step.completed .workflow-step-circle {
+        background: #10B981;
+        color: white;
+    }
+
+    .workflow-step.current .workflow-step-circle {
+        background: #3B82F6;
+        color: white;
+        animation: pulse 2s infinite;
+    }
+
+    .workflow-step-label {
+        font-size: 12px;
+        color: #6B7280;
+        font-weight: 600;
+    }
+
+    .workflow-step.completed .workflow-step-label {
+        color: #10B981;
+    }
+
+    .workflow-step.current .workflow-step-label {
+        color: #3B82F6;
+    }
+
+    .workflow-line {
+        position: absolute;
+        top: 24px;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: #E5E7EB;
+        z-index: 0;
+    }
+
+    .new-request-card {
+        background: linear-gradient(135deg, #F0FDF4 0%, #DCFCE7 100%);
+        border: 2px solid #10B981;
+        border-radius: 16px;
+        padding: 30px;
+        text-align: center;
+        margin-bottom: 30px;
+    }
+
+    .new-request-icon {
+        font-size: 64px;
+        color: #10B981;
+        margin-bottom: 16px;
+    }
+
+    @media (max-width: 768px) {
+        .workflow-steps {
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .workflow-line {
+            display: none;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Hero Section -->
+<div class="request-hero">
+    <div class="d-flex justify-content-between align-items-start mb-4">
+        <div>
+            <h2 style="font-weight: 800; font-size: 32px; margin-bottom: 12px;">Pharmacy Procurement</h2>
+            <p style="opacity: 0.9; font-size: 16px; margin: 0;">
+                Request stock from central procurement
+            </p>
+        </div>
+        <a href="{% url 'hospital:pharmacy_request_create' %}" class="btn btn-light btn-lg">
+            <i class="bi bi-plus-circle me-2"></i>New Request
+        </a>
+    </div>
+    
+    <div class="request-stats">
+        <div class="stat-card-request">
+            <div class="stat-value-request">{{ total_requests|default:0 }}</div>
+            <div class="stat-label-request">Total Requests</div>
+        </div>
+        <div class="stat-card-request">
+            <div class="stat-value-request">{{ pending_requests|default:0 }}</div>
+            <div class="stat-label-request">Pending</div>
+        </div>
+        <div class="stat-card-request">
+            <div class="stat-value-request">{{ approved_requests|default:0 }}</div>
+            <div class="stat-label-request">Approved</div>
+        </div>
+        <div class="stat-card-request">
+            <div class="stat-value-request">{{ received_requests|default:0 }}</div>
+            <div class="stat-label-request">Received</div>
+        </div>
+    </div>
+</div>
+
+<!-- New Request CTA (if no requests) -->
+{% if not requests %}
+<div class="new-request-card">
+    <div class="new-request-icon"><i class="bi bi-box-seam"></i></div>
+    <h4 class="fw-bold mb-3">No Active Requests</h4>
+    <p class="text-muted mb-4">Create your first procurement request to order supplies from central procurement</p>
+    <a href="{% url 'hospital:pharmacy_request_create' %}" class="btn btn-success btn-lg">
+        <i class="bi bi-plus-circle me-2"></i>Create Procurement Request
+    </a>
+</div>
+{% endif %}
+
+<!-- Request Cards -->
+{% for request in requests %}
+<div class="request-card {{ request.status }}">
+    <div class="request-header">
+        <div>
+            <div class="request-number">{{ request.request_number }}</div>
+            <div class="request-meta">
+                <span><i class="bi bi-calendar me-1"></i>{{ request.request_date|date:"d M Y" }}</span>
+                <span><i class="bi bi-person me-1"></i>{{ request.requested_by.user.get_full_name }}</span>
+                <span><i class="bi bi-building me-1"></i>{{ request.requested_by_store.name }}</span>
+                {% if request.priority == 'urgent' %}
+                <span class="badge bg-danger">URGENT</span>
+                {% elif request.priority == 'high' %}
+                <span class="badge bg-warning">HIGH PRIORITY</span>
+                {% endif %}
+            </div>
+        </div>
+        <span class="status-badge-large status-{{ request.status }}">
+            {{ request.get_status_display }}
+        </span>
+    </div>
+    
+    {% if request.justification %}
+    <div class="mb-3">
+        <strong>Justification:</strong> {{ request.justification }}
+    </div>
+    {% endif %}
+    
+    <div class="request-items-summary">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <strong>Requested Items ({{ request.items.count }})</strong>
+            <strong class="text-primary" style="font-size: 20px;">GHS {{ request.estimated_total|floatformat:2 }}</strong>
+        </div>
+        
+        <ul class="item-list">
+            {% for item in request.items.all|slice:":5" %}
+            <li class="d-flex justify-content-between">
+                <span><strong>{{ item.item_name }}</strong> {% if item.drug %}({{ item.drug.strength }}){% endif %}</span>
+                <span>Qty: {{ item.quantity }} {{ item.unit_of_measure }} × GHS {{ item.estimated_unit_price }}</span>
+            </li>
+            {% endfor %}
+            {% if request.items.count > 5 %}
+            <li class="text-muted text-center">
+                <small>And {{ request.items.count|add:"-5" }} more item(s)...</small>
+            </li>
+            {% endif %}
+        </ul>
+    </div>
+    
+    <!-- Workflow Tracker -->
+    <div class="workflow-tracker">
+        <div class="workflow-line"></div>
+        <div class="workflow-steps">
+            <div class="workflow-step completed">
+                <div class="workflow-step-circle">✓</div>
+                <div class="workflow-step-label">Draft</div>
+            </div>
+            <div class="workflow-step {% if request.status in 'submitted,admin_approved,accounts_approved,ordered,received' %}completed{% endif %} {% if request.status == 'submitted' %}current{% endif %}">
+                <div class="workflow-step-circle">
+                    {% if request.status in 'admin_approved,accounts_approved,ordered,received' %}✓{% else %}2{% endif %}
+                </div>
+                <div class="workflow-step-label">Submitted</div>
+            </div>
+            <div class="workflow-step {% if request.status in 'admin_approved,accounts_approved,ordered,received' %}completed{% endif %} {% if request.status == 'admin_approved' %}current{% endif %}">
+                <div class="workflow-step-circle">
+                    {% if request.status in 'accounts_approved,ordered,received' %}✓{% else %}3{% endif %}
+                </div>
+                <div class="workflow-step-label">Admin OK</div>
+            </div>
+            <div class="workflow-step {% if request.status in 'accounts_approved,ordered,received' %}completed{% endif %} {% if request.status == 'accounts_approved' %}current{% endif %}">
+                <div class="workflow-step-circle">
+                    {% if request.status in 'ordered,received' %}✓{% else %}4{% endif %}
+                </div>
+                <div class="workflow-step-label">Accounts OK</div>
+            </div>
+            <div class="workflow-step {% if request.status == 'received' %}completed{% endif %} {% if request.status in 'ordered,payment_processed' %}current{% endif %}">
+                <div class="workflow-step-circle">
+                    {% if request.status == 'received' %}✓{% else %}5{% endif %}
+                </div>
+                <div class="workflow-step-label">Received</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Actions -->
+    <div class="request-actions">
+        <a href="{% url 'hospital:procurement_request_detail' request.pk %}" class="action-btn-request btn-view-request">
+            <i class="bi bi-eye"></i>View Full Details
+        </a>
+        
+        {% if request.status == 'draft' %}
+        <form method="post" action="{% url 'hospital:submit_procurement_request' request.pk %}" class="d-inline">
+            {% csrf_token %}
+            <button type="submit" class="action-btn-request btn-submit">
+                <i class="bi bi-send"></i>Submit for Approval
+            </button>
+        </form>
+        {% endif %}
+        
+        {% if request.status == 'accounts_approved' and user.is_staff %}
+        <form method="post" action="{% url 'hospital:mark_request_received' request.pk %}" class="d-inline">
+            {% csrf_token %}
+            <button type="submit" class="action-btn-request btn-approve">
+                <i class="bi bi-check-circle"></i>Mark as Received
+            </button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+
+<!-- Empty State -->
+{% if not requests and not no_requests %}
+<div class="text-center py-5">
+    <i class="bi bi-hourglass" style="font-size: 64px; color: #ccc;"></i>
+    <p class="text-muted mt-3">Loading requests...</p>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Auto-refresh every 2 minutes
+setInterval(() => {
+    if (!document.hidden) {
+        location.reload();
+    }
+}, 120000);
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

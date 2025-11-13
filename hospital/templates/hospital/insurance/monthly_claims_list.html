@@ -1,0 +1,174 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Monthly Insurance Claims{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-calendar-month me-2"></i>Monthly Insurance Claims</h2>
+        <a href="{% url 'hospital:insurance_claims_dashboard' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left me-2"></i>Back to Dashboard
+        </a>
+    </div>
+    
+    <!-- Filters and Generate -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-8">
+                    <form method="get" class="row g-3">
+                        <div class="col-md-3">
+                            <select name="payer" class="form-select">
+                                <option value="">All Payers</option>
+                                {% for payer in payers %}
+                                <option value="{{ payer.id }}" {% if payer_filter == payer.id|stringformat:"s" %}selected{% endif %}>
+                                    {{ payer.name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <select name="year" class="form-select">
+                                {% for year in years %}
+                                <option value="{{ year }}" {% if year_filter == year|stringformat:"s" %}selected{% endif %}>{{ year }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <select name="month" class="form-select">
+                                <option value="">All Months</option>
+                                {% for month_num, month_name in months %}
+                                <option value="{{ month_num }}" {% if month_filter == month_num|stringformat:"s" %}selected{% endif %}>{{ month_name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <select name="status" class="form-select">
+                                <option value="">All Statuses</option>
+                                <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Draft</option>
+                                <option value="submitted" {% if status_filter == 'submitted' %}selected{% endif %}>Submitted</option>
+                                <option value="fully_paid" {% if status_filter == 'fully_paid' %}selected{% endif %}>Fully Paid</option>
+                            </select>
+                        </div>
+                        <div class="col-md-1">
+                            <button type="submit" class="btn btn-primary w-100"><i class="bi bi-search"></i></button>
+                        </div>
+                    </form>
+                </div>
+                <div class="col-md-4 text-end">
+                    <form method="post" action="{% url 'hospital:generate_monthly_claims' %}">
+                        {% csrf_token %}
+                        <div class="row g-2">
+                            <div class="col-5">
+                                <select name="month" class="form-select" required>
+                                    {% for month_num, month_name in months %}
+                                    <option value="{{ month_num }}">{{ month_name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-4">
+                                <select name="year" class="form-select" required>
+                                    {% for year in years %}
+                                    <option value="{{ year }}">{{ year }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-3">
+                                <button type="submit" class="btn btn-success w-100">
+                                    <i class="bi bi-plus-circle"></i> Generate
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Claims Table -->
+    <div class="card">
+        <div class="card-body">
+            {% if monthly_claims %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Claim Number</th>
+                            <th>Period</th>
+                            <th>Payer</th>
+                            <th>Items</th>
+                            <th>Total Billed</th>
+                            <th>Total Paid</th>
+                            <th>Outstanding</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for claim in monthly_claims %}
+                        <tr>
+                            <td><strong>{{ claim.claim_number }}</strong></td>
+                            <td>{{ claim.month_display }} {{ claim.claim_year }}</td>
+                            <td>{{ claim.payer.name }}</td>
+                            <td>{{ claim.total_items }}</td>
+                            <td>GH₵ {{ claim.total_billed_amount|floatformat:2|intcomma }}</td>
+                            <td>GH₵ {{ claim.total_paid_amount|floatformat:2|intcomma }}</td>
+                            <td>GH₵ {{ claim.outstanding_amount|floatformat:2|intcomma }}</td>
+                            <td>
+                                <span class="badge bg-{{ claim.status }}">
+                                    {{ claim.get_status_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:monthly_claim_detail' claim.pk %}" class="btn btn-sm btn-outline-primary">
+                                    View
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination -->
+            {% if monthly_claims.has_other_pages %}
+            <nav>
+                <ul class="pagination justify-content-center">
+                    {% if monthly_claims.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ monthly_claims.previous_page_number }}">Previous</a>
+                    </li>
+                    {% endif %}
+                    
+                    <li class="page-item disabled">
+                        <span class="page-link">Page {{ monthly_claims.number }} of {{ monthly_claims.paginator.num_pages }}</span>
+                    </li>
+                    
+                    {% if monthly_claims.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ monthly_claims.next_page_number }}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox" style="font-size: 48px; color: #ccc;"></i>
+                <p class="text-muted mt-3">No monthly claims found</p>
+                <p class="text-muted">Generate monthly claims using the form above</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+

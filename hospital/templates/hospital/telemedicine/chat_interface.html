@@ -1,0 +1,509 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Telemedicine Chat{% endblock %}
+
+{% block extra_css %}
+<style>
+    .chat-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+    
+    .chat-header {
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        color: white;
+        padding: 20px;
+        border-radius: 15px;
+        margin-bottom: 20px;
+        text-align: center;
+    }
+    
+    .chat-content {
+        display: grid;
+        grid-template-columns: 1fr 2fr;
+        gap: 20px;
+        height: 70vh;
+    }
+    
+    .consultations-list {
+        background: white;
+        border-radius: 15px;
+        padding: 20px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        overflow-y: auto;
+    }
+    
+    .consultation-item {
+        padding: 15px;
+        border-bottom: 1px solid #eee;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        border-radius: 10px;
+        margin-bottom: 10px;
+    }
+    
+    .consultation-item:hover {
+        background: #f8f9fa;
+        transform: translateX(5px);
+    }
+    
+    .consultation-item.active {
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        color: white;
+    }
+    
+    .chat-messages {
+        background: white;
+        border-radius: 15px;
+        padding: 20px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .messages-area {
+        flex: 1;
+        overflow-y: auto;
+        padding: 10px;
+        border: 1px solid #eee;
+        border-radius: 10px;
+        margin-bottom: 15px;
+        min-height: 300px;
+    }
+    
+    .message {
+        padding: 10px 15px;
+        margin: 5px 0;
+        border-radius: 15px;
+        max-width: 70%;
+    }
+    
+    .message.sent {
+        background: #007bff;
+        color: white;
+        margin-left: auto;
+    }
+    
+    .message.received {
+        background: #f1f3f4;
+        color: #333;
+    }
+    
+    .message-input {
+        display: flex;
+        gap: 10px;
+    }
+    
+    .message-input input {
+        flex: 1;
+        padding: 12px;
+        border: 1px solid #ddd;
+        border-radius: 25px;
+        outline: none;
+    }
+    
+    .send-btn {
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        color: white;
+        border: none;
+        padding: 12px 25px;
+        border-radius: 25px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+    
+    .send-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+    }
+    
+    .no-consultations {
+        text-align: center;
+        color: #666;
+        padding: 40px;
+    }
+    
+    .consultation-status {
+        font-size: 0.8em;
+        padding: 4px 8px;
+        border-radius: 12px;
+        margin-left: 10px;
+    }
+    
+    .status-scheduled {
+        background: #fff3cd;
+        color: #856404;
+    }
+    
+    .status-in-progress {
+        background: #d4edda;
+        color: #155724;
+    }
+    
+    .status-completed {
+        background: #d1ecf1;
+        color: #0c5460;
+    }
+    
+    .input-group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .file-btn {
+        background: #007bff;
+        color: white;
+        padding: 8px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        border: none;
+        font-size: 16px;
+    }
+    
+    .file-btn:hover {
+        background: #0056b3;
+    }
+    
+    .image-preview {
+        margin-top: 10px;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: #f8f9fa;
+    }
+    
+    .image-preview img {
+        max-width: 200px;
+        max-height: 150px;
+        border-radius: 4px;
+        margin-right: 10px;
+    }
+    
+    .message {
+        margin-bottom: 15px;
+        padding: 10px;
+        border-radius: 8px;
+        max-width: 70%;
+    }
+    
+    .message.sent {
+        background: #007bff;
+        color: white;
+        margin-left: auto;
+    }
+    
+    .message.received {
+        background: #f1f3f4;
+        color: #333;
+    }
+    
+    .message-content img {
+        max-width: 100%;
+        border-radius: 4px;
+        margin-top: 5px;
+    }
+    
+    .message-time {
+        font-size: 0.8em;
+        opacity: 0.7;
+        margin-top: 5px;
+    }
+    
+    .message-attachment {
+        margin-top: 5px;
+    }
+    
+    .message-attachment a {
+        color: inherit;
+        text-decoration: none;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="chat-container">
+    <div class="chat-header">
+        <h2><i class="bi bi-chat-dots me-2"></i>Telemedicine Chat</h2>
+        <p>Connect with your healthcare provider</p>
+    </div>
+    
+    <div class="chat-content">
+        <div class="consultations-list">
+            <h4><i class="bi bi-list-ul me-2"></i>Recent Consultations</h4>
+            {% if consultations %}
+                {% for consultation in consultations %}
+                <div class="consultation-item" data-consultation-id="{{ consultation.id }}">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong>
+                                {% if consultation.patient %}
+                                    {{ consultation.patient.first_name }} {{ consultation.patient.last_name }}
+                                {% else %}
+                                    {{ consultation.doctor.first_name }} {{ consultation.doctor.last_name }}
+                                {% endif %}
+                            </strong>
+                            <span class="consultation-status status-{{ consultation.status|lower }}">
+                                {{ consultation.get_status_display }}
+                            </span>
+                        </div>
+                        <small class="text-muted">{{ consultation.created|date:"M d, Y" }}</small>
+                    </div>
+                    <div class="mt-2">
+                        <small class="text-muted">
+                            {% if consultation.patient %}
+                                Doctor: {{ consultation.doctor.first_name }} {{ consultation.doctor.last_name }}
+                            {% else %}
+                                Patient: {{ consultation.patient.first_name }} {{ consultation.patient.last_name }}
+                            {% endif %}
+                        </small>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="no-consultations">
+                    <i class="bi bi-chat-square-text" style="font-size: 3rem; color: #ddd;"></i>
+                    <p>No consultations found</p>
+                    <a href="{% url 'telemedicine:schedule_consultation' %}" class="btn btn-primary">
+                        Schedule Consultation
+                    </a>
+                </div>
+            {% endif %}
+        </div>
+        
+        <div class="chat-messages">
+            <div class="messages-area" id="messagesArea">
+                <div class="text-center text-muted">
+                    <i class="bi bi-chat-square-text" style="font-size: 2rem;"></i>
+                    <p>Select a consultation to start chatting</p>
+                </div>
+            </div>
+            
+            <div class="message-input">
+                <div class="input-group">
+                    <input type="text" id="messageInput" placeholder="Type your message..." disabled>
+                    <label for="fileInput" class="file-btn" title="Attach image">
+                        <i class="bi bi-image"></i>
+                    </label>
+                    <input type="file" id="fileInput" accept="image/*" style="display: none;">
+                    <button class="send-btn" id="sendBtn" disabled>
+                        <i class="bi bi-send"></i> Send
+                    </button>
+                </div>
+                <div id="imagePreview" class="image-preview" style="display: none;">
+                    <img id="previewImg" src="" alt="Preview">
+                    <button id="removeImage" class="btn btn-sm btn-danger">Remove</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const consultationItems = document.querySelectorAll('.consultation-item');
+    const messagesArea = document.getElementById('messagesArea');
+    const messageInput = document.getElementById('messageInput');
+    const sendBtn = document.getElementById('sendBtn');
+    
+    let selectedConsultationId = null;
+    let selectedFile = null;
+    
+    // File input handling
+    const fileInput = document.getElementById('fileInput');
+    const imagePreview = document.getElementById('imagePreview');
+    const previewImg = document.getElementById('previewImg');
+    const removeImageBtn = document.getElementById('removeImage');
+    
+    fileInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file && file.type.startsWith('image/')) {
+            selectedFile = file;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                previewImg.src = e.target.result;
+                imagePreview.style.display = 'block';
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+    
+    removeImageBtn.addEventListener('click', function() {
+        selectedFile = null;
+        fileInput.value = '';
+        imagePreview.style.display = 'none';
+    });
+    
+    consultationItems.forEach(item => {
+        item.addEventListener('click', function() {
+            // Remove active class from all items
+            consultationItems.forEach(i => i.classList.remove('active'));
+            
+            // Add active class to clicked item
+            this.classList.add('active');
+            
+            // Get consultation ID
+            selectedConsultationId = this.dataset.consultationId;
+            
+            // Enable message input
+            messageInput.disabled = false;
+            sendBtn.disabled = false;
+            
+            // Load messages for this consultation
+            loadMessages(selectedConsultationId);
+            
+            // Set up auto-refresh for new messages every 3 seconds
+            if (messageRefreshInterval) {
+                clearInterval(messageRefreshInterval);
+            }
+            messageRefreshInterval = setInterval(() => {
+                if (selectedConsultationId) {
+                    loadMessages(selectedConsultationId, true);
+                }
+            }, 3000);
+        });
+    });
+    
+    let messageRefreshInterval = null;
+    let lastMessageTime = null;
+    
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+    
+    function loadMessages(consultationId, silent = false) {
+        const url = `/hms/telemedicine/consultation/GHS {consultationId}/messages/`;
+        const params = new URLSearchParams();
+            if (lastMessageTime && silent) {
+                params.append('since', lastMessageTime);
+            }
+        fetch(url + (params.toString() ? '?' + params.toString() : ''), {
+            method: 'GET',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.messages && data.messages.length > 0) {
+                if (!silent) {
+                    messagesArea.innerHTML = '';
+                    data.messages.forEach(msg => appendMessage(msg));
+                } else {
+                    const existingIds = Array.from(messagesArea.querySelectorAll('.message')).map(el => el.dataset.messageId);
+                    data.messages.forEach(msg => {
+                        if (!existingIds.includes(msg.id)) {
+                            appendMessage(msg);
+                        }
+                    });
+                }
+                if (data.messages.length > 0) {
+                    lastMessageTime = data.messages[data.messages.length - 1].created;
+                }
+                messagesArea.scrollTop = messagesArea.scrollHeight;
+            } else if (!silent) {
+                messagesArea.innerHTML = `<div class="text-center text-muted"><i class="bi bi-chat-square-text" style="font-size: 2rem;"></i><p>No messages yet. Start the conversation!</p></div>`;
+            }
+        })
+        .catch(error => {
+            if (!silent) {
+                messagesArea.innerHTML = `<div class="text-center text-danger"><p>Error loading messages.</p></div>`;
+            }
+        });
+    }
+    
+    function appendMessage(msg) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message';
+        messageDiv.dataset.messageId = msg.id;
+        const time = new Date(msg.created).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        
+        let content = '';
+        if (msg.message_type === 'file' && msg.attachment_url) {
+            content = `<img src="GHS {msg.attachment_url}" alt="Shared image" style="max-width: 100%; border-radius: 4px;">`;
+            if (msg.content) {
+                content = `<div>GHS {escapeHtml(msg.content)}</div>` + content;
+            }
+        } else {
+            content = escapeHtml(msg.content);
+        }
+        
+        messageDiv.innerHTML = `
+            <div class="message-content">GHS {content}</div>
+            <div class="message-time">GHS {time} - GHS {msg.sender}</div>
+            GHS {msg.attachment_url && msg.message_type !== 'file' ? `<div class="message-attachment"><a href="GHS {msg.attachment_url}" target="_blank">📎 Attachment</a></div>` : ''}
+        `;
+        messagesArea.appendChild(messageDiv);
+    }
+    
+    function escapeHtml(text) {
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, m => map[m]);
+    }
+    
+    function sendMessage() {
+        const message = messageInput.value.trim();
+        if ((message || selectedFile) && selectedConsultationId) {
+            const formData = new FormData();
+            formData.append('content', message || '');
+            if (selectedFile) {
+                formData.append('attachment', selectedFile);
+                formData.append('message_type', 'file');
+            } else {
+                formData.append('message_type', 'text');
+            }
+            
+            fetch(`/hms/telemedicine/consultation/${selectedConsultationId}/messages/`, {
+                method: 'POST',
+                headers: {'X-CSRFToken': getCookie('csrftoken')},
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    messageInput.value = '';
+                    selectedFile = null;
+                    fileInput.value = '';
+                    imagePreview.style.display = 'none';
+                    loadMessages(selectedConsultationId);
+                } else {
+                    alert('Failed to send message: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error sending message:', error);
+                alert('Failed to send message. Please try again.');
+            });
+        }
+    }
+    
+    sendBtn.addEventListener('click', sendMessage);
+    
+    messageInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
+});
+</script>
+{% endblock %}

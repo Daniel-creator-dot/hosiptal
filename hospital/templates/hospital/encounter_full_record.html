@@ -1,0 +1,312 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize math_filters %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header with Actions -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-file-medical me-2"></i>Complete Encounter Record</h2>
+        <div class="btn-group">
+            <a href="{% url 'hospital:patient_consultation_history' encounter.patient.pk %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-2"></i>Back to History
+            </a>
+            <a href="{% url 'hospital:patient_detail' encounter.patient.pk %}" class="btn btn-outline-primary">
+                <i class="bi bi-person me-2"></i>Patient Profile
+            </a>
+            {% if encounter.status == 'active' %}
+                <a href="{% url 'hospital:consultation_view' encounter.pk %}" class="btn btn-primary">
+                    <i class="bi bi-arrow-right-circle me-2"></i>Continue Consultation
+                </a>
+            {% endif %}
+            <button onclick="window.print()" class="btn btn-outline-success">
+                <i class="bi bi-printer me-2"></i>Print
+            </button>
+        </div>
+    </div>
+
+    <!-- Encounter Overview Card -->
+    <div class="card shadow-sm mb-4" style="background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%); color: white;">
+        <div class="card-body p-4">
+            <div class="row">
+                <div class="col-md-6">
+                    <h4 class="mb-3"><i class="bi bi-person-circle me-2"></i>{{ encounter.patient.full_name }}</h4>
+                    <p class="mb-1"><strong>MRN:</strong> {{ encounter.patient.mrn }}</p>
+                    <p class="mb-1"><strong>Age/Gender:</strong> {{ encounter.patient.age }} years • {{ encounter.patient.get_gender_display }}</p>
+                    {% if encounter.patient.phone_number %}
+                        <p class="mb-0"><strong>Phone:</strong> {{ encounter.patient.phone_number }}</p>
+                    {% endif %}
+                </div>
+                <div class="col-md-6">
+                    <p class="mb-1"><strong>Date:</strong> {{ encounter.started_at|date:"F d, Y H:i" }}</p>
+                    <p class="mb-1"><strong>Type:</strong> {{ encounter.get_encounter_type_display }}</p>
+                    <p class="mb-1"><strong>Status:</strong> 
+                        <span class="badge bg-{{ encounter.status == 'completed' }}success{% if encounter.status == 'active' %}warning{% endif %}">
+                            {{ encounter.get_status_display }}
+                        </span>
+                    </p>
+                    {% if encounter.provider %}
+                        <p class="mb-0"><strong>Provider:</strong> Dr. {{ encounter.provider.get_full_name }}</p>
+                    {% endif %}
+                    {% if duration_minutes %}
+                        <p class="mb-0"><strong>Duration:</strong> {{ duration_minutes }} minutes</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Left Column -->
+        <div class="col-md-8">
+            <!-- Chief Complaint & Diagnosis -->
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-clipboard2-pulse me-2"></i>Chief Complaint & Diagnosis</h5>
+                </div>
+                <div class="card-body">
+                    {% if encounter.chief_complaint %}
+                        <div class="mb-3">
+                            <h6>Chief Complaint</h6>
+                            <p class="border-start border-3 border-primary ps-3">{{ encounter.chief_complaint }}</p>
+                        </div>
+                    {% endif %}
+                    
+                    {% if encounter.diagnosis %}
+                        <div class="mb-3">
+                            <h6>Diagnosis</h6>
+                            <p class="border-start border-3 border-success ps-3">{{ encounter.diagnosis }}</p>
+                        </div>
+                    {% endif %}
+                    
+                    {% if encounter.notes %}
+                        <div>
+                            <h6>General Notes</h6>
+                            <p class="border-start border-3 border-secondary ps-3">{{ encounter.notes|linebreaks }}</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Clinical Notes (SOAP) -->
+            {% if clinical_notes %}
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0"><i class="bi bi-journal-medical me-2"></i>Clinical Notes</h5>
+                </div>
+                <div class="card-body">
+                    {% for note in clinical_notes %}
+                    <div class="{% if not forloop.last %}border-bottom pb-3 mb-3{% endif %}">
+                        <div class="d-flex justify-content-between mb-2">
+                            <span class="badge bg-secondary">{{ note.get_note_type_display }}</span>
+                            <small class="text-muted">
+                                {{ note.created|date:"M d, Y H:i" }} by {{ note.created_by.get_full_name }}
+                            </small>
+                        </div>
+                        
+                        {% if note.subjective %}
+                            <p class="mb-2"><strong class="text-primary">Subjective:</strong> {{ note.subjective }}</p>
+                        {% endif %}
+                        {% if note.objective %}
+                            <p class="mb-2"><strong class="text-success">Objective:</strong> {{ note.objective }}</p>
+                        {% endif %}
+                        {% if note.assessment %}
+                            <p class="mb-2"><strong class="text-warning">Assessment:</strong> {{ note.assessment }}</p>
+                        {% endif %}
+                        {% if note.plan %}
+                            <p class="mb-2"><strong class="text-danger">Plan:</strong> {{ note.plan }}</p>
+                        {% endif %}
+                        {% if note.notes %}
+                            <p class="mb-0 small text-muted">{{ note.notes }}</p>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Prescriptions -->
+            {% if prescriptions %}
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="bi bi-prescription2 me-2"></i>Medications Prescribed</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Medication</th>
+                                    <th>Strength</th>
+                                    <th>Quantity</th>
+                                    <th>Dosage</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for rx in prescriptions %}
+                                <tr>
+                                    <td>{{ rx.drug.name }}</td>
+                                    <td>{{ rx.drug.strength }}</td>
+                                    <td>{{ rx.quantity }}</td>
+                                    <td>{{ rx.dosage_instructions|default:"As directed" }}</td>
+                                    <td>
+                                        <span class="badge bg-{{ rx.status == 'dispensed' }}success{% if rx.status == 'pending' %}warning{% endif %}">
+                                            {{ rx.get_status_display }}
+                                        </span>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Lab Results -->
+            {% if lab_results %}
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-clipboard-pulse me-2"></i>Lab Results</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Test</th>
+                                    <th>Result</th>
+                                    <th>Units</th>
+                                    <th>Reference Range</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for result in lab_results %}
+                                <tr>
+                                    <td>{{ result.test.name }}</td>
+                                    <td class="{% if result.is_abnormal %}text-danger fw-bold{% endif %}">
+                                        {{ result.value|default:result.qualitative_result }}
+                                        {% if result.is_abnormal %}<i class="bi bi-exclamation-triangle text-danger"></i>{% endif %}
+                                    </td>
+                                    <td>{{ result.units }}</td>
+                                    <td>{% if result.range_low and result.range_high %}{{ result.range_low }}-{{ result.range_high }}{% endif %}</td>
+                                    <td>
+                                        <span class="badge bg-{{ result.status == 'completed' }}success{% if result.status == 'pending' %}warning{% endif %}">
+                                            {{ result.get_status_display }}
+                                        </span>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Referrals -->
+            {% if referrals %}
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0"><i class="bi bi-arrow-right-circle me-2"></i>Referrals</h5>
+                </div>
+                <div class="card-body">
+                    {% for referral in referrals %}
+                    <div class="{% if not forloop.last %}border-bottom pb-2 mb-2{% endif %}">
+                        <p class="mb-1"><strong>To:</strong> {{ referral.specialist.staff.get_full_name }} ({{ referral.specialty.name }})</p>
+                        <p class="mb-1"><strong>Reason:</strong> {{ referral.reason }}</p>
+                        <p class="mb-0"><small class="text-muted">Referred: {{ referral.referred_date|date:"M d, Y" }}</small></p>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Right Column -->
+        <div class="col-md-4">
+            <!-- Vital Signs -->
+            {% if vitals %}
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-danger text-white">
+                    <h6 class="mb-0"><i class="bi bi-heart-pulse me-2"></i>Vital Signs</h6>
+                </div>
+                <div class="card-body">
+                    {% for vital in vitals %}
+                    <div class="{% if not forloop.last %}border-bottom pb-2 mb-2{% endif %}">
+                        <small class="text-muted">{{ vital.recorded_at|date:"M d, H:i" }}</small>
+                        {% if vital.temperature %}
+                            <p class="mb-1"><i class="bi bi-thermometer me-1"></i> {{ vital.temperature }}°C</p>
+                        {% endif %}
+                        {% if vital.systolic and vital.diastolic %}
+                            <p class="mb-1"><i class="bi bi-activity me-1"></i> {{ vital.systolic }}/{{ vital.diastolic }} mmHg</p>
+                        {% endif %}
+                        {% if vital.heart_rate %}
+                            <p class="mb-1"><i class="bi bi-heart me-1"></i> {{ vital.heart_rate }} bpm</p>
+                        {% endif %}
+                        {% if vital.respiratory_rate %}
+                            <p class="mb-1"><i class="bi bi-lungs me-1"></i> {{ vital.respiratory_rate }} /min</p>
+                        {% endif %}
+                        {% if vital.oxygen_saturation %}
+                            <p class="mb-0"><i class="bi bi-moisture me-1"></i> O₂: {{ vital.oxygen_saturation }}%</p>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Problems/Diagnoses List -->
+            {% if problems %}
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-secondary text-white">
+                    <h6 class="mb-0"><i class="bi bi-list-ul me-2"></i>Problems Documented</h6>
+                </div>
+                <div class="card-body">
+                    {% for problem in problems %}
+                    <div class="{% if not forloop.last %}border-bottom pb-2 mb-2{% endif %}">
+                        <p class="mb-1"><strong>{{ problem.problem_name }}</strong></p>
+                        <p class="mb-0"><small class="badge bg-{{ problem.status == 'active' }}danger{% if problem.status == 'resolved' %}success{% endif %}">{{ problem.get_status_display }}</small></p>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Summary -->
+            <div class="card shadow-sm">
+                <div class="card-header bg-dark text-white">
+                    <h6 class="mb-0"><i class="bi bi-clipboard-check me-2"></i>Summary</h6>
+                </div>
+                <div class="card-body">
+                    <p class="mb-2"><i class="bi bi-prescription2 me-1"></i> {{ prescriptions|length }} Prescriptions</p>
+                    <p class="mb-2"><i class="bi bi-clipboard-pulse me-1"></i> {{ lab_results|length }} Lab Results</p>
+                    <p class="mb-2"><i class="bi bi-journal-medical me-1"></i> {{ clinical_notes|length }} Clinical Notes</p>
+                    <p class="mb-2"><i class="bi bi-heart-pulse me-1"></i> {{ vitals|length }} Vital Sign Records</p>
+                    <p class="mb-0"><i class="bi bi-arrow-right-circle me-1"></i> {{ referrals|length }} Referrals</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+@media print {
+    .btn, .navbar, .sidebar, .breadcrumb { display: none !important; }
+    .card { border: 1px solid #dee2e6 !important; box-shadow: none !important; }
+    .card-header { background: #f8f9fa !important; color: #000 !important; }
+}
+</style>
+{% endblock %}
+
+
+
+
+
+
+
+
+

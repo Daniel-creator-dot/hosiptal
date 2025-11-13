@@ -1,0 +1,285 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Cashier Revenue Report - Hospital Management System{% endblock %}
+
+{% block extra_css %}
+<style>
+    .revenue-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 30px;
+        border-radius: 15px;
+        margin-bottom: 30px;
+        box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+    }
+    
+    .stat-card {
+        background: white;
+        padding: 25px;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    
+    .stat-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 15px rgba(0,0,0,0.2);
+    }
+    
+    .stat-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: #6c757d;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 8px;
+    }
+    
+    .stat-value {
+        font-size: 32px;
+        font-weight: 700;
+        color: #2d3748;
+        margin-bottom: 5px;
+    }
+    
+    .stat-icon {
+        font-size: 40px;
+        opacity: 0.3;
+        float: right;
+        margin-top: -10px;
+    }
+    
+    .payment-method-card {
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        border-left: 4px solid;
+        margin-bottom: 15px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+    }
+    
+    .method-cash { border-left-color: #48bb78; }
+    .method-card { border-left-color: #4299e1; }
+    .method-mobile { border-left-color: #ed8936; }
+    .method-bank { border-left-color: #9f7aea; }
+    
+    .method-name {
+        font-size: 14px;
+        font-weight: 600;
+        color: #4a5568;
+        margin-bottom: 5px;
+    }
+    
+    .method-amount {
+        font-size: 24px;
+        font-weight: 700;
+        color: #2d3748;
+    }
+    
+    .date-selector {
+        background: white;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Header -->
+    <div class="revenue-header">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h2 class="mb-2"><i class="bi bi-cash-stack"></i> Cashier Revenue Report</h2>
+                <p class="mb-0 opacity-90">Daily revenue summary and breakdown</p>
+            </div>
+            <div class="col-md-4 text-end">
+                <div class="badge bg-light text-dark fs-5 px-3 py-2">
+                    <i class="bi bi-calendar-event"></i> {{ date|date:"D, M d, Y" }}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Date Selector -->
+    <div class="date-selector">
+        <form method="get" class="row g-3 align-items-center">
+            <div class="col-auto">
+                <label for="dateInput" class="col-form-label fw-bold">
+                    <i class="bi bi-calendar3"></i> Select Date:
+                </label>
+            </div>
+            <div class="col-auto">
+                <input type="date" class="form-control" id="dateInput" name="date" 
+                       value="{{ date|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}">
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-search"></i> View Report
+                </button>
+            </div>
+            <div class="col-auto">
+                <a href="{% url 'hospital:cashier_revenue_report' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-clockwise"></i> Today
+                </a>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Summary Cards -->
+    <div class="row mb-4">
+        <!-- Total Revenue -->
+        <div class="col-md-6">
+            <div class="stat-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                <i class="bi bi-cash-coin stat-icon"></i>
+                <div class="stat-label" style="color: rgba(255,255,255,0.9);">Total Revenue</div>
+                <div class="stat-value" style="color: white;">
+                    GHS {{ summary.total_revenue|floatformat:2|intcomma }}
+                </div>
+                <small style="opacity: 0.9;">Total collections for {{ date|date:"M d, Y" }}</small>
+            </div>
+        </div>
+        
+        <!-- Total Receipts -->
+        <div class="col-md-6">
+            <div class="stat-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white;">
+                <i class="bi bi-receipt stat-icon"></i>
+                <div class="stat-label" style="color: rgba(255,255,255,0.9);">Total Receipts</div>
+                <div class="stat-value" style="color: white;">
+                    {{ summary.total_receipts|intcomma }}
+                </div>
+                <small style="opacity: 0.9;">Number of transactions processed</small>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Payment Method Breakdown -->
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-credit-card-2-front"></i> Payment Method Breakdown
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <!-- Cash -->
+                        <div class="col-md-6 col-lg-3">
+                            <div class="payment-method-card method-cash">
+                                <div class="method-name">
+                                    <i class="bi bi-cash"></i> Cash
+                                </div>
+                                <div class="method-amount">
+                                    GHS {{ summary.by_payment_method.cash|floatformat:2|intcomma|default:"0.00" }}
+                                </div>
+                                {% if summary.total_revenue > 0 %}
+                                <small class="text-muted">
+                                    {{ summary.by_payment_method.cash|default:0|floatformat:2|intcomma }} 
+                                    ({% widthratio summary.by_payment_method.cash|default:0 summary.total_revenue 100 %}%)
+                                </small>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        <!-- Card -->
+                        <div class="col-md-6 col-lg-3">
+                            <div class="payment-method-card method-card">
+                                <div class="method-name">
+                                    <i class="bi bi-credit-card"></i> Card
+                                </div>
+                                <div class="method-amount">
+                                    GHS {{ summary.by_payment_method.card|floatformat:2|intcomma|default:"0.00" }}
+                                </div>
+                                {% if summary.total_revenue > 0 %}
+                                <small class="text-muted">
+                                    {{ summary.by_payment_method.card|default:0|floatformat:2|intcomma }}
+                                    ({% widthratio summary.by_payment_method.card|default:0 summary.total_revenue 100 %}%)
+                                </small>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        <!-- Mobile Money -->
+                        <div class="col-md-6 col-lg-3">
+                            <div class="payment-method-card method-mobile">
+                                <div class="method-name">
+                                    <i class="bi bi-phone"></i> Mobile Money
+                                </div>
+                                <div class="method-amount">
+                                    GHS {{ summary.by_payment_method.mobile_money|floatformat:2|intcomma|default:"0.00" }}
+                                </div>
+                                {% if summary.total_revenue > 0 %}
+                                <small class="text-muted">
+                                    {{ summary.by_payment_method.mobile_money|default:0|floatformat:2|intcomma }}
+                                    ({% widthratio summary.by_payment_method.mobile_money|default:0 summary.total_revenue 100 %}%)
+                                </small>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        <!-- Bank Transfer -->
+                        <div class="col-md-6 col-lg-3">
+                            <div class="payment-method-card method-bank">
+                                <div class="method-name">
+                                    <i class="bi bi-bank"></i> Bank Transfer
+                                </div>
+                                <div class="method-amount">
+                                    GHS {{ summary.by_payment_method.bank_transfer|floatformat:2|intcomma|default:"0.00" }}
+                                </div>
+                                {% if summary.total_revenue > 0 %}
+                                <small class="text-muted">
+                                    {{ summary.by_payment_method.bank_transfer|default:0|floatformat:2|intcomma }}
+                                    ({% widthratio summary.by_payment_method.bank_transfer|default:0 summary.total_revenue 100 %}%)
+                                </small>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Action Buttons -->
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h6 class="mb-3">Quick Actions</h6>
+                    <a href="{% url 'hospital:cashier_dashboard' %}" class="btn btn-outline-primary me-2">
+                        <i class="bi bi-speedometer2"></i> Back to Dashboard
+                    </a>
+                    <button onclick="window.print()" class="btn btn-outline-secondary me-2">
+                        <i class="bi bi-printer"></i> Print Report
+                    </button>
+                    <a href="#" class="btn btn-outline-success" onclick="alert('Export feature coming soon!')">
+                        <i class="bi bi-file-earmark-excel"></i> Export to Excel
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // Auto-submit form on date change
+    document.getElementById('dateInput').addEventListener('change', function() {
+        this.form.submit();
+    });
+</script>
+{% endblock %}
+{% endblock %}
+
+
+
+
+
+
+

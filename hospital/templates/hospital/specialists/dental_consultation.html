@@ -1,0 +1,806 @@
+{% extends 'hospital/base.html' %}
+{% load humanize static hospital_extras %}
+{% load math_filters %}
+
+{% block title %}Dental Consultation - {{ patient.full_name|default:"New Patient" }}{% endblock %}
+
+{% block page_title %}Dental Consultation{% endblock %}
+{% block page_subtitle %}{% if patient %}{{ patient.full_name }} (MRN: {{ patient.mrn }}){% else %}Select a patient{% endif %}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .dental-chart-container {
+        background: white;
+        border-radius: 16px;
+        padding: 32px;
+        border: 1px solid var(--border);
+        margin-bottom: 24px;
+    }
+    
+    .tooth {
+        cursor: pointer;
+        transition: all 0.2s ease;
+        fill: #ffffff;
+        stroke: #2c3e50;
+        stroke-width: 2;
+    }
+    
+    .tooth:hover {
+        fill: #f8f9fa;
+        stroke-width: 3;
+        filter: brightness(1.1);
+    }
+    
+    .tooth.selected {
+        stroke: #6366f1;
+        stroke-width: 3.5;
+        filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.6));
+    }
+    
+    /* Color indicators for tooth conditions */
+    .tooth.healthy { fill: #ffffff; stroke: #4caf50; }
+    .tooth.carious { fill: #ff6b6b; stroke: #c92a2a; }
+    .tooth.filled { fill: #4dabf7; stroke: #1971c2; }
+    .tooth.missing { fill: #868e96; stroke: #495057; opacity: 0.4; }
+    .tooth.crown { fill: #ffd43b; stroke: #f59f00; }
+    .tooth.bridge { fill: #da77f2; stroke: #ae3ec9; }
+    .tooth.implant { fill: #51cf66; stroke: #2f9e44; }
+    .tooth.root_canal { fill: #ffd43b; stroke: #f59f00; }
+    .tooth.extraction_needed { fill: #ff8787; stroke: #c92a2a; }
+    .tooth.erupting { fill: #a5d8ff; stroke: #339af0; }
+    .tooth.impacted { fill: #ffa94d; stroke: #fd7e14; }
+    .tooth.deciduous { fill: #ffc9c9; stroke: #e03131; }
+    
+    /* Default white for healthy teeth */
+    .tooth:not(.healthy):not(.carious):not(.filled):not(.missing):not(.crown):not(.bridge):not(.implant):not(.root_canal):not(.extraction_needed):not(.erupting):not(.impacted):not(.deciduous) {
+        fill: #ffffff;
+        stroke: #4caf50;
+    }
+    
+    .tooth-root {
+        fill: #e0e0e0;
+        stroke: #95a5a6;
+        stroke-width: 1.5;
+        opacity: 0.8;
+    }
+    
+    .tooth-label {
+        font-size: 12px;
+        font-weight: 700;
+        text-anchor: middle;
+        dominant-baseline: middle;
+        fill: #2c3e50;
+        pointer-events: none;
+    }
+    
+    .jaw-line {
+        stroke: #bdc3c7;
+        stroke-width: 3;
+        stroke-dasharray: 8,4;
+        fill: none;
+        opacity: 0.6;
+    }
+    
+    .dental-chart-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+        margin-bottom: 24px;
+    }
+    
+    .dental-chart-grid svg {
+        min-height: 400px;
+        max-height: 500px;
+        background: linear-gradient(180deg, #f8f9fa 0%, #ffffff 100%);
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    
+    .tooth-group {
+        cursor: pointer;
+    }
+    
+    .tooth-info-panel {
+        background: var(--light);
+        border-radius: 12px;
+        padding: 20px;
+    }
+    
+    .procedure-tabs {
+        border-bottom: 2px solid var(--border);
+        margin-bottom: 20px;
+    }
+    
+    .procedure-tab {
+        padding: 12px 24px;
+        border: none;
+        background: none;
+        cursor: pointer;
+        font-weight: 500;
+        color: var(--gray);
+        border-bottom: 3px solid transparent;
+        transition: all 0.2s ease;
+    }
+    
+    .procedure-tab.active {
+        color: var(--primary);
+        border-bottom-color: var(--primary);
+    }
+    
+    .procedure-tab:hover {
+        color: var(--dark);
+    }
+    
+    .procedure-item {
+        padding: 16px;
+        border-bottom: 1px solid var(--border);
+        transition: all 0.2s ease;
+    }
+    
+    .procedure-item:hover {
+        background: var(--light);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if patient %}
+<div class="row g-4 mb-4">
+    <!-- Patient Info Card -->
+    <div class="col-md-4">
+        <div class="modern-card">
+            <h6 style="font-weight: 600; margin-bottom: 16px; color: var(--dark);">
+                <i class="bi bi-person-circle"></i> Patient Information
+            </h6>
+            <div style="margin-bottom: 12px;">
+                <strong>Name:</strong> {{ patient.full_name }}<br>
+                <strong>MRN:</strong> {{ patient.mrn }}<br>
+                <strong>Age:</strong> {{ patient.age }} years<br>
+                <strong>Gender:</strong> {{ patient.get_gender_display }}
+            </div>
+            {% if patient.allergies %}
+            <div class="alert alert-warning" style="padding: 8px; margin-bottom: 8px; font-size: 12px;">
+                <strong>Allergies:</strong> {{ patient.allergies }}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Quick Actions -->
+    <div class="col-md-8">
+        <div class="modern-card">
+            <h6 style="font-weight: 600; margin-bottom: 16px; color: var(--dark);">
+                <i class="bi bi-tools"></i> Quick Actions
+            </h6>
+            <div class="d-flex gap-2 flex-wrap">
+                <button class="btn btn-primary-modern btn-modern" onclick="showAddProcedureModal()">
+                    <i class="bi bi-plus-circle"></i> Add Procedure
+                </button>
+                <a href="{% url 'hospital:patient_detail' patient.pk %}" class="btn btn-outline-primary btn-modern">
+                    <i class="bi bi-person"></i> View Patient
+                </a>
+                {% if encounter %}
+                <a href="{% url 'hospital:encounter_detail' encounter.pk %}" class="btn btn-outline-primary btn-modern">
+                    <i class="bi bi-heart-pulse"></i> View Encounter
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Dental Chart -->
+{% if dental_chart %}
+<div class="dental-chart-container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h5 style="font-weight: 600; color: var(--dark); margin: 0;">
+            <i class="bi bi-tooth"></i> Dental Chart - {{ dental_chart.chart_date|date:"F d, Y" }}
+        </h5>
+        <div>
+            <select id="conditionTypeSelector" class="form-control-modern" style="display: inline-block; width: auto; margin-right: 8px;">
+                <option value="">Select Condition...</option>
+                {% for value, label in condition_types %}
+                <option value="{{ value }}">{{ label }}</option>
+                {% endfor %}
+            </select>
+            <button class="btn btn-sm btn-outline-secondary" onclick="clearSelection()">
+                <i class="bi bi-x-circle"></i> Clear
+            </button>
+        </div>
+    </div>
+    
+    <!-- Color Legend -->
+    <div class="mb-4" style="display: flex; flex-wrap: wrap; gap: 12px; padding: 16px; background: #f8f9fa; border-radius: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="width: 24px; height: 24px; border: 2px solid #4caf50; background: #ffffff; border-radius: 4px;"></div>
+            <span style="font-size: 13px;">Healthy (White)</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="width: 24px; height: 24px; border: 2px solid #c92a2a; background: #ff6b6b; border-radius: 4px;"></div>
+            <span style="font-size: 13px;">Carious (Red)</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="width: 24px; height: 24px; border: 2px solid #1971c2; background: #4dabf7; border-radius: 4px;"></div>
+            <span style="font-size: 13px;">Filled (Blue)</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="width: 24px; height: 24px; border: 2px solid #f59f00; background: #ffd43b; border-radius: 4px;"></div>
+            <span style="font-size: 13px;">Crown/Root Canal (Yellow)</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="width: 24px; height: 24px; border: 2px solid #495057; background: #868e96; border-radius: 4px; opacity: 0.4;"></div>
+            <span style="font-size: 13px;">Missing (Gray)</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="width: 24px; height: 24px; border: 2px solid #c92a2a; background: #ff8787; border-radius: 4px;"></div>
+            <span style="font-size: 13px;">Extraction Needed (Red)</span>
+        </div>
+    </div>
+    
+    <!-- Interactive Teeth Diagram -->
+    <div class="dental-chart-grid">
+        <!-- Upper Jaw -->
+        <div>
+            <h6 style="text-align: center; margin-bottom: 16px; color: var(--gray); font-weight: 600;">Upper Jaw (Maxilla)</h6>
+            <svg id="upperJaw" width="100%" height="450" viewBox="0 0 1100 400" preserveAspectRatio="xMidYMid meet" style="border: 1px solid var(--border); border-radius: 12px; display: block;">
+                <!-- Jaw line -->
+                <line class="jaw-line" x1="40" y1="220" x2="1060" y2="220"/>
+                
+                <!-- Upper teeth 1-8 (right to left from patient's perspective) -->
+                {% for seq_num in "1,2,3,4,5,6,7,8"|split:"," %}
+                {% with seq_num=seq_num.strip %}
+                {% with x_pos=forloop.counter0|add:1|mul:120|add:50 %}
+                {% with tooth_condition=tooth_conditions_map|get_item:seq_num|default:"healthy" %}
+                {% with fdi_num=sequential_to_fdi|get_item:seq_num|default:seq_num %}
+                <g class="tooth-group" data-tooth="{{ seq_num }}" data-fdi="{{ fdi_num }}" onclick="selectTooth('{{ seq_num }}')">
+                    <!-- Molar/Premolar shape (wider) for teeth 4-7 (premolars and molars) -->
+                    {% if seq_num|add:0 >= 4 and seq_num|add:0 <= 7 %}
+                    <path class="tooth {{ tooth_condition }}" 
+                          id="tooth-{{ seq_num }}"
+                          d="M {{ x_pos }},195 
+                             Q {{ x_pos|add:5 }},165 {{ x_pos|add:10 }},160
+                             Q {{ x_pos|add:18 }},155 {{ x_pos|add:26 }},160
+                             Q {{ x_pos|add:32 }},165 {{ x_pos|add:38 }},195
+                             Q {{ x_pos|add:36 }},225 {{ x_pos|add:30 }},235
+                             Q {{ x_pos|add:24 }},240 {{ x_pos|add:19 }},240
+                             Q {{ x_pos|add:14 }},240 {{ x_pos|add:8 }},235
+                             Q {{ x_pos|add:2 }},225 {{ x_pos }},195 Z"/>
+                    <!-- Multiple roots for molars -->
+                    <path class="tooth-root" d="M {{ x_pos|add:11 }},235 Q {{ x_pos|add:9 }},260 {{ x_pos|add:7 }},285 Q {{ x_pos|add:5 }},300 {{ x_pos|add:11 }},305 Q {{ x_pos|add:13 }},275 {{ x_pos|add:13 }},235 Z"/>
+                    <path class="tooth-root" d="M {{ x_pos|add:19 }},235 Q {{ x_pos|add:19 }},260 {{ x_pos|add:19 }},285 Q {{ x_pos|add:19 }},300 {{ x_pos|add:27 }},305 Q {{ x_pos|add:27 }},275 {{ x_pos|add:25 }},235 Z"/>
+                    <!-- Molar cusps -->
+                    <ellipse cx="{{ x_pos|add:10 }}" cy="195" rx="3" ry="4" fill="#ffffff" opacity="0.4"/>
+                    <ellipse cx="{{ x_pos|add:19 }}" cy="195" rx="3" ry="4" fill="#ffffff" opacity="0.4"/>
+                    <ellipse cx="{{ x_pos|add:28 }}" cy="195" rx="3" ry="4" fill="#ffffff" opacity="0.4"/>
+                    {% elif seq_num|add:0 == 3 %}
+                    <!-- Canine shape (pointed) -->
+                    <path class="tooth {{ tooth_condition }}" 
+                          id="tooth-{{ seq_num }}"
+                          d="M {{ x_pos|add:3 }},195 
+                             Q {{ x_pos|add:6 }},165 {{ x_pos|add:10 }},160
+                             Q {{ x_pos|add:15 }},155 {{ x_pos|add:22 }},165
+                             Q {{ x_pos|add:27 }},170 {{ x_pos|add:29 }},180
+                             Q {{ x_pos|add:32 }},190 {{ x_pos|add:30 }},205
+                             Q {{ x_pos|add:27 }},220 {{ x_pos|add:22 }},225
+                             Q {{ x_pos|add:17 }},230 {{ x_pos|add:12 }},225
+                             Q {{ x_pos|add:7 }},220 {{ x_pos|add:4 }},205
+                             Q {{ x_pos|add:1 }},190 {{ x_pos|add:3 }},195 Z"/>
+                    <path class="tooth-root" d="M {{ x_pos|add:16 }},225 Q {{ x_pos|add:15 }},250 {{ x_pos|add:14 }},275 Q {{ x_pos|add:13 }},290 {{ x_pos|add:16 }},295 Q {{ x_pos|add:17 }},265 {{ x_pos|add:17 }},225 Z"/>
+                    {% else %}
+                    <!-- Incisor shape (narrower, rectangular) -->
+                    <path class="tooth {{ tooth_condition }}" 
+                          id="tooth-{{ seq_num }}"
+                          d="M {{ x_pos|add:6 }},195 
+                             Q {{ x_pos|add:7 }},165 {{ x_pos|add:11 }},160
+                             Q {{ x_pos|add:16 }},155 {{ x_pos|add:23 }},160
+                             Q {{ x_pos|add:25 }},165 {{ x_pos|add:27 }},195
+                             Q {{ x_pos|add:26 }},220 {{ x_pos|add:24 }},230
+                             Q {{ x_pos|add:22 }},235 {{ x_pos|add:17 }},235
+                             Q {{ x_pos|add:12 }},235 {{ x_pos|add:10 }},230
+                             Q {{ x_pos|add:8 }},220 {{ x_pos|add:6 }},195 Z"/>
+                    <path class="tooth-root" d="M {{ x_pos|add:16 }},230 Q {{ x_pos|add:15 }},255 {{ x_pos|add:14 }},275 Q {{ x_pos|add:13 }},290 {{ x_pos|add:16 }},295 Q {{ x_pos|add:17 }},265 {{ x_pos|add:17 }},230 Z"/>
+                    {% endif %}
+                    <!-- Tooth number label -->
+                    <text class="tooth-label" x="{{ x_pos|add:16 }}" y="210">{{ seq_num }}</text>
+                </g>
+                {% endwith %}
+                {% endwith %}
+                {% endwith %}
+                {% endwith %}
+                {% endfor %}
+                
+                <!-- Upper teeth 9-16 (left to right) -->
+                {% for seq_num in "9,10,11,12,13,14,15,16"|split:"," %}
+                {% with seq_num=seq_num.strip %}
+                {% with x_pos=forloop.counter0|add:9|mul:120|add:50 %}
+                {% with tooth_condition=tooth_conditions_map|get_item:seq_num|default:"healthy" %}
+                {% with fdi_num=sequential_to_fdi|get_item:seq_num|default:seq_num %}
+                <g class="tooth-group" data-tooth="{{ seq_num }}" data-fdi="{{ fdi_num }}" onclick="selectTooth('{{ seq_num }}')">
+                    {% if seq_num|add:0 >= 12 and seq_num|add:0 <= 15 %}
+                    <!-- Molar/Premolar shape (wider) -->
+                    <path class="tooth {{ tooth_condition }}" 
+                          id="tooth-{{ seq_num }}"
+                          d="M {{ x_pos }},195 
+                             Q {{ x_pos|add:5 }},165 {{ x_pos|add:10 }},160
+                             Q {{ x_pos|add:18 }},155 {{ x_pos|add:26 }},160
+                             Q {{ x_pos|add:32 }},165 {{ x_pos|add:38 }},195
+                             Q {{ x_pos|add:36 }},225 {{ x_pos|add:30 }},235
+                             Q {{ x_pos|add:24 }},240 {{ x_pos|add:19 }},240
+                             Q {{ x_pos|add:14 }},240 {{ x_pos|add:8 }},235
+                             Q {{ x_pos|add:2 }},225 {{ x_pos }},195 Z"/>
+                    <path class="tooth-root" d="M {{ x_pos|add:11 }},235 Q {{ x_pos|add:9 }},260 {{ x_pos|add:7 }},285 Q {{ x_pos|add:5 }},300 {{ x_pos|add:11 }},305 Q {{ x_pos|add:13 }},275 {{ x_pos|add:13 }},235 Z"/>
+                    <path class="tooth-root" d="M {{ x_pos|add:19 }},235 Q {{ x_pos|add:19 }},260 {{ x_pos|add:19 }},285 Q {{ x_pos|add:19 }},300 {{ x_pos|add:27 }},305 Q {{ x_pos|add:27 }},275 {{ x_pos|add:25 }},235 Z"/>
+                    <ellipse cx="{{ x_pos|add:10 }}" cy="195" rx="3" ry="4" fill="#ffffff" opacity="0.4"/>
+                    <ellipse cx="{{ x_pos|add:19 }}" cy="195" rx="3" ry="4" fill="#ffffff" opacity="0.4"/>
+                    <ellipse cx="{{ x_pos|add:28 }}" cy="195" rx="3" ry="4" fill="#ffffff" opacity="0.4"/>
+                    {% elif seq_num|add:0 == 11 %}
+                    <!-- Canine shape (pointed) -->
+                    <path class="tooth {{ tooth_condition }}" 
+                          id="tooth-{{ seq_num }}"
+                          d="M {{ x_pos|add:3 }},195 
+                             Q {{ x_pos|add:6 }},165 {{ x_pos|add:10 }},160
+                             Q {{ x_pos|add:15 }},155 {{ x_pos|add:22 }},165
+                             Q {{ x_pos|add:27 }},170 {{ x_pos|add:29 }},180
+                             Q {{ x_pos|add:32 }},190 {{ x_pos|add:30 }},205
+                             Q {{ x_pos|add:27 }},220 {{ x_pos|add:22 }},225
+                             Q {{ x_pos|add:17 }},230 {{ x_pos|add:12 }},225
+                             Q {{ x_pos|add:7 }},220 {{ x_pos|add:4 }},205
+                             Q {{ x_pos|add:1 }},190 {{ x_pos|add:3 }},195 Z"/>
+                    <path class="tooth-root" d="M {{ x_pos|add:16 }},225 Q {{ x_pos|add:15 }},250 {{ x_pos|add:14 }},275 Q {{ x_pos|add:13 }},290 {{ x_pos|add:16 }},295 Q {{ x_pos|add:17 }},265 {{ x_pos|add:17 }},225 Z"/>
+                    {% else %}
+                    <!-- Incisor shape (narrower) -->
+                    <path class="tooth {{ tooth_condition }}" 
+                          id="tooth-{{ seq_num }}"
+                          d="M {{ x_pos|add:6 }},195 
+                             Q {{ x_pos|add:7 }},165 {{ x_pos|add:11 }},160
+                             Q {{ x_pos|add:16 }},155 {{ x_pos|add:23 }},160
+                             Q {{ x_pos|add:25 }},165 {{ x_pos|add:27 }},195
+                             Q {{ x_pos|add:26 }},220 {{ x_pos|add:24 }},230
+                             Q {{ x_pos|add:22 }},235 {{ x_pos|add:17 }},235
+                             Q {{ x_pos|add:12 }},235 {{ x_pos|add:10 }},230
+                             Q {{ x_pos|add:8 }},220 {{ x_pos|add:6 }},195 Z"/>
+                    <path class="tooth-root" d="M {{ x_pos|add:16 }},230 Q {{ x_pos|add:15 }},255 {{ x_pos|add:14 }},275 Q {{ x_pos|add:13 }},290 {{ x_pos|add:16 }},295 Q {{ x_pos|add:17 }},265 {{ x_pos|add:17 }},230 Z"/>
+                    {% endif %}
+                    <text class="tooth-label" x="{{ x_pos|add:16 }}" y="210">{{ seq_num }}</text>
+                </g>
+                {% endwith %}
+                {% endwith %}
+                {% endwith %}
+                {% endwith %}
+                {% endfor %}
+            </svg>
+        </div>
+        
+        <!-- Lower Jaw -->
+        <div>
+            <h6 style="text-align: center; margin-bottom: 16px; color: var(--gray); font-weight: 600;">Lower Jaw (Mandible)</h6>
+            <svg id="lowerJaw" width="100%" height="450" viewBox="0 0 1100 400" preserveAspectRatio="xMidYMid meet" style="border: 1px solid var(--border); border-radius: 12px; display: block;">
+                <!-- Jaw line -->
+                <line class="jaw-line" x1="40" y1="180" x2="1060" y2="180"/>
+                
+                <!-- Lower teeth 25-32 (right to left from patient's perspective) -->
+                {% for seq_num in "25,26,27,28,29,30,31,32"|split:"," %}
+                {% with seq_num=seq_num.strip %}
+                {% with x_pos=forloop.counter0|add:1|mul:120|add:50 %}
+                {% with tooth_condition=tooth_conditions_map|get_item:seq_num|default:"healthy" %}
+                {% with fdi_num=sequential_to_fdi|get_item:seq_num|default:seq_num %}
+                <g class="tooth-group" data-tooth="{{ seq_num }}" data-fdi="{{ fdi_num }}" onclick="selectTooth('{{ seq_num }}')">
+                    <!-- Tooth root (below jaw line) -->
+                    {% if seq_num|add:0 >= 28 and seq_num|add:0 <= 31 %}
+                    <path class="tooth-root" d="M {{ x_pos|add:11 }},145 Q {{ x_pos|add:9 }},120 {{ x_pos|add:7 }},95 Q {{ x_pos|add:5 }},80 {{ x_pos|add:11 }},75 Q {{ x_pos|add:13 }},105 {{ x_pos|add:13 }},145 Z"/>
+                    <path class="tooth-root" d="M {{ x_pos|add:19 }},145 Q {{ x_pos|add:19 }},120 {{ x_pos|add:19 }},95 Q {{ x_pos|add:19 }},80 {{ x_pos|add:27 }},75 Q {{ x_pos|add:27 }},105 {{ x_pos|add:25 }},145 Z"/>
+                    {% else %}
+                    <path class="tooth-root" d="M {{ x_pos|add:16 }},145 Q {{ x_pos|add:15 }},120 {{ x_pos|add:14 }},95 Q {{ x_pos|add:13 }},80 {{ x_pos|add:16 }},75 Q {{ x_pos|add:17 }},105 {{ x_pos|add:17 }},145 Z"/>
+                    {% endif %}
+                    <!-- Tooth crown (visible part above jaw line) -->
+                    {% if seq_num|add:0 >= 28 and seq_num|add:0 <= 31 %}
+                    <!-- Molar/Premolar shape -->
+                    <path class="tooth {{ tooth_condition }}" 
+                          id="tooth-{{ seq_num }}"
+                          d="M {{ x_pos }},185 
+                             Q {{ x_pos|add:5 }},215 {{ x_pos|add:10 }},220
+                             Q {{ x_pos|add:18 }},225 {{ x_pos|add:26 }},220
+                             Q {{ x_pos|add:32 }},215 {{ x_pos|add:38 }},185
+                             Q {{ x_pos|add:36 }},160 {{ x_pos|add:30 }},150
+                             Q {{ x_pos|add:24 }},145 {{ x_pos|add:19 }},145
+                             Q {{ x_pos|add:14 }},145 {{ x_pos|add:8 }},150
+                             Q {{ x_pos|add:2 }},160 {{ x_pos }},185 Z"/>
+                    <ellipse cx="{{ x_pos|add:10 }}" cy="185" rx="3" ry="4" fill="#ffffff" opacity="0.4"/>
+                    <ellipse cx="{{ x_pos|add:19 }}" cy="185" rx="3" ry="4" fill="#ffffff" opacity="0.4"/>
+                    <ellipse cx="{{ x_pos|add:28 }}" cy="185" rx="3" ry="4" fill="#ffffff" opacity="0.4"/>
+                    {% elif seq_num|add:0 == 27 %}
+                    <!-- Canine shape -->
+                    <path class="tooth {{ tooth_condition }}" 
+                          id="tooth-{{ seq_num }}"
+                          d="M {{ x_pos|add:3 }},185 
+                             Q {{ x_pos|add:6 }},215 {{ x_pos|add:10 }},220
+                             Q {{ x_pos|add:15 }},225 {{ x_pos|add:22 }},215
+                             Q {{ x_pos|add:27 }},210 {{ x_pos|add:29 }},200
+                             Q {{ x_pos|add:32 }},190 {{ x_pos|add:30 }},175
+                             Q {{ x_pos|add:27 }},160 {{ x_pos|add:22 }},155
+                             Q {{ x_pos|add:17 }},150 {{ x_pos|add:12 }},155
+                             Q {{ x_pos|add:7 }},160 {{ x_pos|add:4 }},175
+                             Q {{ x_pos|add:1 }},190 {{ x_pos|add:3 }},185 Z"/>
+                    <path class="tooth-root" d="M {{ x_pos|add:16 }},155 Q {{ x_pos|add:15 }},130 {{ x_pos|add:14 }},105 Q {{ x_pos|add:13 }},90 {{ x_pos|add:16 }},85 Q {{ x_pos|add:17 }},115 {{ x_pos|add:17 }},155 Z"/>
+                    {% else %}
+                    <!-- Incisor shape -->
+                    <path class="tooth {{ tooth_condition }}" 
+                          id="tooth-{{ seq_num }}"
+                          d="M {{ x_pos|add:6 }},185 
+                             Q {{ x_pos|add:7 }},215 {{ x_pos|add:11 }},220
+                             Q {{ x_pos|add:16 }},225 {{ x_pos|add:23 }},220
+                             Q {{ x_pos|add:25 }},215 {{ x_pos|add:27 }},185
+                             Q {{ x_pos|add:26 }},165 {{ x_pos|add:24 }},155
+                             Q {{ x_pos|add:22 }},150 {{ x_pos|add:17 }},150
+                             Q {{ x_pos|add:12 }},150 {{ x_pos|add:10 }},155
+                             Q {{ x_pos|add:8 }},165 {{ x_pos|add:6 }},185 Z"/>
+                    <path class="tooth-root" d="M {{ x_pos|add:16 }},155 Q {{ x_pos|add:15 }},130 {{ x_pos|add:14 }},105 Q {{ x_pos|add:13 }},90 {{ x_pos|add:16 }},85 Q {{ x_pos|add:17 }},115 {{ x_pos|add:17 }},155 Z"/>
+                    {% endif %}
+                    <text class="tooth-label" x="{{ x_pos|add:16 }}" y="165">{{ seq_num }}</text>
+                </g>
+                {% endwith %}
+                {% endwith %}
+                {% endwith %}
+                {% endwith %}
+                {% endfor %}
+                
+                <!-- Lower teeth 17-24 (left to right) -->
+                {% for seq_num in "17,18,19,20,21,22,23,24"|split:"," %}
+                {% with seq_num=seq_num.strip %}
+                {% with x_pos=forloop.counter0|add:9|mul:120|add:50 %}
+                {% with tooth_condition=tooth_conditions_map|get_item:seq_num|default:"healthy" %}
+                {% with fdi_num=sequential_to_fdi|get_item:seq_num|default:seq_num %}
+                <g class="tooth-group" data-tooth="{{ seq_num }}" data-fdi="{{ fdi_num }}" onclick="selectTooth('{{ seq_num }}')">
+                    <!-- Tooth root (below jaw line) -->
+                    {% if seq_num|add:0 >= 20 and seq_num|add:0 <= 23 %}
+                    <path class="tooth-root" d="M {{ x_pos|add:11 }},145 Q {{ x_pos|add:9 }},120 {{ x_pos|add:7 }},95 Q {{ x_pos|add:5 }},80 {{ x_pos|add:11 }},75 Q {{ x_pos|add:13 }},105 {{ x_pos|add:13 }},145 Z"/>
+                    <path class="tooth-root" d="M {{ x_pos|add:19 }},145 Q {{ x_pos|add:19 }},120 {{ x_pos|add:19 }},95 Q {{ x_pos|add:19 }},80 {{ x_pos|add:27 }},75 Q {{ x_pos|add:27 }},105 {{ x_pos|add:25 }},145 Z"/>
+                    {% else %}
+                    <path class="tooth-root" d="M {{ x_pos|add:16 }},145 Q {{ x_pos|add:15 }},120 {{ x_pos|add:14 }},95 Q {{ x_pos|add:13 }},80 {{ x_pos|add:16 }},75 Q {{ x_pos|add:17 }},105 {{ x_pos|add:17 }},145 Z"/>
+                    {% endif %}
+                    <!-- Tooth crown (visible part above jaw line) -->
+                    {% if seq_num|add:0 >= 20 and seq_num|add:0 <= 23 %}
+                    <!-- Molar/Premolar shape -->
+                    <path class="tooth {{ tooth_condition }}" 
+                          id="tooth-{{ seq_num }}"
+                          d="M {{ x_pos }},185 
+                             Q {{ x_pos|add:5 }},215 {{ x_pos|add:10 }},220
+                             Q {{ x_pos|add:18 }},225 {{ x_pos|add:26 }},220
+                             Q {{ x_pos|add:32 }},215 {{ x_pos|add:38 }},185
+                             Q {{ x_pos|add:36 }},160 {{ x_pos|add:30 }},150
+                             Q {{ x_pos|add:24 }},145 {{ x_pos|add:19 }},145
+                             Q {{ x_pos|add:14 }},145 {{ x_pos|add:8 }},150
+                             Q {{ x_pos|add:2 }},160 {{ x_pos }},185 Z"/>
+                    <ellipse cx="{{ x_pos|add:10 }}" cy="185" rx="3" ry="4" fill="#ffffff" opacity="0.4"/>
+                    <ellipse cx="{{ x_pos|add:19 }}" cy="185" rx="3" ry="4" fill="#ffffff" opacity="0.4"/>
+                    <ellipse cx="{{ x_pos|add:28 }}" cy="185" rx="3" ry="4" fill="#ffffff" opacity="0.4"/>
+                    {% elif seq_num|add:0 == 19 %}
+                    <!-- Canine shape -->
+                    <path class="tooth {{ tooth_condition }}" 
+                          id="tooth-{{ seq_num }}"
+                          d="M {{ x_pos|add:3 }},185 
+                             Q {{ x_pos|add:6 }},215 {{ x_pos|add:10 }},220
+                             Q {{ x_pos|add:15 }},225 {{ x_pos|add:22 }},215
+                             Q {{ x_pos|add:27 }},210 {{ x_pos|add:29 }},200
+                             Q {{ x_pos|add:32 }},190 {{ x_pos|add:30 }},175
+                             Q {{ x_pos|add:27 }},160 {{ x_pos|add:22 }},155
+                             Q {{ x_pos|add:17 }},150 {{ x_pos|add:12 }},155
+                             Q {{ x_pos|add:7 }},160 {{ x_pos|add:4 }},175
+                             Q {{ x_pos|add:1 }},190 {{ x_pos|add:3 }},185 Z"/>
+                    <path class="tooth-root" d="M {{ x_pos|add:16 }},155 Q {{ x_pos|add:15 }},130 {{ x_pos|add:14 }},105 Q {{ x_pos|add:13 }},90 {{ x_pos|add:16 }},85 Q {{ x_pos|add:17 }},115 {{ x_pos|add:17 }},155 Z"/>
+                    {% else %}
+                    <!-- Incisor shape -->
+                    <path class="tooth {{ tooth_condition }}" 
+                          id="tooth-{{ seq_num }}"
+                          d="M {{ x_pos|add:6 }},185 
+                             Q {{ x_pos|add:7 }},215 {{ x_pos|add:11 }},220
+                             Q {{ x_pos|add:16 }},225 {{ x_pos|add:23 }},220
+                             Q {{ x_pos|add:25 }},215 {{ x_pos|add:27 }},185
+                             Q {{ x_pos|add:26 }},165 {{ x_pos|add:24 }},155
+                             Q {{ x_pos|add:22 }},150 {{ x_pos|add:17 }},150
+                             Q {{ x_pos|add:12 }},150 {{ x_pos|add:10 }},155
+                             Q {{ x_pos|add:8 }},165 {{ x_pos|add:6 }},185 Z"/>
+                    <path class="tooth-root" d="M {{ x_pos|add:16 }},155 Q {{ x_pos|add:15 }},130 {{ x_pos|add:14 }},105 Q {{ x_pos|add:13 }},90 {{ x_pos|add:16 }},85 Q {{ x_pos|add:17 }},115 {{ x_pos|add:17 }},155 Z"/>
+                    {% endif %}
+                    <text class="tooth-label" x="{{ x_pos|add:16 }}" y="165">{{ seq_num }}</text>
+                </g>
+                {% endwith %}
+                {% endwith %}
+                {% endwith %}
+                {% endwith %}
+                {% endfor %}
+            </svg>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-info">
+    <i class="bi bi-info-circle"></i> Dental chart will be created automatically when you start documenting teeth conditions.
+</div>
+{% endif %}
+
+<!-- Procedures Section -->
+<div class="row g-4">
+    <div class="col-12">
+        <div class="modern-card">
+            <div class="procedure-tabs">
+                <button class="procedure-tab active" onclick="switchTab('all')">All Procedures ({{ procedures|length }})</button>
+                <button class="procedure-tab" onclick="switchTab('planned')">Planned</button>
+                <button class="procedure-tab" onclick="switchTab('completed')">Completed</button>
+                <button class="procedure-tab" onclick="switchTab('in_progress')">In Progress</button>
+            </div>
+            
+            <div id="proceduresList">
+                {% for procedure in procedures %}
+                <div class="procedure-item" data-status="{{ procedure.status }}">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div style="flex: 1;">
+                            <h6 style="margin: 0 0 8px 0; font-weight: 600; color: var(--dark);">
+                                {{ procedure.procedure_name }}
+                            </h6>
+                            <div style="font-size: 12px; color: var(--gray); margin-bottom: 4px;">
+                                <span class="badge-modern badge-info me-2">{{ procedure.get_procedure_type_display }}</span>
+                                <span class="badge-modern badge-secondary">Teeth: {{ procedure.teeth }}</span>
+                                <span class="badge-modern badge-secondary">Qty: x{{ procedure.quantity }}</span>
+                            </div>
+                            {% if procedure.notes %}
+                            <div style="font-size: 13px; color: var(--gray); margin-top: 8px;">
+                                {{ procedure.notes }}
+                            </div>
+                            {% endif %}
+                            <div style="font-size: 11px; color: var(--gray); margin-top: 8px;">
+                                <i class="bi bi-calendar"></i> {{ procedure.created|date:"M d, Y" }}
+                                {% if procedure.performed_by %}
+                                | <i class="bi bi-person"></i> {{ procedure.performed_by.user.get_full_name }}
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div style="text-align: right; margin-left: 16px;">
+                            <div style="font-size: 18px; font-weight: 700; color: var(--primary); margin-bottom: 8px;">
+                                GHS {{ procedure.fee|floatformat:2 }}
+                            </div>
+                            <span class="badge-modern badge-{% if procedure.status == 'completed' %}success{% elif procedure.status == 'in_progress' %}warning{% else %}info{% endif %}">
+                                {{ procedure.get_status_display }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="text-center text-muted py-5">
+                    <i class="bi bi-clipboard-x" style="font-size: 48px; opacity: 0.3;"></i>
+                    <div style="margin-top: 16px;">No procedures recorded yet</div>
+                    <button class="btn btn-primary-modern btn-modern mt-3" onclick="showAddProcedureModal()">
+                        <i class="bi bi-plus-circle"></i> Add First Procedure
+                    </button>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Procedure Modal -->
+{% if dental_chart %}
+<div class="modal fade" id="addProcedureModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add Dental Procedure</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="procedureForm">
+                    <input type="hidden" name="dental_chart_id" value="{{ dental_chart.id }}">
+                    <div class="mb-3">
+                        <label class="form-label">Procedure Code</label>
+                        <input type="text" class="form-control-modern" name="procedure_code" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Procedure Name</label>
+                        <input type="text" class="form-control-modern" name="procedure_name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Procedure Type</label>
+                        <select class="form-control-modern" name="procedure_type" required>
+                            {% for value, label in procedure_types %}
+                            <option value="{{ value }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Teeth (comma-separated, e.g., 11,12,13)</label>
+                        <input type="text" class="form-control-modern" name="teeth" id="selectedTeeth" placeholder="Select teeth from diagram">
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Quantity</label>
+                            <input type="number" class="form-control-modern" name="quantity" value="1" min="1">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Fee (GHS)</label>
+                            <input type="number" class="form-control-modern" name="fee" step="0.01" min="0" value="0">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Notes</label>
+                        <textarea class="form-control-modern" name="notes" rows="3"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary-modern" onclick="saveProcedure()">Save Procedure</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% else %}
+<div class="modern-card text-center py-5">
+    <i class="bi bi-exclamation-triangle" style="font-size: 64px; color: var(--warning); opacity: 0.5;"></i>
+    <h5 style="margin-top: 24px; color: var(--gray);">No Patient Selected</h5>
+    <p style="color: var(--gray);">Please select a patient from the patient list to begin a dental consultation.</p>
+    <a href="{% url 'hospital:patient_list' %}" class="btn btn-primary-modern btn-modern mt-3">
+        <i class="bi bi-search"></i> Find Patient
+    </a>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let selectedTooth = null;
+    let selectedTeeth = [];
+    
+    function selectTooth(toothNumber) {
+        selectedTooth = toothNumber;
+        
+        // Highlight selected tooth
+        document.querySelectorAll('.tooth-group').forEach(g => {
+            g.querySelectorAll('.tooth').forEach(t => {
+                t.classList.remove('selected');
+            });
+        });
+        
+        const toothGroup = document.querySelector(`[data-tooth="GHS {toothNumber}"]`);
+        if (toothGroup) {
+            const tooth = toothGroup.querySelector('.tooth');
+            if (tooth) {
+                tooth.classList.add('selected');
+            }
+        }
+        
+        // Add to selected teeth list
+        if (!selectedTeeth.includes(toothNumber)) {
+            selectedTeeth.push(toothNumber);
+        }
+        
+        // Update selected teeth input
+        const selectedTeethInput = document.getElementById('selectedTeeth');
+        if (selectedTeethInput) {
+            selectedTeethInput.value = selectedTeeth.join(',');
+        }
+        
+        // Save condition if selector has value
+        const conditionType = document.getElementById('conditionTypeSelector');
+        if (conditionType && conditionType.value) {
+            saveToothCondition(toothNumber, conditionType.value);
+        }
+    }
+    
+    function clearSelection() {
+        selectedTooth = null;
+        selectedTeeth = [];
+        document.querySelectorAll('.tooth-group').forEach(g => {
+            g.querySelectorAll('.tooth').forEach(t => {
+                t.classList.remove('selected');
+            });
+        });
+        const selectedTeethInput = document.getElementById('selectedTeeth');
+        if (selectedTeethInput) {
+            selectedTeethInput.value = '';
+        }
+    }
+    
+    function saveToothCondition(toothNumber, conditionType) {
+        {% if not dental_chart %}
+        alert('Dental chart not available. Please refresh the page.');
+        return;
+        {% endif %}
+        
+        // Convert sequential number to FDI number
+        const toothGroup = document.querySelector(`[data-tooth="GHS {toothNumber}"]`);
+        const fdiNumber = toothGroup ? toothGroup.getAttribute('data-fdi') : toothNumber;
+        
+        const formData = new FormData();
+        formData.append('dental_chart_id', '{{ dental_chart.id }}');
+        formData.append('tooth_number', fdiNumber || toothNumber);
+        formData.append('condition_type', conditionType);
+        formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+        
+        fetch('{% url "hospital:save_tooth_condition" %}', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Update tooth appearance
+                const toothGroup = document.querySelector(`[data-tooth="GHS {toothNumber}"]`);
+                if (toothGroup) {
+                    const tooth = toothGroup.querySelector('.tooth');
+                    if (tooth) {
+                        // Remove all condition classes
+                        tooth.className = 'tooth';
+                        // Add new condition class
+                        tooth.classList.add(conditionType);
+                    }
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error saving tooth condition:', error);
+        });
+    }
+    
+    // Condition selector change
+    document.getElementById('conditionTypeSelector').addEventListener('change', function() {
+        if (selectedTooth && this.value) {
+            saveToothCondition(selectedTooth, this.value);
+        }
+    });
+    
+    function showAddProcedureModal() {
+        const modal = new bootstrap.Modal(document.getElementById('addProcedureModal'));
+        modal.show();
+    }
+    
+    function saveProcedure() {
+        const form = document.getElementById('procedureForm');
+        const formData = new FormData(form);
+        formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+        
+        fetch('{% url "hospital:save_dental_procedure" %}', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                alert('Error: ' + (data.error || 'Failed to save procedure'));
+            }
+        })
+        .catch(error => {
+            console.error('Error saving procedure:', error);
+            alert('An error occurred while saving the procedure');
+        });
+    }
+    
+    function switchTab(tab) {
+        // Update tab buttons
+        document.querySelectorAll('.procedure-tab').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        event.target.classList.add('active');
+        
+        // Filter procedures
+        const items = document.querySelectorAll('.procedure-item');
+        items.forEach(item => {
+            if (tab === 'all' || item.dataset.status === tab) {
+                item.style.display = '';
+            } else {
+                item.style.display = 'none';
+            }
+        });
+    }
+</script>
+{% endblock %}

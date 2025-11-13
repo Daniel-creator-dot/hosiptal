@@ -1,0 +1,255 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Discharge Patient - {{ admission.encounter.patient.full_name }}{% endblock %}
+{% block page_title %}🏥 Discharge Patient{% endblock %}
+{% block page_subtitle %}Complete patient discharge and finalize bed charges{% endblock %}
+
+{% block extra_css %}
+<style>
+    .discharge-card {
+        background: white;
+        border-radius: 16px;
+        padding: 32px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        margin-bottom: 24px;
+        max-width: 800px;
+        margin-left: auto;
+        margin-right: auto;
+    }
+    
+    .patient-summary {
+        background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+    
+    .detail-row {
+        display: flex;
+        padding: 12px 0;
+        border-bottom: 1px solid #F3F4F6;
+    }
+    
+    .detail-row:last-child {
+        border-bottom: none;
+    }
+    
+    .detail-label {
+        font-weight: 600;
+        color: #6B7280;
+        width: 180px;
+        flex-shrink: 0;
+    }
+    
+    .detail-value {
+        color: #1F2937;
+        flex-grow: 1;
+    }
+    
+    .charges-box {
+        background: #FEF3C7;
+        border-left: 4px solid #F59E0B;
+        padding: 20px;
+        border-radius: 8px;
+        margin: 20px 0;
+    }
+    
+    .form-label-modern {
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 8px;
+        display: block;
+    }
+    
+    .form-input-modern {
+        width: 100%;
+        padding: 12px 16px;
+        border: 2px solid #E5E7EB;
+        border-radius: 8px;
+        font-size: 14px;
+    }
+    
+    .form-input-modern:focus {
+        border-color: #10B981;
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Patient Summary Header -->
+    <div class="patient-summary">
+        <h3 class="mb-3">
+            <i class="bi bi-person-circle"></i> {{ admission.encounter.patient.full_name }}
+        </h3>
+        <div class="row">
+            <div class="col-md-6">
+                <div><strong>MRN:</strong> {{ admission.encounter.patient.mrn }}</div>
+                <div><strong>Age:</strong> {{ admission.encounter.patient.age }} years</div>
+                <div><strong>Gender:</strong> {{ admission.encounter.patient.get_gender_display }}</div>
+            </div>
+            <div class="col-md-6">
+                <div><strong>Ward:</strong> {{ admission.ward.name }}</div>
+                <div><strong>Bed:</strong> {{ admission.bed.bed_number }}</div>
+                <div><strong>Admitted:</strong> {{ admission.admit_date|date:"d M Y, g:i A" }}</div>
+                <div><strong>Duration:</strong> {{ admission.get_duration_days }} day{{ admission.get_duration_days|pluralize }}</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Discharge Form -->
+    <div class="discharge-card">
+        <h4 class="mb-4">
+            <i class="bi bi-box-arrow-right text-success"></i> Discharge Information
+        </h4>
+        
+        <!-- Current Admission Details -->
+        <div class="mb-4">
+            <h6 class="fw-bold mb-3">Admission Summary</h6>
+            <div class="detail-row">
+                <div class="detail-label">Admission Date:</div>
+                <div class="detail-value">{{ admission.admit_date|date:"d M Y, g:i A" }}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Duration:</div>
+                <div class="detail-value">{{ admission.get_duration_days }} day{{ admission.get_duration_days|pluralize }}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Admitting Doctor:</div>
+                <div class="detail-value">{{ admission.admitting_doctor.user.get_full_name|default:"N/A" }}</div>
+            </div>
+            {% if admission.diagnosis_icd10 %}
+            <div class="detail-row">
+                <div class="detail-label">Diagnosis:</div>
+                <div class="detail-value">{{ admission.diagnosis_icd10 }}</div>
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- Bed Charges Summary -->
+        <div class="charges-box">
+            <h6 class="mb-3">
+                <i class="bi bi-currency-dollar"></i> Estimated Bed Charges
+            </h6>
+            <div class="row">
+                <div class="col-md-6">
+                    <div><strong>Daily Rate:</strong> GHS 120.00</div>
+                    <div><strong>Days Admitted:</strong> {{ admission.get_duration_days }} day{{ admission.get_duration_days|pluralize }}</div>
+                </div>
+                <div class="col-md-6 text-end">
+                    <div class="text-muted small">Estimated Total:</div>
+                    <div style="font-size: 24px; font-weight: 700; color: #D97706;">
+                        GHS {% widthratio admission.get_duration_days 1 120 %}.00
+                    </div>
+                </div>
+            </div>
+            <div class="alert alert-info mt-3 mb-0">
+                <i class="bi bi-info-circle"></i> <strong>Note:</strong> Final charges will be calculated and added to the patient's invoice upon discharge.
+            </div>
+        </div>
+        
+        <!-- Discharge Form -->
+        <form method="post">
+            {% csrf_token %}
+            
+            <div class="mb-4">
+                <label class="form-label-modern">
+                    <i class="bi bi-file-text"></i> Discharge Notes & Instructions
+                    <span class="text-danger">*</span>
+                </label>
+                <textarea 
+                    name="discharge_notes" 
+                    class="form-input-modern" 
+                    rows="6" 
+                    placeholder="Enter discharge summary, follow-up instructions, medications to continue, diet restrictions, activity limitations, next appointment date, warning signs to watch for, etc."
+                    required
+                ></textarea>
+                <small class="text-muted">
+                    <i class="bi bi-lightbulb"></i> 
+                    Include: Discharge diagnosis, medications to continue, follow-up appointments, activity restrictions, warning signs
+                </small>
+            </div>
+            
+            <!-- Discharge Checklist -->
+            <div class="mb-4">
+                <label class="form-label-modern">
+                    <i class="bi bi-check2-square"></i> Discharge Checklist
+                </label>
+                <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" id="check1" required>
+                    <label class="form-check-label" for="check1">
+                        Patient/family counseled on discharge instructions
+                    </label>
+                </div>
+                <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" id="check2" required>
+                    <label class="form-check-label" for="check2">
+                        Medications prescribed and explained
+                    </label>
+                </div>
+                <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" id="check3" required>
+                    <label class="form-check-label" for="check3">
+                        Follow-up appointment scheduled/arranged
+                    </label>
+                </div>
+                <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" id="check4" required>
+                    <label class="form-check-label" for="check4">
+                        Patient's belongings returned
+                    </label>
+                </div>
+                <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" id="check5">
+                    <label class="form-check-label" for="check5">
+                        Financial clearance obtained (if applicable)
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Action Buttons -->
+            <div class="d-flex gap-3 justify-content-between">
+                <a href="{% url 'hospital:admission_detail' admission.pk %}" class="btn btn-outline-secondary btn-lg">
+                    <i class="bi bi-arrow-left me-2"></i>Cancel
+                </a>
+                <button type="submit" class="btn btn-success btn-lg" onclick="return confirm('Are you sure you want to discharge this patient? Final bed charges will be calculated and added to the invoice.')">
+                    <i class="bi bi-box-arrow-right me-2"></i>
+                    Confirm Discharge
+                </button>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Warning Box -->
+    <div class="discharge-card">
+        <div class="alert alert-warning mb-0">
+            <h6 class="fw-bold mb-2">
+                <i class="bi bi-exclamation-triangle"></i> Important Discharge Actions
+            </h6>
+            <ul class="mb-0">
+                <li>Bed {{ admission.bed.bed_number }} will be marked as <strong>available</strong></li>
+                <li>Final bed charges will be calculated based on <strong>{{ admission.get_duration_days }} day(s)</strong></li>
+                <li>Total estimated bed charges: <strong>GHS {% widthratio admission.get_duration_days 1 120 %}.00</strong></li>
+                <li>Patient invoice will be updated with final charges</li>
+                <li>Patient should settle bill at cashier before leaving</li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+

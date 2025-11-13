@@ -1,0 +1,277 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Telemedicine Analytics - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    .analytics-card {
+        background: white;
+        border-radius: 16px;
+        padding: 28px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+        height: 100%;
+    }
+    
+    .kpi-box {
+        text-align: center;
+        padding: 24px;
+        background: linear-gradient(135deg, #f8f9fa, white);
+        border-radius: 12px;
+        border: 2px solid #e5e7eb;
+        transition: all 0.3s;
+    }
+    
+    .kpi-box:hover {
+        border-color: #06b6d4;
+        transform: translateY(-4px);
+        box-shadow: 0 8px 20px rgba(6, 182, 212, 0.2);
+    }
+    
+    .kpi-value {
+        font-size: 48px;
+        font-weight: 900;
+        line-height: 1;
+        margin-bottom: 8px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div style="background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); color: white; border-radius: 20px; padding: 40px; margin-bottom: 32px; box-shadow: 0 10px 40px rgba(99, 102, 241, 0.3);">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1 class="mb-2"><i class="bi bi-graph-up me-3"></i>Telemedicine Analytics & Insights</h1>
+                <p class="mb-0" style="opacity: 0.95; font-size: 16px;">AI-Powered Performance Monitoring</p>
+            </div>
+            <div>
+                <select class="form-select" style="width: 200px;" onchange="window.location.href='?days='+this.value">
+                    <option value="7" {% if days == 7 %}selected{% endif %}>Last 7 Days</option>
+                    <option value="30" {% if days == 30 %}selected{% endif %}>Last 30 Days</option>
+                    <option value="90" {% if days == 90 %}selected{% endif %}>Last 90 Days</option>
+                </select>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Key Performance Indicators -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-3">
+            <div class="kpi-box">
+                <div class="kpi-value" style="color: #06b6d4;">{{ total_count }}</div>
+                <div style="font-size: 14px; color: #6b7280; font-weight: 600;">TOTAL CONSULTATIONS</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="kpi-box">
+                <div class="kpi-value" style="color: #10b981;">{{ completion_rate|floatformat:1 }}%</div>
+                <div style="font-size: 14px; color: #6b7280; font-weight: 600;">COMPLETION RATE</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="kpi-box">
+                <div class="kpi-value" style="color: #f59e0b;">{{ avg_satisfaction|floatformat:1 }}⭐</div>
+                <div style="font-size: 14px; color: #6b7280; font-weight: 600;">PATIENT SATISFACTION</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="kpi-box">
+                <div class="kpi-value" style="color: #8b5cf6;">{{ ai_usage_rate|floatformat:0 }}%</div>
+                <div style="font-size: 14px; color: #6b7280; font-weight: 600;">AI UTILIZATION</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row g-4 mb-4">
+        <div class="col-md-4">
+            <div class="kpi-box">
+                <div class="kpi-value" style="color: #3b82f6;">{{ avg_wait_time|floatformat:0 }}m</div>
+                <div style="font-size: 14px; color: #6b7280; font-weight: 600;">AVG WAIT TIME</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="kpi-box">
+                <div class="kpi-value" style="color: #10b981;">{{ avg_duration|floatformat:0 }}m</div>
+                <div style="font-size: 14px; color: #6b7280; font-weight: 600;">AVG DURATION</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="kpi-box">
+                <div class="kpi-value" style="color: #ef4444;">{{ cancelled }}</div>
+                <div style="font-size: 14px; color: #6b7280; font-weight: 600;">CANCELLATIONS</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Charts Row -->
+    <div class="row g-4 mb-4">
+        <div class="col-lg-8">
+            <div class="analytics-card">
+                <h5 class="mb-4"><i class="bi bi-bar-chart me-2"></i>Consultation Trends</h5>
+                <canvas id="consultationChart" height="300"></canvas>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="analytics-card">
+                <h5 class="mb-4"><i class="bi bi-trophy me-2"></i>Top Performing Doctors</h5>
+                {% for doctor in top_doctors %}
+                <div style="padding: 16px; background: #f8f9fa; border-radius: 8px; margin-bottom: 12px;">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <div style="font-weight: 600;">Dr. {{ doctor.doctor__user__first_name }} {{ doctor.doctor__user__last_name }}</div>
+                            <div style="font-size: 13px; color: #6b7280;">{{ doctor.consultation_count }} consultations</div>
+                        </div>
+                        <div style="font-size: 24px; font-weight: 800; color: #06b6d4;">
+                            #{{ forloop.counter }}
+                        </div>
+                    </div>
+                </div>
+                {% empty %}
+                <p class="text-center text-muted py-4">No data yet</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Detailed Metrics -->
+    <div class="analytics-card">
+        <h5 class="mb-4"><i class="bi bi-clipboard-data me-2"></i>Detailed Performance Metrics</h5>
+        <div class="row g-4">
+            <div class="col-md-6">
+                <h6 class="mb-3">Quality Metrics</h6>
+                <div style="padding: 16px; background: #f0fdf4; border-radius: 8px; margin-bottom: 12px;">
+                    <div class="d-flex justify-content-between">
+                        <span>Patient Satisfaction</span>
+                        <strong style="color: #10b981;">{{ avg_satisfaction|floatformat:2 }}/5.00</strong>
+                    </div>
+                </div>
+                <div style="padding: 16px; background: #eff6ff; border-radius: 8px; margin-bottom: 12px;">
+                    <div class="d-flex justify-content-between">
+                        <span>Completion Rate</span>
+                        <strong style="color: #3b82f6;">{{ completion_rate|floatformat:1 }}%</strong>
+                    </div>
+                </div>
+                <div style="padding: 16px; background: #fef3c7; border-radius: 8px;">
+                    <div class="d-flex justify-content-between">
+                        <span>Average Wait Time</span>
+                        <strong style="color: #f59e0b;">{{ avg_wait_time|floatformat:0 }} minutes</strong>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <h6 class="mb-3">Efficiency Metrics</h6>
+                <div style="padding: 16px; background: #faf5ff; border-radius: 8px; margin-bottom: 12px;">
+                    <div class="d-flex justify-content-between">
+                        <span>AI Symptom Checker Usage</span>
+                        <strong style="color: #8b5cf6;">{{ ai_usage_rate|floatformat:0 }}%</strong>
+                    </div>
+                </div>
+                <div style="padding: 16px; background: #ecfdf5; border-radius: 8px; margin-bottom: 12px;">
+                    <div class="d-flex justify-content-between">
+                        <span>Avg Consultation Duration</span>
+                        <strong style="color: #10b981;">{{ avg_duration|floatformat:0 }} minutes</strong>
+                    </div>
+                </div>
+                <div style="padding: 16px; background: #fef2f2; border-radius: 8px;">
+                    <div class="d-flex justify-content-between">
+                        <span>Cancellation Count</span>
+                        <strong style="color: #ef4444;">{{ cancelled }}</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const chartData = {{ chart_data|safe }};
+
+// Ensure data is valid
+if (!chartData || !chartData.labels || chartData.labels.length === 0) {
+    console.warn('No chart data available');
+    chartData.labels = ['No Data'];
+    chartData.consultations = [0];
+    chartData.satisfaction = [0];
+}
+
+// Ensure all values are numbers and not NaN or Infinity
+chartData.consultations = chartData.consultations.map(v => isFinite(v) ? v : 0);
+chartData.satisfaction = chartData.satisfaction.map(v => isFinite(v) ? Math.min(v, 5) : 0);
+
+// Consultation Trends Chart
+const ctx = document.getElementById('consultationChart').getContext('2d');
+new Chart(ctx, {
+    type: 'line',
+    data: {
+        labels: chartData.labels,
+        datasets: [
+            {
+                label: 'Consultations',
+                data: chartData.consultations,
+                borderColor: '#06b6d4',
+                backgroundColor: 'rgba(6, 182, 212, 0.1)',
+                tension: 0.4,
+                fill: true
+            },
+            {
+                label: 'Satisfaction (0-5)',
+                data: chartData.satisfaction,
+                borderColor: '#10b981',
+                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                tension: 0.4,
+                yAxisID: 'y1',
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+            mode: 'index',
+            intersect: false,
+        },
+        scales: {
+            y: {
+                type: 'linear',
+                display: true,
+                position: 'left',
+                beginAtZero: true,
+                min: 0,
+                suggestedMax: 10,
+                title: {
+                    display: true,
+                    text: 'Consultations'
+                },
+                ticks: {
+                    stepSize: 1,
+                    precision: 0
+                }
+            },
+            y1: {
+                type: 'linear',
+                display: true,
+                position: 'right',
+                beginAtZero: true,
+                min: 0,
+                max: 5,
+                title: {
+                    display: true,
+                    text: 'Satisfaction'
+                },
+                grid: {
+                    drawOnChartArea: false,
+                },
+                ticks: {
+                    stepSize: 1,
+                    precision: 1
+                }
+            }
+        }
+    }
+});
+</script>
+{% endblock %}
+

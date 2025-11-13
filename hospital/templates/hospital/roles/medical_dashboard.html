@@ -1,0 +1,121 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Medical Dashboard - HMS{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border-radius: 20px; padding: 40px; margin-bottom: 32px; box-shadow: 0 10px 40px rgba(59, 130, 246, 0.3);">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1 class="mb-2"><i class="bi bi-heart-pulse-fill me-3"></i>Medical Dashboard</h1>
+                <p class="mb-0" style="opacity: 0.95; font-size: 16px;">
+                    {% if staff %}Dr. {{ staff.user.get_full_name }}{% else %}Clinical Management{% endif %}
+                </p>
+            </div>
+            <div class="text-end">
+                <div class="badge" style="background: rgba(255,255,255,0.2); font-size: 14px; padding: 8px 16px;">
+                    <i class="bi bi-person-badge me-2"></i>{{ role_info.name }}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quick Stats -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-4">
+            <div style="background: white; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 42px; font-weight: 800; color: #3b82f6;">{{ active_patients }}</div>
+                <div style="color: #6b7280; font-size: 14px;">My Active Patients</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div style="background: white; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 42px; font-weight: 800; color: #10b981;">{{ appointments_count }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Appointments Today</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div style="background: white; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 42px; font-weight: 800; color: #f59e0b;">{{ pending_labs_count }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Pending Lab Results</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quick Actions -->
+    <div style="background: white; border-radius: 16px; padding: 24px; margin-bottom: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+        <h5 class="mb-3"><i class="bi bi-lightning me-2"></i>Quick Actions</h5>
+        <div class="row g-3">
+            <div class="col-md-2"><a href="{% url 'hospital:patient_list' %}" class="btn btn-primary w-100"><i class="bi bi-person me-2"></i>Patients</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:encounter_list' %}" class="btn btn-info w-100"><i class="bi bi-hospital me-2"></i>Encounters</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:triage' %}" class="btn btn-danger w-100"><i class="bi bi-heart-pulse me-2"></i>Triage</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:prescription_list' %}" class="btn btn-warning w-100"><i class="bi bi-prescription2 me-2"></i>Prescriptions</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:order_list' %}" class="btn btn-secondary w-100"><i class="bi bi-clipboard-check me-2"></i>Orders</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:global_search' %}" class="btn btn-outline-primary w-100"><i class="bi bi-search me-2"></i>Search</a></div>
+        </div>
+    </div>
+    
+    <div class="row g-4">
+        <!-- Today's Appointments -->
+        <div class="col-lg-6">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-4"><i class="bi bi-calendar-event me-2"></i>Today's Appointments</h5>
+                {% for appointment in today_appointments %}
+                <div style="border-left: 4px solid #3b82f6; padding: 16px; margin-bottom: 12px; background: #f8f9fa; border-radius: 8px;">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <strong>{{ appointment.patient.full_name }}</strong>
+                            <div style="font-size: 13px; color: #6b7280;">
+                                <i class="bi bi-clock me-1"></i>{{ appointment.appointment_date|date:"g:i A" }}
+                                <i class="bi bi-card-text ms-2 me-1"></i>{{ appointment.reason|truncatewords:5 }}
+                            </div>
+                        </div>
+                        <span class="badge bg-{{ appointment.status }}">{{ appointment.get_status_display }}</span>
+                    </div>
+                </div>
+                {% empty %}
+                <p class="text-center text-muted py-4">No appointments today</p>
+                {% endfor %}
+            </div>
+        </div>
+        
+        <!-- My Active Patients -->
+        <div class="col-lg-6">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-4"><i class="bi bi-clipboard2-pulse me-2"></i>My Active Patients</h5>
+                {% for encounter in my_encounters %}
+                <div style="border-left: 4px solid #10b981; padding: 16px; margin-bottom: 12px; background: #f0fdf4; border-radius: 8px;">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <strong>{{ encounter.patient.full_name }}</strong>
+                            <div style="font-size: 13px; color: #6b7280;">
+                                MRN: {{ encounter.patient.mrn }} | {{ encounter.get_encounter_type_display }}
+                            </div>
+                            <div style="font-size: 12px; color: #9ca3af; margin-top: 4px;">
+                                {{ encounter.chief_complaint|truncatewords:8 }}
+                            </div>
+                        </div>
+                        <a href="{% url 'hospital:encounter_detail' encounter.pk %}" class="btn btn-sm btn-outline-primary">View</a>
+                    </div>
+                </div>
+                {% empty %}
+                <p class="text-center text-muted py-4">No active patients</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+

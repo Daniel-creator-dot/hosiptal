@@ -1,0 +1,150 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Staff Management - HMS{% endblock %}
+{% block page_title %}Staff Management{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    <a href="{% url 'hospital:staff_create' %}" class="btn btn-primary-modern">
+        <i class="bi bi-plus-circle"></i> Add New Staff
+    </a>
+    <a href="{% url 'hospital:staff_shift_list' %}" class="btn btn-outline-primary">
+        <i class="bi bi-calendar"></i> View Shifts
+    </a>
+</div>
+<!-- Filters -->
+<div class="modern-card mb-4">
+    <form method="get" class="row g-3">
+        <div class="col-md-4">
+            <label class="form-label">Search</label>
+            <input type="text" name="q" value="{{ query }}" class="form-control form-control-modern" placeholder="Name, Email, Staff ID">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Department</label>
+            <select name="department" class="form-select form-control-modern">
+                <option value="">All Departments</option>
+                {% for dept in departments %}
+                <option value="{{ dept.pk }}" {% if department_filter == dept.pk|stringformat:"s" %}selected{% endif %}>
+                    {{ dept.name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Status</label>
+            <select name="status" class="form-select form-control-modern">
+                <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Active</option>
+                <option value="inactive" {% if status_filter == 'inactive' %}selected{% endif %}>Inactive</option>
+                <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">&nbsp;</label>
+            <button type="submit" class="btn btn-primary-modern w-100">Filter</button>
+        </div>
+    </form>
+</div>
+
+<!-- Staff List -->
+<div class="modern-card">
+    <div class="table-responsive">
+        <table class="table modern-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Employee ID</th>
+                    <th>Profession</th>
+                    <th>Department</th>
+                    <th>Date of Birth</th>
+                    <th>Age</th>
+                    <th>Retirement</th>
+                    <th>Phone</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for staff in staff_list %}
+                <tr>
+                    <td>
+                        <strong>{{ staff.user.get_full_name|default:staff.user.username }}</strong>
+                        <br>
+                        <small class="text-muted">{{ staff.user.email|default:"" }}</small>
+                    </td>
+                    <td>{{ staff.employee_id|default:"-" }}</td>
+                    <td>
+                        <span class="badge-modern badge-info">{{ staff.get_profession_display|default:"-" }}</span>
+                    </td>
+                    <td>{{ staff.department.name|default:"-" }}</td>
+                    <td>
+                        {% if staff.date_of_birth %}
+                            {{ staff.date_of_birth|date:"d/m/Y" }}
+                            {% if staff.date_of_birth.month == today.month and staff.date_of_birth.day == today.day %}
+                                <span class="badge-modern badge-warning" title="Birthday Today!">🎂</span>
+                            {% endif %}
+                        {% else %}
+                            <span class="text-muted">Not set</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if staff.age %}
+                            {{ staff.age }} yrs
+                        {% else %}
+                            <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if staff.years_until_retirement is not None %}
+                            {% if staff.years_until_retirement <= 5 %}
+                                <span class="badge-modern badge-warning" title="Retires in {{ staff.years_until_retirement }} years">
+                                    {{ staff.years_until_retirement }} yrs
+                                </span>
+                            {% elif staff.years_until_retirement <= 0 %}
+                                <span class="badge-modern badge-danger">Retired</span>
+                            {% else %}
+                                {{ staff.years_until_retirement }} yrs
+                            {% endif %}
+                            {% if staff.retirement_date %}
+                                <br><small class="text-muted">{{ staff.retirement_date|date:"Y" }}</small>
+                            {% endif %}
+                        {% else %}
+                            <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if staff.phone_number %}
+                            {{ staff.phone_number }}
+                        {% else %}
+                            <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if staff.is_active %}
+                        <span class="badge-modern badge-success">Active</span>
+                        {% else %}
+                        <span class="badge-modern badge-secondary">Inactive</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="btn-group" role="group">
+                            <a href="{% url 'hospital:staff_detail' staff.pk %}" class="btn btn-sm btn-outline-primary" title="View">
+                                <i class="bi bi-eye"></i>
+                            </a>
+                            <a href="{% url 'hospital:staff_edit' staff.pk %}" class="btn btn-sm btn-outline-secondary" title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="10" class="text-center text-muted py-4">No staff found</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+

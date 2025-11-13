@@ -1,0 +1,288 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Trial Balance - Hospital Management System{% endblock %}
+
+{% block extra_css %}
+<style>
+    .report-header {
+        background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+        color: #333;
+        padding: 30px;
+        border-radius: 15px;
+        margin-bottom: 30px;
+    }
+    
+    .trial-balance-table {
+        background: white;
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .trial-balance-table thead {
+        background: #667eea;
+        color: white;
+    }
+    
+    .trial-balance-table th {
+        padding: 15px;
+        font-weight: 600;
+    }
+    
+    .trial-balance-table td {
+        padding: 12px 15px;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .account-type-header {
+        background: #f8f9fa;
+        font-weight: 600;
+        color: #495057;
+    }
+    
+    .balance-check {
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-top: 20px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    
+    <!-- Header -->
+    <div class="report-header">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h2 class="mb-2"><i class="bi bi-calculator"></i> Trial Balance</h2>
+                <p class="mb-1">As of {{ as_of_date|date:"M d, Y" }}</p>
+                <p class="mb-0"><small>Hospital Name | Generated: {{ today|date:"M d, Y h:i A" }}</small></p>
+            </div>
+            <div>
+                <button onclick="window.print()" class="btn btn-outline-primary">
+                    <i class="bi bi-printer"></i> Print
+                </button>
+                <a href="{% url 'hospital:accounting_dashboard' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Back
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Trial Balance Table -->
+    <div class="trial-balance-table">
+        <table class="table mb-0">
+            <thead>
+                <tr>
+                    <th>Account Code</th>
+                    <th>Account Name</th>
+                    <th>Account Type</th>
+                    <th class="text-end">Debit</th>
+                    <th class="text-end">Credit</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Assets -->
+                <tr class="account-type-header">
+                    <td colspan="5">ASSETS</td>
+                </tr>
+                {% for account in accounts %}
+                    {% if account.account_type == 'asset' %}
+                    <tr>
+                        <td>{{ account.account_code }}</td>
+                        <td>{{ account.account_name }}</td>
+                        <td><span class="badge bg-primary">{{ account.account_type|title }}</span></td>
+                        <td class="text-end">
+                            {% if account.balance >= 0 %}
+                                <strong>GHS {{ account.balance|floatformat:2|intcomma }}</strong>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if account.balance < 0 %}
+                                <strong>GHS {{ account.balance|floatformat:2|intcomma|slice:"1:" }}</strong>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+                {% endfor %}
+                
+                <!-- Liabilities -->
+                <tr class="account-type-header">
+                    <td colspan="5">LIABILITIES</td>
+                </tr>
+                {% for account in accounts %}
+                    {% if account.account_type == 'liability' %}
+                    <tr>
+                        <td>{{ account.account_code }}</td>
+                        <td>{{ account.account_name }}</td>
+                        <td><span class="badge bg-danger">{{ account.account_type|title }}</span></td>
+                        <td class="text-end">
+                            {% if account.balance < 0 %}
+                                <strong>GHS {{ account.balance|floatformat:2|intcomma|slice:"1:" }}</strong>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if account.balance >= 0 %}
+                                <strong>GHS {{ account.balance|floatformat:2|intcomma }}</strong>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+                {% endfor %}
+                
+                <!-- Equity -->
+                <tr class="account-type-header">
+                    <td colspan="5">EQUITY</td>
+                </tr>
+                {% for account in accounts %}
+                    {% if account.account_type == 'equity' %}
+                    <tr>
+                        <td>{{ account.account_code }}</td>
+                        <td>{{ account.account_name }}</td>
+                        <td><span class="badge bg-success">{{ account.account_type|title }}</span></td>
+                        <td class="text-end">
+                            {% if account.balance < 0 %}
+                                <strong>GHS {{ account.balance|floatformat:2|intcomma|slice:"1:" }}</strong>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if account.balance >= 0 %}
+                                <strong>GHS {{ account.balance|floatformat:2|intcomma }}</strong>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+                {% endfor %}
+                
+                <!-- Revenue -->
+                <tr class="account-type-header">
+                    <td colspan="5">REVENUE</td>
+                </tr>
+                {% for account in accounts %}
+                    {% if account.account_type == 'revenue' %}
+                    <tr>
+                        <td>{{ account.account_code }}</td>
+                        <td>{{ account.account_name }}</td>
+                        <td><span class="badge bg-info">{{ account.account_type|title }}</span></td>
+                        <td class="text-end">
+                            {% if account.balance < 0 %}
+                                <strong>GHS {{ account.balance|floatformat:2|intcomma|slice:"1:" }}</strong>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if account.balance >= 0 %}
+                                <strong>GHS {{ account.balance|floatformat:2|intcomma }}</strong>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+                {% endfor %}
+                
+                <!-- Expenses -->
+                <tr class="account-type-header">
+                    <td colspan="5">EXPENSES</td>
+                </tr>
+                {% for account in accounts %}
+                    {% if account.account_type == 'expense' %}
+                    <tr>
+                        <td>{{ account.account_code }}</td>
+                        <td>{{ account.account_name }}</td>
+                        <td><span class="badge bg-warning">{{ account.account_type|title }}</span></td>
+                        <td class="text-end">
+                            {% if account.balance >= 0 %}
+                                <strong>GHS {{ account.balance|floatformat:2|intcomma }}</strong>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if account.balance < 0 %}
+                                <strong>GHS {{ account.balance|floatformat:2|intcomma|slice:"1:" }}</strong>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+                {% endfor %}
+                
+                {% if not accounts %}
+                <tr>
+                    <td colspan="5" class="text-center py-5 text-muted">
+                        No accounts found.
+                    </td>
+                </tr>
+                {% endif %}
+            </tbody>
+            <tfoot style="background: #667eea; color: white; font-weight: 600; font-size: 16px;">
+                <tr>
+                    <td colspan="3" class="text-end">TOTALS:</td>
+                    <td class="text-end">GHS {{ total_debits|floatformat:2|intcomma }}</td>
+                    <td class="text-end">GHS {{ total_credits|floatformat:2|intcomma }}</td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+    
+    <!-- Balance Check -->
+    <div class="balance-check">
+        <div class="row">
+            <div class="col-md-4">
+                <div class="text-center">
+                    <h6 class="text-muted">Total Debits</h6>
+                    <h3 class="text-primary">GHS {{ total_debits|floatformat:2|intcomma }}</h3>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="text-center">
+                    <h6 class="text-muted">Total Credits</h6>
+                    <h3 class="text-success">GHS {{ total_credits|floatformat:2|intcomma }}</h3>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="text-center">
+                    <h6 class="text-muted">Difference</h6>
+                    <h3 class="{% if balance_difference == 0 %}text-success{% else %}text-danger{% endif %}">
+                        {% if balance_difference >= 0 %}
+                            GHS {{ balance_difference|floatformat:2|intcomma }}
+                        {% else %}
+                            GHS {{ balance_difference|floatformat:2|intcomma|slice:"1:" }}
+                        {% endif %}
+                    </h3>
+                    {% if balance_difference == 0 %}
+                    <p class="text-success mb-0">
+                        <i class="bi bi-check-circle"></i> Books are balanced!
+                    </p>
+                    {% else %}
+                    <p class="text-danger mb-0">
+                        <i class="bi bi-exclamation-triangle"></i> Out of balance
+                    </p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+</div>
+{% endblock %}

@@ -1,0 +1,169 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container-fluid">
+    <h2>{{ title }}</h2>
+    <p class="text-muted">🔒 Payment verification required before releasing results</p>
+    
+    <!-- Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card border-left-danger shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Pending Payment</h6>
+                    <h2 class="text-danger">{{ stats.pending_payment }}</h2>
+                    <small>Cannot release - awaiting payment</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card border-left-success shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Paid - Ready to Release</h6>
+                    <h2 class="text-success">{{ stats.paid_ready }}</h2>
+                    <small>Payment verified ✅</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card border-left-info shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Already Released</h6>
+                    <h2 class="text-info">{{ stats.released }}</h2>
+                    <small>Completed</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card border-left-primary shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Total Results</h6>
+                    <h2>{{ stats.total }}</h2>
+                    <small>All completed results</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- Pending Payment -->
+        <div class="col-md-6">
+            <div class="card shadow">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0">🔒 Pending Payment ({{ stats.pending_payment }})</h5>
+                </div>
+                <div class="card-body" style="max-height: 500px; overflow-y: auto;">
+                    {% if pending_payment %}
+                        {% for lab in pending_payment %}
+                        <div class="card mb-2" style="border-left: 4px solid #dc3545;">
+                            <div class="card-body">
+                                <h6>{{ lab.test.name }}</h6>
+                                <p class="mb-1"><strong>Patient:</strong> {{ lab.order.encounter.patient.full_name }}</p>
+                                <p class="mb-1"><small>MRN: {{ lab.order.encounter.patient.mrn }}</small></p>
+                                <p class="mb-1"><small>Verified: {{ lab.verified_at|date:"M d, Y - h:i A" }}</small></p>
+                                <p class="mb-0"><strong class="text-danger">❌ CANNOT RELEASE - PAYMENT REQUIRED</strong></p>
+                                <small class="text-muted">Patient must pay GHS {{ lab.test.price }} at cashier first</small>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted text-center py-4">No results pending payment</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Paid & Ready to Release -->
+        <div class="col-md-6">
+            <div class="card shadow">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">✅ Paid - Ready to Release ({{ stats.paid_ready }})</h5>
+                </div>
+                <div class="card-body" style="max-height: 500px; overflow-y: auto;">
+                    {% if paid_ready_to_release %}
+                        {% for lab in paid_ready_to_release %}
+                        <div class="card mb-2" style="border-left: 4px solid #28a745;">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <h6>{{ lab.test.name }}</h6>
+                                        <p class="mb-1"><strong>Patient:</strong> {{ lab.order.encounter.patient.full_name }}</p>
+                                        <p class="mb-1"><small>MRN: {{ lab.order.encounter.patient.mrn }}</small></p>
+                                        <p class="mb-0"><strong class="text-success">✅ PAYMENT VERIFIED</strong></p>
+                                        <small class="text-muted">Receipt: {{ lab.release_record.payment_receipt.receipt_number }}</small>
+                                    </div>
+                                    <div>
+                                        <a href="{% url 'hospital:lab_result_release_enforced' lab.id %}" 
+                                           class="btn btn-success btn-sm">
+                                            <i class="bi bi-check-circle"></i> Release Results
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted text-center py-4">No results ready to release</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Recently Released -->
+    {% if already_released %}
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <div class="card shadow">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">📋 Recently Released ({{ stats.released }})</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Test</th>
+                                    <th>Patient</th>
+                                    <th>Receipt</th>
+                                    <th>Released To</th>
+                                    <th>Released At</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for lab in already_released %}
+                                <tr>
+                                    <td>{{ lab.test.name }}</td>
+                                    <td>{{ lab.order.encounter.patient.full_name }}</td>
+                                    <td>{{ lab.release_record.payment_receipt.receipt_number }}</td>
+                                    <td>{{ lab.release_record.released_to }}</td>
+                                    <td>{{ lab.release_record.released_at|date:"M d, h:i A" }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+

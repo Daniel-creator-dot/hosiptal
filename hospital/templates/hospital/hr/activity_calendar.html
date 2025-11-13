@@ -1,0 +1,237 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Activity Calendar - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    .calendar-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 1px;
+        background: #e5e7eb;
+        border: 1px solid #e5e7eb;
+    }
+    
+    .calendar-day {
+        background: white;
+        min-height: 120px;
+        padding: 8px;
+        position: relative;
+    }
+    
+    .calendar-day.weekend {
+        background: #f9fafb;
+    }
+    
+    .calendar-day.today {
+        background: #eff6ff;
+        border: 2px solid #3b82f6;
+    }
+    
+    .day-number {
+        font-weight: 700;
+        font-size: 18px;
+        margin-bottom: 4px;
+    }
+    
+    .activity-pill {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 4px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        margin-bottom: 4px;
+        display: block;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .activity-pill:hover {
+        transform: scale(1.02);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    }
+    
+    .activity-pill.meeting { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); }
+    .activity-pill.training { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
+    .activity-pill.social { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); }
+    .activity-pill.urgent { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
+    .activity-pill.holiday { background: linear-gradient(135deg, #ec4899 0%, #db2777 100%); }
+    
+    .activity-card {
+        background: white;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        border-left: 4px solid #667eea;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        transition: all 0.3s;
+    }
+    
+    .activity-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    }
+    
+    .activity-card.mandatory {
+        border-left-color: #ef4444;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 16px; padding: 32px; margin-bottom: 24px;">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1><i class="bi bi-calendar-event me-3"></i>Activity Calendar</h1>
+                <p class="mb-0" style="opacity: 0.9;">Hospital-wide events, meetings, and activities</p>
+            </div>
+            <div>
+                {% if perms.hospital.add_hospitalactivity %}
+                <a href="{% url 'admin:hospital_hospitalactivity_add' %}" class="btn btn-light btn-lg">
+                    <i class="bi bi-plus-circle me-2"></i>Add Activity
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Statistics -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-3">
+            <div style="background: white; border-radius: 12px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 36px; font-weight: 700; color: #667eea;">{{ total_activities }}</div>
+                <div style="color: #6b7280;">Total Activities</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div style="background: white; border-radius: 12px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 36px; font-weight: 700; color: #10b981;">{{ this_month_count }}</div>
+                <div style="color: #6b7280;">This Month</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div style="background: white; border-radius: 12px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 36px; font-weight: 700; color: #f59e0b;">{{ mandatory_upcoming }}</div>
+                <div style="color: #6b7280;">Mandatory Upcoming</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div style="background: white; border-radius: 12px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 20px; font-weight: 700; color: #3b82f6;">{{ month_name }} {{ year }}</div>
+                <div style="color: #6b7280;">Current View</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row g-4">
+        <!-- Calendar -->
+        <div class="col-lg-8">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <!-- Month Navigation -->
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <a href="?year={{ prev_year }}&month={{ prev_month }}" class="btn btn-outline-primary">
+                        <i class="bi bi-chevron-left"></i> Previous
+                    </a>
+                    <h4 class="mb-0">{{ month_name }} {{ year }}</h4>
+                    <a href="?year={{ next_year }}&month={{ next_month }}" class="btn btn-outline-primary">
+                        Next <i class="bi bi-chevron-right"></i>
+                    </a>
+                </div>
+                
+                <!-- Calendar Grid -->
+                <div class="calendar-grid">
+                    <!-- Day Headers -->
+                    <div style="background: #f3f4f6; padding: 12px; text-align: center; font-weight: 700;">Sun</div>
+                    <div style="background: #f3f4f6; padding: 12px; text-align: center; font-weight: 700;">Mon</div>
+                    <div style="background: #f3f4f6; padding: 12px; text-align: center; font-weight: 700;">Tue</div>
+                    <div style="background: #f3f4f6; padding: 12px; text-align: center; font-weight: 700;">Wed</div>
+                    <div style="background: #f3f4f6; padding: 12px; text-align: center; font-weight: 700;">Thu</div>
+                    <div style="background: #f3f4f6; padding: 12px; text-align: center; font-weight: 700;">Fri</div>
+                    <div style="background: #f3f4f6; padding: 12px; text-align: center; font-weight: 700;">Sat</div>
+                    
+                    <!-- Calendar Days -->
+                    {% for day in calendar_data %}
+                    <div class="calendar-day {% if day.is_weekend %}weekend{% endif %} {% if day.is_today %}today{% endif %}">
+                        <div class="day-number">{{ day.day }}</div>
+                        {% for activity in day.activities %}
+                            <a href="{% url 'hospital:activity_detail' activity.id %}" class="activity-pill {{ activity.activity_type }} {% if activity.is_mandatory %}urgent{% endif %}" title="{{ activity.title }}">
+                                {% if activity.is_mandatory %}<i class="bi bi-exclamation-circle me-1"></i>{% endif %}
+                                {{ activity.title|truncatewords:2 }}
+                            </a>
+                        {% endfor %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Upcoming Activities -->
+        <div class="col-lg-4">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-4"><i class="bi bi-calendar-check me-2"></i>Upcoming Activities</h5>
+                
+                {% for activity in upcoming_activities %}
+                <div class="activity-card {% if activity.is_mandatory %}mandatory{% endif %}">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h6 class="mb-1">{{ activity.title }}</h6>
+                            <div style="font-size: 12px; color: #6b7280;">
+                                <i class="bi bi-calendar3 me-1"></i>{{ activity.start_date|date:"M d, Y" }}
+                                {% if activity.start_time %}
+                                    <i class="bi bi-clock ms-2 me-1"></i>{{ activity.start_time|time:"h:i A" }}
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% if activity.is_mandatory %}
+                            <span class="badge bg-danger">Mandatory</span>
+                        {% endif %}
+                    </div>
+                    
+                    {% if activity.location %}
+                    <div style="font-size: 12px; color: #6b7280;">
+                        <i class="bi bi-geo-alt me-1"></i>{{ activity.location }}
+                    </div>
+                    {% endif %}
+                    
+                    <div class="mt-2">
+                        <a href="{% url 'hospital:activity_detail' activity.id %}" class="btn btn-sm btn-outline-primary">
+                            View Details
+                        </a>
+                    </div>
+                </div>
+                {% empty %}
+                <p class="text-muted text-center py-4">
+                    <i class="bi bi-calendar-x me-2"></i>No upcoming activities
+                </p>
+                {% endfor %}
+            </div>
+            
+            <!-- Legend -->
+            <div style="background: white; border-radius: 12px; padding: 20px; margin-top: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
+                <h6 class="mb-3">Activity Types</h6>
+                <div class="d-flex flex-wrap gap-2">
+                    <span class="activity-pill meeting" style="display: inline-block;">Meeting</span>
+                    <span class="activity-pill training" style="display: inline-block;">Training</span>
+                    <span class="activity-pill social" style="display: inline-block;">Social</span>
+                    <span class="activity-pill holiday" style="display: inline-block;">Holiday</span>
+                    <span class="activity-pill urgent" style="display: inline-block;">Urgent</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,182 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize hospital_extras %}
+
+{% block title %}Process Payment - HMS{% endblock %}
+{% block page_title %}Process Payment{% endblock %}
+{% block page_subtitle %}{% if patient %}{{ patient.full_name }}{% else %}Payment Processing{% endif %}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8">
+        <div class="modern-card mb-4">
+            <h5 style="font-weight: 600; margin-bottom: 20px;">Payment Details</h5>
+            
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <strong>Patient:</strong><br>
+                    {% if patient %}
+                    <a href="{% url 'hospital:patient_detail' patient.pk %}">{{ patient.full_name }}</a>
+                    {% else %}
+                    N/A
+                    {% endif %}
+                </div>
+                <div class="col-md-6">
+                    {% if invoice %}
+                    <strong>Invoice Number:</strong><br>
+                    {{ invoice.invoice_number }}
+                    {% elif bill %}
+                    <strong>Bill Number:</strong><br>
+                    {{ bill.bill_number }}
+                    {% endif %}
+                </div>
+            </div>
+            
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <strong>Total Amount:</strong><br>
+                    <span style="font-size: 24px; font-weight: 700; color: var(--dark);">
+                        GHS {% if invoice %}{{ invoice.total_amount|floatformat:2|intcomma }}{% elif bill %}{{ bill.total_amount|floatformat:2|intcomma }}{% endif %}
+                    </span>
+                </div>
+                {% if bill and bill.insurance_covered > 0 %}
+                <div class="col-md-6">
+                    <strong>Insurance Covered:</strong><br>
+                    <span style="font-size: 18px; color: var(--info);">GHS {{ bill.insurance_covered|floatformat:2|intcomma }}</span>
+                </div>
+                {% endif %}
+            </div>
+            
+            <div class="row mb-4" style="background: #fef3c7; padding: 16px; border-radius: 8px; border-left: 4px solid var(--warning);">
+                <div class="col-12">
+                    <strong>Balance Due:</strong>
+                    <span style="font-size: 28px; font-weight: 800; color: var(--danger); margin-left: 12px;">
+                        GHS {% if invoice %}{{ invoice.balance|floatformat:2|intcomma }}{% elif bill %}{{ bill.patient_portion|floatformat:2|intcomma }}{% endif %}
+                    </span>
+                </div>
+            </div>
+            
+            {% if invoice %}
+            <div class="mb-3">
+                <strong>Invoice Status:</strong> {{ invoice.get_status_display }}<br>
+                {% if invoice.payer %}
+                <strong>Payer:</strong> {{ invoice.payer.name }}
+                {% endif %}
+            </div>
+            {% elif bill %}
+            {% if bill.invoice %}
+            <div class="mb-3">
+                <strong>Invoice Number:</strong> {{ bill.invoice.invoice_number }}<br>
+                <strong>Status:</strong> {{ bill.get_status_display }}
+            </div>
+            {% endif %}
+            {% endif %}
+            
+            <form method="post">
+                {% csrf_token %}
+                
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Amount to Pay <span class="text-danger">*</span></label>
+                        {% if invoice %}
+                        <input type="number" name="amount" step="0.01" min="0.01" max="{{ invoice.balance }}" 
+                               value="{{ invoice.balance }}" class="form-control form-control-modern" required>
+                        <small class="text-muted">Maximum: GHS {{ invoice.balance|floatformat:2 }}</small>
+                        {% elif bill %}
+                        <input type="number" name="amount" step="0.01" min="0.01" max="{{ bill.patient_portion }}" 
+                               value="{{ bill.patient_portion }}" class="form-control form-control-modern" required>
+                        <small class="text-muted">Maximum: GHS {{ bill.patient_portion|floatformat:2 }}</small>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Payment Method <span class="text-danger">*</span></label>
+                        <select name="payment_method" class="form-select form-control-modern" required>
+                            <option value="cash">Cash</option>
+                            <option value="card">Card</option>
+                            <option value="mobile_money">Mobile Money</option>
+                            <option value="bank_transfer">Bank Transfer</option>
+                            <option value="cheque">Cheque</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">Reference Number</label>
+                    <input type="text" name="reference_number" class="form-control form-control-modern" 
+                           placeholder="Transaction/Receipt number (optional)">
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">Notes</label>
+                    <textarea name="notes" class="form-control form-control-modern" rows="2" placeholder="Additional notes (optional)"></textarea>
+                </div>
+                
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-success btn-modern">
+                        <i class="bi bi-check-circle"></i> Process Payment
+                    </button>
+                    <a href="{% url 'hospital:cashier_dashboard' %}" class="btn btn-outline-secondary">
+                        Cancel
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="modern-card">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Payment Summary</h6>
+            <div style="font-size: 14px;">
+                <div class="d-flex justify-content-between mb-2">
+                    <span>Total Amount:</span>
+                    <strong>GHS {% if invoice %}{{ invoice.total_amount|floatformat:2 }}{% elif bill %}{{ bill.total_amount|floatformat:2 }}{% endif %}</strong>
+                </div>
+                {% if invoice %}
+                {% with paid_amount=invoice.total_amount|sub:invoice.balance %}
+                <div class="d-flex justify-content-between mb-2" style="color: var(--success);">
+                    <span>Amount Paid:</span>
+                    <strong>GHS {{ paid_amount|floatformat:2|default:"0.00" }}</strong>
+                </div>
+                {% endwith %}
+                {% elif bill and bill.insurance_covered > 0 %}
+                <div class="d-flex justify-content-between mb-2" style="color: var(--info);">
+                    <span>Insurance:</span>
+                    <strong>-GHS {{ bill.insurance_covered|floatformat:2 }}</strong>
+                </div>
+                {% endif %}
+                <hr>
+                <div class="d-flex justify-content-between" style="font-size: 18px; font-weight: 700; color: var(--primary);">
+                    <span>Amount Due:</span>
+                    <strong style="color: var(--danger);">
+                        GHS {% if invoice %}{{ invoice.balance|floatformat:2 }}{% elif bill %}{{ bill.patient_portion|floatformat:2 }}{% endif %}
+                    </strong>
+                </div>
+            </div>
+        </div>
+        
+        {% if payment_request %}
+        <div class="modern-card mt-3">
+            <h6 style="font-weight: 600; margin-bottom: 12px;">Payment Request Info</h6>
+            <div style="font-size: 13px;">
+                <strong>Request:</strong> {{ payment_request.request_number }}<br>
+                <strong>Requested:</strong> {{ payment_request.requested_at|date:"M d, Y H:i" }}<br>
+                <strong>Type:</strong> {{ payment_request.get_payment_type_display }}
+            </div>
+        </div>
+        {% endif %}
+        
+        {% if invoice %}
+        <div class="modern-card mt-3">
+            <h6 style="font-weight: 600; margin-bottom: 12px;">Invoice Info</h6>
+            <div style="font-size: 13px;">
+                <strong>Invoice:</strong> {{ invoice.invoice_number }}<br>
+                <strong>Issued:</strong> {{ invoice.issued_at|date:"M d, Y" }}<br>
+                <strong>Due:</strong> {{ invoice.due_at|date:"M d, Y" }}<br>
+                {% if invoice.payer %}
+                <strong>Payer:</strong> {{ invoice.payer.name }}
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,135 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow">
+                <div class="card-header bg-success text-white">
+                    <h4 class="mb-0">
+                        <i class="bi bi-cash-coin"></i> Process Combined Payment
+                    </h4>
+                </div>
+                <div class="card-body">
+                    <!-- Patient Info -->
+                    <div class="alert alert-info">
+                        <h5><i class="bi bi-person-circle"></i> {{ patient.full_name }}</h5>
+                        <p class="mb-0">
+                            <strong>MRN:</strong> {{ patient.mrn }} | 
+                            <strong>Phone:</strong> {{ patient.phone_number|default:"N/A" }}
+                        </p>
+                    </div>
+                    
+                    <!-- Services Summary -->
+                    <div class="mb-4">
+                        <h5>Services Summary ({{ service_count }} service(s)):</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered">
+                                <thead>
+                                    <tr>
+                                        <th>Type</th>
+                                        <th>Service</th>
+                                        <th class="text-end">Amount</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for service in services %}
+                                    <tr>
+                                        <td>
+                                            {% if service.type == 'lab' %}
+                                                <span class="badge bg-info">🧪 Lab</span>
+                                            {% elif service.type == 'pharmacy' %}
+                                                <span class="badge bg-success">💊 Pharmacy</span>
+                                            {% elif service.type == 'imaging' %}
+                                                <span class="badge" style="background: linear-gradient(135deg, #6f42c1 0%, #8e44ad 100%); color: white;">📷 Imaging</span>
+                                            {% elif service.type == 'consultation' %}
+                                                <span class="badge bg-primary">👨‍⚕️ Consultation</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ service.name }}</td>
+                                        <td class="text-end"><strong>GHS {{ service.price|floatformat:2 }}</strong></td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                                <tfoot>
+                                    <tr>
+                                        <th colspan="2" class="text-end">TOTAL:</th>
+                                        <th class="text-end text-success">GHS {{ total_amount|floatformat:2 }}</th>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- Payment Form -->
+                    <form method="POST">
+                        {% csrf_token %}
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Amount to Pay</label>
+                                <input type="number" 
+                                       class="form-control form-control-lg" 
+                                       name="amount" 
+                                       value="{{ total_amount }}" 
+                                       step="0.01" 
+                                       min="0.01" 
+                                       required>
+                                <small class="text-muted">Total due: GHS {{ total_amount|floatformat:2 }}</small>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Payment Method</label>
+                                <select class="form-select form-select-lg" name="payment_method" required>
+                                    {% for method_code, method_name in payment_methods %}
+                                    <option value="{{ method_code }}" {% if method_code == 'cash' %}selected{% endif %}>
+                                        {{ method_name }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Reference Number (Optional)</label>
+                                <input type="text" 
+                                       class="form-control" 
+                                       name="reference_number" 
+                                       placeholder="Transaction reference">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Notes (Optional)</label>
+                                <input type="text" 
+                                       class="form-control" 
+                                       name="notes" 
+                                       placeholder="Additional notes">
+                            </div>
+                        </div>
+                        
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                            <a href="{% url 'hospital:cashier_patient_bills' %}" class="btn btn-secondary">
+                                <i class="bi bi-arrow-left"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-success btn-lg">
+                                <i class="bi bi-check-circle"></i> Process Payment & Generate Bill
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,206 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="card shadow-sm mb-4" style="background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%); color: white;">
+        <div class="card-body p-4">
+            <h3 class="mb-2"><i class="bi bi-clipboard2-pulse me-2"></i>My Consultations</h3>
+            <p class="mb-0">Review all your consultation records and patient interactions</p>
+        </div>
+    </div>
+
+    <!-- Statistics -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <p class="text-muted mb-1">Total</p>
+                            <h3 class="mb-0">{{ stats.total }}</h3>
+                        </div>
+                        <div class="bg-primary bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-clipboard2-pulse text-primary" style="font-size: 24px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <p class="text-muted mb-1">Today</p>
+                            <h3 class="mb-0">{{ stats.today }}</h3>
+                        </div>
+                        <div class="bg-success bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-calendar-check text-success" style="font-size: 24px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <p class="text-muted mb-1">Active</p>
+                            <h3 class="mb-0">{{ stats.active }}</h3>
+                        </div>
+                        <div class="bg-warning bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-clock-history text-warning" style="font-size: 24px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <p class="text-muted mb-1">Completed Today</p>
+                            <h3 class="mb-0">{{ stats.completed_today }}</h3>
+                        </div>
+                        <div class="bg-info bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-check-circle text-info" style="font-size: 24px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Status</label>
+                    <select name="status" class="form-select" onchange="this.form.submit()">
+                        <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All Status</option>
+                        <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Active</option>
+                        <option value="completed" {% if status_filter == 'completed' %}selected{% endif %}>Completed</option>
+                        <option value="cancelled" {% if status_filter == 'cancelled' %}selected{% endif %}>Cancelled</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Date Range</label>
+                    <select name="date" class="form-select" onchange="this.form.submit()">
+                        <option value="all" {% if date_filter == 'all' %}selected{% endif %}>All Time</option>
+                        <option value="today" {% if date_filter == 'today' %}selected{% endif %}>Today</option>
+                        <option value="week" {% if date_filter == 'week' %}selected{% endif %}>Past Week</option>
+                        <option value="month" {% if date_filter == 'month' %}selected{% endif %}>Past Month</option>
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Search Patient</label>
+                    <div class="input-group">
+                        <input type="text" name="search" class="form-control" placeholder="Name, MRN, complaint, diagnosis..."
+                               value="{{ search }}">
+                        <button class="btn btn-primary" type="submit">
+                            <i class="bi bi-search"></i> Search
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Consultations List -->
+    <div class="card shadow-sm">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-list-ul me-2"></i>Consultations ({{ encounters|length }})</h5>
+        </div>
+        <div class="card-body p-0">
+            {% if encounters %}
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Date</th>
+                                <th>Patient</th>
+                                <th>Chief Complaint</th>
+                                <th>Diagnosis</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                                <th>Duration</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for encounter in encounters %}
+                            <tr>
+                                <td>
+                                    {{ encounter.started_at|date:"M d, Y" }}<br>
+                                    <small class="text-muted">{{ encounter.started_at|date:"H:i" }}</small>
+                                </td>
+                                <td>
+                                    <strong>{{ encounter.patient.full_name }}</strong><br>
+                                    <small class="text-muted">{{ encounter.patient.mrn }}</small>
+                                </td>
+                                <td>{{ encounter.chief_complaint|truncatewords:5|default:"-" }}</td>
+                                <td>{{ encounter.diagnosis|truncatewords:5|default:"-" }}</td>
+                                <td>
+                                    <span class="badge bg-info">{{ encounter.get_encounter_type_display }}</span>
+                                </td>
+                                <td>
+                                    <span class="badge bg-{% if encounter.status == 'active' %}warning{% elif encounter.status == 'completed' %}success{% elif encounter.status == 'cancelled' %}secondary{% else %}primary{% endif %}">
+                                        {{ encounter.get_status_display }}
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if encounter.status == 'completed' and encounter.get_duration_minutes %}
+                                        {{ encounter.get_duration_minutes }} min
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <a href="{% url 'hospital:encounter_full_record' encounter.pk %}" 
+                                           class="btn btn-outline-primary" title="View Record">
+                                            <i class="bi bi-file-medical"></i>
+                                        </a>
+                                        {% if encounter.status == 'active' %}
+                                            <a href="{% url 'hospital:consultation_view' encounter.pk %}" 
+                                               class="btn btn-primary" title="Continue">
+                                                <i class="bi bi-arrow-right-circle"></i>
+                                            </a>
+                                        {% endif %}
+                                        <a href="{% url 'hospital:patient_detail' encounter.patient.pk %}" 
+                                           class="btn btn-outline-secondary" title="Patient Profile">
+                                            <i class="bi bi-person"></i>
+                                        </a>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="text-center py-5">
+                    <i class="bi bi-inbox" style="font-size: 64px; opacity: 0.3;"></i>
+                    <p class="text-muted mt-3">No consultations found</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+

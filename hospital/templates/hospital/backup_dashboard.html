@@ -1,0 +1,268 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Database Backups - HMS{% endblock %}
+{% block page_title %}Database Backups{% endblock %}
+{% block page_subtitle %}Manage and download database backups{% endblock %}
+
+{% block extra_css %}
+<style>
+    .backup-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        border: 1px solid var(--border);
+        margin-bottom: 24px;
+    }
+    
+    .stat-card {
+        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+    }
+    
+    .stat-card h3 {
+        font-size: 32px;
+        font-weight: 700;
+        margin: 0;
+    }
+    
+    .stat-card p {
+        margin: 8px 0 0 0;
+        opacity: 0.9;
+    }
+    
+    .backup-item {
+        background: white;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        transition: all 0.3s;
+    }
+    
+    .backup-item:hover {
+        border-color: var(--primary);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    
+    .backup-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 8px;
+        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 24px;
+    }
+    
+    .backup-info h6 {
+        margin: 0 0 4px 0;
+        font-weight: 600;
+    }
+    
+    .backup-meta {
+        font-size: 13px;
+        color: var(--gray);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Statistics -->
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="stat-card">
+            <h3>{{ backup_count }}</h3>
+            <p>Total Backups</p>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="stat-card" style="background: linear-gradient(135deg, #6c757d 0%, #495057 100%);">
+            <h3>{{ total_size_mb }} MB</h3>
+            <p>Total Backup Size</p>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="stat-card" style="background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);">
+            <h3>{{ db_size_mb }} MB</h3>
+            <p>Current Database Size</p>
+        </div>
+    </div>
+</div>
+
+<!-- Create Backup Card -->
+<div class="backup-card">
+    <h5 class="mb-3"><i class="bi bi-plus-circle"></i> Create New Backup</h5>
+    
+    <form method="post" action="{% url 'hospital:create_backup' %}" class="row g-3">
+        {% csrf_token %}
+        
+        <div class="col-md-6">
+            <label class="form-label">Backup Name (Optional)</label>
+            <input type="text" class="form-control" name="backup_name" placeholder="e.g., before_update, monthly_backup">
+            <small class="text-muted">Leave empty for auto-generated name</small>
+        </div>
+        
+        <div class="col-md-6 d-flex align-items-end">
+            <button type="submit" class="btn btn-primary btn-lg w-100">
+                <i class="bi bi-database-add"></i> Create Backup Now
+            </button>
+        </div>
+    </form>
+    
+    <div class="mt-3">
+        <button class="btn btn-outline-primary" onclick="createAutoBackup()">
+            <i class="bi bi-clock-history"></i> Quick Auto Backup
+        </button>
+    </div>
+</div>
+
+<!-- Backup Actions Card -->
+<div class="backup-card">
+    <h5 class="mb-3"><i class="bi bi-gear"></i> Backup Actions</h5>
+    
+    <div class="row g-3">
+        <div class="col-md-6">
+            <a href="{% url 'hospital:download_all_backups' %}" class="btn btn-success w-100">
+                <i class="bi bi-download"></i> Download All Backups (ZIP)
+            </a>
+        </div>
+        
+        <div class="col-md-6">
+            <button class="btn btn-warning w-100" data-bs-toggle="modal" data-bs-target="#deleteOldModal">
+                <i class="bi bi-trash"></i> Delete Old Backups
+            </button>
+        </div>
+    </div>
+    
+    <div class="mt-3 p-3" style="background: #f8f9fa; border-radius: 8px;">
+        <small class="text-muted">
+            <i class="bi bi-info-circle"></i>
+            <strong>Backup Location:</strong> {{ backup_dir }}
+        </small>
+    </div>
+</div>
+
+<!-- Backup List -->
+<div class="backup-card">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0"><i class="bi bi-archive"></i> Available Backups ({{ backup_count }})</h5>
+    </div>
+    
+    {% if backups %}
+        {% for backup in backups %}
+        <div class="backup-item">
+            <div class="d-flex align-items-center gap-3">
+                <div class="backup-icon">
+                    <i class="bi bi-database-fill-check"></i>
+                </div>
+                
+                <div class="backup-info flex-grow-1">
+                    <h6>{{ backup.filename }}</h6>
+                    <div class="backup-meta">
+                        <span><i class="bi bi-calendar3"></i> {{ backup.created|date:"Y-m-d H:i:s" }}</span>
+                        <span class="ms-3"><i class="bi bi-clock"></i> {{ backup.age_days }} day(s) ago</span>
+                        <span class="ms-3"><i class="bi bi-file-earmark"></i> {{ backup.size_mb }} MB</span>
+                    </div>
+                </div>
+                
+                <div class="d-flex gap-2">
+                    <a href="{% url 'hospital:download_backup' backup.filename %}" class="btn btn-sm btn-outline-success">
+                        <i class="bi bi-download"></i> Download
+                    </a>
+                    
+                    <form method="post" action="{% url 'hospital:delete_backup' backup.filename %}" style="display: inline;" onsubmit="return confirm('Delete this backup?');">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                            <i class="bi bi-trash"></i> Delete
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="text-center py-5">
+            <i class="bi bi-inbox" style="font-size: 48px; color: var(--gray);"></i>
+            <p class="text-muted mt-3">No backups found</p>
+            <p class="text-muted">Create your first backup using the form above</p>
+        </div>
+    {% endif %}
+</div>
+
+<!-- Delete Old Backups Modal -->
+<div class="modal fade" id="deleteOldModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Delete Old Backups</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'hospital:delete_old_backups' %}">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Delete backups older than:</label>
+                        <select class="form-select" name="days">
+                            <option value="7">7 days</option>
+                            <option value="14">14 days</option>
+                            <option value="30" selected>30 days</option>
+                            <option value="60">60 days</option>
+                            <option value="90">90 days</option>
+                        </select>
+                    </div>
+                    
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        This action cannot be undone. Old backup files will be permanently deleted.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning">Delete Old Backups</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+function createAutoBackup() {
+    if (!confirm('Create automatic backup now?')) return;
+    
+    fetch("{% url 'hospital:auto_backup_now' %}", {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert('Error: ' + data.message);
+        }
+    })
+    .catch(error => {
+        alert('Error creating backup: ' + error);
+    });
+}
+</script>
+
+{% endblock %}
+
+
+
+
+
+
+
+

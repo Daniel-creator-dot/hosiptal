@@ -1,0 +1,1069 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Consultation Room - {{ consultation.consultation_id }}{% endblock %}
+{% block page_title %}Consultation Room{% endblock %}
+{% block page_subtitle %}{{ consultation.consultation_id }} - {{ consultation.patient.full_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .consultation-room {
+        background: #f8f9fa;
+        min-height: 100vh;
+        padding: 0;
+    }
+    
+    .video-container {
+        position: relative;
+        background: #000;
+        border-radius: 15px;
+        overflow: hidden;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    }
+    
+    .video-main {
+        width: 100%;
+        height: 400px;
+        object-fit: cover;
+    }
+    
+    .video-pip {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        width: 150px;
+        height: 100px;
+        border-radius: 10px;
+        border: 3px solid #fff;
+        object-fit: cover;
+    }
+    
+    .controls-panel {
+        background: white;
+        border-radius: 15px;
+        padding: 1.5rem;
+        box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        margin-top: 1rem;
+    }
+    
+    .control-btn {
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        border: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        margin: 0 5px;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    
+    .control-btn:hover {
+        transform: scale(1.1);
+    }
+    
+    .btn-mute {
+        background: #6c757d;
+        color: white;
+    }
+    
+    .btn-mute.active {
+        background: #dc3545;
+    }
+    
+    .btn-video {
+        background: #6c757d;
+        color: white;
+    }
+    
+    .btn-video.active {
+        background: #dc3545;
+    }
+    
+    .btn-end {
+        background: #dc3545;
+        color: white;
+    }
+    
+    .btn-screen-share {
+        background: #17a2b8;
+        color: white;
+    }
+    
+    .btn-record {
+        background: #ffc107;
+        color: #212529;
+    }
+    
+    .btn-ai-analysis {
+        background: #6f42c1;
+        color: white;
+    }
+    
+    .ai-analysis-panel {
+        background: white;
+        border-radius: 15px;
+        padding: 1.5rem;
+        margin-top: 1rem;
+        box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        display: none;
+    }
+    
+    .analysis-results {
+        background: #f8f9fa;
+        border-radius: 10px;
+        padding: 1rem;
+        margin-top: 1rem;
+    }
+    
+    .finding-item {
+        background: #e3f2fd;
+        border-left: 4px solid #2196f3;
+        padding: 0.5rem 1rem;
+        margin: 0.5rem 0;
+        border-radius: 4px;
+    }
+    
+    .recommendation-item {
+        background: #f3e5f5;
+        border-left: 4px solid #9c27b0;
+        padding: 0.5rem 1rem;
+        margin: 0.5rem 0;
+        border-radius: 4px;
+    }
+    
+    .image-upload-area {
+        border: 2px dashed #007bff;
+        border-radius: 10px;
+        padding: 2rem;
+        text-align: center;
+        margin: 1rem 0;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+    
+    .image-upload-area:hover {
+        background: #f8f9fa;
+        border-color: #0056b3;
+    }
+    
+    .image-upload-area.dragover {
+        background: #e3f2fd;
+        border-color: #2196f3;
+    }
+    
+    .screen-share-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.8);
+        z-index: 9999;
+        display: none;
+    }
+    
+    .screen-share-content {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: white;
+        border-radius: 15px;
+        padding: 2rem;
+        text-align: center;
+    }
+    
+    .recording-indicator {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        background: #dc3545;
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        font-size: 0.9rem;
+        display: none;
+    }
+    
+    .btn-chat {
+        background: #007bff;
+        color: white;
+    }
+    
+    .btn-screen {
+        background: #28a745;
+        color: white;
+    }
+    
+    .btn-record {
+        background: #ffc107;
+        color: #212529;
+    }
+    
+    .btn-record.recording {
+        background: #dc3545;
+        color: white;
+        animation: pulse 1s infinite;
+    }
+    
+    @keyframes pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.1); }
+        100% { transform: scale(1); }
+    }
+    
+    .chat-panel {
+        background: white;
+        border-radius: 15px;
+        height: 500px;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+    }
+    
+    .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1rem;
+        border-bottom: 1px solid #eee;
+    }
+    
+    .chat-input {
+        padding: 1rem;
+        border: none;
+        border-top: 1px solid #eee;
+        border-radius: 0 0 15px 15px;
+    }
+    
+    .message {
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: flex-start;
+    }
+    
+    .message.sent {
+        justify-content: flex-end;
+    }
+    
+    .message-content {
+        max-width: 70%;
+        padding: 0.75rem 1rem;
+        border-radius: 20px;
+        word-wrap: break-word;
+    }
+    
+    .message.received .message-content {
+        background: #f1f3f4;
+        color: #333;
+    }
+    
+    .message.sent .message-content {
+        background: #007bff;
+        color: white;
+    }
+    
+    .message-time {
+        font-size: 0.75rem;
+        color: #6c757d;
+        margin-top: 0.25rem;
+    }
+    
+    .ai-suggestions {
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        color: white;
+        border-radius: 15px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+    
+    .suggestion-item {
+        background: rgba(255,255,255,0.1);
+        border-radius: 10px;
+        padding: 0.75rem;
+        margin-bottom: 0.5rem;
+        cursor: pointer;
+        transition: background 0.3s ease;
+    }
+    
+    .suggestion-item:hover {
+        background: rgba(255,255,255,0.2);
+    }
+    
+    .vital-signs-panel {
+        background: white;
+        border-radius: 15px;
+        padding: 1.5rem;
+        box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+    }
+    
+    .vital-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid #eee;
+    }
+    
+    .vital-value {
+        font-weight: 600;
+        color: #2c3e50;
+    }
+    
+    .status-indicator {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 0.5rem;
+    }
+    
+    .status-online {
+        background: #28a745;
+    }
+    
+    .status-away {
+        background: #ffc107;
+    }
+    
+    .status-offline {
+        background: #dc3545;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="consultation-room">
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Main Video Area -->
+            <div class="col-lg-8">
+                <div class="video-container">
+                    <video id="remoteVideo" class="video-main" autoplay playsinline></video>
+                    <video id="localVideo" class="video-pip" autoplay playsinline muted></video>
+                    
+                    <!-- Connection Status -->
+                    <div class="position-absolute top-0 start-0 m-3">
+                        <span class="badge bg-success" id="connectionStatus">
+                            <span class="status-indicator status-online"></span>
+                            Connected
+                        </span>
+                    </div>
+                    
+                    <!-- Recording Indicator -->
+                    <div class="position-absolute top-0 start-50 translate-middle-x m-3" id="recordingIndicator" style="display: none;">
+                        <span class="badge bg-danger">
+                            <i class="bi bi-record-circle me-1"></i>
+                            Recording
+                        </span>
+                    </div>
+                </div>
+                
+                <!-- Controls -->
+                <div class="controls-panel">
+                    <div class="d-flex justify-content-center align-items-center">
+                        <button class="control-btn btn-mute" id="muteBtn" title="Mute/Unmute">
+                            <i class="bi bi-mic"></i>
+                        </button>
+                        <button class="control-btn btn-video" id="videoBtn" title="Turn Video On/Off">
+                            <i class="bi bi-camera-video"></i>
+                        </button>
+                        <button class="control-btn btn-screen" id="screenBtn" title="Share Screen">
+                            <i class="bi bi-laptop"></i>
+                        </button>
+                        <button class="control-btn btn-chat" id="chatBtn" title="Open Chat">
+                            <i class="bi bi-chat-dots"></i>
+                        </button>
+                        <button class="control-btn btn-record" id="recordBtn" title="Start/Stop Recording">
+                            <i class="bi bi-record-circle"></i>
+                        </button>
+                        <button class="control-btn btn-ai-analysis" id="aiAnalysisBtn" title="AI Image Analysis">
+                            <i class="bi bi-robot"></i>
+                        </button>
+                        <button class="control-btn btn-end" id="endBtn" title="End Consultation">
+                            <i class="bi bi-telephone-x"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- AI Analysis Panel -->
+                <div class="ai-analysis-panel" id="aiAnalysisPanel">
+                    <h5><i class="bi bi-robot me-2"></i>AI Image Analysis</h5>
+                    <p class="text-muted">Upload a medical image for AI-powered analysis and diagnosis assistance.</p>
+                    
+                    <div class="image-upload-area" id="imageUploadArea">
+                        <i class="bi bi-cloud-upload" style="font-size: 2rem; color: #007bff;"></i>
+                        <p>Drag & drop an image here or click to browse</p>
+                        <p class="small text-muted">Supported formats: JPEG, PNG, GIF, BMP, TIFF (Max 10MB)</p>
+                        <input type="file" id="imageFileInput" accept="image/*" style="display: none;">
+                    </div>
+                    
+                    <div class="analysis-results" id="analysisResults" style="display: none;">
+                        <h6>Analysis Results</h6>
+                        <div id="analysisContent"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Sidebar -->
+            <div class="col-lg-4">
+                <!-- AI Suggestions -->
+                <div class="ai-suggestions">
+                    <h6 class="mb-3">
+                        <i class="bi bi-robot me-2"></i>
+                        AI Suggestions
+                    </h6>
+                    <div class="suggestion-item" onclick="sendAISuggestion('Ask about symptoms')">
+                        <i class="bi bi-chat-quote me-2"></i>
+                        Ask about symptoms
+                    </div>
+                    <div class="suggestion-item" onclick="sendAISuggestion('Request vital signs')">
+                        <i class="bi bi-heart-pulse me-2"></i>
+                        Request vital signs
+                    </div>
+                    <div class="suggestion-item" onclick="sendAISuggestion('Suggest prescription')">
+                        <i class="bi bi-prescription me-2"></i>
+                        Suggest prescription
+                    </div>
+                </div>
+                
+                <!-- Chat Panel -->
+                <div class="chat-panel" id="chatPanel" style="display: none;">
+                    <div class="chat-messages" id="chatMessages">
+                        <!-- Messages will be loaded here -->
+                    </div>
+                    <div class="chat-input">
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="messageInput" placeholder="Type a message...">
+                            <button class="btn btn-primary" id="sendBtn">
+                                <i class="bi bi-send"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Vital Signs Panel -->
+                <div class="vital-signs-panel">
+                    <h6 class="mb-3">
+                        <i class="bi bi-heart-pulse me-2"></i>
+                        Vital Signs
+                    </h6>
+                    <div class="vital-item">
+                        <span>Blood Pressure</span>
+                        <span class="vital-value" id="bpValue">--/--</span>
+                    </div>
+                    <div class="vital-item">
+                        <span>Heart Rate</span>
+                        <span class="vital-value" id="hrValue">--</span>
+                    </div>
+                    <div class="vital-item">
+                        <span>Temperature</span>
+                        <span class="vital-value" id="tempValue">--°C</span>
+                    </div>
+                    <div class="vital-item">
+                        <span>Oxygen Saturation</span>
+                        <span class="vital-value" id="spo2Value">--%</span>
+                    </div>
+                    <div class="vital-item">
+                        <span>BMI</span>
+                        <span class="vital-value" id="bmiValue">--</span>
+                    </div>
+                    <button class="btn btn-outline-primary btn-sm w-100 mt-2" onclick="requestVitalSigns()">
+                        <i class="bi bi-plus-circle me-1"></i>
+                        Add Vital Signs
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // WebRTC Configuration
+    const configuration = {
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+        ]
+    };
+    
+    let localStream;
+    let remoteStream;
+    let peerConnection;
+    let isMuted = false;
+    let isVideoOn = true;
+    let isRecording = false;
+    let mediaRecorder;
+    let recordedChunks = [];
+    
+    // Initialize WebRTC
+    async function initWebRTC() {
+        try {
+            // Get user media
+            localStream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: true
+            });
+            
+            // Set local video
+            const localVideo = document.getElementById('localVideo');
+            localVideo.srcObject = localStream;
+            
+            // Create peer connection
+            peerConnection = new RTCPeerConnection(configuration);
+            
+            // Add local stream to peer connection
+            localStream.getTracks().forEach(track => {
+                peerConnection.addTrack(track, localStream);
+            });
+            
+            // Handle remote stream
+            peerConnection.ontrack = (event) => {
+                const remoteVideo = document.getElementById('remoteVideo');
+                remoteStream = event.streams[0];
+                remoteVideo.srcObject = remoteStream;
+            };
+            
+            // Handle ICE candidates
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    // Send ICE candidate to remote peer
+                    sendSignalingMessage({
+                        type: 'ice-candidate',
+                        candidate: event.candidate
+                    });
+                }
+            };
+            
+            // Start signaling
+            startSignaling();
+            
+        } catch (error) {
+            console.error('Error accessing media devices:', error);
+            alert('Error accessing camera and microphone. Please check permissions.');
+        }
+    }
+    
+    // Signaling (WebSocket or Server-Sent Events)
+    function startSignaling() {
+        // In a real implementation, you would use WebSockets or Server-Sent Events
+        // For now, we'll simulate the connection
+        updateConnectionStatus('Connected');
+    }
+    
+    function sendSignalingMessage(message) {
+        // Send signaling message to server
+        fetch(`/hms/telemedicine/signaling/${meetingRoomId}/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(message)
+        });
+    }
+    
+    // Control Functions
+    function toggleMute() {
+        if (localStream) {
+            const audioTrack = localStream.getAudioTracks()[0];
+            if (audioTrack) {
+                audioTrack.enabled = isMuted;
+                isMuted = !isMuted;
+                updateMuteButton();
+            }
+        }
+    }
+    
+    function toggleVideo() {
+        if (localStream) {
+            const videoTrack = localStream.getVideoTracks()[0];
+            if (videoTrack) {
+                videoTrack.enabled = isVideoOn;
+                isVideoOn = !isVideoOn;
+                updateVideoButton();
+            }
+        }
+    }
+    
+    function toggleScreenShare() {
+        // Implement screen sharing
+        navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: true
+        }).then(stream => {
+            const screenTrack = stream.getVideoTracks()[0];
+            const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender) {
+                sender.replaceTrack(screenTrack);
+            }
+        });
+    }
+    
+    function toggleChat() {
+        const chatPanel = document.getElementById('chatPanel');
+        chatPanel.style.display = chatPanel.style.display === 'none' ? 'block' : 'none';
+    }
+    
+    function toggleRecording() {
+        if (!isRecording) {
+            startRecording();
+        } else {
+            stopRecording();
+        }
+    }
+    
+    function startRecording() {
+        if (localStream) {
+            recordedChunks = [];
+            mediaRecorder = new MediaRecorder(localStream);
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                uploadRecording(blob);
+            };
+            mediaRecorder.start();
+            isRecording = true;
+            updateRecordButton();
+            document.getElementById('recordingIndicator').style.display = 'block';
+        }
+    }
+    
+    function stopRecording() {
+        if (mediaRecorder && isRecording) {
+            mediaRecorder.stop();
+            isRecording = false;
+            updateRecordButton();
+            document.getElementById('recordingIndicator').style.display = 'none';
+        }
+    }
+    
+    function uploadRecording(blob) {
+        const formData = new FormData();
+        formData.append('recording', blob);
+        formData.append('consultation_id', '{{ consultation.id }}');
+        
+        fetch('/hms/telemedicine/upload-recording/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: formData
+        });
+    }
+    
+    function endConsultation() {
+        if (confirm('Are you sure you want to end this consultation?')) {
+            fetch(`/hms/telemedicine/consultation/{{ consultation.id }}/end/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': getCookie('csrftoken')
+                }
+            }).then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.href = '/hms/telemedicine/';
+                }
+            });
+        }
+    }
+    
+    // Chat Functions
+    function sendMessage() {
+        const messageInput = document.getElementById('messageInput');
+        const message = messageInput.value.trim();
+        
+        if (message) {
+            fetch(`/hms/telemedicine/consultation/{{ consultation.id }}/send-message/`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: `content=GHS {encodeURIComponent(message)}&message_type=text`
+            }).then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    addMessageToChat(message, true);
+                    messageInput.value = '';
+                }
+            });
+        }
+    }
+    
+    function addMessageToChat(message, isSent) {
+        const chatMessages = document.getElementById('chatMessages');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message GHS {isSent ? 'sent' : 'received'}`;
+        
+        messageDiv.innerHTML = `
+            <div class="message-content">
+                GHS {message}
+                <div class="message-time">GHS {new Date().toLocaleTimeString()}</div>
+            </div>
+        `;
+        
+        chatMessages.appendChild(messageDiv);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+    
+    // AI Functions
+    function sendAISuggestion(suggestion) {
+        addMessageToChat(suggestion, true);
+        // Send to AI service for processing
+        fetch('/hms/telemedicine/ai/process-suggestion/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                suggestion: suggestion,
+                consultation_id: '{{ consultation.id }}'
+            })
+        });
+    }
+    
+    // AI Image Analysis Functions
+    function toggleAIAnalysis() {
+        const panel = document.getElementById('aiAnalysisPanel');
+        const btn = document.getElementById('aiAnalysisBtn');
+        
+        if (panel.style.display === 'none' || panel.style.display === '') {
+            panel.style.display = 'block';
+            btn.classList.add('active');
+        } else {
+            panel.style.display = 'none';
+            btn.classList.remove('active');
+        }
+    }
+    
+    function setupImageUpload() {
+        const uploadArea = document.getElementById('imageUploadArea');
+        const fileInput = document.getElementById('imageFileInput');
+        
+        uploadArea.addEventListener('click', () => fileInput.click());
+        
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleImageUpload(files[0]);
+            }
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleImageUpload(e.target.files[0]);
+            }
+        });
+    }
+    
+    function handleImageUpload(file) {
+        // Validate file
+        if (!file.type.startsWith('image/')) {
+            alert('Please select an image file.');
+            return;
+        }
+        
+        if (file.size > 10 * 1024 * 1024) {
+            alert('Image too large. Please select an image smaller than 10MB.');
+            return;
+        }
+        
+        // Show loading
+        const uploadArea = document.getElementById('imageUploadArea');
+        uploadArea.innerHTML = '<i class="bi bi-hourglass-split" style="font-size: 2rem;"></i><p>Analyzing image...</p>';
+        
+        // Upload and analyze
+        const formData = new FormData();
+        formData.append('image', file);
+        
+        fetch(`/hms/telemedicine/consultation/{{ consultation.id }}/ai-image-analysis/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                displayAnalysisResults(data.results);
+            } else {
+                alert('Analysis failed: ' + (data.error || 'Unknown error'));
+                resetUploadArea();
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Analysis failed. Please try again.');
+            resetUploadArea();
+        });
+    }
+    
+    function displayAnalysisResults(results) {
+        const analysisResults = document.getElementById('analysisResults');
+        const analysisContent = document.getElementById('analysisContent');
+        
+        let html = `
+            <div class="row">
+                <div class="col-md-6">
+                    <h6>Image Information</h6>
+                    <ul class="list-unstyled">
+                        <li><strong>Dimensions:</strong> GHS {results.image_info.width} x GHS {results.image_info.height}</li>
+                        <li><strong>Format:</strong> GHS {results.image_info.format}</li>
+                        <li><strong>Size:</strong> GHS {results.image_info.size_kb} KB</li>
+                        <li><strong>Mode:</strong> GHS {results.image_info.mode}</li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <h6>AI Analysis</h6>
+                    <ul class="list-unstyled">
+                        <li><strong>Confidence:</strong> GHS {Math.round(results.ai_analysis.confidence * 100)}%</li>
+                        <li><strong>Risk Level:</strong> <span class="badge bg-GHS {results.ai_analysis.risk_level === 'high' ? 'danger' : results.ai_analysis.risk_level === 'medium' ? 'warning' : 'success'}">GHS {results.ai_analysis.risk_level}</span></li>
+                    </ul>
+                </div>
+            </div>
+        `;
+        
+        if (results.ai_analysis.findings.length > 0) {
+            html += '<h6 class="mt-3">Findings</h6>';
+            results.ai_analysis.findings.forEach(finding => {
+                html += `<div class="finding-item">GHS {finding}</div>`;
+            });
+        }
+        
+        if (results.ai_analysis.recommendations.length > 0) {
+            html += '<h6 class="mt-3">Recommendations</h6>';
+            results.ai_analysis.recommendations.forEach(rec => {
+                html += `<div class="recommendation-item">GHS {rec}</div>`;
+            });
+        }
+        
+        analysisContent.innerHTML = html;
+        analysisResults.style.display = 'block';
+        resetUploadArea();
+    }
+    
+    function resetUploadArea() {
+        const uploadArea = document.getElementById('imageUploadArea');
+        uploadArea.innerHTML = `
+            <i class="bi bi-cloud-upload" style="font-size: 2rem; color: #007bff;"></i>
+            <p>Drag & drop an image here or click to browse</p>
+            <p class="small text-muted">Supported formats: JPEG, PNG, GIF, BMP, TIFF (Max 10MB)</p>
+            <input type="file" id="imageFileInput" accept="image/*" style="display: none;">
+        `;
+        setupImageUpload();
+    }
+    
+    // Screen sharing functions
+    function toggleScreenShare() {
+        if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+            navigator.mediaDevices.getDisplayMedia({ video: true })
+                .then(stream => {
+                    const video = document.getElementById('remoteVideo');
+                    video.srcObject = stream;
+                    video.style.display = 'block';
+                    
+                    // Show screen share overlay
+                    const overlay = document.createElement('div');
+                    overlay.className = 'screen-share-overlay';
+                    overlay.innerHTML = `
+                        <div class="screen-share-content">
+                            <h5>Screen Sharing Active</h5>
+                            <p>Your screen is being shared with the patient.</p>
+                            <button class="btn btn-danger" onclick="stopScreenShare()">Stop Sharing</button>
+                        </div>
+                    `;
+                    document.body.appendChild(overlay);
+                    overlay.style.display = 'block';
+                })
+                .catch(err => {
+                    console.error('Error accessing screen share:', err);
+                    alert('Screen sharing not supported or denied.');
+                });
+        } else {
+            alert('Screen sharing not supported in this browser.');
+        }
+    }
+    
+    function stopScreenShare() {
+        const overlay = document.querySelector('.screen-share-overlay');
+        if (overlay) {
+            overlay.remove();
+        }
+        
+        const video = document.getElementById('remoteVideo');
+        if (video.srcObject) {
+            video.srcObject.getTracks().forEach(track => track.stop());
+            video.srcObject = null;
+            video.style.display = 'none';
+        }
+    }
+    
+    // Recording functions
+    let isRecording = false;
+    let mediaRecorder;
+    
+    function toggleRecording() {
+        if (!isRecording) {
+            startRecording();
+        } else {
+            stopRecording();
+        }
+    }
+    
+    function startRecording() {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+                .then(stream => {
+                    mediaRecorder = new MediaRecorder(stream);
+                    const chunks = [];
+                    
+                    mediaRecorder.ondataavailable = (e) => {
+                        chunks.push(e.data);
+                    };
+                    
+                    mediaRecorder.onstop = () => {
+                        const blob = new Blob(chunks, { type: 'video/webm' });
+                        // Here you would typically upload the recording to the server
+                        console.log('Recording saved:', blob);
+                    };
+                    
+                    mediaRecorder.start();
+                    isRecording = true;
+                    
+                    const recordBtn = document.getElementById('recordBtn');
+                    recordBtn.classList.add('active');
+                    recordBtn.innerHTML = '<i class="bi bi-stop-circle"></i>';
+                    
+                    // Show recording indicator
+                    const indicator = document.createElement('div');
+                    indicator.className = 'recording-indicator';
+                    indicator.innerHTML = '<i class="bi bi-record-circle me-1"></i>Recording';
+                    indicator.id = 'recordingIndicator';
+                    document.querySelector('.video-container').appendChild(indicator);
+                    indicator.style.display = 'block';
+                })
+                .catch(err => {
+                    console.error('Error accessing media:', err);
+                    alert('Recording not supported or denied.');
+                });
+        } else {
+            alert('Recording not supported in this browser.');
+        }
+    }
+    
+    function stopRecording() {
+        if (mediaRecorder && isRecording) {
+            mediaRecorder.stop();
+            isRecording = false;
+            
+            const recordBtn = document.getElementById('recordBtn');
+            recordBtn.classList.remove('active');
+            recordBtn.innerHTML = '<i class="bi bi-record-circle"></i>';
+            
+            const indicator = document.getElementById('recordingIndicator');
+            if (indicator) {
+                indicator.remove();
+            }
+        }
+    }
+    
+    function requestVitalSigns() {
+        // Open vital signs input modal
+        // This would open a modal for entering vital signs
+        alert('Vital signs input modal would open here');
+    }
+    
+    // Update Functions
+    function updateMuteButton() {
+        const muteBtn = document.getElementById('muteBtn');
+        muteBtn.classList.toggle('active', isMuted);
+        muteBtn.innerHTML = `<i class="bi bi-GHS {isMuted ? 'mic-mute' : 'mic'}"></i>`;
+    }
+    
+    function updateVideoButton() {
+        const videoBtn = document.getElementById('videoBtn');
+        videoBtn.classList.toggle('active', !isVideoOn);
+        videoBtn.innerHTML = `<i class="bi bi-GHS {isVideoOn ? 'camera-video' : 'camera-video-off'}"></i>`;
+    }
+    
+    function updateRecordButton() {
+        const recordBtn = document.getElementById('recordBtn');
+        recordBtn.classList.toggle('recording', isRecording);
+        recordBtn.innerHTML = `<i class="bi bi-GHS {isRecording ? 'stop-circle' : 'record-circle'}"></i>`;
+    }
+    
+    function updateConnectionStatus(status) {
+        const statusElement = document.getElementById('connectionStatus');
+        statusElement.textContent = status;
+    }
+    
+    // Utility Functions
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+    
+    // Event Listeners
+    document.getElementById('muteBtn').addEventListener('click', toggleMute);
+    document.getElementById('videoBtn').addEventListener('click', toggleVideo);
+    document.getElementById('screenBtn').addEventListener('click', toggleScreenShare);
+    document.getElementById('chatBtn').addEventListener('click', toggleChat);
+    document.getElementById('recordBtn').addEventListener('click', toggleRecording);
+    document.getElementById('aiAnalysisBtn').addEventListener('click', toggleAIAnalysis);
+    document.getElementById('endBtn').addEventListener('click', endConsultation);
+    document.getElementById('sendBtn').addEventListener('click', sendMessage);
+    document.getElementById('messageInput').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            sendMessage();
+        }
+    });
+    
+    // Initialize when page loads
+    document.addEventListener('DOMContentLoaded', function() {
+        initWebRTC();
+        setupImageUpload();
+    });
+    
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', () => {
+        if (localStream) {
+            localStream.getTracks().forEach(track => track.stop());
+        }
+        if (peerConnection) {
+            peerConnection.close();
+        }
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,273 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Verify Payment - Pharmacy{% endblock %}
+
+{% block extra_css %}
+<style>
+    .receipt-scanner {
+        background: #f8f9fa;
+        border: 2px dashed #17a2b8;
+        border-radius: 12px;
+        padding: 2rem;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .verification-form {
+        background: white;
+        border-radius: 12px;
+        padding: 2rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .payment-status {
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 2rem;
+    }
+    .payment-status.pending {
+        background: #fff3cd;
+        border-left: 4px solid #ffc107;
+    }
+    .payment-status.verified {
+        background: #d1e7dd;
+        border-left: 4px solid #28a745;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'hospital:payment_verification_dashboard' %}">Payment Verification</a></li>
+            <li class="breadcrumb-item active">Verify Pharmacy Payment</li>
+        </ol>
+    </nav>
+    
+    <h2><i class="bi bi-shield-check"></i> {{ title }}</h2>
+    
+    <div class="row mt-4">
+        <div class="col-md-8">
+            <!-- Prescription Details -->
+            <div class="card mb-4">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0"><i class="bi bi-capsule"></i> Prescription Details</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <p><strong>Drug Name:</strong> {{ prescription.drug.name }}</p>
+                            <p><strong>Patient:</strong> {{ patient.full_name }}</p>
+                            <p><strong>MRN:</strong> {{ patient.mrn }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <p><strong>Dosage:</strong> {{ prescription.dosage }}</p>
+                            <p><strong>Frequency:</strong> {{ prescription.frequency }}</p>
+                            <p><strong>Duration:</strong> {{ prescription.duration }}</p>
+                        </div>
+                    </div>
+                    {% if prescription.instructions %}
+                    <div class="alert alert-info mt-2">
+                        <strong>Doctor's Instructions:</strong><br>
+                        {{ prescription.instructions }}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <!-- Payment Status -->
+            <div class="payment-status {% if dispensing_record.payment_receipt %}verified{% else %}pending{% endif %}">
+                <h5>
+                    {% if dispensing_record.payment_receipt %}
+                        <i class="bi bi-check-circle"></i> Payment Verified
+                    {% else %}
+                        <i class="bi bi-exclamation-triangle"></i> Payment Required
+                    {% endif %}
+                </h5>
+                {% if dispensing_record.payment_receipt %}
+                    <p class="mb-0">
+                        Receipt: <strong>{{ dispensing_record.payment_receipt.receipt_number }}</strong><br>
+                        Verified by: {{ dispensing_record.payment_verified_by.get_full_name }}<br>
+                        Verified at: {{ dispensing_record.payment_verified_at|date:"M d, Y h:i A" }}
+                    </p>
+                {% else %}
+                    <p class="mb-0">Patient must pay at cashier before medication can be dispensed.</p>
+                {% endif %}
+            </div>
+            
+            <!-- Receipt Verification Form -->
+            {% if not dispensing_record.payment_receipt %}
+            <div class="verification-form">
+                <h5><i class="bi bi-receipt"></i> Verify Payment & Dispense Medication</h5>
+                
+                <!-- QR Scanner Section -->
+                <div class="receipt-scanner mb-4">
+                    <i class="bi bi-qr-code-scan" style="font-size: 3rem; color: #17a2b8;"></i>
+                    <h6 class="mt-3">Scan Receipt QR Code</h6>
+                    <button type="button" class="btn btn-info mt-2" id="openScanner">
+                        <i class="bi bi-camera"></i> Open QR Scanner
+                    </button>
+                    <p class="text-muted mt-2 mb-0">Or enter receipt number manually below</p>
+                </div>
+                
+                <form method="post">
+                    {% csrf_token %}
+                    
+                    <div class="mb-3">
+                        <label class="form-label"><strong>Receipt Number</strong></label>
+                        <input type="text" name="receipt_number" class="form-control form-control-lg" 
+                               placeholder="RCP20251106123456" required id="receiptNumberInput">
+                        <small class="text-muted">Enter the receipt number from cashier payment</small>
+                    </div>
+                    
+                    <hr>
+                    
+                    <h6 class="mb-3">Dispensing Information</h6>
+                    
+                    <div class="mb-3">
+                        <label class="form-label"><strong>Quantity to Dispense</strong></label>
+                        <input type="number" name="quantity" class="form-control" 
+                               value="{{ dispensing_record.quantity_ordered }}" min="1" required>
+                        <small class="text-muted">Ordered: {{ dispensing_record.quantity_ordered }}</small>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label"><strong>Dispensing Instructions</strong></label>
+                        <textarea name="instructions" class="form-control" rows="3" 
+                                  placeholder="e.g., Take 1 tablet twice daily after meals">{{ prescription.instructions }}</textarea>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="counselling_given" id="counsellingCheck">
+                            <label class="form-check-label" for="counsellingCheck">
+                                <strong>Patient Counselling Given</strong> (Medication usage explained)
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Notes (Optional)</label>
+                        <textarea name="notes" class="form-control" rows="2"></textarea>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-success btn-lg w-100">
+                        <i class="bi bi-check-circle"></i> Verify Payment & Dispense Medication
+                    </button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card bg-light">
+                <div class="card-body">
+                    <h6><i class="bi bi-info-circle"></i> Pharmacy Dispensing Protocol</h6>
+                    <ol>
+                        <li>Patient receives prescription from doctor</li>
+                        <li>Patient goes to <strong>Cashier</strong> to pay</li>
+                        <li>Cashier collects payment and issues <strong>receipt</strong></li>
+                        <li>Patient brings receipt to <strong>Pharmacy</strong></li>
+                        <li>Pharmacy scans receipt QR or enters number</li>
+                        <li>System verifies payment</li>
+                        <li>Pharmacy dispenses medication</li>
+                        <li>Pharmacy counsels patient on usage</li>
+                    </ol>
+                    
+                    <div class="alert alert-danger mt-3">
+                        <strong><i class="bi bi-shield-exclamation"></i> CRITICAL:</strong>
+                        Do NOT dispense medication without valid payment receipt!
+                    </div>
+                    
+                    <div class="alert alert-info mt-3">
+                        <strong><i class="bi bi-lightbulb"></i> Tip:</strong>
+                        Always provide patient counselling about medication usage, side effects, and storage.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- QR Scanner Modal -->
+<div class="modal fade" id="qrScannerModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-info text-white">
+                <h5 class="modal-title"><i class="bi bi-qr-code-scan"></i> Scan Receipt QR Code</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="qr-reader" style="width: 100%;"></div>
+                <div id="qr-reader-results" class="mt-3"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script>
+    const openScannerBtn = document.getElementById('openScanner');
+    const receiptNumberInput = document.getElementById('receiptNumberInput');
+    let html5QrcodeScanner = null;
+    
+    if (openScannerBtn) {
+        openScannerBtn.addEventListener('click', function() {
+            const modal = new bootstrap.Modal(document.getElementById('qrScannerModal'));
+            modal.show();
+            
+            // Initialize scanner
+            setTimeout(() => {
+                if (!html5QrcodeScanner) {
+                    html5QrcodeScanner = new Html5QrcodeScanner(
+                        "qr-reader",
+                        { fps: 10, qrbox: {width: 250, height: 250} },
+                        false
+                    );
+                    
+                    html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+                }
+            }, 300);
+        });
+    }
+    
+    function onScanSuccess(decodedText, decodedResult) {
+        console.log(`Code matched = GHS {decodedText}`, decodedResult);
+        
+        // Extract receipt number
+        if (decodedText.startsWith('RECEIPT:')) {
+            const receiptNumber = decodedText.replace('RECEIPT:', '');
+            receiptNumberInput.value = receiptNumber;
+            
+            // Close modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('qrScannerModal'));
+            modal.hide();
+            
+            // Show success message
+            const resultsDiv = document.getElementById('qr-reader-results');
+            resultsDiv.innerHTML = `<div class="alert alert-success">Receipt GHS {receiptNumber} scanned successfully!</div>`;
+        } else {
+            alert('Invalid QR code format. Please scan a valid receipt QR code.');
+        }
+    }
+    
+    function onScanFailure(error) {
+        // Handle scan failure silently
+    }
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+

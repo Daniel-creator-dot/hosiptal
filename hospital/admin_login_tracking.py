@@ -1,0 +1,100 @@
+"""
+Login Tracking Admin
+"""
+from django.contrib import admin
+from .models_login_tracking import LoginHistory, SecurityAlert, TrustedLocation, TrustedDevice
+
+
+@admin.register(LoginHistory)
+class LoginHistoryAdmin(admin.ModelAdmin):
+    list_display = ['user', 'login_time', 'ip_address', 'city', 'country', 'device_type', 'browser', 'status', 'is_suspicious']
+    list_filter = ['status', 'is_suspicious', 'is_new_location', 'device_type', 'country', 'login_time']
+    search_fields = ['user__username', 'user__first_name', 'user__last_name', 'ip_address', 'city', 'country']
+    readonly_fields = ['created', 'modified', 'login_time', 'logout_time']
+    date_hierarchy = 'login_time'
+    
+    fieldsets = (
+        ('User & Session', {
+            'fields': ('user', 'staff', 'login_time', 'logout_time', 'session_key', 'status')
+        }),
+        ('Location', {
+            'fields': ('ip_address', 'city', 'region', 'country', 'country_code', 'latitude', 'longitude', 'timezone_name')
+        }),
+        ('Network', {
+            'fields': ('isp', 'organization')
+        }),
+        ('Device', {
+            'fields': ('browser', 'browser_version', 'os', 'os_version', 'device_type', 'device_name', 'user_agent')
+        }),
+        ('Security', {
+            'fields': ('is_suspicious', 'is_new_location', 'is_new_device', 'failure_reason')
+        }),
+        ('Raw Data', {
+            'fields': ('geo_api_response', 'notes'),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def has_add_permission(self, request):
+        # Login history should only be created by system
+        return False
+
+
+@admin.register(SecurityAlert)
+class SecurityAlertAdmin(admin.ModelAdmin):
+    list_display = ['user', 'alert_type', 'severity', 'alert_time', 'location', 'is_resolved']
+    list_filter = ['alert_type', 'severity', 'is_resolved', 'alert_time']
+    search_fields = ['user__username', 'description', 'location']
+    readonly_fields = ['created', 'modified', 'alert_time', 'resolved_at']
+    date_hierarchy = 'alert_time'
+    
+    fieldsets = (
+        ('Alert Info', {
+            'fields': ('user', 'login_history', 'alert_time', 'alert_type', 'severity')
+        }),
+        ('Details', {
+            'fields': ('description', 'ip_address', 'location')
+        }),
+        ('Resolution', {
+            'fields': ('is_resolved', 'resolved_by', 'resolved_at', 'resolution_notes')
+        }),
+        ('Notification', {
+            'fields': ('notification_sent',)
+        })
+    )
+    
+    actions = ['mark_resolved']
+    
+    def mark_resolved(self, request, queryset):
+        for alert in queryset:
+            alert.is_resolved = True
+            alert.resolved_by = request.user
+            alert.resolved_at = timezone.now()
+            alert.save()
+        self.message_user(request, f"{queryset.count()} alert(s) marked as resolved.")
+    mark_resolved.short_description = "Mark selected alerts as resolved"
+
+
+@admin.register(TrustedLocation)
+class TrustedLocationAdmin(admin.ModelAdmin):
+    list_display = ['user', 'location_name', 'city', 'country', 'is_active', 'last_used']
+    list_filter = ['is_active', 'country']
+    search_fields = ['user__username', 'location_name', 'city', 'country']
+    readonly_fields = ['created', 'modified', 'last_used']
+
+
+@admin.register(TrustedDevice)
+class TrustedDeviceAdmin(admin.ModelAdmin):
+    list_display = ['user', 'device_name', 'os', 'browser', 'device_type', 'is_active', 'last_seen']
+    list_filter = ['is_active', 'device_type', 'os']
+    search_fields = ['user__username', 'device_name', 'device_fingerprint']
+    readonly_fields = ['created', 'modified', 'first_seen', 'last_seen', 'device_fingerprint']
+
+
+
+
+
+
+
+
+

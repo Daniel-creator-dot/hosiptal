@@ -1,0 +1,316 @@
+"""
+IMPROVED Pharmacy Payment Verification System
+Simplified workflow for better usability
+"""
+from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib.auth.decorators import login_required
+from django.contrib import messages
+from django.http import JsonResponse
+from django.utils import timezone
+from django.db.models import Q
+from decimal import Decimal
+import logging
+
+from .models import Prescription, Patient, Staff, Drug
+from .models_payment_verification import PharmacyDispensing
+from .models_accounting import PaymentReceipt
+
+logger = logging.getLogger(__name__)
+
+
+@login_required
+def pharmacy_quick_payment(request, prescription_id):
+    """
+    SIMPLIFIED: One-click payment and dispensing for pharmacy
+    Combines payment recording + dispensing in one smooth flow
+    """
+    prescription = get_object_or_404(Prescription, id=prescription_id, is_deleted=False)
+    patient = prescription.order.encounter.patient
+    drug = prescription.drug
+    
+    # Calculate total cost
+    unit_price = getattr(drug, 'unit_price', Decimal('0.00'))
+    total_cost = unit_price * prescription.quantity
+    
+    # Get or create dispensing record
+    from .services.auto_billing_service import AutoBillingService
+    billing_result = AutoBillingService.create_pharmacy_bill(prescription)
+    
+    try:
+        dispensing_record = prescription.dispensing_record
+    except:
+        dispensing_record = None
+    
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        
+        if action == 'record_payment':
+            # Record payment
+            try:
+                amount_paid = Decimal(request.POST.get('amount_paid', str(total_cost)))
+                payment_method = request.POST.get('payment_method', 'cash')
+                
+                # Get current staff
+                try:
+                    staff = Staff.objects.get(user=request.user, is_active=True)
+                except Staff.DoesNotExist:
+                    staff = None
+                
+                # Create payment receipt
+                receipt = PaymentReceipt.objects.create(
+                    patient=patient,
+                    amount=amount_paid,
+                    payment_method=payment_method,
+                    payment_type='pharmacy',
+                    received_by=staff,
+                    notes=f"Pharmacy: {drug.name} x{prescription.quantity} (Prescription #{prescription.id})"
+                )
+                
+                # Link receipt to dispensing record
+                if dispensing_record:
+                    dispensing_record.payment_receipt = receipt
+                    dispensing_record.payment_verified_at = timezone.now()
+                    dispensing_record.payment_verified_by = request.user
+                    dispensing_record.dispensing_status = 'ready_to_dispense'
+                    dispensing_record.save()
+                    
+                    messages.success(
+                        request,
+                        f'✅ Payment received: GHS {amount_paid}. Receipt: {receipt.receipt_number}. '
+                        f'Ready to dispense!'
+                    )
+                else:
+                    messages.success(
+                        request,
+                        f'✅ Payment received: GHS {amount_paid}. Receipt: {receipt.receipt_number}.'
+                    )
+                
+                # If user wants to dispense immediately
+                if request.POST.get('dispense_now') == 'yes':
+                    return redirect('hospital:pharmacy_quick_dispense', prescription_id=prescription.id)
+                
+                return redirect('hospital:pharmacy_pending_dispensing')
+                
+            except Exception as e:
+                logger.error(f"Error recording payment: {str(e)}", exc_info=True)
+                messages.error(request, f'❌ Error recording payment: {str(e)}')
+        
+        elif action == 'mark_paid':
+            # Mark as paid without creating new receipt (if already paid elsewhere)
+            try:
+                receipt_number = request.POST.get('receipt_number', '')
+                
+                # Find existing receipt
+                receipt = PaymentReceipt.objects.filter(
+                    Q(receipt_number=receipt_number) | Q(patient=patient),
+                    is_deleted=False
+                ).order_by('-created').first()
+                
+                if receipt and dispensing_record:
+                    dispensing_record.payment_receipt = receipt
+                    dispensing_record.payment_verified_at = timezone.now()
+                    dispensing_record.payment_verified_by = request.user
+                    dispensing_record.dispensing_status = 'ready_to_dispense'
+                    dispensing_record.save()
+                    
+                    messages.success(
+                        request,
+                        f'✅ Payment verified with receipt {receipt.receipt_number}. Ready to dispense!'
+                    )
+                else:
+                    messages.error(request, '❌ Receipt not found. Please record payment first.')
+                
+                return redirect('hospital:pharmacy_pending_dispensing')
+                
+            except Exception as e:
+                logger.error(f"Error marking as paid: {str(e)}", exc_info=True)
+                messages.error(request, f'❌ Error: {str(e)}')
+    
+    # Check existing payments
+    existing_receipts = PaymentReceipt.objects.filter(
+        patient=patient,
+        payment_type='pharmacy',
+        is_deleted=False
+    ).order_by('-created')[:5]
+    
+    context = {
+        'title': f'Payment - {drug.name}',
+        'prescription': prescription,
+        'patient': patient,
+        'drug': drug,
+        'unit_price': unit_price,
+        'total_cost': total_cost,
+        'dispensing_record': dispensing_record,
+        'existing_receipts': existing_receipts,
+    }
+    return render(request, 'hospital/pharmacy_quick_payment.html', context)
+
+
+@login_required
+def pharmacy_quick_dispense(request, prescription_id):
+    """
+    SIMPLIFIED: Quick dispense after payment verified
+    """
+    prescription = get_object_or_404(Prescription, id=prescription_id, is_deleted=False)
+    patient = prescription.order.encounter.patient
+    drug = prescription.drug
+    
+    # Get dispensing record
+    try:
+        dispensing_record = prescription.dispensing_record
+    except:
+        messages.error(request, '❌ No dispensing record found. Create bill first.')
+        return redirect('hospital:pharmacy_pending_dispensing')
+    
+    # Check payment
+    if not dispensing_record.can_dispense():
+        messages.error(
+            request,
+            f'❌ PAYMENT REQUIRED! Patient must pay first. Status: {dispensing_record.get_dispensing_status_display()}'
+        )
+        return redirect('hospital:pharmacy_quick_payment', prescription_id=prescription.id)
+    
+    if request.method == 'POST':
+        try:
+            # Get current staff
+            try:
+                staff = Staff.objects.get(user=request.user, is_active=True)
+            except Staff.DoesNotExist:
+                staff = None
+            
+            # Get dispensing details
+            quantity = int(request.POST.get('quantity', prescription.quantity))
+            instructions = request.POST.get('instructions', f"{prescription.dose}, {prescription.frequency}, {prescription.duration}")
+            counselling_given = request.POST.get('counselling_given') == 'on'
+            notes = request.POST.get('notes', '')
+            
+            # Mark as dispensed
+            dispensing_record.mark_dispensed(
+                user=request.user,
+                quantity=quantity,
+                instructions=instructions,
+                notes=notes
+            )
+            
+            dispensing_record.counselling_given = counselling_given
+            if staff:
+                dispensing_record.counselled_by = staff
+                dispensing_record.dispensed_by = staff
+            dispensing_record.dispensed_at = timezone.now()
+            dispensing_record.save()
+            
+            # Reduce stock
+            try:
+                from .models import PharmacyStock
+                from django.db.models import F
+                
+                # Reduce stock (FIFO)
+                stocks = PharmacyStock.objects.filter(
+                    drug=drug,
+                    quantity_on_hand__gt=0,
+                    is_deleted=False
+                ).order_by('expiry_date')
+                
+                remaining_qty = quantity
+                for stock in stocks:
+                    if remaining_qty <= 0:
+                        break
+                    
+                    if stock.quantity_on_hand >= remaining_qty:
+                        stock.quantity_on_hand = F('quantity_on_hand') - remaining_qty
+                        stock.save()
+                        remaining_qty = 0
+                    else:
+                        remaining_qty -= stock.quantity_on_hand
+                        stock.quantity_on_hand = 0
+                        stock.save()
+                
+                if remaining_qty > 0:
+                    messages.warning(request, f'⚠️ Insufficient stock. Short by {remaining_qty} units.')
+                    
+            except Exception as e:
+                logger.error(f"Error reducing stock: {str(e)}")
+            
+            # Send SMS
+            if patient.phone_number:
+                try:
+                    from .services.sms_service import sms_service
+                    message = (
+                        f"Your medication {drug.name} x{quantity} has been dispensed. "
+                        f"Instructions: {instructions}. PrimeCare Medical"
+                    )
+                    sms_service.send_sms(
+                        phone_number=patient.phone_number,
+                        message=message,
+                        message_type='pharmacy_dispensing'
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending SMS: {str(e)}")
+            
+            messages.success(
+                request,
+                f'✅ Medication dispensed to {patient.full_name}! '
+                f'Receipt: {dispensing_record.payment_receipt.receipt_number}'
+            )
+            
+            return redirect('hospital:pharmacy_pending_dispensing')
+            
+        except Exception as e:
+            logger.error(f"Error dispensing: {str(e)}", exc_info=True)
+            messages.error(request, f'❌ Error: {str(e)}')
+    
+    context = {
+        'title': f'Dispense - {drug.name}',
+        'prescription': prescription,
+        'patient': patient,
+        'drug': drug,
+        'dispensing_record': dispensing_record,
+    }
+    return render(request, 'hospital/pharmacy_quick_dispense.html', context)
+
+
+@login_required
+def pharmacy_payment_status_check(request, prescription_id):
+    """
+    API endpoint to check payment status
+    """
+    try:
+        prescription = Prescription.objects.get(id=prescription_id, is_deleted=False)
+        
+        try:
+            dispensing_record = prescription.dispensing_record
+            has_payment = dispensing_record.payment_receipt is not None
+            
+            return JsonResponse({
+                'success': True,
+                'paid': has_payment,
+                'status': dispensing_record.dispensing_status,
+                'status_display': dispensing_record.get_dispensing_status_display(),
+                'can_dispense': dispensing_record.can_dispense(),
+                'receipt_number': dispensing_record.payment_receipt.receipt_number if has_payment else None,
+                'amount': str(dispensing_record.payment_receipt.amount) if has_payment else None,
+            })
+        except:
+            return JsonResponse({
+                'success': True,
+                'paid': False,
+                'status': 'pending_payment',
+                'status_display': 'Pending Payment',
+                'can_dispense': False,
+                'message': 'No dispensing record found'
+            })
+            
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+
+
+
+
+
+
+

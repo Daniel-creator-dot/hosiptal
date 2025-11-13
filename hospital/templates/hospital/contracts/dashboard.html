@@ -1,0 +1,267 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block extra_css %}
+<style>
+    .contracts-header {
+        background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 40px;
+        margin-bottom: 32px;
+        box-shadow: 0 8px 32px rgba(8, 145, 178, 0.2);
+    }
+    
+    .stat-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin-bottom: 32px;
+    }
+    
+    .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 24px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+        transition: all 0.3s ease;
+    }
+    
+    .stat-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    }
+    
+    .stat-value {
+        font-size: 32px;
+        font-weight: 700;
+        margin-bottom: 8px;
+    }
+    
+    .stat-label {
+        font-size: 14px;
+        color: #6b7280;
+    }
+    
+    .expiry-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 16px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        border-left: 4px solid #f59e0b;
+        transition: all 0.3s ease;
+    }
+    
+    .expiry-card:hover {
+        transform: translateX(4px);
+    }
+    
+    .expiry-card.critical {
+        border-left-color: #ef4444;
+        background: #fef2f2;
+    }
+    
+    .expiry-card.warning {
+        border-left-color: #f59e0b;
+        background: #fffbeb;
+    }
+    
+    .expiry-card.info {
+        border-left-color: #3b82f6;
+        background: #eff6ff;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="contracts-header">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1 class="mb-2"><i class="bi bi-file-earmark-text me-3"></i>Contracts & Certificates Management</h1>
+                <p class="mb-0" style="opacity: 0.9;">Track all contracts, agreements, and certificates with automatic expiry alerts</p>
+            </div>
+            <div class="d-flex gap-2">
+                <a href="{% url 'hospital:contract_create' %}" class="btn btn-light btn-lg">
+                    <i class="bi bi-plus-circle me-2"></i>New Contract
+                </a>
+                <a href="{% url 'hospital:certificate_create' %}" class="btn btn-outline-light btn-lg">
+                    <i class="bi bi-award me-2"></i>New Certificate
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Contract Statistics -->
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <h5 class="mb-3"><i class="bi bi-file-earmark-text me-2"></i>Contracts Overview</h5>
+        </div>
+    </div>
+    <div class="stat-cards">
+        <div class="stat-card">
+            <div class="stat-value" style="color: #0891b2;">{{ contract_stats.total_contracts }}</div>
+            <div class="stat-label">Total Contracts</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: #10b981;">{{ contract_stats.active_contracts }}</div>
+            <div class="stat-label">Active Contracts</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: #f59e0b;">{{ contract_stats.expiring_soon }}</div>
+            <div class="stat-label">Expiring Soon</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: #ef4444;">{{ contract_stats.expired }}</div>
+            <div class="stat-label">Expired</div>
+        </div>
+    </div>
+    
+    <!-- Certificate Statistics -->
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <h5 class="mb-3"><i class="bi bi-award me-2"></i>Certificates Overview</h5>
+        </div>
+    </div>
+    <div class="stat-cards">
+        <div class="stat-card">
+            <div class="stat-value" style="color: #0891b2;">{{ certificate_stats.total_certificates }}</div>
+            <div class="stat-label">Total Certificates</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: #10b981;">{{ certificate_stats.valid_certificates }}</div>
+            <div class="stat-label">Valid Certificates</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: #f59e0b;">{{ certificate_stats.expiring_soon }}</div>
+            <div class="stat-label">Expiring Soon</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: #ef4444;">{{ certificate_stats.expired }}</div>
+            <div class="stat-label">Expired</div>
+        </div>
+    </div>
+    
+    <!-- Expiring Contracts Alert -->
+    {% if contracts_expiring %}
+    <div style="background: white; border-radius: 16px; padding: 32px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 32px;">
+        <h4 class="mb-4">
+            <i class="bi bi-exclamation-triangle-fill me-2" style="color: #f59e0b;"></i>
+            Contracts Expiring in Next 30 Days
+        </h4>
+        
+        {% for contract in contracts_expiring %}
+        <div class="expiry-card {% if contract.days_until_expiry <= 7 %}critical{% elif contract.days_until_expiry <= 14 %}warning{% else %}info{% endif %}">
+            <div class="row align-items-center">
+                <div class="col-md-5">
+                    <h6 class="mb-1" style="font-weight: 600;">{{ contract.contract_name }}</h6>
+                    <div style="font-size: 13px; color: #6b7280;">
+                        {{ contract.company_name }} | {{ contract.category.name }}
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div style="font-size: 13px; color: #6b7280;">
+                        <strong>Contract #:</strong> {{ contract.contract_number }}
+                    </div>
+                    <div style="font-size: 13px; color: #6b7280;">
+                        <strong>Expires:</strong> {{ contract.end_date|date:"M d, Y" }}
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <span class="badge {% if contract.days_until_expiry <= 7 %}bg-danger{% elif contract.days_until_expiry <= 14 %}bg-warning{% else %}bg-info{% endif %}" style="font-size: 14px; padding: 8px 12px;">
+                        {{ contract.days_until_expiry }} day(s) left
+                    </span>
+                </div>
+                <div class="col-md-2 text-end">
+                    <a href="{% url 'hospital:contract_detail' contract.pk %}" class="btn btn-sm btn-outline-primary">
+                        View Details
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    
+    <!-- Expiring Certificates Alert -->
+    {% if certificates_expiring %}
+    <div style="background: white; border-radius: 16px; padding: 32px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 32px;">
+        <h4 class="mb-4">
+            <i class="bi bi-award me-2" style="color: #f59e0b;"></i>
+            Certificates Expiring in Next 60 Days
+        </h4>
+        
+        {% for cert in certificates_expiring %}
+        <div class="expiry-card {% if cert.days_until_expiry <= 14 %}critical{% elif cert.days_until_expiry <= 30 %}warning{% else %}info{% endif %}">
+            <div class="row align-items-center">
+                <div class="col-md-5">
+                    <h6 class="mb-1" style="font-weight: 600;">{{ cert.certificate_name }}</h6>
+                    <div style="font-size: 13px; color: #6b7280;">
+                        {{ cert.get_certificate_type_display }} | {{ cert.issuing_authority }}
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div style="font-size: 13px; color: #6b7280;">
+                        <strong>Cert #:</strong> {{ cert.certificate_number }}
+                    </div>
+                    <div style="font-size: 13px; color: #6b7280;">
+                        <strong>Expires:</strong> {{ cert.expiry_date|date:"M d, Y" }}
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <span class="badge {% if cert.days_until_expiry <= 14 %}bg-danger{% elif cert.days_until_expiry <= 30 %}bg-warning{% else %}bg-info{% endif %}" style="font-size: 14px; padding: 8px 12px;">
+                        {{ cert.days_until_expiry }} day(s) left
+                    </span>
+                </div>
+                <div class="col-md-2 text-end">
+                    <a href="{% url 'hospital:certificate_detail' cert.pk %}" class="btn btn-sm btn-outline-primary">
+                        View Details
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    
+    <!-- Quick Actions -->
+    <div style="background: white; border-radius: 16px; padding: 32px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+        <h4 class="mb-4"><i class="bi bi-lightning me-2"></i>Quick Actions</h4>
+        <div class="row g-3">
+            <div class="col-md-3">
+                <a href="{% url 'hospital:contract_list' %}" class="btn btn-outline-primary w-100">
+                    <i class="bi bi-list-ul me-2"></i>View All Contracts
+                </a>
+            </div>
+            <div class="col-md-3">
+                <a href="{% url 'hospital:certificate_list' %}" class="btn btn-outline-success w-100">
+                    <i class="bi bi-list-check me-2"></i>View All Certificates
+                </a>
+            </div>
+            <div class="col-md-3">
+                <a href="{% url 'hospital:contract_create' %}" class="btn btn-primary w-100">
+                    <i class="bi bi-plus-circle me-2"></i>Add Contract
+                </a>
+            </div>
+            <div class="col-md-3">
+                <a href="{% url 'hospital:certificate_create' %}" class="btn btn-success w-100">
+                    <i class="bi bi-award me-2"></i>Add Certificate
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+

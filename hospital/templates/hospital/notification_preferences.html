@@ -1,0 +1,382 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Notification Preferences - {{ patient.full_name }} - HMS{% endblock %}
+{% block page_title %}📬 Notification Preferences{% endblock %}
+{% block page_subtitle %}Manage how {{ patient.full_name }} receives notifications{% endblock %}
+
+{% block extra_css %}
+<style>
+    .preference-card {
+        background: white;
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+        border: 1px solid #e0e0e0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    
+    .channel-card {
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 16px;
+        transition: all 0.3s;
+    }
+    
+    .channel-card.enabled {
+        border-color: #28a745;
+        background-color: #f0f9f4;
+    }
+    
+    .channel-icon {
+        font-size: 32px;
+        margin-bottom: 8px;
+    }
+    
+    .switch {
+        position: relative;
+        display: inline-block;
+        width: 50px;
+        height: 24px;
+    }
+    
+    .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+    
+    .slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #ccc;
+        transition: .4s;
+        border-radius: 24px;
+    }
+    
+    .slider:before {
+        position: absolute;
+        content: "";
+        height: 18px;
+        width: 18px;
+        left: 3px;
+        bottom: 3px;
+        background-color: white;
+        transition: .4s;
+        border-radius: 50%;
+    }
+    
+    input:checked + .slider {
+        background-color: #28a745;
+    }
+    
+    input:checked + .slider:before {
+        transform: translateX(26px);
+    }
+    
+    .log-item {
+        padding: 12px;
+        border-left: 3px solid #e0e0e0;
+        margin-bottom: 12px;
+        background: #f8f9fa;
+        border-radius: 4px;
+    }
+    
+    .log-item.success {
+        border-left-color: #28a745;
+    }
+    
+    .log-item.failed {
+        border-left-color: #dc3545;
+    }
+    
+    .log-item.partial {
+        border-left-color: #ffc107;
+    }
+    
+    .badge-channel {
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: bold;
+        margin-right: 4px;
+    }
+    
+    .badge-sms {
+        background-color: #28a745;
+        color: white;
+    }
+    
+    .badge-whatsapp {
+        background-color: #25D366;
+        color: white;
+    }
+    
+    .badge-email {
+        background-color: #007bff;
+        color: white;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <!-- Patient Info -->
+        <div class="alert alert-info">
+            <h5 class="mb-2"><i class="bi bi-person-circle"></i> {{ patient.full_name }}</h5>
+            <p class="mb-1"><strong>MRN:</strong> {{ patient.mrn }}</p>
+            {% if patient.phone_number %}
+            <p class="mb-1"><strong>Phone:</strong> {{ patient.phone_number }}</p>
+            {% endif %}
+            {% if patient.email %}
+            <p class="mb-0"><strong>Email:</strong> {{ patient.email }}</p>
+            {% endif %}
+        </div>
+        
+        <!-- Preferences Form -->
+        <form method="post" id="preferencesForm">
+            {% csrf_token %}
+            
+            <!-- Channel Preferences -->
+            <div class="preference-card">
+                <h5 class="mb-4"><i class="bi bi-broadcast"></i> Notification Channels</h5>
+                
+                <div class="row">
+                    <!-- SMS -->
+                    <div class="col-md-4">
+                        <div class="channel-card {% if preference.sms_enabled %}enabled{% endif %}" id="smsCard">
+                            <div class="text-center">
+                                <div class="channel-icon">📱</div>
+                                <h6>SMS</h6>
+                                <label class="switch">
+                                    <input type="checkbox" name="sms_enabled" {% if preference.sms_enabled %}checked{% endif %} onchange="toggleCard('smsCard', this.checked)">
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+                            <div class="mt-3">
+                                <input type="text" name="sms_phone_number" class="form-control form-control-sm" 
+                                       placeholder="Phone (optional)" value="{{ preference.sms_phone_number }}"
+                                       title="Override default patient phone">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- WhatsApp -->
+                    <div class="col-md-4">
+                        <div class="channel-card {% if preference.whatsapp_enabled %}enabled{% endif %}" id="whatsappCard">
+                            <div class="text-center">
+                                <div class="channel-icon">💬</div>
+                                <h6>WhatsApp</h6>
+                                <label class="switch">
+                                    <input type="checkbox" name="whatsapp_enabled" {% if preference.whatsapp_enabled %}checked{% endif %} onchange="toggleCard('whatsappCard', this.checked)">
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+                            <div class="mt-3">
+                                <input type="text" name="whatsapp_phone_number" class="form-control form-control-sm" 
+                                       placeholder="WhatsApp # (optional)" value="{{ preference.whatsapp_phone_number }}"
+                                       title="Override default phone">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Email -->
+                    <div class="col-md-4">
+                        <div class="channel-card {% if preference.email_enabled %}enabled{% endif %}" id="emailCard">
+                            <div class="text-center">
+                                <div class="channel-icon">📧</div>
+                                <h6>Email</h6>
+                                <label class="switch">
+                                    <input type="checkbox" name="email_enabled" {% if preference.email_enabled %}checked{% endif %} onchange="toggleCard('emailCard', this.checked)">
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+                            <div class="mt-3">
+                                <input type="email" name="email_address" class="form-control form-control-sm" 
+                                       placeholder="Email (optional)" value="{{ preference.email_address }}"
+                                       title="Override default patient email">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Notification Types -->
+            <div class="preference-card">
+                <h5 class="mb-4"><i class="bi bi-bell"></i> Notification Types</h5>
+                
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" name="lab_results_notify" id="labResults" {% if preference.lab_results_notify %}checked{% endif %}>
+                    <label class="form-check-label" for="labResults">
+                        <strong>🧪 Lab Results</strong> - Notify when lab results are ready
+                    </label>
+                </div>
+                
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" name="appointment_notify" id="appointments" {% if preference.appointment_notify %}checked{% endif %}>
+                    <label class="form-check-label" for="appointments">
+                        <strong>📅 Appointments</strong> - Reminders for upcoming appointments
+                    </label>
+                </div>
+                
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" name="payment_notify" id="payments" {% if preference.payment_notify %}checked{% endif %}>
+                    <label class="form-check-label" for="payments">
+                        <strong>💰 Payments</strong> - Payment reminders and receipts
+                    </label>
+                </div>
+                
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" name="prescription_notify" id="prescriptions" {% if preference.prescription_notify %}checked{% endif %}>
+                    <label class="form-check-label" for="prescriptions">
+                        <strong>💊 Prescriptions</strong> - Prescription ready notifications
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Additional Preferences -->
+            <div class="preference-card">
+                <h5 class="mb-4"><i class="bi bi-gear"></i> Additional Options</h5>
+                
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" name="send_full_results" id="fullResults" {% if preference.send_full_results %}checked{% endif %}>
+                    <label class="form-check-label" for="fullResults">
+                        <strong>Include Full Lab Results</strong><br>
+                        <small class="text-muted">When enabled, full result details will be included in notifications. Otherwise, only a "results ready" message is sent.</small>
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Action Buttons -->
+            <div class="d-flex justify-content-between">
+                <a href="{% url 'hospital:patient_detail' patient.id %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Back to Patient
+                </a>
+                <div>
+                    <button type="button" class="btn btn-info me-2" onclick="testNotification()">
+                        <i class="bi bi-broadcast"></i> Test Notification
+                    </button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-save"></i> Save Preferences
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+    
+    <div class="col-lg-4">
+        <!-- Recent Notifications -->
+        <div class="preference-card">
+            <h5 class="mb-4"><i class="bi bi-clock-history"></i> Recent Notifications</h5>
+            
+            {% if notification_logs %}
+                {% for log in notification_logs|slice:":5" %}
+                <div class="log-item {% if log.status == 'sent' %}success{% elif log.status == 'failed' %}failed{% elif log.status == 'partial' %}partial{% endif %}">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <strong>{{ log.get_notification_type_display }}</strong>
+                        <small class="text-muted">{{ log.created|timesince }} ago</small>
+                    </div>
+                    <div class="mb-2">
+                        {% for channel in log.channels_successful %}
+                            <span class="badge-channel badge-{{ channel }}">✓ {{ channel|upper }}</span>
+                        {% endfor %}
+                        {% for channel in log.channels_failed %}
+                            <span class="badge-channel" style="background-color: #dc3545; color: white;">✗ {{ channel|upper }}</span>
+                        {% endfor %}
+                    </div>
+                    <small>{{ log.subject|truncatewords:10 }}</small>
+                </div>
+                {% endfor %}
+                
+                <a href="{% url 'hospital:notification_history' patient.id %}" class="btn btn-sm btn-outline-primary w-100 mt-3">
+                    <i class="bi bi-list"></i> View Full History
+                </a>
+            {% else %}
+                <p class="text-muted text-center">No notifications sent yet</p>
+            {% endif %}
+        </div>
+        
+        <!-- Quick Stats -->
+        <div class="preference-card">
+            <h6 class="mb-3"><i class="bi bi-graph-up"></i> Quick Stats</h6>
+            <div class="d-flex justify-content-between mb-2">
+                <span>Active Channels:</span>
+                <strong>{{ active_channels|length }}</strong>
+            </div>
+            <div class="d-flex justify-content-between mb-2">
+                <span>Recent Notifications:</span>
+                <strong>{{ notification_logs|length }}</strong>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function toggleCard(cardId, enabled) {
+    const card = document.getElementById(cardId);
+    if (enabled) {
+        card.classList.add('enabled');
+    } else {
+        card.classList.remove('enabled');
+    }
+}
+
+function testNotification() {
+    // Get enabled channels
+    const channels = [];
+    if (document.querySelector('input[name="sms_enabled"]').checked) channels.push('sms');
+    if (document.querySelector('input[name="whatsapp_enabled"]').checked) channels.push('whatsapp');
+    if (document.querySelector('input[name="email_enabled"]').checked) channels.push('email');
+    
+    if (channels.length === 0) {
+        alert('Please enable at least one notification channel first.');
+        return;
+    }
+    
+    if (!confirm(`Send test notification via: ${channels.join(', ')}?`)) {
+        return;
+    }
+    
+    // Send test notification
+    const formData = new FormData();
+    formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    channels.forEach(channel => formData.append('channels[]', channel));
+    
+    fetch('{% url "hospital:test_notification" patient.id %}', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert(`${data.message}\n\nSuccessful: ${data.successful_channels.join(', ')}\nFailed: ${data.failed_channels.join(', ')}`);
+        } else {
+            alert(`Test failed: ${data.message}`);
+        }
+    })
+    .catch(error => {
+        alert('Error sending test notification: ' + error);
+    });
+}
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+

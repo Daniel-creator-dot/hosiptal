@@ -1,0 +1,476 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Queue Display - HMS{% endblock %}
+{% block page_title %}Queue Display{% endblock %}
+{% block page_subtitle %}Real-time patient queue management{% endblock %}
+
+{% block extra_css %}
+<style>
+    .queue-card {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        margin-bottom: 16px;
+        border: 2px solid var(--border);
+        transition: all 0.3s ease;
+    }
+    
+    .queue-card.waiting {
+        border-left: 4px solid var(--warning);
+    }
+    
+    .queue-card.in-progress {
+        border-left: 4px solid var(--success);
+    }
+    
+    .queue-card.priority-stat {
+        border-left: 4px solid var(--danger);
+        background: #fef2f2;
+    }
+    
+    .queue-card.priority-urgent {
+        border-left: 4px solid var(--warning);
+    }
+    
+    .queue-number {
+        font-size: 32px;
+        font-weight: 800;
+        color: var(--primary);
+        margin: 0;
+    }
+    
+    .wait-time {
+        font-size: 14px;
+        color: var(--gray);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Filters -->
+<div class="modern-card mb-4">
+    <form method="get" class="row g-3">
+        <div class="col-md-4">
+            <label class="form-label">Department</label>
+            <select name="department" class="form-select form-control-modern" title="Filter by department">
+                <option value="">All Departments</option>
+                {% for dept in departments %}
+                <option value="{{ dept.id }}" {% if selected_department and selected_department == dept.id|stringformat:"s" %}selected{% endif %}>
+                    {{ dept.name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Location</label>
+            <select name="location" class="form-select form-control-modern" title="Filter by location">
+                <option value="">All Locations</option>
+                <option value="clinic" {% if selected_location == 'clinic' %}selected{% endif %}>Clinic</option>
+                <option value="ward" {% if selected_location == 'ward' %}selected{% endif %}>Ward</option>
+                <option value="theatre" {% if selected_location == 'theatre' %}selected{% endif %}>Theatre</option>
+                <option value="er" {% if selected_location == 'er' %}selected{% endif %}>Emergency Room</option>
+                <option value="pharmacy" {% if selected_location == 'pharmacy' %}selected{% endif %}>Pharmacy</option>
+                <option value="lab" {% if selected_location == 'lab' %}selected{% endif %}>Laboratory</option>
+                <option value="imaging" {% if selected_location == 'imaging' %}selected{% endif %}>Imaging</option>
+                <option value="reception" {% if selected_location == 'reception' %}selected{% endif %}>Reception</option>
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">&nbsp;</label>
+            <button type="submit" class="btn btn-primary-modern btn-modern w-100">
+                <i class="bi bi-filter"></i> Filter
+            </button>
+        </div>
+    </form>
+</div>
+
+<div class="row">
+    <!-- Waiting Queue -->
+        <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin-bottom: 0; color: var(--dark);">
+                    <span class="badge-modern badge-warning">{{ waiting|length }}</span>
+                    Waiting
+                </h5>
+                <form method="get" action="{% url 'hospital:queue_call_next' %}" id="callNextForm" style="display: inline;">
+                    {% if selected_department and selected_department != 'None' %}<input type="hidden" name="department" value="{{ selected_department }}">{% endif %}
+                    {% if selected_location and selected_location != 'None' %}<input type="hidden" name="location" value="{{ selected_location }}">{% endif %}
+                    <button type="submit" class="btn btn-success btn-sm" id="callNextBtn">
+                        <i class="bi bi-telephone-forward"></i> Call Next
+                    </button>
+                </form>
+            </div>
+            
+            <div class="queue-cards-container">
+            {% if waiting %}
+                {% for queue in waiting %}
+                <div class="queue-card waiting priority-{{ queue.priority }}">
+                    <div class="row align-items-center">
+                        <div class="col-2 text-center">
+                            <div class="queue-number">{{ queue.queue_number }}</div>
+                        </div>
+                        <div class="col-7">
+                            <h6 style="margin: 0 0 5px 0; font-weight: 600;">
+                                {{ queue.encounter.patient.full_name }}
+                            </h6>
+                            <div style="font-size: 12px; color: var(--gray);">
+                                MRN: {{ queue.encounter.patient.mrn }}
+                                {% if queue.estimated_wait_time %}
+                                <br>Est. wait: {{ queue.estimated_wait_time }} min
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-3 text-end">
+                            <span class="badge-modern badge-{% if queue.priority == 'stat' %}danger{% elif queue.priority == 'urgent' %}warning{% else %}info{% endif %}">
+                                {{ queue.get_priority_display }}
+                            </span>
+                            <div class="wait-time mt-2">
+                                {{ queue.checked_in_at|timesince }}
+                            </div>
+                            <div class="mt-2">
+                                {% url 'hospital:queue_action' queue_id=queue.pk action='call' as action_url %}
+                                {% if selected_department and selected_department != 'None' and selected_location and selected_location != 'None' %}
+                                    <a href="{{ action_url }}?department={{ selected_department }}&location={{ selected_location }}" 
+                                       class="btn btn-sm btn-success" title="Call Patient">
+                                        <i class="bi bi-telephone"></i> Call
+                                    </a>
+                                {% elif selected_department and selected_department != 'None' %}
+                                    <a href="{{ action_url }}?department={{ selected_department }}" 
+                                       class="btn btn-sm btn-success" title="Call Patient">
+                                        <i class="bi bi-telephone"></i> Call
+                                    </a>
+                                {% elif selected_location and selected_location != 'None' %}
+                                    <a href="{{ action_url }}?location={{ selected_location }}" 
+                                       class="btn btn-sm btn-success" title="Call Patient">
+                                        <i class="bi bi-telephone"></i> Call
+                                    </a>
+                                {% else %}
+                                    <a href="{{ action_url }}" class="btn btn-sm btn-success" title="Call Patient">
+                                        <i class="bi bi-telephone"></i> Call
+                                    </a>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-muted text-center py-4">No patients waiting</p>
+            {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- In Progress -->
+        <div class="col-md-6">
+        <div class="modern-card">
+            <h5 style="font-weight: 600; margin-bottom: 20px; color: var(--dark);">
+                <span class="badge-modern badge-success">{{ in_progress|length }}</span>
+                In Progress
+            </h5>
+            
+            <div class="queue-cards-container">
+            {% if in_progress %}
+                {% for queue in in_progress %}
+                <div class="queue-card in-progress">
+                    <div class="row align-items-center">
+                        <div class="col-2 text-center">
+                            <div class="queue-number">{{ queue.queue_number }}</div>
+                        </div>
+                        <div class="col-7">
+                            <h6 style="margin: 0 0 5px 0; font-weight: 600;">
+                                {{ queue.encounter.patient.full_name }}
+                            </h6>
+                            <div style="font-size: 12px; color: var(--gray);">
+                                MRN: {{ queue.encounter.patient.mrn }}
+                                {% if queue.called_at %}
+                                <br>Called: {{ queue.called_at|timesince }} ago
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-3 text-end">
+                            <span class="badge-modern badge-success">In Progress</span>
+                            <div class="mt-2">
+                                {% url 'hospital:queue_action' queue_id=queue.pk action='complete' as complete_url %}
+                                {% if selected_department and selected_department != 'None' and selected_location and selected_location != 'None' %}
+                                    <a href="{{ complete_url }}?department={{ selected_department }}&location={{ selected_location }}" 
+                                       class="btn btn-sm btn-primary" title="Complete">
+                                        <i class="bi bi-check-circle"></i> Complete
+                                    </a>
+                                {% elif selected_department and selected_department != 'None' %}
+                                    <a href="{{ complete_url }}?department={{ selected_department }}" 
+                                       class="btn btn-sm btn-primary" title="Complete">
+                                        <i class="bi bi-check-circle"></i> Complete
+                                    </a>
+                                {% elif selected_location and selected_location != 'None' %}
+                                    <a href="{{ complete_url }}?location={{ selected_location }}" 
+                                       class="btn btn-sm btn-primary" title="Complete">
+                                        <i class="bi bi-check-circle"></i> Complete
+                                    </a>
+                                {% else %}
+                                    <a href="{{ complete_url }}" class="btn btn-sm btn-primary" title="Complete">
+                                        <i class="bi bi-check-circle"></i> Complete
+                                    </a>
+                                {% endif %}
+                                
+                                {% url 'hospital:queue_action' queue_id=queue.pk action='skip' as skip_url %}
+                                {% if selected_department and selected_department != 'None' and selected_location and selected_location != 'None' %}
+                                    <a href="{{ skip_url }}?department={{ selected_department }}&location={{ selected_location }}" 
+                                       class="btn btn-sm btn-warning" title="Skip">
+                                        <i class="bi bi-skip-forward"></i>
+                                    </a>
+                                {% elif selected_department and selected_department != 'None' %}
+                                    <a href="{{ skip_url }}?department={{ selected_department }}" 
+                                       class="btn btn-sm btn-warning" title="Skip">
+                                        <i class="bi bi-skip-forward"></i>
+                                    </a>
+                                {% elif selected_location and selected_location != 'None' %}
+                                    <a href="{{ skip_url }}?location={{ selected_location }}" 
+                                       class="btn btn-sm btn-warning" title="Skip">
+                                        <i class="bi bi-skip-forward"></i>
+                                    </a>
+                                {% else %}
+                                    <a href="{{ skip_url }}" class="btn btn-sm btn-warning" title="Skip">
+                                        <i class="bi bi-skip-forward"></i>
+                                    </a>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-muted text-center py-4">No patients in progress</p>
+            {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="text-center mt-4">
+    <a href="{% url 'hospital:queue_create' %}" class="btn btn-primary-modern btn-modern">
+        <i class="bi bi-plus-circle"></i> Add Patient to Queue
+    </a>
+</div>
+
+<!-- Live queue updates script -->
+<script>
+    // Base URL patterns - build dynamically
+    const queueDataApiUrl = '{% url "hospital:queue_data_api" %}';
+    let selectedDept = {% if selected_department and selected_department != 'None' %}'{{ selected_department }}'{% else %}null{% endif %};
+    let selectedLoc = {% if selected_location and selected_location != 'None' %}'{{ selected_location }}'{% else %}null{% endif %};
+    const baseQueueUrl = '/hms/queues/'; // Base URL for queue actions
+    
+    // Function to format time since
+    function timeSince(dateString) {
+        const date = new Date(dateString);
+        const seconds = Math.floor((new Date() - date) / 1000);
+        if (seconds < 60) return seconds + 's ago';
+        if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+        return Math.floor(seconds / 3600) + 'h ago';
+    }
+    
+    // Function to build action URL
+    function buildActionUrl(queueId, action) {
+        let url = baseQueueUrl + queueId + '/' + action + '/';
+        let params = [];
+        if (selectedDept) {
+            params.push('department=' + selectedDept);
+        }
+        if (selectedLoc) {
+            params.push('location=' + selectedLoc);
+        }
+        if (params.length > 0) {
+            url += '?' + params.join('&');
+        }
+        return url;
+    }
+    
+    // Function to update queue display
+    function updateQueueDisplay(data) {
+        // Update waiting queue
+        const waitingContainer = document.querySelector('.col-md-6:first-of-type .modern-card');
+        if (!waitingContainer) return;
+        
+        // Update waiting count
+        const waitingBadge = waitingContainer.querySelector('h5 .badge-modern');
+        if (waitingBadge) {
+            waitingBadge.textContent = data.waiting_count || data.waiting.length;
+        }
+        
+        // Clear existing waiting queues
+        const waitingArea = waitingContainer.querySelector('.queue-cards-container');
+        if (waitingArea) {
+            waitingArea.innerHTML = '';
+            
+            if (data.waiting && data.waiting.length > 0) {
+                data.waiting.forEach(queue => {
+                    const priorityClass = queue.priority === 'stat' ? 'danger' : 
+                                        queue.priority === 'urgent' ? 'warning' : 'info';
+                    const priorityBadge = queue.priority === 'stat' ? 'STAT' :
+                                        queue.priority === 'urgent' ? 'Urgent' : 'Normal';
+                    
+                    const queueCard = document.createElement('div');
+                    queueCard.className = `queue-card waiting priority-GHS {queue.priority}`;
+                    queueCard.innerHTML = `
+                        <div class="row align-items-center">
+                            <div class="col-2 text-center">
+                                <div class="queue-number">GHS {queue.queue_number}</div>
+                            </div>
+                            <div class="col-7">
+                                <h6 style="margin: 0 0 5px 0; font-weight: 600;">GHS {queue.patient_name}</h6>
+                                <div style="font-size: 12px; color: var(--gray);">
+                                    MRN: GHS {queue.mrn}
+                                    GHS {queue.estimated_wait_time ? '<br>Est. wait: ' + queue.estimated_wait_time + ' min' : ''}
+                                </div>
+                            </div>
+                            <div class="col-3 text-end">
+                                <span class="badge-modern badge-GHS {priorityClass}">GHS {priorityBadge}</span>
+                                <div class="wait-time mt-2">GHS {timeSince(queue.checked_in_at)}</div>
+                                <div class="mt-2">
+                                    <a href="GHS {buildActionUrl(queue.id, 'call')}" 
+                                       class="btn btn-sm btn-success" title="Call Patient">
+                                        <i class="bi bi-telephone"></i> Call
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    waitingArea.appendChild(queueCard);
+                });
+            } else {
+                const msg = document.createElement('p');
+                msg.className = 'text-muted text-center py-4';
+                msg.textContent = 'No patients waiting';
+                waitingArea.appendChild(msg);
+            }
+        }
+        
+        // Update in-progress queue
+        const inProgressContainer = document.querySelectorAll('.col-md-6')[1]?.querySelector('.modern-card');
+        if (inProgressContainer) {
+            // Update in-progress count
+            const inProgressBadge = inProgressContainer.querySelector('h5 .badge-modern');
+            if (inProgressBadge) {
+                inProgressBadge.textContent = data.in_progress_count || data.in_progress.length;
+            }
+            
+            // Update in-progress list
+            const inProgressArea = inProgressContainer.querySelector('.queue-cards-container') || inProgressContainer;
+            const existingInProgress = inProgressArea.querySelectorAll('.queue-card.in-progress, p.text-muted');
+            existingInProgress.forEach(el => el.remove());
+            
+            if (data.in_progress && data.in_progress.length > 0) {
+                data.in_progress.forEach(queue => {
+                    const queueCard = document.createElement('div');
+                    queueCard.className = 'queue-card in-progress';
+                    queueCard.innerHTML = `
+                        <div class="row align-items-center">
+                            <div class="col-2 text-center">
+                                <div class="queue-number">GHS {queue.queue_number}</div>
+                            </div>
+                            <div class="col-7">
+                                <h6 style="margin: 0 0 5px 0; font-weight: 600;">GHS {queue.patient_name}</h6>
+                                <div style="font-size: 12px; color: var(--gray);">
+                                    MRN: GHS {queue.mrn}
+                                    GHS {queue.called_at ? '<br>Called: ' + timeSince(queue.called_at) : ''}
+                                </div>
+                            </div>
+                            <div class="col-3 text-end">
+                                <span class="badge-modern badge-success">In Progress</span>
+                                <div class="mt-2">
+                                    <a href="GHS {buildActionUrl(queue.id, 'complete')}" 
+                                       class="btn btn-sm btn-primary" title="Complete">
+                                        <i class="bi bi-check-circle"></i> Complete
+                                    </a>
+                                    <a href="GHS {buildActionUrl(queue.id, 'skip')}" 
+                                       class="btn btn-sm btn-warning" title="Skip">
+                                        <i class="bi bi-skip-forward"></i>
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    inProgressArea.appendChild(queueCard);
+                });
+            } else {
+                const msg = document.createElement('p');
+                msg.className = 'text-muted text-center py-4';
+                msg.textContent = 'No patients in progress';
+                inProgressArea.appendChild(msg);
+            }
+        }
+    }
+    
+    // Function to fetch queue data
+    function fetchQueueData() {
+        const params = new URLSearchParams();
+        if (selectedDept) params.append('department', selectedDept);
+        if (selectedLoc) params.append('location', selectedLoc);
+        
+        fetch(queueDataApiUrl + (params.toString() ? '?' + params.toString() : ''), {
+            method: 'GET',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            cache: 'no-cache'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                updateQueueDisplay(data);
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching queue data:', error);
+        });
+    }
+    
+    // Fetch queue data every 5 seconds for live updates
+    setInterval(fetchQueueData, 5000);
+    
+    // Initial fetch
+    fetchQueueData();
+    
+    // Handle call next button with AJAX
+    document.getElementById('callNextForm')?.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const form = this;
+        const btn = document.getElementById('callNextBtn');
+        const originalText = btn.innerHTML;
+        
+        btn.disabled = true;
+        btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Calling...';
+        
+        fetch(form.action + '?' + new URLSearchParams(new FormData(form)), {
+            method: 'GET',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Show success message
+                const smsText = data.sms_sent ? ' SMS sent to patient.' : '';
+                alert(data.message + smsText);
+                // Refresh queue data immediately
+                setTimeout(fetchQueueData, 500);
+            } else {
+                alert(data.message || 'No patients in queue');
+            }
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error calling next patient');
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        });
+    });
+</script>
+{% endblock %}
+

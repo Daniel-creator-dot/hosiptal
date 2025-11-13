@@ -1,0 +1,93 @@
+{% extends 'hospital/base.html' %}
+{% load crispy_forms_tags %}
+
+{% block title %}Create Referral - HMS{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Create Referral</h1>
+    <a href="{% url 'hospital:encounter_detail' pk=encounter.pk %}" class="btn btn-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Encounter
+    </a>
+</div>
+
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">Refer Patient to Specialist</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <strong>Patient:</strong> {{ patient.full_name }} ({{ patient.mrn }})<br>
+                    <strong>Encounter:</strong> {{ encounter.get_encounter_type_display }} - {{ encounter.started_at|date:"M d, Y H:i" }}
+                    {% if referring_doctor %}<br>
+                    <strong>Referring doctor:</strong> {{ referring_doctor.user.get_full_name }}{% endif %}
+                </div>
+                <hr>
+                
+                <form method="post">
+                    {% csrf_token %}
+                    {% crispy form %}
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const specialtySelect = document.getElementById('id_specialty');
+    const specialistSelect = document.getElementById('id_specialist');
+    // Capture the full unfiltered specialist options as a fallback
+    const allSpecialistOptionsHTML = specialistSelect ? specialistSelect.innerHTML : '';
+    
+    // On load: if list is empty, try fetching all specialists as a fallback
+    if (specialistSelect && (!specialistSelect.options || specialistSelect.options.length <= 1)) {
+        fetch('/hms/api/specialists/all/')
+            .then(response => response.json())
+            .then(data => {
+                specialistSelect.innerHTML = '<option value="">---------</option>';
+                data.specialists.forEach(spec => {
+                    const option = document.createElement('option');
+                    option.value = spec.id;
+                    option.textContent = `${spec.name} (${spec.specialty})` + (spec.qualification ? ` - ${spec.qualification}` : '');
+                    specialistSelect.appendChild(option);
+                });
+            })
+            .catch(() => {
+                // Keep whatever is there if fetch fails
+            });
+    }
+    
+    if (specialtySelect && specialistSelect) {
+        specialtySelect.addEventListener('change', function() {
+            const specialtyId = this.value;
+            if (specialtyId) {
+                fetch(`/hms/api/specialists/by-specialty/?specialty_id=${specialtyId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        specialistSelect.innerHTML = '<option value="">---------</option>';
+                        data.specialists.forEach(spec => {
+                            const option = document.createElement('option');
+                            option.value = spec.id;
+                            option.textContent = spec.name + (spec.qualification ? ` - ${spec.qualification}` : '');
+                            specialistSelect.appendChild(option);
+                        });
+                    })
+                    .catch(error => {
+                        // Fallback: restore full list so user can still select a specialist
+                        console.error('Specialist filter API error, falling back to full list:', error);
+                        specialistSelect.innerHTML = allSpecialistOptionsHTML;
+                    });
+            } else {
+                // No specialty selected: show full list rather than empty
+                specialistSelect.innerHTML = allSpecialistOptionsHTML;
+            }
+        });
+    }
+});
+</script>
+{% endblock %}
+
+

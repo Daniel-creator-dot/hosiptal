@@ -1,0 +1,116 @@
+{% extends 'hospital/base.html' %}
+
+{% block title %}Bed Availability - HMS{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Bed Availability</h1>
+</div>
+
+<!-- Filters -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="get" class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label">Ward</label>
+                <select name="ward" class="form-select">
+                    <option value="">All Wards</option>
+                    {% for ward in wards %}
+                    <option value="{{ ward.pk }}" {% if ward_filter == ward.pk|stringformat:"s" %}selected{% endif %}>
+                        {{ ward.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">&nbsp;</label>
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-filter"></i> Filter
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Bed Status Cards -->
+<div class="row mb-4">
+    {% regroup beds by ward as beds_by_ward %}
+    {% for ward_group in beds_by_ward %}
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5>{{ ward_group.grouper.name }}</h5>
+                <small class="text-muted">{{ ward_group.list|length }} beds</small>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Bed #</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for bed in ward_group.list %}
+                            <tr>
+                                <td>{{ bed.bed_number }}</td>
+                                <td>{{ bed.get_bed_type_display }}</td>
+                                <td>
+                                    <span class="badge bg-{% if bed.status == 'available' %}success{% elif bed.status == 'occupied' %}danger{% elif bed.status == 'maintenance' %}warning{% else %}info{% endif %}">
+                                        {{ bed.get_status_display }}
+                                    </span>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% empty %}
+    <div class="col-12">
+        <div class="alert alert-info">No beds found</div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Summary Statistics -->
+<div class="row">
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="text-primary">{{ total_beds }}</h3>
+                <p class="text-muted mb-0">Total Beds</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="text-success">{{ available_beds }}</h3>
+                <p class="text-muted mb-0">Available</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="text-danger">{{ occupied_beds }}</h3>
+                <p class="text-muted mb-0">Occupied</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="text-warning">{{ maintenance_beds }}</h3>
+                <p class="text-muted mb-0">Maintenance</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

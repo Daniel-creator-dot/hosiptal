@@ -1,0 +1,394 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}My Biometric Profile - PrimeCare HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    .profile-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 30px;
+        border-radius: 10px;
+        margin-bottom: 30px;
+    }
+    .biometric-card {
+        border: 2px solid #e9ecef;
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 20px;
+        transition: all 0.3s;
+    }
+    .biometric-card:hover {
+        border-color: #667eea;
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+    }
+    .biometric-card.active {
+        border-color: #28a745;
+        background-color: #f8fff9;
+    }
+    .biometric-card.inactive {
+        border-color: #dc3545;
+        background-color: #fff5f5;
+        opacity: 0.7;
+    }
+    .stat-card {
+        background: white;
+        border-radius: 10px;
+        padding: 25px;
+        text-align: center;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        height: 100%;
+    }
+    .stat-number {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: #667eea;
+        margin-bottom: 10px;
+    }
+    .timeline {
+        position: relative;
+        padding-left: 30px;
+    }
+    .timeline::before {
+        content: '';
+        position: absolute;
+        left: 8px;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: #e9ecef;
+    }
+    .timeline-item {
+        position: relative;
+        padding-bottom: 20px;
+    }
+    .timeline-marker {
+        position: absolute;
+        left: -26px;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        border: 3px solid white;
+        box-shadow: 0 0 0 2px #667eea;
+    }
+    .timeline-marker.success {
+        background-color: #28a745;
+        box-shadow: 0 0 0 2px #28a745;
+    }
+    .timeline-marker.failed {
+        background-color: #dc3545;
+        box-shadow: 0 0 0 2px #dc3545;
+    }
+    .quality-bar {
+        height: 8px;
+        background-color: #e9ecef;
+        border-radius: 4px;
+        overflow: hidden;
+        margin-top: 5px;
+    }
+    .quality-fill {
+        height: 100%;
+        transition: width 0.3s;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="profile-header">
+    <div class="row align-items-center">
+        <div class="col-md-8">
+            <h1><i class="bi bi-person-badge-fill"></i> My Biometric Profile</h1>
+            <p class="mb-0">Manage your biometric authentication settings</p>
+        </div>
+        <div class="col-md-4 text-end">
+            <h3 class="mb-0">{{ staff.user.get_full_name }}</h3>
+            <p class="mb-0">{{ staff.employee_id }}</p>
+        </div>
+    </div>
+</div>
+
+<!-- Statistics -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-number">{{ biometrics.count }}</div>
+            <p class="text-muted mb-0">Enrolled Biometrics</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-number">{{ total_authentications }}</div>
+            <p class="text-muted mb-0">Total Logins</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-number">{{ successful_authentications }}</div>
+            <p class="text-muted mb-0">Successful</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-number">{{ success_rate|floatformat:1 }}%</div>
+            <p class="text-muted mb-0">Success Rate</p>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Enrolled Biometrics -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="bi bi-fingerprint"></i> Enrolled Biometrics</h5>
+            </div>
+            <div class="card-body">
+                {% if biometrics %}
+                    {% for biometric in biometrics %}
+                    <div class="biometric-card {% if biometric.is_active %}active{% else %}inactive{% endif %}">
+                        <div class="d-flex justify-content-between align-items-start mb-3">
+                            <div>
+                                <h5 class="mb-1">
+                                    <i class="bi bi-{{ biometric.biometric_type.name }}"></i>
+                                    {{ biometric.biometric_type.display_name }}
+                                </h5>
+                                <small class="text-muted">
+                                    Enrolled: {{ biometric.enrolled_at|date:"M d, Y H:i" }}
+                                </small>
+                            </div>
+                            <div>
+                                {% if biometric.is_active %}
+                                    {% if biometric.is_locked %}
+                                    <span class="badge bg-danger">
+                                        <i class="bi bi-lock"></i> Locked
+                                    </span>
+                                    {% elif biometric.is_expired %}
+                                    <span class="badge bg-warning">
+                                        <i class="bi bi-exclamation-triangle"></i> Expired
+                                    </span>
+                                    {% else %}
+                                    <span class="badge bg-success">
+                                        <i class="bi bi-check-circle"></i> Active
+                                    </span>
+                                    {% endif %}
+                                {% else %}
+                                <span class="badge bg-secondary">
+                                    <i class="bi bi-x-circle"></i> Inactive
+                                </span>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <small class="text-muted">Quality Score</small>
+                                <div class="fw-bold">{{ biometric.quality_score }}/100</div>
+                                <div class="quality-bar">
+                                    <div class="quality-fill bg-{% if biometric.quality_score >= 80 %}success{% elif biometric.quality_score >= 60 %}warning{% else %}danger{% endif %}" 
+                                         style="width: {{ biometric.quality_score }}%"></div>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <small class="text-muted">Verifications</small>
+                                <div class="fw-bold">{{ biometric.verification_count }}</div>
+                            </div>
+                            <div class="col-6">
+                                <small class="text-muted">Last Verified</small>
+                                <div class="fw-bold">
+                                    {% if biometric.last_verified %}
+                                        {{ biometric.last_verified|timesince }} ago
+                                    {% else %}
+                                        Never
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <small class="text-muted">Failed Attempts</small>
+                                <div class="fw-bold text-{% if biometric.failed_attempts > 0 %}danger{% else %}success{% endif %}">
+                                    {{ biometric.failed_attempts }}
+                                </div>
+                            </div>
+                        </div>
+
+                        {% if biometric.is_primary %}
+                        <div class="mt-2">
+                            <span class="badge bg-info">
+                                <i class="bi bi-star-fill"></i> Primary Biometric
+                            </span>
+                        </div>
+                        {% endif %}
+
+                        {% if biometric.expires_at %}
+                        <div class="mt-2">
+                            <small class="text-muted">
+                                <i class="bi bi-calendar-event"></i>
+                                Expires: {{ biometric.expires_at|date:"M d, Y" }}
+                            </small>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i>
+                        You don't have any biometrics enrolled yet. Please contact HR to enroll.
+                    </div>
+                {% endif %}
+
+                <!-- Available Biometric Types -->
+                {% if available_types %}
+                <div class="mt-4">
+                    <h6 class="text-muted">Available Biometric Types</h6>
+                    <div class="list-group">
+                        {% for type in available_types %}
+                        <div class="list-group-item">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>{{ type.display_name }}</strong>
+                                    <br>
+                                    <small class="text-muted">{{ type.description }}</small>
+                                </div>
+                                {% if type.id not in biometrics.values_list|join:",biometric_type_id," %}
+                                <span class="badge bg-warning">Not Enrolled</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Activity -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0"><i class="bi bi-clock-history"></i> Recent Authentication History</h5>
+            </div>
+            <div class="card-body">
+                {% if recent_authentications %}
+                <div class="timeline">
+                    {% for auth in recent_authentications %}
+                    <div class="timeline-item">
+                        <div class="timeline-marker {% if auth.status == 'success' %}success{% else %}failed{% endif %}"></div>
+                        <div class="card mb-0">
+                            <div class="card-body p-3">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <h6 class="mb-1">
+                                            {% if auth.status == 'success' %}
+                                            <i class="bi bi-check-circle text-success"></i>
+                                            Successful Login
+                                            {% else %}
+                                            <i class="bi bi-x-circle text-danger"></i>
+                                            {{ auth.get_status_display }}
+                                            {% endif %}
+                                        </h6>
+                                        <small class="text-muted">
+                                            <i class="bi bi-clock"></i> {{ auth.timestamp|date:"M d, Y H:i:s" }}
+                                            ({{ auth.timestamp|timesince }} ago)
+                                        </small>
+                                    </div>
+                                    {% if auth.status == 'success' %}
+                                    <span class="badge bg-success">✓</span>
+                                    {% else %}
+                                    <span class="badge bg-danger">✗</span>
+                                    {% endif %}
+                                </div>
+
+                                <div class="mt-2">
+                                    <div class="row g-2 small">
+                                        <div class="col-6">
+                                            <i class="bi bi-fingerprint"></i> {{ auth.biometric_type.display_name }}
+                                        </div>
+                                        <div class="col-6">
+                                            <i class="bi bi-geo-alt"></i> {{ auth.location_name|default:"Unknown" }}
+                                        </div>
+                                        {% if auth.confidence_score %}
+                                        <div class="col-6">
+                                            <i class="bi bi-graph-up"></i> Confidence: {{ auth.confidence_score }}%
+                                        </div>
+                                        {% endif %}
+                                        {% if auth.quality_score %}
+                                        <div class="col-6">
+                                            <i class="bi bi-star"></i> Quality: {{ auth.quality_score }}/100
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+
+                                {% if auth.failure_reason %}
+                                <div class="alert alert-danger alert-sm mt-2 mb-0">
+                                    <small><i class="bi bi-exclamation-triangle"></i> {{ auth.failure_reason }}</small>
+                                </div>
+                                {% endif %}
+
+                                {% if auth.created_attendance %}
+                                <div class="mt-2">
+                                    <span class="badge bg-info">
+                                        <i class="bi bi-calendar-check"></i> Attendance Created
+                                    </span>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle"></i>
+                    No authentication history yet.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Security Information -->
+        <div class="card mt-3">
+            <div class="card-header bg-warning">
+                <h6 class="mb-0"><i class="bi bi-shield-check"></i> Security & Privacy</h6>
+            </div>
+            <div class="card-body">
+                <h6>How We Protect Your Biometric Data:</h6>
+                <ul class="small mb-0">
+                    <li><strong>Encrypted Storage:</strong> Your biometric templates are encrypted and cannot be reverse-engineered.</li>
+                    <li><strong>No Image Storage:</strong> We never store your actual photos, only mathematical representations.</li>
+                    <li><strong>Liveness Detection:</strong> Advanced AI prevents spoofing with photos or videos.</li>
+                    <li><strong>Audit Logging:</strong> All authentication attempts are logged for security.</li>
+                    <li><strong>Data Deletion:</strong> Contact HR if you wish to delete your biometric data.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Contact HR -->
+<div class="card mt-4">
+    <div class="card-body">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h5><i class="bi bi-question-circle"></i> Need Help with Biometric Authentication?</h5>
+                <p class="mb-0">Contact HR for enrollment, issues, or to update your biometric data.</p>
+            </div>
+            <div class="col-md-4 text-end">
+                <a href="{% url 'hospital:hr_dashboard' %}" class="btn btn-primary">
+                    <i class="bi bi-telephone"></i> Contact HR
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+
+
+
+
+
+
+

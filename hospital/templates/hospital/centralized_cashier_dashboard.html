@@ -1,0 +1,421 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block extra_css %}
+<style>
+    .eco-badge {
+        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        color: white;
+        padding: 8px 20px;
+        border-radius: 25px;
+        font-size: 0.9em;
+        display: inline-block;
+        margin: 10px 0;
+    }
+    
+    .stat-card {
+        border-left: 4px solid #0d6efd;
+        transition: transform 0.2s;
+    }
+    
+    .stat-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    
+    .pending-item {
+        border-left: 4px solid #ffc107;
+        transition: all 0.2s;
+    }
+    
+    .pending-item:hover {
+        background-color: #f8f9fa;
+        border-left-color: #0d6efd;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2>💰 Centralized Cashier Dashboard</h2>
+            <span class="eco-badge">🌿 Paperless System - Digital Receipts</span>
+        </div>
+        <div>
+            <a href="{% url 'hospital:cashier_patient_bills' %}" class="btn btn-success me-2">
+                <i class="bi bi-people"></i> Patient Bills (Combined)
+            </a>
+            <a href="{% url 'hospital:cashier_all_pending_bills' %}" class="btn btn-primary me-2">
+                <i class="bi bi-list-ul"></i> View All Pending Bills
+            </a>
+            <a href="{% url 'hospital:cashier_revenue_report' %}" class="btn btn-outline-primary">
+                <i class="bi bi-graph-up"></i> Revenue Report
+            </a>
+        </div>
+    </div>
+    
+    <!-- Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card stat-card">
+                <div class="card-body">
+                    <h6 class="text-muted">Pending Lab Tests</h6>
+                    <h2 class="mb-0">{{ stats.pending_lab }}</h2>
+                    <small class="text-muted">Awaiting payment</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card stat-card" style="border-left-color: #28a745;">
+                <div class="card-body">
+                    <h6 class="text-muted">Pending Pharmacy</h6>
+                    <h2 class="mb-0">{{ stats.pending_pharmacy }}</h2>
+                    <small class="text-muted">Awaiting payment</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card stat-card" style="border-left-color: #17a2b8;">
+                <div class="card-body">
+                    <h6 class="text-muted">Today's Receipts</h6>
+                    <h2 class="mb-0">{{ stats.todays_receipts }}</h2>
+                    <small class="text-muted">Payments processed</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card stat-card" style="border-left-color: #ffc107;">
+                <div class="card-body">
+                    <h6 class="text-muted">Today's Revenue</h6>
+                    <h2 class="mb-0">GHS {{ stats.todays_revenue }}</h2>
+                    <small class="text-muted">Total collected</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Additional Stats Row -->
+    {% if stats.pending_imaging or stats.pending_admissions %}
+    <div class="row mb-4">
+        {% if stats.pending_imaging %}
+        <div class="col-md-3">
+            <div class="card stat-card" style="border-left-color: #6f42c1;">
+                <div class="card-body">
+                    <h6 class="text-muted">Pending Imaging</h6>
+                    <h2 class="mb-0">{{ stats.pending_imaging }}</h2>
+                    <small class="text-muted">Awaiting payment</small>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        
+        {% if stats.pending_admissions %}
+        <div class="col-md-3">
+            <div class="card stat-card" style="border-left-color: #F59E0B;">
+                <div class="card-body">
+                    <h6 class="text-muted">Active Admissions</h6>
+                    <h2 class="mb-0">{{ stats.pending_admissions }}</h2>
+                    <small class="text-muted">Bed charges pending</small>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+    
+    <!-- Revenue by Method -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Today's Revenue by Payment Method</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-md-3">
+                            <h4>GHS {{ stats.by_method.cash }}</h4>
+                            <small class="text-muted">Cash</small>
+                        </div>
+                        <div class="col-md-3">
+                            <h4>GHS {{ stats.by_method.card }}</h4>
+                            <small class="text-muted">Card</small>
+                        </div>
+                        <div class="col-md-3">
+                            <h4>GHS {{ stats.by_method.mobile_money }}</h4>
+                            <small class="text-muted">Mobile Money</small>
+                        </div>
+                        <div class="col-md-3">
+                            <h4>GHS {{ stats.by_method.bank_transfer }}</h4>
+                            <small class="text-muted">Bank Transfer</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- Pending Lab Tests -->
+        <div class="col-md-6">
+            <div class="card shadow">
+                <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">🧪 Pending Lab Tests ({{ stats.pending_lab }})</h5>
+                    {% if stats.pending_lab > 10 %}
+                    <a href="{% url 'hospital:cashier_all_pending_bills' %}?service_type=lab" class="btn btn-sm btn-dark">
+                        View All {{ stats.pending_lab }} →
+                    </a>
+                    {% endif %}
+                </div>
+                <div class="card-body" style="max-height: 500px; overflow-y: auto;">
+                    {% if pending_labs %}
+                        {% for lab in pending_labs %}
+                        <div class="pending-item card mb-2">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <h6 class="mb-1">{{ lab.test.name }}</h6>
+                                        <p class="mb-1"><strong>Patient:</strong> {{ lab.order.encounter.patient.full_name }}</p>
+                                        <p class="mb-1"><small class="text-muted">MRN: {{ lab.order.encounter.patient.mrn }}</small></p>
+                                        <p class="mb-0"><small class="text-muted">Ordered: {{ lab.created|date:"M d, Y - h:i A" }}</small></p>
+                                    </div>
+                                    <div class="text-end">
+                                        <h5 class="text-primary mb-2">GHS {{ lab.test.price }}</h5>
+                                        <a href="{% url 'hospital:cashier_process_service_payment' 'lab' lab.id %}" 
+                                           class="btn btn-primary btn-sm">
+                                            <i class="bi bi-credit-card"></i> Process Payment
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                        {% if total_pending_labs > 20 %}
+                        <div class="text-center mt-3">
+                            <a href="{% url 'hospital:cashier_all_pending_bills' %}?service_type=lab" class="btn btn-outline-primary">
+                                View All {{ total_pending_labs }} Lab Bills →
+                            </a>
+                        </div>
+                        {% endif %}
+                    {% else %}
+                        <p class="text-muted text-center py-4">
+                            No pending lab tests<br>
+                            <small>Debug: Total verified labs in DB: {{ total_pending_labs|default:"0" }}</small>
+                        </p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Pending Pharmacy -->
+        <div class="col-md-6">
+            <div class="card shadow">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">💊 Pending Pharmacy ({{ stats.pending_pharmacy }})</h5>
+                </div>
+                <div class="card-body" style="max-height: 500px; overflow-y: auto;">
+                    {% if pending_pharmacy %}
+                        {% for rx in pending_pharmacy %}
+                        <div class="pending-item card mb-2">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <h6 class="mb-1">{{ rx.drug.name }}</h6>
+                                        <p class="mb-1"><strong>Patient:</strong> {{ rx.order.encounter.patient.full_name }}</p>
+                                        <p class="mb-1"><small class="text-muted">Quantity: {{ rx.quantity }}</small></p>
+                                        <p class="mb-0"><small class="text-muted">Prescribed: {{ rx.created|date:"M d, Y" }}</small></p>
+                                    </div>
+                                    <div class="text-end">
+                                        <h5 class="text-success mb-2">GHS {{ rx.drug.unit_price|default:"0.00"|floatformat:2 }}</h5>
+                                        <a href="{% url 'hospital:cashier_process_service_payment' 'pharmacy' rx.id %}" 
+                                           class="btn btn-success btn-sm">
+                                            <i class="bi bi-credit-card"></i> Process Payment
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted text-center py-4">No pending prescriptions</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Pending Imaging Studies -->
+        {% if pending_imaging %}
+        <div class="col-md-12 mt-4">
+            <div class="card shadow">
+                <div class="card-header bg-purple text-white" style="background: linear-gradient(135deg, #6f42c1 0%, #8e44ad 100%);">
+                    <h5 class="mb-0">📷 Pending Imaging Studies ({{ stats.pending_imaging }})</h5>
+                    {% if stats.pending_imaging > 20 %}
+                    <a href="{% url 'hospital:cashier_all_pending_bills' %}?service_type=imaging" class="btn btn-sm btn-light">
+                        View All {{ total_pending_imaging }} →
+                    </a>
+                    {% endif %}
+                </div>
+                <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                    <div class="row">
+                        {% for imaging in pending_imaging %}
+                        <div class="col-md-6 mb-3">
+                            <div class="pending-item card">
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div>
+                                            <h6 class="mb-1">{{ imaging.study_type }}</h6>
+                                            <p class="mb-1"><strong>Patient:</strong> 
+                                                {% if imaging.patient %}{{ imaging.patient.full_name }}{% else %}{{ imaging.order.encounter.patient.full_name }}{% endif %}
+                                            </p>
+                                            <p class="mb-1"><small class="text-muted">
+                                                MRN: {% if imaging.patient %}{{ imaging.patient.mrn }}{% else %}{{ imaging.order.encounter.patient.mrn }}{% endif %}
+                                            </small></p>
+                                            <p class="mb-1"><small class="text-muted">Body Part: {{ imaging.body_part }}</small></p>
+                                            <p class="mb-0"><small class="text-muted">Completed: {{ imaging.performed_at|default:imaging.created|date:"M d, Y - h:i A" }}</small></p>
+                                        </div>
+                                        <div class="text-end">
+                                            <h5 class="text-purple mb-2" style="color: #6f42c1;">GHS 50.00</h5>
+                                            <a href="{% url 'hospital:cashier_process_service_payment' 'imaging' imaging.id %}" 
+                                               class="btn btn-sm text-white" style="background: linear-gradient(135deg, #6f42c1 0%, #8e44ad 100%);">
+                                                <i class="bi bi-credit-card"></i> Process Payment
+                                            </a>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% if total_pending_imaging > 20 %}
+                    <div class="text-center mt-3">
+                        <a href="{% url 'hospital:cashier_all_pending_bills' %}?service_type=imaging" class="btn btn-outline-primary">
+                            View All {{ total_pending_imaging }} Imaging Bills →
+                        </a>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Pending Bed Charges (Admissions) -->
+        {% if pending_admissions %}
+        <div class="col-md-12 mt-4">
+            <div class="card shadow">
+                <div class="card-header text-white" style="background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);">
+                    <h5 class="mb-0">🛏️ Pending Bed Charges ({{ stats.pending_admissions }})</h5>
+                </div>
+                <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                    <div class="row">
+                        {% for admission in pending_admissions %}
+                        <div class="col-md-6 mb-3">
+                            <div class="pending-item card" style="border-left-color: #F59E0B;">
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div>
+                                            <h6 class="mb-1">
+                                                <i class="bi bi-hospital"></i> {{ admission.ward.name }} - Bed {{ admission.bed.bed_number }}
+                                            </h6>
+                                            <p class="mb-1"><strong>Patient:</strong> {{ admission.encounter.patient.full_name }}</p>
+                                            <p class="mb-1"><small class="text-muted">MRN: {{ admission.encounter.patient.mrn }}</small></p>
+                                            <p class="mb-1"><small class="text-muted">
+                                                Admitted: {{ admission.admit_date|date:"M d, Y - h:i A" }}
+                                            </small></p>
+                                            <p class="mb-0">
+                                                <span class="badge bg-info">{{ admission.bed_charges.days_admitted }} day{{ admission.bed_charges.days_admitted|pluralize }}</span>
+                                                <span class="badge bg-warning text-dark">GHS {{ admission.bed_charges.daily_rate }}/day</span>
+                                            </p>
+                                        </div>
+                                        <div class="text-end">
+                                            <h5 class="mb-2" style="color: #D97706;">
+                                                GHS {{ admission.bed_charges.current_charges|floatformat:2 }}
+                                            </h5>
+                                            <small class="text-muted d-block mb-2">Current charges</small>
+                                            <a href="{% url 'hospital:admission_detail' admission.pk %}" 
+                                               class="btn btn-sm btn-outline-warning">
+                                                <i class="bi bi-eye"></i> View
+                                            </a>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <div class="alert alert-info mt-3 mb-0">
+                        <i class="bi bi-info-circle"></i> <strong>Note:</strong> Bed charges are automatically added when patients are admitted. 
+                        Final charges will be calculated at discharge. Patients can pay bed charges as part of combined payment or separately.
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Today's Receipts -->
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <div class="card shadow">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">📋 Today's Receipts ({{ stats.todays_receipts }})</h5>
+                </div>
+                <div class="card-body">
+                    {% if todays_receipts %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Receipt No</th>
+                                    <th>Time</th>
+                                    <th>Patient</th>
+                                    <th>Amount</th>
+                                    <th>Method</th>
+                                    <th>Received By</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for receipt in todays_receipts %}
+                                <tr>
+                                    <td><strong>{{ receipt.receipt_number }}</strong></td>
+                                    <td>{{ receipt.receipt_date|date:"h:i A" }}</td>
+                                    <td>{{ receipt.patient.full_name }}</td>
+                                    <td><strong>GHS {{ receipt.amount_paid }}</strong></td>
+                                    <td><span class="badge bg-primary">{{ receipt.get_payment_method_display }}</span></td>
+                                    <td>{{ receipt.received_by.get_full_name }}</td>
+                                    <td>
+                                        <a href="{% url 'hospital:receipt_print' receipt.id %}" 
+                                           class="btn btn-sm btn-outline-primary" title="Print">
+                                            <i class="bi bi-printer"></i>
+                                        </a>
+                                        <a href="{% url 'hospital:receipt_detail' receipt.id %}" 
+                                           class="btn btn-sm btn-outline-info" title="View">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                        <p class="text-muted text-center py-4">No receipts issued today</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Auto-refresh every 30 seconds
+setTimeout(function() {
+    location.reload();
+}, 30000);
+</script>
+{% endblock %}
+

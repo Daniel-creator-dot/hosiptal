@@ -1,0 +1,493 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Front Desk - Appointments{% endblock %}
+
+{% block extra_css %}
+<style>
+    .appointment-card {
+        border-left: 4px solid #007bff;
+        transition: all 0.3s ease;
+    }
+    .appointment-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        transform: translateY(-2px);
+    }
+    .status-badge {
+        padding: 0.35rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+    .status-scheduled { background-color: #6c757d; color: white; }
+    .status-confirmed { background-color: #17a2b8; color: white; }
+    .status-completed { background-color: #28a745; color: white; }
+    .status-cancelled { background-color: #dc3545; color: white; }
+    .status-no_show { background-color: #ffc107; color: #212529; }
+    
+    .stats-card {
+        border-radius: 10px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+        border-left: 4px solid;
+    }
+    .stats-card.total { border-color: #007bff; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+    .stats-card.scheduled { border-color: #6c757d; background: linear-gradient(135deg, #95a5a6 0%, #7f8c8d 100%); color: white; }
+    .stats-card.confirmed { border-color: #17a2b8; background: linear-gradient(135deg, #56CCF2 0%, #2F80ED 100%); color: white; }
+    .stats-card.completed { border-color: #28a745; background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; }
+    .stats-card.cancelled { border-color: #dc3545; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; }
+    
+    .quick-action-btn {
+        margin-bottom: 0.5rem;
+        width: 100%;
+    }
+    
+    .time-indicator {
+        font-size: 1.2rem;
+        font-weight: bold;
+        color: #007bff;
+    }
+    
+    /* Live Update Styles */
+    .live-indicator {
+        position: fixed;
+        top: 70px;
+        right: 20px;
+        background: #28a745;
+        color: white;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        z-index: 1000;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        animation: pulse 2s infinite;
+    }
+    
+    .live-indicator.refreshing {
+        background: #ffc107;
+        color: #000;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+    
+    .current-time {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #007bff;
+        padding: 8px 16px;
+        background: #e7f3ff;
+        border-radius: 8px;
+        display: inline-block;
+    }
+    
+    .new-appointment {
+        animation: slideIn 0.5s ease-out;
+    }
+    
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateX(-20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateX(0);
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Live Update Indicator -->
+<div class="live-indicator" id="liveIndicator">
+    <i class="bi bi-circle-fill" style="font-size: 8px; margin-right: 6px;"></i>
+    <span id="updateStatus">LIVE</span>
+    <small id="countdown" style="margin-left: 8px; opacity: 0.8;"></small>
+</div>
+
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <h2><i class="bi bi-calendar-check"></i> Front Desk - Appointment Management</h2>
+            <p class="text-muted">Manage patient appointments and send SMS notifications</p>
+        </div>
+        <div class="col-md-3 text-center">
+            <div class="current-time">
+                <i class="bi bi-clock"></i> <span id="currentTime"></span>
+            </div>
+            <small class="text-muted d-block mt-1">Auto-refresh: <span id="refreshTimer">60</span>s</small>
+        </div>
+        <div class="col-md-3 text-end">
+            <a href="{% url 'hospital:frontdesk_appointment_create' %}" class="btn btn-primary btn-lg">
+                <i class="bi bi-plus-circle"></i> Create New Appointment
+            </a>
+        </div>
+    </div>
+    
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-2">
+            <div class="stats-card total">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="mb-1">Today Total</h6>
+                        <h2 class="mb-0">{{ stats.today_total }}</h2>
+                    </div>
+                    <i class="bi bi-calendar3 fs-1"></i>
+                </div>
+                <small class="d-block mt-2" style="opacity: 0.8; font-size: 0.75rem;">Today only</small>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stats-card scheduled">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="mb-1">Scheduled</h6>
+                        <h2 class="mb-0">{{ stats.all_scheduled }}</h2>
+                    </div>
+                    <i class="bi bi-clock fs-1"></i>
+                </div>
+                <small class="d-block mt-2" style="opacity: 0.8; font-size: 0.75rem;">All upcoming</small>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stats-card confirmed">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="mb-1">Confirmed</h6>
+                        <h2 class="mb-0">{{ stats.all_confirmed }}</h2>
+                    </div>
+                    <i class="bi bi-check-circle fs-1"></i>
+                </div>
+                <small class="d-block mt-2" style="opacity: 0.8; font-size: 0.75rem;">All upcoming</small>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stats-card completed">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="mb-1">Completed</h6>
+                        <h2 class="mb-0">{{ stats.today_completed }}</h2>
+                    </div>
+                    <i class="bi bi-check2-all fs-1"></i>
+                </div>
+                <small class="d-block mt-2" style="opacity: 0.8; font-size: 0.75rem;">Today only</small>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stats-card cancelled">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="mb-1">Cancelled</h6>
+                        <h2 class="mb-0">{{ stats.today_cancelled }}</h2>
+                    </div>
+                    <i class="bi bi-x-circle fs-1"></i>
+                </div>
+                <small class="d-block mt-2" style="opacity: 0.8; font-size: 0.75rem;">Today only</small>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stats-card scheduled">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="mb-1">No Show</h6>
+                        <h2 class="mb-0">{{ stats.today_no_show }}</h2>
+                    </div>
+                    <i class="bi bi-person-x fs-1"></i>
+                </div>
+                <small class="d-block mt-2" style="opacity: 0.8; font-size: 0.75rem;">Today only</small>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quick Actions & Filters -->
+    <div class="row mb-3">
+        <div class="col-md-8">
+            <div class="btn-group" role="group">
+                <a href="?status=" class="btn btn-outline-primary {% if not status_filter %}active{% endif %}">All</a>
+                <a href="?status=scheduled" class="btn btn-outline-secondary {% if status_filter == 'scheduled' %}active{% endif %}">Scheduled</a>
+                <a href="?status=confirmed" class="btn btn-outline-info {% if status_filter == 'confirmed' %}active{% endif %}">Confirmed</a>
+                <a href="?status=completed" class="btn btn-outline-success {% if status_filter == 'completed' %}active{% endif %}">Completed</a>
+                <a href="?status=cancelled" class="btn btn-outline-danger {% if status_filter == 'cancelled' %}active{% endif %}">Cancelled</a>
+            </div>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{% url 'hospital:frontdesk_appointment_list' %}" class="btn btn-outline-primary">
+                <i class="bi bi-list-ul"></i> View All Appointments
+            </a>
+        </div>
+    </div>
+    
+    <!-- Today's Appointments -->
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-calendar-day"></i> Today's Appointments - {{ today|date:"l, F d, Y" }}</h5>
+                </div>
+                <div class="card-body">
+                    {% if todays_appointments %}
+                        {% for appointment in todays_appointments %}
+                        <div class="appointment-card card mb-3">
+                            <div class="card-body">
+                                <div class="row align-items-center">
+                                    <div class="col-md-2 text-center">
+                                        <div class="time-indicator">
+                                            {{ appointment.appointment_date|date:"h:i A" }}
+                                        </div>
+                                        <small class="text-muted">{{ appointment.duration_minutes }} min</small>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <h6 class="mb-1">
+                                            <i class="bi bi-person-circle"></i> 
+                                            <a href="{% url 'hospital:patient_detail' appointment.patient.pk %}">
+                                                {{ appointment.patient.full_name }}
+                                            </a>
+                                        </h6>
+                                        <small class="text-muted">MRN: {{ appointment.patient.mrn }}</small><br>
+                                        <small class="text-muted">
+                                            <i class="bi bi-telephone"></i> {{ appointment.patient.phone_number|default:"No phone" }}
+                                        </small>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <strong>Provider:</strong> Dr. {{ appointment.provider.user.get_full_name }}<br>
+                                        <small class="text-muted">
+                                            <i class="bi bi-building"></i> {{ appointment.department.name }}
+                                        </small>
+                                    </div>
+                                    <div class="col-md-2 text-center">
+                                        <span class="status-badge status-{{ appointment.status }}">
+                                            {{ appointment.get_status_display }}
+                                        </span>
+                                    </div>
+                                    <div class="col-md-1 text-end">
+                                        <a href="{% url 'hospital:frontdesk_appointment_detail' appointment.pk %}" 
+                                           class="btn btn-sm btn-outline-primary" title="View Details">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+                                    </div>
+                                </div>
+                                {% if appointment.reason %}
+                                <div class="row mt-2">
+                                    <div class="col-md-12">
+                                        <small><strong>Reason:</strong> {{ appointment.reason }}</small>
+                                    </div>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i> No appointments scheduled for today.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Upcoming Appointments Sidebar -->
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header bg-info text-white">
+                    <h6 class="mb-0"><i class="bi bi-calendar-week"></i> Upcoming (Next 7 Days)</h6>
+                </div>
+                <div class="card-body" style="max-height: 600px; overflow-y: auto;">
+                    {% if upcoming_appointments %}
+                        {% for appointment in upcoming_appointments %}
+                        <div class="card mb-2">
+                            <div class="card-body p-2">
+                                <small class="text-muted">{{ appointment.appointment_date|date:"M d, Y h:i A" }}</small>
+                                <h6 class="mb-0">{{ appointment.patient.full_name }}</h6>
+                                <small>Dr. {{ appointment.provider.user.get_full_name }}</small><br>
+                                <span class="status-badge status-{{ appointment.status }}">
+                                    {{ appointment.get_status_display }}
+                                </span>
+                                <a href="{% url 'hospital:frontdesk_appointment_detail' appointment.pk %}" 
+                                   class="btn btn-xs btn-outline-primary float-end">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted">No upcoming appointments in the next 7 days.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Live Update Configuration
+const REFRESH_INTERVAL = 60000; // 60 seconds
+let refreshTimer = 60;
+let countdownInterval;
+
+// Update current time
+function updateCurrentTime() {
+    const now = new Date();
+    const timeString = now.toLocaleTimeString('en-US', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true 
+    });
+    document.getElementById('currentTime').textContent = timeString;
+}
+
+// Update countdown timer
+function updateCountdown() {
+    const timerElement = document.getElementById('refreshTimer');
+    const countdownElement = document.getElementById('countdown');
+    
+    if (timerElement) {
+        timerElement.textContent = refreshTimer;
+    }
+    
+    if (countdownElement) {
+        countdownElement.textContent = `(GHS {refreshTimer}s)`;
+    }
+    
+    if (refreshTimer <= 0) {
+        refreshPage();
+        refreshTimer = 60;
+    } else {
+        refreshTimer--;
+    }
+}
+
+// Refresh the page with visual indicator
+function refreshPage() {
+    const indicator = document.getElementById('liveIndicator');
+    const status = document.getElementById('updateStatus');
+    
+    // Show refreshing state
+    indicator.classList.add('refreshing');
+    status.textContent = 'REFRESHING...';
+    
+    // Store scroll position
+    const scrollPos = window.scrollY;
+    sessionStorage.setItem('scrollPos', scrollPos);
+    
+    // Reload page
+    setTimeout(() => {
+        window.location.reload();
+    }, 500);
+}
+
+// Restore scroll position after refresh
+function restoreScrollPosition() {
+    const scrollPos = sessionStorage.getItem('scrollPos');
+    if (scrollPos) {
+        window.scrollTo(0, parseInt(scrollPos));
+        sessionStorage.removeItem('scrollPos');
+    }
+}
+
+// Show notification for new appointments
+function showNewAppointmentNotification() {
+    const cards = document.querySelectorAll('.appointment-card');
+    cards.forEach(card => {
+        card.classList.add('new-appointment');
+    });
+}
+
+// Initialize live updates
+function initLiveUpdates() {
+    // Update time immediately and every second
+    updateCurrentTime();
+    setInterval(updateCurrentTime, 1000);
+    
+    // Start countdown timer
+    countdownInterval = setInterval(updateCountdown, 1000);
+    
+    // Restore scroll position if page was refreshed
+    restoreScrollPosition();
+    
+    // Optional: Play sound on page load (indicating refresh)
+    const wasRefreshed = sessionStorage.getItem('wasAutoRefreshed');
+    if (wasRefreshed === 'true') {
+        console.log('Dashboard auto-refreshed at ' + new Date().toLocaleTimeString());
+        sessionStorage.removeItem('wasAutoRefreshed');
+    }
+    
+    // Set flag for next refresh
+    sessionStorage.setItem('wasAutoRefreshed', 'true');
+}
+
+// Manual refresh button (optional)
+function addManualRefreshButton() {
+    const header = document.querySelector('.col-md-3.text-end');
+    if (header) {
+        const refreshBtn = document.createElement('button');
+        refreshBtn.className = 'btn btn-outline-secondary btn-sm ms-2';
+        refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh Now';
+        refreshBtn.onclick = function() {
+            refreshTimer = 0;
+            updateCountdown();
+        };
+        header.appendChild(refreshBtn);
+    }
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', function(e) {
+    // Ctrl/Cmd + R to refresh
+    if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+        e.preventDefault();
+        refreshTimer = 0;
+        updateCountdown();
+    }
+    
+    // Press 'N' to create new appointment
+    if (e.key === 'n' || e.key === 'N') {
+        if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+            window.location.href = "{% url 'hospital:frontdesk_appointment_create' %}";
+        }
+    }
+});
+
+// Visibility API - pause timer when tab is not visible
+document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+        // Page is hidden, pause countdown
+        clearInterval(countdownInterval);
+        console.log('Auto-refresh paused (tab not visible)');
+    } else {
+        // Page is visible again, resume countdown
+        countdownInterval = setInterval(updateCountdown, 1000);
+        console.log('Auto-refresh resumed');
+    }
+});
+
+// Initialize when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    initLiveUpdates();
+    addManualRefreshButton();
+    
+    console.log('%c📅 Appointment Dashboard - Live Mode Active', 'color: #28a745; font-weight: bold; font-size: 14px;');
+    console.log('%cAuto-refresh: Every 60 seconds', 'color: #007bff;');
+    console.log('%cKeyboard Shortcuts:', 'color: #6c757d; font-weight: bold;');
+    console.log('  • N = New Appointment');
+    console.log('  • Ctrl+R = Refresh Now');
+});
+
+// Before page unload, save that we're refreshing
+window.addEventListener('beforeunload', function() {
+    if (refreshTimer === 0) {
+        sessionStorage.setItem('wasAutoRefreshed', 'true');
+    }
+});
+</script>
+{% endblock %}
+

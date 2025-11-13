@@ -1,0 +1,282 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block extra_css %}
+<style>
+    .bulk-input-container {
+        max-width: 1200px;
+        margin: 40px auto;
+    }
+    
+    .header-card {
+        background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 40px;
+        margin-bottom: 32px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+    }
+    
+    .input-card {
+        background: white;
+        border-radius: 16px;
+        padding: 32px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        margin-bottom: 24px;
+    }
+    
+    .csv-textarea {
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+        border: 2px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 16px;
+        min-height: 300px;
+        width: 100%;
+        resize: vertical;
+    }
+    
+    .csv-textarea:focus {
+        border-color: #f59e0b;
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.1);
+    }
+    
+    .example-box {
+        background: #fef3c7;
+        border-left: 4px solid #f59e0b;
+        padding: 20px;
+        border-radius: 8px;
+        margin: 20px 0;
+    }
+    
+    .service-selector {
+        max-height: 400px;
+        overflow-y: auto;
+        border: 2px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 16px;
+    }
+    
+    .service-item {
+        padding: 12px;
+        border-bottom: 1px solid #e5e7eb;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .service-item:hover {
+        background: #f9fafb;
+    }
+    
+    .service-item:last-child {
+        border-bottom: none;
+    }
+    
+    .service-info {
+        flex: 1;
+    }
+    
+    .service-code {
+        font-weight: 600;
+        color: #1f2937;
+    }
+    
+    .service-desc {
+        font-size: 13px;
+        color: #6b7280;
+    }
+    
+    .price-input {
+        width: 120px;
+        padding: 8px 12px;
+        border: 2px solid #e5e7eb;
+        border-radius: 8px;
+        font-weight: 600;
+    }
+    
+    .price-input:focus {
+        border-color: #f59e0b;
+        outline: none;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="bulk-input-container">
+    <div class="header-card">
+        <h1 class="mb-2"><i class="bi bi-upload me-3"></i>Bulk Price Input</h1>
+        <p class="mb-0" style="opacity: 0.9;">Upload prices for multiple services at once using CSV format</p>
+    </div>
+    
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        
+        <!-- Category Selection -->
+        <div class="input-card">
+            <h4 class="mb-4"><i class="bi bi-folder me-2"></i>Step 1: Select Pricing Category</h4>
+            <select name="pricing_category" class="form-select form-select-lg" required>
+                <option value="">Choose pricing category...</option>
+                {% for category in categories %}
+                <option value="{{ category.id }}">
+                    {{ category.name }} ({{ category.code }}) - {{ category.get_category_type_display }}
+                </option>
+                {% endfor %}
+            </select>
+            <small class="text-muted">Select the pricing category (Cash, Insurance, Corporate, etc.)</small>
+        </div>
+        
+        <!-- CSV Input Method -->
+        <div class="input-card">
+            <h4 class="mb-4"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Step 2: Enter Prices</h4>
+            
+            <ul class="nav nav-tabs mb-4" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="csv-tab" data-bs-toggle="tab" data-bs-target="#csv-pane" type="button">
+                        <i class="bi bi-file-text me-2"></i>CSV Format
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="form-tab" data-bs-toggle="tab" data-bs-target="#form-pane" type="button">
+                        <i class="bi bi-list-ul me-2"></i>Form Input
+                    </button>
+                </li>
+            </ul>
+            
+            <div class="tab-content">
+                <!-- CSV Tab -->
+                <div class="tab-pane fade show active" id="csv-pane">
+                    <div class="example-box">
+                        <h6><i class="bi bi-info-circle me-2"></i>CSV Format Example:</h6>
+                        <code>
+service_code,price<br>
+LAB001,50.00<br>
+LAB002,75.50<br>
+IMG001,200.00<br>
+CONS001,100.00
+                        </code>
+                        <p class="mb-0 mt-3"><small>
+                            <strong>Instructions:</strong><br>
+                            • First line must be headers: service_code,price<br>
+                            • Each line after is: SERVICE_CODE,PRICE<br>
+                            • Use exact service codes from your system<br>
+                            • Prices should be numbers only (no currency symbols)
+                        </small></p>
+                    </div>
+                    
+                    <label class="form-label fw-bold">Paste CSV Data:</label>
+                    <textarea name="csv_data" class="csv-textarea" placeholder="service_code,price&#10;LAB001,50.00&#10;LAB002,75.50&#10;IMG001,200.00"></textarea>
+                    
+                    <div class="mt-3">
+                        <button type="button" class="btn btn-outline-secondary" onclick="document.getElementById('sample-file').click()">
+                            <i class="bi bi-download me-2"></i>Download Sample CSV
+                        </button>
+                        <a href="#" id="sample-file" style="display:none;" download="sample_prices.csv"></a>
+                    </div>
+                </div>
+                
+                <!-- Form Tab -->
+                <div class="tab-pane fade" id="form-pane">
+                    <p class="text-muted mb-3">Select services and enter prices below:</p>
+                    
+                    <div class="mb-3">
+                        <input type="text" class="form-control" id="service-search" placeholder="🔍 Search services...">
+                    </div>
+                    
+                    <div class="service-selector" id="service-list">
+                        {% for service in services %}
+                        <div class="service-item" data-code="{{ service.code }}" data-desc="{{ service.description }}">
+                            <div class="service-info">
+                                <div class="service-code">{{ service.code }}</div>
+                                <div class="service-desc">{{ service.description }} • {{ service.category }}</div>
+                            </div>
+                            <input type="number" 
+                                   class="price-input" 
+                                   placeholder="0.00" 
+                                   step="0.01" 
+                                   min="0"
+                                   data-service="{{ service.code }}">
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Submit Buttons -->
+        <div class="input-card">
+            <div class="d-flex justify-content-between align-items-center">
+                <a href="{% url 'hospital:pricing_dashboard' %}" class="btn btn-outline-secondary btn-lg">
+                    <i class="bi bi-arrow-left me-2"></i>Cancel
+                </a>
+                <button type="submit" class="btn btn-warning btn-lg">
+                    <i class="bi bi-check-circle me-2"></i>Upload Prices
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+
+<script>
+// Search functionality
+document.getElementById('service-search')?.addEventListener('input', function(e) {
+    const query = e.target.value.toLowerCase();
+    const items = document.querySelectorAll('.service-item');
+    
+    items.forEach(item => {
+        const code = item.dataset.code.toLowerCase();
+        const desc = item.dataset.desc.toLowerCase();
+        
+        if (code.includes(query) || desc.includes(query)) {
+            item.style.display = 'flex';
+        } else {
+            item.style.display = 'none';
+        }
+    });
+});
+
+// Generate sample CSV
+document.querySelector('[onclick*="sample-file"]')?.addEventListener('click', function(e) {
+    e.preventDefault();
+    
+    const csvContent = "service_code,price\nLAB001,50.00\nLAB002,75.50\nIMG001,200.00\nCONS001,100.00";
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    
+    const link = document.getElementById('sample-file');
+    link.href = url;
+    link.click();
+    
+    setTimeout(() => window.URL.revokeObjectURL(url), 100);
+});
+
+// Convert form inputs to CSV when switching tabs
+document.getElementById('form-tab')?.addEventListener('shown.bs.tab', function() {
+    const prices = [];
+    document.querySelectorAll('.price-input').forEach(input => {
+        if (input.value && parseFloat(input.value) > 0) {
+            prices.push(`${input.dataset.service},${input.value}`);
+        }
+    });
+    
+    if (prices.length > 0) {
+        const csvData = 'service_code,price\n' + prices.join('\n');
+        document.querySelector('[name="csv_data"]').value = csvData;
+    }
+});
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+

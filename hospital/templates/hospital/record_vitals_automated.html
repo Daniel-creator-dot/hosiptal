@@ -1,0 +1,658 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Record Vital Signs - PrimeCare Medical Center{% endblock %}
+
+{% block page_title %}Record Vital Signs{% endblock %}
+{% block page_subtitle %}{{ encounter.patient.full_name }} (Age: {{ encounter.patient.age }}, {{ encounter.patient.get_gender_display }}){% endblock %}
+
+{% block extra_css %}
+<style>
+    .vital-input-group {
+        margin-bottom: 24px;
+    }
+    
+    .vital-label {
+        font-weight: 600;
+        color: var(--dark);
+        margin-bottom: 8px;
+        display: block;
+    }
+    
+    .vital-input-wrapper {
+        position: relative;
+    }
+    
+    .vital-input {
+        width: 100%;
+        padding: 12px 16px;
+        border: 2px solid var(--border);
+        border-radius: 10px;
+        font-size: 16px;
+        transition: all 0.3s ease;
+    }
+    
+    .vital-input:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    }
+    
+    .vital-status-indicator {
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        opacity: 0;
+        transition: all 0.3s ease;
+    }
+    
+    .vital-status-indicator.show {
+        opacity: 1;
+    }
+    
+    .vital-status-indicator.normal {
+        background: #10b981;
+        color: white;
+    }
+    
+    .vital-status-indicator.warning {
+        background: #f59e0b;
+        color: white;
+    }
+    
+    .vital-status-indicator.danger {
+        background: #ef4444;
+        color: white;
+    }
+    
+    .vital-feedback {
+        margin-top: 8px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        font-size: 13px;
+        display: none;
+    }
+    
+    .vital-feedback.show {
+        display: block;
+    }
+    
+    .vital-feedback.normal {
+        background: #d1fae5;
+        color: #065f46;
+        border-left: 3px solid #10b981;
+    }
+    
+    .vital-feedback.warning {
+        background: #fef3c7;
+        color: #92400e;
+        border-left: 3px solid #f59e0b;
+    }
+    
+    .vital-feedback.danger {
+        background: #fee2e2;
+        color: #991b1b;
+        border-left: 3px solid #ef4444;
+    }
+    
+    .normal-range-hint {
+        font-size: 12px;
+        color: var(--gray);
+        margin-top: 4px;
+    }
+    
+    .vitals-summary-card {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        border: 1px solid var(--border);
+        margin-bottom: 24px;
+    }
+    
+    .overall-status {
+        text-align: center;
+        padding: 20px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+    }
+    
+    .overall-status.all-normal {
+        background: #d1fae5;
+        color: #065f46;
+        border: 2px solid #10b981;
+    }
+    
+    .overall-status.has-warnings {
+        background: #fef3c7;
+        color: #92400e;
+        border: 2px solid #f59e0b;
+    }
+    
+    .overall-status.has-critical {
+        background: #fee2e2;
+        color: #991b1b;
+        border: 2px solid #ef4444;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <!-- Main Form -->
+    <div class="col-md-8">
+        <div class="modern-card">
+            <div class="mb-4">
+                <h6 style="font-weight: 600; color: var(--dark); margin-bottom: 8px;">
+                    <i class="bi bi-person-circle"></i> Patient Information
+                </h6>
+                <div style="font-size: 14px; color: var(--gray);">
+                    <strong>Name:</strong> {{ encounter.patient.full_name }}<br>
+                    <strong>Patient ID:</strong> {{ encounter.patient.mrn }}<br>
+                    <strong>Age:</strong> {{ encounter.patient.age }} years | <strong>Gender:</strong> {{ encounter.patient.get_gender_display }}
+                </div>
+            </div>
+            
+            <form id="vitalSignsForm" method="post">
+                {% csrf_token %}
+                
+                <!-- Overall Status Summary -->
+                <div id="overallStatus" class="overall-status" style="display: none;">
+                    <div id="overallStatusMessage"></div>
+                </div>
+                
+                <!-- Blood Pressure -->
+                <div class="vital-input-group">
+                    <label class="vital-label">
+                        <i class="bi bi-heart-pulse-fill"></i> Blood Pressure (mmHg)
+                    </label>
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <div class="vital-input-wrapper">
+                                <input type="number" name="systolic_bp" id="systolic_bp" 
+                                       class="vital-input" placeholder="Systolic" 
+                                       min="50" max="250" 
+                                       oninput="validateBP()">
+                                <div id="bp_status" class="vital-status-indicator"></div>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <input type="number" name="diastolic_bp" id="diastolic_bp" 
+                                   class="vital-input" placeholder="Diastolic" 
+                                   min="30" max="150"
+                                   oninput="validateBP()">
+                        </div>
+                    </div>
+                    <div id="bp_feedback" class="vital-feedback"></div>
+                    <div class="normal-range-hint" id="bp_range_hint"></div>
+                </div>
+                
+                <!-- Pulse/Heart Rate -->
+                <div class="vital-input-group">
+                    <label class="vital-label">
+                        <i class="bi bi-activity"></i> Pulse/Heart Rate (bpm)
+                    </label>
+                    <div class="vital-input-wrapper">
+                        <input type="number" name="pulse" id="pulse" 
+                               class="vital-input" placeholder="Enter pulse rate" 
+                               min="30" max="220"
+                               oninput="validatePulse()">
+                        <div id="pulse_status" class="vital-status-indicator"></div>
+                    </div>
+                    <div id="pulse_feedback" class="vital-feedback"></div>
+                    <div class="normal-range-hint" id="pulse_range_hint"></div>
+                </div>
+                
+                <!-- Temperature -->
+                <div class="vital-input-group">
+                    <label class="vital-label">
+                        <i class="bi bi-thermometer-half"></i> Temperature (°C)
+                    </label>
+                    <div class="vital-input-wrapper">
+                        <input type="number" name="temperature" id="temperature" 
+                               class="vital-input" placeholder="Enter temperature" 
+                               step="0.1" min="30" max="45"
+                               oninput="validateTemperature()">
+                        <div id="temp_status" class="vital-status-indicator"></div>
+                    </div>
+                    <div id="temp_feedback" class="vital-feedback"></div>
+                    <div class="normal-range-hint">Normal: 36.1°C - 37.2°C</div>
+                </div>
+                
+                <!-- SpO2 -->
+                <div class="vital-input-group">
+                    <label class="vital-label">
+                        <i class="bi bi-droplet"></i> Oxygen Saturation (SpO2 %)
+                    </label>
+                    <div class="vital-input-wrapper">
+                        <input type="number" name="spo2" id="spo2" 
+                               class="vital-input" placeholder="Enter SpO2" 
+                               min="0" max="100"
+                               oninput="validateSpO2()">
+                        <div id="spo2_status" class="vital-status-indicator"></div>
+                    </div>
+                    <div id="spo2_feedback" class="vital-feedback"></div>
+                    <div class="normal-range-hint">Normal: 95% - 100%</div>
+                </div>
+                
+                <!-- Respiratory Rate -->
+                <div class="vital-input-group">
+                    <label class="vital-label">
+                        <i class="bi bi-wind"></i> Respiratory Rate (per minute)
+                    </label>
+                    <div class="vital-input-wrapper">
+                        <input type="number" name="respiratory_rate" id="respiratory_rate" 
+                               class="vital-input" placeholder="Enter respiratory rate" 
+                               min="10" max="40"
+                               oninput="validateRespiratoryRate()">
+                        <div id="rr_status" class="vital-status-indicator"></div>
+                    </div>
+                    <div id="rr_feedback" class="vital-feedback"></div>
+                    <div class="normal-range-hint" id="rr_range_hint"></div>
+                </div>
+                
+                <!-- Weight and Height (Optional) -->
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="vital-label">
+                            <i class="bi bi-rulers"></i> Weight (kg) - Optional
+                        </label>
+                        <input type="number" name="weight" id="weight" 
+                               class="vital-input" placeholder="Enter weight" 
+                               step="0.1" min="1" max="300">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="vital-label">
+                            <i class="bi bi-rulers"></i> Height (cm) - Optional
+                        </label>
+                        <input type="number" name="height" id="height" 
+                               class="vital-input" placeholder="Enter height" 
+                               step="0.1" min="30" max="250">
+                    </div>
+                </div>
+                
+                <!-- Notes -->
+                <div class="mt-4">
+                    <label class="vital-label">Notes (Optional)</label>
+                    <textarea name="notes" class="vital-input" rows="3" placeholder="Additional notes about vital signs..."></textarea>
+                </div>
+                
+                <div class="mt-4 d-flex gap-2">
+                    <button type="submit" class="btn btn-primary-modern btn-modern">
+                        <i class="bi bi-check-circle"></i> Save Vital Signs
+                    </button>
+                    <a href="{% url 'hospital:patient_list' %}" class="btn btn-outline-info btn-modern me-2">
+                        <i class="bi bi-people"></i> View All Patients
+                    </a>
+                    <a href="{% url 'hospital:patient_detail' encounter.patient.pk %}" class="btn btn-outline-secondary btn-modern">
+                        <i class="bi bi-x-circle"></i> Skip for Now
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Sidebar -->
+    <div class="col-md-4">
+        <!-- Quick Reference -->
+        <div class="modern-card">
+            <h6 style="font-weight: 600; margin-bottom: 16px; color: var(--dark);">
+                <i class="bi bi-info-circle"></i> Quick Reference
+            </h6>
+            <div style="font-size: 13px; line-height: 1.8;">
+                <div class="mb-3">
+                    <strong>✅ Green Indicator:</strong> Value is within normal range
+                </div>
+                <div class="mb-3">
+                    <strong>⚠️ Yellow Indicator:</strong> Value is slightly outside normal range
+                </div>
+                <div class="mb-3">
+                    <strong>🔴 Red Indicator:</strong> Value is critically abnormal - requires immediate attention
+                </div>
+                <div style="padding-top: 16px; border-top: 1px solid var(--border); margin-top: 16px;">
+                    <small class="text-muted">
+                        Normal ranges adjust automatically based on patient age ({{ encounter.patient.age }} years).
+                    </small>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Previous Vitals -->
+        {% if previous_vitals %}
+        <div class="modern-card mt-4">
+            <h6 style="font-weight: 600; margin-bottom: 16px; color: var(--dark);">
+                <i class="bi bi-clock-history"></i> Previous Records
+            </h6>
+            <div style="font-size: 13px;">
+                {% for vital in previous_vitals|slice:":3" %}
+                <div style="padding: 12px; background: var(--light); border-radius: 8px; margin-bottom: 12px;">
+                    <div style="font-weight: 600; margin-bottom: 8px;">
+                        {{ vital.recorded_at|date:"M d, Y H:i" }}
+                    </div>
+                    <div style="color: var(--gray);">
+                        BP: {{ vital.systolic_bp|default:"-" }}/{{ vital.diastolic_bp|default:"-" }} | 
+                        Pulse: {{ vital.pulse|default:"-" }} | 
+                        Temp: {{ vital.temperature|default:"-" }}°C
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const patientAge = {{ encounter.patient.age }};
+    const patientGender = '{{ encounter.patient.gender }}';
+    
+    // Get normal ranges based on age
+    function getNormalRanges() {
+        let bpRange, pulseRange, rrRange;
+        
+        if (patientAge < 1) {
+            bpRange = {sys: '70-100', dia: '40-60'};
+            pulseRange = '100-160';
+            rrRange = '30-50';
+        } else if (patientAge < 3) {
+            bpRange = {sys: '80-110', dia: '50-70'};
+            pulseRange = '80-130';
+            rrRange = '24-40';
+        } else if (patientAge < 6) {
+            bpRange = {sys: '85-115', dia: '55-75'};
+            pulseRange = '75-120';
+            rrRange = '22-34';
+        } else if (patientAge < 13) {
+            bpRange = {sys: '95-115', dia: '60-75'};
+            pulseRange = '70-110';
+            rrRange = '18-30';
+        } else if (patientAge < 18) {
+            bpRange = {sys: '105-130', dia: '65-80'};
+            pulseRange = '60-100';
+            rrRange = '12-20';
+        } else if (patientAge < 65) {
+            bpRange = {sys: '90-120', dia: '60-80'};
+            pulseRange = '60-100';
+            rrRange = '12-20';
+        } else {
+            bpRange = {sys: '90-140', dia: '60-90'};
+            pulseRange = '60-100';
+            rrRange = '12-20';
+        }
+        
+        return {bpRange, pulseRange, rrRange};
+    }
+    
+    const ranges = getNormalRanges();
+    
+    // Set range hints
+    document.getElementById('bp_range_hint').textContent = 
+        `Normal: GHS {ranges.bpRange.sys}/GHS {ranges.bpRange.dia} mmHg`;
+    document.getElementById('pulse_range_hint').textContent = 
+        `Normal: GHS {ranges.pulseRange} bpm`;
+    document.getElementById('rr_range_hint').textContent = 
+        `Normal: GHS {ranges.rrRange} /min`;
+    
+    function setStatusIndicator(elementId, status, message) {
+        const indicator = document.getElementById(elementId);
+        const feedback = document.getElementById(elementId.replace('_status', '_feedback'));
+        
+        indicator.className = 'vital-status-indicator';
+        feedback.className = 'vital-feedback';
+        
+        if (status === 'normal') {
+            indicator.classList.add('normal', 'show');
+            indicator.innerHTML = '✓';
+            feedback.classList.add('normal', 'show');
+            feedback.innerHTML = message;
+        } else if (status === 'warning' || status === 'high' || status === 'low') {
+            indicator.classList.add('warning', 'show');
+            indicator.innerHTML = '⚠';
+            feedback.classList.add('warning', 'show');
+            feedback.innerHTML = message;
+        } else if (status === 'danger' || status === 'critical_high' || status === 'critical_low') {
+            indicator.classList.add('danger', 'show');
+            indicator.innerHTML = '✕';
+            feedback.classList.add('danger', 'show');
+            feedback.innerHTML = message;
+        } else {
+            indicator.classList.remove('show');
+            feedback.classList.remove('show');
+        }
+    }
+    
+    function validateBP() {
+        const systolic = parseInt(document.getElementById('systolic_bp').value);
+        const diastolic = parseInt(document.getElementById('diastolic_bp').value);
+        
+        if (!systolic || !diastolic) {
+            setStatusIndicator('bp_status', null, '');
+            return;
+        }
+        
+        // Simplified validation - in production, use AJAX to call backend validator
+        const sysMin = patientAge < 65 ? 90 : 90;
+        const sysMax = patientAge < 65 ? 120 : 140;
+        const diaMin = patientAge < 65 ? 60 : 60;
+        const diaMax = patientAge < 65 ? 80 : 90;
+        
+        let status, message;
+        
+        if (systolic >= 180 || diastolic >= 120) {
+            status = 'danger';
+            message = '⚠️ CRITICAL: Hypertension Crisis - Requires immediate attention!';
+        } else if (systolic >= 140 || diastolic >= 90) {
+            status = 'warning';
+            message = '⚠️ HIGH: Elevated blood pressure detected';
+        } else if (systolic < 90 || diastolic < 60) {
+            status = 'danger';
+            message = '⚠️ CRITICAL: Hypotension - Requires immediate attention!';
+        } else if (systolic >= 130 || diastolic >= 80) {
+            status = 'warning';
+            message = '⚠️ ELEVATED: Blood pressure slightly above normal';
+        } else if (systolic < sysMin || diastolic < diaMin) {
+            status = 'warning';
+            message = '⚠️ LOW: Blood pressure below normal range';
+        } else {
+            status = 'normal';
+            message = '✅ NORMAL: Blood pressure is within normal range';
+        }
+        
+        setStatusIndicator('bp_status', status, message);
+        updateOverallStatus();
+    }
+    
+    function validatePulse() {
+        const pulse = parseInt(document.getElementById('pulse').value);
+        if (!pulse) {
+            setStatusIndicator('pulse_status', null, '');
+            return;
+        }
+        
+        let minRate, maxRate;
+        if (patientAge < 1) {
+            minRate = 100; maxRate = 160;
+        } else if (patientAge < 3) {
+            minRate = 80; maxRate = 130;
+        } else if (patientAge < 6) {
+            minRate = 75; maxRate = 120;
+        } else if (patientAge < 13) {
+            minRate = 70; maxRate = 110;
+        } else {
+            minRate = 60; maxRate = 100;
+        }
+        
+        let status, message;
+        if (pulse > maxRate + 20) {
+            status = 'danger';
+            message = '⚠️ CRITICAL: Severe tachycardia - Requires immediate attention!';
+        } else if (pulse > maxRate) {
+            status = 'warning';
+            message = '⚠️ HIGH: Tachycardia detected';
+        } else if (pulse < minRate - 20) {
+            status = 'danger';
+            message = '⚠️ CRITICAL: Severe bradycardia - Requires immediate attention!';
+        } else if (pulse < minRate) {
+            status = 'warning';
+            message = '⚠️ LOW: Bradycardia detected';
+        } else {
+            status = 'normal';
+            message = '✅ NORMAL: Heart rate is within normal range';
+        }
+        
+        setStatusIndicator('pulse_status', status, message);
+        updateOverallStatus();
+    }
+    
+    function validateTemperature() {
+        const temp = parseFloat(document.getElementById('temperature').value);
+        if (!temp) {
+            setStatusIndicator('temp_status', null, '');
+            return;
+        }
+        
+        let status, message;
+        if (temp >= 39.5) {
+            status = 'danger';
+            message = '⚠️ CRITICAL: High fever - Requires immediate attention!';
+        } else if (temp >= 38.0) {
+            status = 'warning';
+            message = '⚠️ HIGH: Fever detected';
+        } else if (temp < 36.1) {
+            status = 'danger';
+            message = '⚠️ CRITICAL: Hypothermia - Requires immediate attention!';
+        } else {
+            status = 'normal';
+            message = '✅ NORMAL: Temperature is within normal range';
+        }
+        
+        setStatusIndicator('temp_status', status, message);
+        updateOverallStatus();
+    }
+    
+    function validateSpO2() {
+        const spo2 = parseInt(document.getElementById('spo2').value);
+        if (!spo2) {
+            setStatusIndicator('spo2_status', null, '');
+            return;
+        }
+        
+        let status, message;
+        if (spo2 < 90) {
+            status = 'danger';
+            message = '⚠️ CRITICAL: Severe hypoxia - Requires immediate attention!';
+        } else if (spo2 < 95) {
+            status = 'warning';
+            message = '⚠️ LOW: Mild hypoxia detected';
+        } else {
+            status = 'normal';
+            message = '✅ NORMAL: Oxygen saturation is within normal range';
+        }
+        
+        setStatusIndicator('spo2_status', status, message);
+        updateOverallStatus();
+    }
+    
+    function validateRespiratoryRate() {
+        const rr = parseInt(document.getElementById('respiratory_rate').value);
+        if (!rr) {
+            setStatusIndicator('rr_status', null, '');
+            return;
+        }
+        
+        let minRate, maxRate;
+        if (patientAge < 1) {
+            minRate = 30; maxRate = 50;
+        } else if (patientAge < 3) {
+            minRate = 24; maxRate = 40;
+        } else if (patientAge < 6) {
+            minRate = 22; maxRate = 34;
+        } else if (patientAge < 13) {
+            minRate = 18; maxRate = 30;
+        } else {
+            minRate = 12; maxRate = 20;
+        }
+        
+        let status, message;
+        if (rr > maxRate + 10) {
+            status = 'danger';
+            message = '⚠️ CRITICAL: Severe tachypnea - Requires immediate attention!';
+        } else if (rr > maxRate) {
+            status = 'warning';
+            message = '⚠️ HIGH: Tachypnea detected';
+        } else if (rr < minRate) {
+            status = 'danger';
+            message = '⚠️ CRITICAL: Bradypnea - Requires immediate attention!';
+        } else {
+            status = 'normal';
+            message = '✅ NORMAL: Respiratory rate is within normal range';
+        }
+        
+        setStatusIndicator('rr_status', status, message);
+        updateOverallStatus();
+    }
+    
+    function updateOverallStatus() {
+        const statusIndicators = document.querySelectorAll('.vital-status-indicator.show');
+        const overallStatus = document.getElementById('overallStatus');
+        const overallMessage = document.getElementById('overallStatusMessage');
+        
+        if (statusIndicators.length === 0) {
+            overallStatus.style.display = 'none';
+            return;
+        }
+        
+        let criticalCount = 0;
+        let warningCount = 0;
+        let normalCount = 0;
+        
+        statusIndicators.forEach(ind => {
+            if (ind.classList.contains('danger')) criticalCount++;
+            else if (ind.classList.contains('warning')) warningCount++;
+            else if (ind.classList.contains('normal')) normalCount++;
+        });
+        
+        overallStatus.style.display = 'block';
+        
+        if (criticalCount > 0) {
+            overallStatus.className = 'overall-status has-critical';
+            overallMessage.innerHTML = `
+                <i class="bi bi-exclamation-triangle-fill"></i> <strong>CRITICAL:</strong> 
+                GHS {criticalCount} critical vital sign(s) detected - Immediate medical attention required!
+            `;
+        } else if (warningCount > 0) {
+            overallStatus.className = 'overall-status has-warnings';
+            overallMessage.innerHTML = `
+                <i class="bi bi-exclamation-circle-fill"></i> <strong>WARNING:</strong> 
+                GHS {warningCount} abnormal vital sign(s) detected - Review required
+            `;
+        } else {
+            overallStatus.className = 'overall-status all-normal';
+            overallMessage.innerHTML = `
+                <i class="bi bi-check-circle-fill"></i> <strong>ALL NORMAL:</strong> 
+                All recorded vital signs are within normal range
+            `;
+        }
+    }
+    
+    // Validate on form submit
+    document.getElementById('vitalSignsForm').addEventListener('submit', function(e) {
+        const criticalIndicators = document.querySelectorAll('.vital-status-indicator.danger.show');
+        if (criticalIndicators.length > 0) {
+            if (!confirm('⚠️ CRITICAL vital signs detected. Are you sure you want to save? Please ensure immediate medical attention is provided.')) {
+                e.preventDefault();
+            }
+        }
+    });
+</script>
+{% endblock %}
+

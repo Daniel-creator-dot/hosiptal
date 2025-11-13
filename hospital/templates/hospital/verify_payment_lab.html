@@ -1,0 +1,280 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Verify Payment - Lab Result{% endblock %}
+
+{% block extra_css %}
+<style>
+    .receipt-scanner {
+        background: #f8f9fa;
+        border: 2px dashed #007bff;
+        border-radius: 12px;
+        padding: 2rem;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .verification-form {
+        background: white;
+        border-radius: 12px;
+        padding: 2rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .payment-status {
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 2rem;
+    }
+    .payment-status.pending {
+        background: #fff3cd;
+        border-left: 4px solid #ffc107;
+    }
+    .payment-status.verified {
+        background: #d1e7dd;
+        border-left: 4px solid #28a745;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'hospital:payment_verification_dashboard' %}">Payment Verification</a></li>
+            <li class="breadcrumb-item active">Verify Lab Payment</li>
+        </ol>
+    </nav>
+    
+    <h2><i class="bi bi-shield-check"></i> {{ title }}</h2>
+    
+    <div class="row mt-4">
+        <div class="col-md-8">
+            <!-- Lab Result Details -->
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-flask"></i> Lab Test Details</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <p><strong>Test Name:</strong> {{ lab_result.test.name }}</p>
+                            <p><strong>Patient:</strong> {{ patient.full_name }}</p>
+                            <p><strong>MRN:</strong> {{ patient.mrn }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <p><strong>Test Price:</strong> GHS {{ lab_result.test.price|default:"0.00" }}</p>
+                            <p><strong>Status:</strong> <span class="badge bg-success">{{ lab_result.status }}</span></p>
+                            <p><strong>Completed:</strong> {{ lab_result.completed_at|date:"M d, Y h:i A" }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Payment Status -->
+            <div class="payment-status {% if release_record.payment_receipt %}verified{% else %}pending{% endif %}">
+                <h5>
+                    {% if release_record.payment_receipt %}
+                        <i class="bi bi-check-circle"></i> Payment Verified
+                    {% else %}
+                        <i class="bi bi-exclamation-triangle"></i> Payment Required
+                    {% endif %}
+                </h5>
+                {% if release_record.payment_receipt %}
+                    <p class="mb-0">
+                        Receipt: <strong>{{ release_record.payment_receipt.receipt_number }}</strong><br>
+                        Verified by: {{ release_record.payment_verified_by.get_full_name }}<br>
+                        Verified at: {{ release_record.payment_verified_at|date:"M d, Y h:i A" }}
+                    </p>
+                {% else %}
+                    <p class="mb-0">Patient must pay at cashier before lab result can be released.</p>
+                {% endif %}
+            </div>
+            
+            <!-- Receipt Verification Form -->
+            {% if not release_record.payment_receipt %}
+            <div class="verification-form">
+                <h5><i class="bi bi-receipt"></i> Verify Payment Receipt</h5>
+                
+                <!-- QR Scanner Section -->
+                <div class="receipt-scanner mb-4">
+                    <i class="bi bi-qr-code-scan" style="font-size: 3rem; color: #007bff;"></i>
+                    <h6 class="mt-3">Scan Receipt QR Code</h6>
+                    <button type="button" class="btn btn-primary mt-2" id="openScanner">
+                        <i class="bi bi-camera"></i> Open QR Scanner
+                    </button>
+                    <p class="text-muted mt-2 mb-0">Or enter receipt number manually below</p>
+                </div>
+                
+                <form method="post">
+                    {% csrf_token %}
+                    
+                    <div class="mb-3">
+                        <label class="form-label"><strong>Receipt Number</strong></label>
+                        <input type="text" name="receipt_number" class="form-control form-control-lg" 
+                               placeholder="RCP20251106123456" required id="receiptNumberInput">
+                        <small class="text-muted">Enter the receipt number from cashier payment</small>
+                    </div>
+                    
+                    <hr>
+                    
+                    <h6 class="mb-3">Release Information</h6>
+                    
+                    <div class="mb-3">
+                        <label class="form-label"><strong>Released To (Name)</strong></label>
+                        <input type="text" name="released_to" class="form-control" 
+                               value="{{ patient.full_name }}" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label"><strong>Relationship to Patient</strong></label>
+                        <select name="relationship" class="form-control" required>
+                            <option value="Self">Self (Patient)</option>
+                            <option value="Spouse">Spouse</option>
+                            <option value="Parent">Parent</option>
+                            <option value="Child">Child</option>
+                            <option value="Sibling">Sibling</option>
+                            <option value="Other">Other Relative</option>
+                            <option value="Authorized">Authorized Representative</option>
+                        </select>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label"><strong>ID Type</strong></label>
+                            <select name="id_type" class="form-control">
+                                <option value="">Select ID Type</option>
+                                <option value="National ID">National ID</option>
+                                <option value="Passport">Passport</option>
+                                <option value="Driver License">Driver's License</option>
+                                <option value="Voter ID">Voter ID</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label"><strong>ID Number</strong></label>
+                            <input type="text" name="id_number" class="form-control" placeholder="GHA-123456789">
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label"><strong>Delivery Method</strong></label>
+                        <select name="delivery_method" class="form-control">
+                            <option value="in_person">Collected in Person</option>
+                            <option value="email">Email to Patient</option>
+                            <option value="proxy">Collected by Proxy</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Notes (Optional)</label>
+                        <textarea name="notes" class="form-control" rows="2"></textarea>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-success btn-lg w-100">
+                        <i class="bi bi-check-circle"></i> Verify Payment & Release Lab Result
+                    </button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card bg-light">
+                <div class="card-body">
+                    <h6><i class="bi bi-info-circle"></i> Instructions</h6>
+                    <ol>
+                        <li>Patient must pay at <strong>Cashier</strong> first</li>
+                        <li>Cashier gives patient a <strong>receipt</strong></li>
+                        <li>Patient brings receipt to <strong>Laboratory</strong></li>
+                        <li>Lab staff scans QR or enters receipt number</li>
+                        <li>System verifies payment</li>
+                        <li>Lab result is released to patient</li>
+                    </ol>
+                    
+                    <div class="alert alert-warning mt-3">
+                        <strong><i class="bi bi-exclamation-triangle"></i> Important:</strong>
+                        Do NOT release lab results without payment verification!
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="qrScannerModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-qr-code-scan"></i> Scan Receipt QR Code</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="qr-reader" style="width: 100%;"></div>
+                <div id="qr-reader-results"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script>
+    const openScannerBtn = document.getElementById('openScanner');
+    const receiptNumberInput = document.getElementById('receiptNumberInput');
+    let html5QrcodeScanner = null;
+    
+    if (openScannerBtn) {
+        openScannerBtn.addEventListener('click', function() {
+            const modal = new bootstrap.Modal(document.getElementById('qrScannerModal'));
+            modal.show();
+            
+            // Initialize scanner
+            if (!html5QrcodeScanner) {
+                html5QrcodeScanner = new Html5QrcodeScanner(
+                    "qr-reader",
+                    { fps: 10, qrbox: {width: 250, height: 250} },
+                    false
+                );
+                
+                html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+            }
+        });
+    }
+    
+    function onScanSuccess(decodedText, decodedResult) {
+        // QR code successfully scanned
+        console.log(`Code matched = GHS {decodedText}`, decodedResult);
+        
+        // Extract receipt number
+        if (decodedText.startsWith('RECEIPT:')) {
+            const receiptNumber = decodedText.replace('RECEIPT:', '');
+            receiptNumberInput.value = receiptNumber;
+            
+            // Close modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('qrScannerModal'));
+            modal.hide();
+            
+            // Show success message
+            alert(`Receipt GHS {receiptNumber} scanned successfully!`);
+        } else {
+            alert('Invalid QR code format. Please scan a valid receipt QR code.');
+        }
+    }
+    
+    function onScanFailure(error) {
+        // Handle scan failure, usually ignored
+    }
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+

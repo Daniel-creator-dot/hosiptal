@@ -1,0 +1,230 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Patient Flow - HMS{% endblock %}
+{% block page_title %}Patient Flow{% endblock %}
+{% block page_subtitle %}{{ encounter.patient.full_name }} - {{ encounter.get_encounter_type_display }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .flow-timeline {
+        background: white;
+        border-radius: 16px;
+        padding: 32px;
+        margin-bottom: 24px;
+        border: 1px solid var(--border);
+    }
+    
+    .stage-card {
+        background: var(--light);
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 16px;
+        border: 2px solid var(--border);
+        transition: all 0.3s ease;
+        position: relative;
+    }
+    
+    .stage-card.pending {
+        border-color: #e5e7eb;
+        background: #f9fafb;
+    }
+    
+    .stage-card.in_progress {
+        border-color: var(--primary);
+        background: #eff6ff;
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+    }
+    
+    .stage-card.completed {
+        border-color: var(--success);
+        background: #d1fae5;
+    }
+    
+    .stage-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        margin-right: 16px;
+    }
+    
+    .stage-icon.pending {
+        background: #e5e7eb;
+        color: var(--gray);
+    }
+    
+    .stage-icon.in_progress {
+        background: var(--primary);
+        color: white;
+        animation: pulse 2s ease-in-out infinite;
+    }
+    
+    .stage-icon.completed {
+        background: var(--success);
+        color: white;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.05); }
+    }
+    
+    .stage-actions {
+        margin-top: 12px;
+    }
+    
+    .patient-info-card {
+        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Patient Info Header -->
+<div class="patient-info-card">
+    <div class="row align-items-center">
+        <div class="col-md-8">
+            <h4 style="margin: 0 0 8px 0; font-weight: 700;">{{ encounter.patient.full_name }}</h4>
+            <div style="font-size: 14px; opacity: 0.9;">
+                <i class="bi bi-file-earmark-medical"></i> MRN: {{ encounter.patient.mrn }} |
+                <i class="bi bi-calendar"></i> Age: {{ encounter.patient.age }} |
+                <i class="bi bi-hospital"></i> {{ encounter.get_encounter_type_display }}
+            </div>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{% url 'hospital:patient_detail' encounter.patient.pk %}" class="btn btn-light">
+                <i class="bi bi-person"></i> View Patient
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Flow Timeline -->
+<div class="flow-timeline">
+    <h5 style="font-weight: 600; margin-bottom: 24px; color: var(--dark);">
+        <i class="bi bi-diagram-3"></i> Patient Journey
+    </h5>
+    
+    {% for stage in stages %}
+    <div class="stage-card {{ stage.status }}">
+        <div class="row align-items-center">
+            <div class="col-auto">
+                <div class="stage-icon {{ stage.status }}">
+                    {% if stage.stage_type == 'registration' %}
+                    <i class="bi bi-person-plus"></i>
+                    {% elif stage.stage_type == 'vitals' %}
+                    <i class="bi bi-heart-pulse"></i>
+                    {% elif stage.stage_type == 'consultation' %}
+                    <i class="bi bi-clipboard-pulse"></i>
+                    {% elif stage.stage_type == 'laboratory' %}
+                    <i class="bi bi-flask"></i>
+                    {% elif stage.stage_type == 'pharmacy' %}
+                    <i class="bi bi-capsule"></i>
+                    {% elif stage.stage_type == 'billing' %}
+                    <i class="bi bi-receipt-cutoff"></i>
+                    {% elif stage.stage_type == 'payment' %}
+                    <i class="bi bi-cash-coin"></i>
+                    {% elif stage.stage_type == 'discharge' %}
+                    <i class="bi bi-box-arrow-right"></i>
+                    {% else %}
+                    <i class="bi bi-circle"></i>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="col">
+                <h6 style="margin: 0 0 4px 0; font-weight: 600; font-size: 18px;">
+                    {{ stage.get_stage_type_display }}
+                </h6>
+                <div style="font-size: 13px; color: var(--gray);">
+                    {% if stage.status == 'pending' %}
+                    <span class="badge-modern badge-secondary">Pending</span>
+                    {% elif stage.status == 'in_progress' %}
+                    <span class="badge-modern badge-primary">In Progress</span>
+                    {% elif stage.status == 'completed' %}
+                    <span class="badge-modern badge-success">Completed</span>
+                    {% endif %}
+                    
+                    {% if stage.completed_at %}
+                    | Completed: {{ stage.completed_at|date:"M d, Y H:i" }}
+                    {% if stage.completed_by %}
+                    by {{ stage.completed_by.user.get_full_name|default:stage.completed_by.user.username }}
+                    {% endif %}
+                    {% elif stage.started_at %}
+                    | Started: {{ stage.started_at|date:"M d, Y H:i" }}
+                    {% endif %}
+                </div>
+                
+                {% if stage.notes %}
+                <div style="font-size: 13px; margin-top: 8px; color: var(--gray);">
+                    {{ stage.notes }}
+                </div>
+                {% endif %}
+            </div>
+            <div class="col-auto">
+                <div class="stage-actions">
+                    {% if stage.status == 'pending' %}
+                    <a href="{% url 'hospital:start_flow_stage' stage.pk %}" class="btn btn-sm btn-primary-modern">
+                        <i class="bi bi-play-fill"></i> Start
+                    </a>
+                    {% elif stage.status == 'in_progress' %}
+                    {% if stage.stage_type == 'vitals' and not has_vitals %}
+                    <a href="{% url 'hospital:record_vitals' encounter.pk %}" class="btn btn-sm btn-success">
+                        <i class="bi bi-plus-circle"></i> Record Vitals
+                    </a>
+                    {% elif stage.stage_type == 'billing' %}
+                    <a href="{% url 'hospital:create_bill' encounter.pk %}" class="btn btn-sm btn-success">
+                        <i class="bi bi-receipt"></i> Create Bill
+                    </a>
+                    {% elif stage.stage_type == 'payment' %}
+                    <a href="{% url 'hospital:cashier_dashboard' %}" class="btn btn-sm btn-success">
+                        <i class="bi bi-cash"></i> Process Payment
+                    </a>
+                    {% else %}
+                    <a href="{% url 'hospital:complete_flow_stage' stage.pk %}" class="btn btn-sm btn-success">
+                        <i class="bi bi-check-circle"></i> Complete
+                    </a>
+                    {% endif %}
+                    {% elif stage.status == 'completed' %}
+                    <span class="badge-modern badge-success">
+                        <i class="bi bi-check-circle-fill"></i> Done
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% empty %}
+    <div class="text-center py-5 text-muted">
+        <p>No workflow stages defined. Please configure workflow templates.</p>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Quick Actions -->
+<div class="modern-card">
+    <h6 style="font-weight: 600; margin-bottom: 16px;">Quick Actions</h6>
+    <div class="d-grid gap-2 d-md-flex">
+        <a href="{% url 'hospital:record_vitals' encounter.pk %}" class="btn btn-outline-primary">
+            <i class="bi bi-heart-pulse"></i> Record Vitals
+        </a>
+        <a href="{% url 'hospital:encounter_detail' encounter.pk %}" class="btn btn-outline-primary">
+            <i class="bi bi-clipboard-pulse"></i> View Encounter
+        </a>
+        <a href="{% url 'hospital:create_bill' encounter.pk %}" class="btn btn-outline-primary">
+            <i class="bi bi-receipt"></i> Create Bill
+        </a>
+        <a href="{% url 'hospital:patient_detail' encounter.patient.pk %}" class="btn btn-outline-secondary">
+            <i class="bi bi-person"></i> Patient Profile
+        </a>
+    </div>
+</div>
+{% endblock %}
+

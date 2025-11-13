@@ -1,0 +1,218 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h2 style="font-weight: 700; color: #1f2937;">💊 Walk-in Pharmacy Sales</h2>
+            <p class="text-muted">Direct medication sales to customers</p>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{% url 'hospital:pharmacy_walkin_sale_create' %}" class="btn btn-primary btn-lg">
+                <i class="bi bi-plus-circle"></i> New Walk-in Sale
+            </a>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <p class="text-muted mb-1">Today's Sales</p>
+                            <h3 class="mb-0">{{ stats.today_sales }}</h3>
+                        </div>
+                        <div class="bg-primary bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-cart-check text-primary" style="font-size: 24px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <p class="text-muted mb-1">Today's Revenue</p>
+                            <h3 class="mb-0">GHS {{ stats.today_revenue }}</h3>
+                        </div>
+                        <div class="bg-success bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-cash-coin text-success" style="font-size: 24px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <p class="text-muted mb-1">Pending Payment</p>
+                            <h3 class="mb-0">{{ stats.pending_payment }}</h3>
+                        </div>
+                        <div class="bg-warning bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-clock-history text-warning" style="font-size: 24px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <p class="text-muted mb-1">Total Sales</p>
+                            <h3 class="mb-0">{{ stats.total_sales }}</h3>
+                        </div>
+                        <div class="bg-info bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-graph-up text-info" style="font-size: 24px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Search</label>
+                    <input type="text" class="form-control" name="q" value="{{ search_query }}" 
+                           placeholder="Sale number, customer name, phone...">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Payment Status</label>
+                    <select class="form-select" name="status">
+                        <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All</option>
+                        <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
+                        <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid</option>
+                        <option value="partial" {% if status_filter == 'partial' %}selected{% endif %}>Partial</option>
+                    </select>
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-funnel"></i> Filter
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Sales List -->
+    <div class="card shadow-sm">
+        <div class="card-body">
+            {% if sales %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Sale Number</th>
+                                <th>Customer</th>
+                                <th>Phone</th>
+                                <th>Date</th>
+                                <th>Amount</th>
+                                <th>Payment Status</th>
+                                <th>Dispensed</th>
+                                <th>Served By</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for sale in sales %}
+                            <tr>
+                                <td>
+                                    <strong>{{ sale.sale_number }}</strong><br>
+                                    {% if sale.customer_type == 'registered' %}
+                                        <span class="badge bg-info">Registered</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Walk-in</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ sale.customer_name }}</td>
+                                <td>{{ sale.customer_phone|default:"—" }}</td>
+                                <td>{{ sale.sale_date|date:"d M Y H:i" }}</td>
+                                <td>
+                                    <strong>GHS {{ sale.total_amount }}</strong><br>
+                                    {% if sale.amount_due > 0 %}
+                                        <small class="text-danger">Due: GHS {{ sale.amount_due }}</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if sale.payment_status == 'paid' %}
+                                        <span class="badge bg-success">Paid</span>
+                                    {% elif sale.payment_status == 'partial' %}
+                                        <span class="badge bg-warning">Partial</span>
+                                    {% elif sale.payment_status == 'pending' %}
+                                        <span class="badge bg-danger">Pending</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">{{ sale.get_payment_status_display }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if sale.is_dispensed %}
+                                        <span class="badge bg-success">
+                                            <i class="bi bi-check-circle"></i> Yes
+                                        </span>
+                                    {% else %}
+                                        <span class="badge bg-warning">
+                                            <i class="bi bi-clock"></i> No
+                                        </span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ sale.served_by.get_full_name|default:"—" }}</td>
+                                <td>
+                                    <div class="btn-group" role="group">
+                                        <a href="{% url 'hospital:pharmacy_walkin_sale_detail' sale.id %}" 
+                                           class="btn btn-sm btn-outline-primary" title="View Details">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+                                        {% if sale.payment_status == 'paid' and not sale.is_dispensed %}
+                                            <a href="{% url 'hospital:pharmacy_walkin_dispense' sale.id %}" 
+                                               class="btn btn-sm btn-success" title="Dispense">
+                                                <i class="bi bi-capsule"></i>
+                                            </a>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="text-center py-5">
+                    <i class="bi bi-cart-x" style="font-size: 64px; opacity: 0.3;"></i>
+                    <p class="text-muted mt-3">No walk-in sales found</p>
+                    <a href="{% url 'hospital:pharmacy_walkin_sale_create' %}" class="btn btn-primary">
+                        <i class="bi bi-plus-circle"></i> Create First Sale
+                    </a>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+

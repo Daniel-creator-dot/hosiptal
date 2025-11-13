@@ -1,0 +1,175 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}My Schedule - {{ staff.full_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2><i class="bi bi-calendar-check"></i> My Schedule</h2>
+            <p class="text-muted">{{ staff.full_name}} - {{ staff.department.name }}</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:dashboard' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Dashboard
+            </a>
+        </div>
+    </div>
+    
+    <!-- Today's Schedule -->
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0"><i class="bi bi-sun"></i> Today's Schedule - {{ today|date:"l, M d, Y" }}</h5>
+        </div>
+        <div class="card-body">
+            {% if todays_shifts or todays_timetable %}
+            
+            <!-- Today's Shifts -->
+            {% if todays_shifts %}
+            <h6 class="mb-3"><i class="bi bi-clock"></i> Your Shifts Today</h6>
+            {% for shift in todays_shifts %}
+            <div class="alert alert-info" style="border-left: 4px solid #0d6efd;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="mb-1">
+                            <span class="badge bg-primary">{{ shift.get_shift_type_display }}</span>
+                            {{ shift.start_time|time:"H:i" }} - {{ shift.end_time|time:"H:i" }}
+                        </h6>
+                        {% if shift.assigned_location %}
+                        <p class="mb-0"><i class="bi bi-geo-alt"></i> {{ shift.assigned_location }}</p>
+                        {% endif %}
+                        {% if shift.assigned_duties %}
+                        <p class="mb-0"><small>{{ shift.assigned_duties }}</small></p>
+                        {% endif %}
+                    </div>
+                    <div>
+                        {% if shift.checked_in %}
+                            <span class="badge bg-success">Checked In</span>
+                        {% else %}
+                            <span class="badge bg-warning">Not Checked In</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% endif %}
+            
+            <!-- Today's Timetable -->
+            {% if todays_timetable %}
+            <h6 class="mb-3 mt-4"><i class="bi bi-table"></i> Department Timetable Today</h6>
+            <div class="table-responsive">
+                <table class="table table-bordered">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Activity</th>
+                            <th>Location</th>
+                            <th>Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for entry in todays_timetable %}
+                        <tr>
+                            <td><strong>{{ entry.start_time|time:"H:i" }} - {{ entry.end_time|time:"H:i" }}</strong></td>
+                            <td>{{ entry.activity_name }}</td>
+                            <td>{{ entry.location|default:"-" }}</td>
+                            <td>{{ entry.duration_hours|floatformat:1 }}h</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+            
+            {% else %}
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-calendar-x" style="font-size: 48px;"></i>
+                <p class="mt-3">No shifts or activities scheduled for today</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- This Week's Shifts -->
+    <div class="card mb-4">
+        <div class="card-header bg-success text-white">
+            <h5 class="mb-0"><i class="bi bi-calendar-week"></i> This Week's Shifts ({{ week_start|date:"M d" }} - {{ week_end|date:"M d" }})</h5>
+        </div>
+        <div class="card-body">
+            {% if weekly_shifts %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Day</th>
+                            <th>Shift</th>
+                            <th>Time</th>
+                            <th>Location</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for shift in weekly_shifts %}
+                        <tr {% if shift.is_today %}style="background-color: #fff3cd;"{% endif %}>
+                            <td>{{ shift.shift_date|date:"M d" }}</td>
+                            <td>{{ shift.shift_date|date:"l" }}</td>
+                            <td><span class="badge bg-primary">{{ shift.get_shift_type_display }}</span></td>
+                            <td>{{ shift.start_time|time:"H:i" }} - {{ shift.end_time|time:"H:i" }}</td>
+                            <td>{{ shift.assigned_location|default:"-" }}</td>
+                            <td>
+                                {% if shift.check_out_time %}
+                                    <span class="badge bg-success">Completed</span>
+                                {% elif shift.checked_in %}
+                                    <span class="badge bg-info">In Progress</span>
+                                {% elif shift.is_confirmed %}
+                                    <span class="badge bg-primary">Confirmed</span>
+                                {% else %}
+                                    <span class="badge bg-warning">Pending</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-4 text-muted">
+                <p>No shifts assigned for this week</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Monthly Roster -->
+    {% if roster %}
+    <div class="card">
+        <div class="card-header bg-warning">
+            <h5 class="mb-0"><i class="bi bi-file-earmark-pdf"></i> Monthly Duty Roster</h5>
+        </div>
+        <div class="card-body">
+            <p><strong>{{ roster.get_month_name }} {{ roster.year }}</strong></p>
+            {% if roster.roster_file %}
+            <a href="{{ roster.roster_file.url }}" target="_blank" class="btn btn-primary">
+                <i class="bi bi-download"></i> Download Roster
+            </a>
+            {% else %}
+            <p class="text-muted">No roster file uploaded</p>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+    
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+

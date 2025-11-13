@@ -1,0 +1,322 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Imaging/X-ray Dashboard - HMS{% endblock %}
+{% block page_title %}Imaging & X-ray Dashboard{% endblock %}
+{% block page_subtitle %}Manage imaging orders, scans, and reports{% endblock %}
+
+{% block content %}
+<!-- Statistics Cards -->
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="modern-card stat-card-warning text-center">
+            <div class="stat-icon" style="width: 48px; height: 48px; border-radius: 12px; margin: 0 auto 12px; display: flex; align-items: center; justify-content: center;">
+                <i class="bi bi-clock-history" style="font-size: 24px;"></i>
+            </div>
+            <div class="stat-value" style="font-size: 32px; font-weight: 700;">{{ total_pending }}</div>
+            <div class="stat-label">Pending Orders</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card stat-card-info text-center">
+            <div class="stat-icon" style="width: 48px; height: 48px; border-radius: 12px; margin: 0 auto 12px; display: flex; align-items: center; justify-content: center;">
+                <i class="bi bi-hourglass-split" style="font-size: 24px;"></i>
+            </div>
+            <div class="stat-value" style="font-size: 32px; font-weight: 700;">{{ total_in_progress }}</div>
+            <div class="stat-label">In Progress</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card stat-card-success text-center">
+            <div class="stat-icon" style="width: 48px; height: 48px; border-radius: 12px; margin: 0 auto 12px; display: flex; align-items: center; justify-content: center;">
+                <i class="bi bi-check-circle" style="font-size: 24px;"></i>
+            </div>
+            <div class="stat-value" style="font-size: 32px; font-weight: 700;">{{ total_completed_today }}</div>
+            <div class="stat-label">Completed Today</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card stat-card-primary text-center">
+            <div class="stat-icon" style="width: 48px; height: 48px; border-radius: 12px; margin: 0 auto 12px; display: flex; align-items: center; justify-content: center;">
+                <i class="bi bi-file-earmark-medical" style="font-size: 24px;"></i>
+            </div>
+            <div class="stat-value" style="font-size: 32px; font-weight: 700;">{{ total_reports }}</div>
+            <div class="stat-label">Total Reports</div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- Pending Orders -->
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin: 0;">
+                    <i class="bi bi-clock-history me-2"></i>Pending Imaging Orders
+                </h5>
+                <span class="badge-modern badge-warning">{{ pending_orders|length }}</span>
+            </div>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Patient</th>
+                            <th>Requested By</th>
+                            <th>Time</th>
+                            <th>Priority</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for order in pending_orders %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'hospital:patient_detail' order.encounter.patient.pk %}" style="text-decoration: none; font-weight: 600;">
+                                    {{ order.encounter.patient.full_name }}
+                                </a>
+                            </td>
+                            <td>{{ order.requested_by.user.get_full_name|default:order.requested_by.user.username }}</td>
+                            <td>{{ order.requested_at|timesince }} ago</td>
+                            <td>
+                                <span class="badge-modern badge-{% if order.priority == 'stat' %}danger{% elif order.priority == 'urgent' %}warning{% else %}info{% endif %}">
+                                    {{ order.get_priority_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <button type="button" class="btn btn-success" 
+                                            onclick="updateOrderStatus('{{ order.pk }}', 'start')"
+                                            title="Start Scan">
+                                        <i class="bi bi-play-circle"></i>
+                                    </button>
+                                    <a href="{% url 'hospital:encounter_detail' order.encounter.pk %}" class="btn btn-outline-primary">
+                                        View
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="5" class="text-center text-muted py-3">No pending orders</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- In Progress Orders -->
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin: 0;">
+                    <i class="bi bi-hourglass-split me-2"></i>In Progress Scans
+                </h5>
+                <span class="badge-modern badge-info">{{ in_progress_orders|length }}</span>
+            </div>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Patient</th>
+                            <th>Type</th>
+                            <th>Started</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for order in in_progress_orders %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'hospital:patient_detail' order.encounter.patient.pk %}" style="text-decoration: none; font-weight: 600;">
+                                    {{ order.encounter.patient.full_name }}
+                                </a>
+                            </td>
+                            <td>{{ order.get_order_type_display }}</td>
+                            <td>{{ order.modified|timesince }} ago</td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <button type="button" class="btn btn-primary" 
+                                            onclick="updateOrderStatus('{{ order.pk }}', 'complete')"
+                                            title="Mark Complete">
+                                        <i class="bi bi-check-circle"></i>
+                                    </button>
+                                    <a href="{% url 'hospital:encounter_detail' order.encounter.pk %}" class="btn btn-outline-primary">
+                                        View
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-3">No scans in progress</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Today's Completed & Recent Reports -->
+<div class="row g-4 mt-2">
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin: 0; color: var(--success);">
+                    <i class="bi bi-check-circle me-2"></i>Completed Today
+                </h5>
+                <span class="badge-modern badge-success">{{ today_imaging|length }}</span>
+            </div>
+            <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Patient</th>
+                            <th>Type</th>
+                            <th>Completed</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for order in today_imaging %}
+                        <tr>
+                            <td>{{ order.encounter.patient.full_name }}</td>
+                            <td>{{ order.get_order_type_display }}</td>
+                            <td>{{ order.modified|date:"H:i" }}</td>
+                            <td>
+                                {% if order.imaging_study %}
+                                    <a href="{% url 'hospital:imaging_study_detail' order.imaging_study.id %}" class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-file-earmark-medical"></i> View Report
+                                    </a>
+                                {% else %}
+                                    <span class="text-muted">No imaging study created</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-3">No scans completed today</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin: 0;">
+                    <i class="bi bi-file-earmark-medical me-2"></i>Recent Reports
+                </h5>
+                <span class="badge-modern badge-primary">{{ recent_reports|length }}</span>
+            </div>
+            <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Patient</th>
+                            <th>Report Type</th>
+                            <th>Date</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for report in recent_reports %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'hospital:patient_detail' report.patient.pk %}" style="text-decoration: none; font-weight: 600;">
+                                    {{ report.patient.full_name }}
+                                </a>
+                            </td>
+                            <td>{{ report.get_record_type_display }}</td>
+                            <td>{{ report.created|date:"d/m/Y" }}</td>
+                            <td>
+                                {% if report.document %}
+                                <a href="{{ report.document.url }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-download"></i> View
+                                </a>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-3">No reports available</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mt-4">
+    <div class="alert alert-info" style="border-radius: 12px;">
+        <i class="bi bi-info-circle me-2"></i>
+        <strong>Workflow:</strong> Orders → Scan → Report Generation → Patient Notification
+    </div>
+</div>
+
+<script>
+let autoRefreshTimer;
+
+function updateOrderStatus(orderId, action) {
+    const formData = new FormData();
+    formData.append('action', action);
+    formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    
+    fetch(`/hms/api/order/${orderId}/update-status/`, {
+        method: 'POST',
+        body: formData,
+        headers: {'X-Requested-With': 'XMLHttpRequest'}
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            clearTimeout(autoRefreshTimer);
+            location.reload();
+        } else {
+            alert(data.error || 'Error updating order status');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error updating order status');
+    });
+}
+
+// Auto-refresh every 30 seconds
+function refreshDashboard() {
+    fetch(`/hms/api/dashboard-stats/?type=imaging`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Could update stats here
+            }
+        })
+        .catch(error => console.error('Error refreshing stats:', error));
+}
+
+// Auto-refresh every 60 seconds (reduced frequency)
+autoRefreshTimer = setInterval(() => {
+    refreshDashboard();
+    // Removed automatic page reload to prevent unwanted redirections
+}, 60000);
+
+// Pause refresh on user interaction
+document.addEventListener('mousemove', () => {
+    clearInterval(autoRefreshTimer);
+    autoRefreshTimer = setInterval(() => {
+        refreshDashboard();
+    }, 60000);
+});
+</script>
+{% endblock %}
+

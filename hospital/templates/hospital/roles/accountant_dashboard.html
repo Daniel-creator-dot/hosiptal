@@ -1,0 +1,135 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Accounting Dashboard - HMS{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border-radius: 20px; padding: 40px; margin-bottom: 32px; box-shadow: 0 10px 40px rgba(16, 185, 129, 0.3);">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1 class="mb-2"><i class="bi bi-calculator me-3"></i>Accounting Dashboard</h1>
+                <p class="mb-0" style="opacity: 0.95; font-size: 16px;">Financial Management & Reporting</p>
+            </div>
+            <div class="text-end">
+                <div class="badge" style="background: rgba(255,255,255,0.2); font-size: 14px; padding: 8px 16px;">
+                    <i class="bi bi-person-badge me-2"></i>{{ role_info.name }}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Financial Statistics -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-3">
+            <div style="background: white; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 42px; font-weight: 800; color: #10b981;">GHS {{ total_revenue_today|floatformat:0|intcomma }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Revenue Today</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div style="background: white; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 42px; font-weight: 800; color: #3b82f6;">GHS {{ total_revenue_month|floatformat:0|intcomma }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Revenue This Month</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div style="background: white; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 42px; font-weight: 800; color: #f59e0b;">GHS {{ outstanding_invoices|floatformat:0|intcomma }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Outstanding Balance</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div style="background: white; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 42px; font-weight: 800; color: #ef4444;">{{ overdue_count }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Overdue Invoices</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quick Actions -->
+    <div style="background: white; border-radius: 16px; padding: 24px; margin-bottom: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+        <h5 class="mb-3"><i class="bi bi-lightning me-2"></i>Quick Actions</h5>
+        <div class="row g-3">
+            <div class="col-md-2"><a href="{% url 'hospital:invoice_list' %}" class="btn btn-primary w-100"><i class="bi bi-receipt me-2"></i>Invoices</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:cashier_dashboard' %}" class="btn btn-success w-100"><i class="bi bi-credit-card me-2"></i>Cashier</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:payment_verification_dashboard' %}" class="btn btn-info w-100"><i class="bi bi-check-circle me-2"></i>Verification</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:accounting_dashboard' %}" class="btn btn-warning w-100"><i class="bi bi-wallet2 me-2"></i>Accounting</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:dashboard' %}" class="btn btn-secondary w-100"><i class="bi bi-graph-up me-2"></i>Main Dashboard</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:global_search' %}" class="btn btn-outline-primary w-100"><i class="bi bi-search me-2"></i>Search</a></div>
+        </div>
+    </div>
+    
+    <div class="row g-4">
+        <!-- Recent Payments -->
+        <div class="col-lg-6">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-4"><i class="bi bi-credit-card me-2"></i>Recent Payments</h5>
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Patient</th>
+                                <th>Amount</th>
+                                <th>Method</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for payment in recent_payments %}
+                            <tr>
+                                <td>{{ payment.payment_date|date:"M d, H:i" }}</td>
+                                <td>{{ payment.invoice.patient.full_name }}</td>
+                                <td><strong>GHS {{ payment.amount|floatformat:2|intcomma }}</strong></td>
+                                <td><span class="badge bg-success">{{ payment.get_payment_method_display }}</span></td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="4" class="text-center text-muted py-4">No recent payments</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Pending Invoices -->
+        <div class="col-lg-6">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-4"><i class="bi bi-receipt-cutoff me-2"></i>Pending Invoices</h5>
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Invoice #</th>
+                                <th>Patient</th>
+                                <th>Amount</th>
+                                <th>Balance</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for invoice in pending_invoices %}
+                            <tr>
+                                <td><a href="{% url 'hospital:invoice_detail' invoice.pk %}">{{ invoice.invoice_number }}</a></td>
+                                <td>{{ invoice.patient.full_name }}</td>
+                                <td>GHS {{ invoice.total_amount|floatformat:2|intcomma }}</td>
+                                <td><strong style="color: #f59e0b;">GHS {{ invoice.balance|floatformat:2|intcomma }}</strong></td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="4" class="text-center text-muted py-4">No pending invoices</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+

@@ -1,0 +1,181 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Staff Availability - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    .availability-card {
+        background: white;
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 16px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        transition: all 0.3s;
+    }
+    
+    .availability-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    }
+    
+    .availability-progress {
+        height: 24px;
+        background: #e5e7eb;
+        border-radius: 12px;
+        overflow: hidden;
+        margin-top: 12px;
+        position: relative;
+    }
+    
+    .availability-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+        transition: width 0.5s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 600;
+        font-size: 12px;
+    }
+    
+    .stat-circle {
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto;
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+    }
+    
+    .stat-circle-value {
+        font-size: 32px;
+        font-weight: 700;
+    }
+    
+    .stat-circle-label {
+        font-size: 11px;
+        opacity: 0.9;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border-radius: 16px; padding: 32px; margin-bottom: 24px;">
+        <h1><i class="bi bi-people-fill me-3"></i>Staff Availability Dashboard</h1>
+        <p class="mb-0" style="opacity: 0.9;">Real-time staff availability across all departments</p>
+    </div>
+    
+    <!-- Overall Statistics -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-4">
+            <div style="background: white; border-radius: 12px; padding: 32px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div class="stat-circle">
+                    <div class="stat-circle-value">{{ availability_percentage }}%</div>
+                    <div class="stat-circle-label">AVAILABLE</div>
+                </div>
+                <div style="margin-top: 16px; color: #6b7280; font-size: 14px;">
+                    {{ total_available }} of {{ total_staff }} staff
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div style="background: white; border-radius: 12px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 48px; font-weight: 700; color: #10b981;">{{ total_available }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Available Staff</div>
+                <div style="margin-top: 16px;">
+                    <span class="badge bg-success" style="font-size: 14px;">Ready to Work</span>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div style="background: white; border-radius: 12px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 48px; font-weight: 700; color: #f59e0b;">{{ total_on_leave }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Staff on Leave</div>
+                <div style="margin-top: 16px;">
+                    <span class="badge bg-warning" style="font-size: 14px;">{{ today|date:"M d, Y" }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Department Availability -->
+    <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+        <h4 class="mb-4"><i class="bi bi-building me-2"></i>Availability by Department</h4>
+        
+        {% for data in availability_data %}
+        <div class="availability-card">
+            <div class="row align-items-center">
+                <div class="col-md-3">
+                    <h5 class="mb-1">{{ data.department.name }}</h5>
+                    <div style="font-size: 13px; color: #6b7280;">
+                        {% if data.department.head_of_department %}
+                            Head: {{ data.department.head_of_department.user.get_full_name }}
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="col-md-2 text-center">
+                    <div style="font-size: 32px; font-weight: 700; color: #3b82f6;">{{ data.total }}</div>
+                    <div style="font-size: 12px; color: #6b7280;">Total Staff</div>
+                </div>
+                <div class="col-md-2 text-center">
+                    <div style="font-size: 32px; font-weight: 700; color: #10b981;">{{ data.available }}</div>
+                    <div style="font-size: 12px; color: #6b7280;">Available</div>
+                </div>
+                <div class="col-md-2 text-center">
+                    <div style="font-size: 32px; font-weight: 700; color: #f59e0b;">{{ data.on_leave }}</div>
+                    <div style="font-size: 12px; color: #6b7280;">On Leave</div>
+                </div>
+                <div class="col-md-3">
+                    <div class="availability-progress">
+                        <div class="availability-fill" style="width: {{ data.availability_percentage }}%;">
+                            {{ data.availability_percentage }}%
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <p class="text-muted text-center py-4">No departments found</p>
+        {% endfor %}
+    </div>
+    
+    <!-- Legend -->
+    <div class="row g-3 mt-4">
+        <div class="col-md-12">
+            <div style="background: #f9fafb; border-radius: 8px; padding: 16px; display: flex; gap: 24px; justify-content: center; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <div style="width: 16px; height: 16px; background: #10b981; border-radius: 4px;"></div>
+                    <span style="font-size: 13px; color: #6b7280;">Available</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <div style="width: 16px; height: 16px; background: #f59e0b; border-radius: 4px;"></div>
+                    <span style="font-size: 13px; color: #6b7280;">On Leave</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <div style="width: 16px; height: 16px; background: #3b82f6; border-radius: 4px;"></div>
+                    <span style="font-size: 13px; color: #6b7280;">On Shift</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+

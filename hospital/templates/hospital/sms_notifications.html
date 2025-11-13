@@ -1,0 +1,121 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}SMS Notifications - HMS{% endblock %}
+{% block page_title %}SMS Notification History{% endblock %}
+
+{% block content %}
+<!-- Filters -->
+<div class="modern-card mb-4">
+    <form method="get" class="row g-3 align-items-end">
+        <div class="col-md-3">
+            <label for="type" class="form-label">Type</label>
+            <select name="type" id="type" class="form-select form-control-modern">
+                <option value="">All Types</option>
+                <option value="birthday" {% if notification_type == 'birthday' %}selected{% endif %}>Birthday</option>
+                <option value="appointment" {% if notification_type == 'appointment' %}selected{% endif %}>Appointment</option>
+                <option value="lab_result" {% if notification_type == 'lab_result' %}selected{% endif %}>Lab Result</option>
+                <option value="payment" {% if notification_type == 'payment' %}selected{% endif %}>Payment</option>
+                <option value="reminder" {% if notification_type == 'reminder' %}selected{% endif %}>Reminder</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label for="status" class="form-label">Status</label>
+            <select name="status" id="status" class="form-select form-control-modern">
+                <option value="">All Statuses</option>
+                <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
+                <option value="sent" {% if status_filter == 'sent' %}selected{% endif %}>Sent</option>
+                <option value="delivered" {% if status_filter == 'delivered' %}selected{% endif %}>Delivered</option>
+                <option value="failed" {% if status_filter == 'failed' %}selected{% endif %}>Failed</option>
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label for="search" class="form-label">Search</label>
+            <input type="text" name="search" id="search" value="{{ search }}" placeholder="Name, phone, or message" class="form-control form-control-modern">
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-primary-modern w-100">Filter</button>
+        </div>
+    </form>
+</div>
+
+<!-- SMS List -->
+<div class="modern-card">
+    <div class="table-responsive">
+        <table class="table modern-table">
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Recipient</th>
+                    <th>Phone</th>
+                    <th>Message</th>
+                    <th>Status</th>
+                    <th>Sent At</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for sms in page_obj %}
+                <tr>
+                    <td>
+                        {% if sms.notification_type == 'birthday' %}
+                        <span class="badge-modern badge-success">Birthday</span>
+                        {% elif sms.notification_type == 'appointment' %}
+                        <span class="badge-modern badge-info">Appointment</span>
+                        {% elif sms.notification_type == 'lab_result' %}
+                        <span class="badge-modern badge-primary">Lab Result</span>
+                        {% else %}
+                        <span class="badge-modern badge-secondary">{{ sms.get_notification_type_display }}</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ sms.recipient_name|default:"-" }}</td>
+                    <td>{{ sms.recipient_number }}</td>
+                    <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;">
+                        {{ sms.message|truncatewords:10 }}
+                    </td>
+                    <td>
+                        {% if sms.status == 'sent' %}
+                        <span class="badge-modern badge-info">Sent</span>
+                        {% elif sms.status == 'delivered' %}
+                        <span class="badge-modern badge-success">Delivered</span>
+                        {% elif sms.status == 'failed' %}
+                        <span class="badge-modern badge-danger">Failed</span>
+                        {% else %}
+                        <span class="badge-modern badge-warning">Pending</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ sms.sent_at|date:"M d, Y H:i"|default:"-" }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted py-4">No SMS notifications found</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Pagination -->
+    {% if page_obj.has_other_pages %}
+    <nav aria-label="Page navigation" class="mt-3">
+        <ul class="pagination justify-content-center">
+            {% if page_obj.has_previous %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if notification_type %}&type={{ notification_type }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if search %}&search={{ search }}{% endif %}">Previous</a>
+            </li>
+            {% endif %}
+            
+            <li class="page-item active">
+                <span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+            </li>
+            
+            {% if page_obj.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if notification_type %}&type={{ notification_type }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if search %}&search={{ search }}{% endif %}">Next</a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+{% endblock %}
+

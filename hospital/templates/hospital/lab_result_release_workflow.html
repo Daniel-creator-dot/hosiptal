@@ -1,0 +1,166 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2>🧪 Lab Results - Payment Verification</h2>
+            <p class="text-muted">Verify payment before releasing lab results</p>
+        </div>
+        <a href="{% url 'hospital:payment_verification_dashboard' %}" class="btn btn-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </a>
+    </div>
+    
+    <!-- Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card border-left-danger shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Pending Payment</h6>
+                    <h2 class="text-danger">{{ stats.pending_payment|default:"0" }}</h2>
+                    <small>Awaiting payment verification</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card border-left-success shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Ready to Release</h6>
+                    <h2 class="text-success">{{ stats.ready_for_release|default:"0" }}</h2>
+                    <small>Payment verified</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card border-left-info shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Released</h6>
+                    <h2 class="text-info">{{ stats.released|default:"0" }}</h2>
+                    <small>Already released</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Lab Results Table -->
+    <div class="card shadow">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">Lab Results with Payment Status</h5>
+        </div>
+        <div class="card-body">
+            {% if lab_results_with_status %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Patient</th>
+                            <th>MRN</th>
+                            <th>Test</th>
+                            <th>Result</th>
+                            <th>Verified</th>
+                            <th>Payment Status</th>
+                            <th>Receipt</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in lab_results_with_status %}
+                        <tr>
+                            <td><strong>{{ item.lab_result.order.encounter.patient.full_name }}</strong></td>
+                            <td>{{ item.lab_result.order.encounter.patient.mrn }}</td>
+                            <td>{{ item.lab_result.test.name }}</td>
+                            <td>
+                                {% if item.lab_result.value %}
+                                    {{ item.lab_result.value }} {{ item.lab_result.units }}
+                                    {% if item.lab_result.is_abnormal %}
+                                        <span class="badge bg-danger">Abnormal</span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.lab_result.verified_by %}
+                                    <span class="badge bg-success">✓ Verified</span><br>
+                                    <small>{{ item.lab_result.verified_at|date:"M d, h:i A" }}</small>
+                                {% else %}
+                                    <span class="badge bg-warning">Pending</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.status == 'pending_payment' %}
+                                    <span class="badge bg-danger">🔒 Not Paid</span>
+                                {% elif item.status == 'ready_for_release' %}
+                                    <span class="badge bg-success">✅ Paid</span>
+                                {% elif item.status == 'released' %}
+                                    <span class="badge bg-info">📋 Released</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ item.status }}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.payment_verified %}
+                                    <strong>{{ item.release_record.payment_receipt.receipt_number }}</strong><br>
+                                    <small>GHS {{ item.release_record.payment_receipt.amount_paid }}</small>
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.status == 'pending_payment' %}
+                                    <a href="{% url 'hospital:cashier_process_service_payment' 'lab' item.lab_result.id %}" 
+                                       class="btn btn-sm btn-danger">
+                                        <i class="bi bi-credit-card"></i> Collect Payment
+                                    </a>
+                                {% elif item.status == 'ready_for_release' %}
+                                    <a href="{% url 'hospital:lab_result_release_enforced' item.lab_result.id %}" 
+                                       class="btn btn-sm btn-success">
+                                        <i class="bi bi-check-circle"></i> Release Results
+                                    </a>
+                                {% elif item.status == 'released' %}
+                                    <small class="text-muted">Released {{ item.release_record.released_at|date:"M d" }}</small>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox" style="font-size: 4em; color: #ccc;"></i>
+                <h4 class="mt-3 text-muted">No Lab Results</h4>
+                <p class="text-muted">No completed lab results found</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Instructions -->
+    <div class="alert alert-info mt-4">
+        <h5><i class="bi bi-info-circle"></i> Workflow:</h5>
+        <ol class="mb-0">
+            <li><strong>Pending Payment:</strong> Lab results completed but not paid. Direct patient to cashier for payment.</li>
+            <li><strong>Ready to Release:</strong> Payment verified. Can release results to patient.</li>
+            <li><strong>Released:</strong> Results already given to patient. Complete.</li>
+        </ol>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+

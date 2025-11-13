@@ -1,0 +1,529 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block extra_css %}
+<style>
+    .insurance-dashboard {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 60px 0;
+    }
+    
+    .dashboard-header {
+        background: white;
+        border-radius: 20px;
+        padding: 40px;
+        margin-bottom: 40px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+    }
+    
+    .dashboard-header h1 {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: 700;
+        margin-bottom: 10px;
+    }
+    
+    .stat-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 24px;
+        margin-bottom: 40px;
+    }
+    
+    .stat-card {
+        background: white;
+        border-radius: 16px;
+        padding: 28px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .stat-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+    }
+    
+    .stat-card.blue::before {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    
+    .stat-card.green::before {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    }
+    
+    .stat-card.orange::before {
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    }
+    
+    .stat-card.purple::before {
+        background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+    }
+    
+    .stat-card.red::before {
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    }
+    
+    .stat-card.cyan::before {
+        background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+    }
+    
+    .stat-card:hover {
+        transform: translateY(-8px);
+        box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+    }
+    
+    .stat-icon {
+        width: 60px;
+        height: 60px;
+        border-radius: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+        margin-bottom: 16px;
+    }
+    
+    .stat-card.blue .stat-icon {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    
+    .stat-card.green .stat-icon {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+    }
+    
+    .stat-card.orange .stat-icon {
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        color: white;
+    }
+    
+    .stat-card.purple .stat-icon {
+        background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+        color: white;
+    }
+    
+    .stat-card.red .stat-icon {
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        color: white;
+    }
+    
+    .stat-card.cyan .stat-icon {
+        background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+        color: white;
+    }
+    
+    .stat-value {
+        font-size: 32px;
+        font-weight: 700;
+        color: #1f2937;
+        margin-bottom: 8px;
+    }
+    
+    .stat-label {
+        font-size: 14px;
+        color: #6b7280;
+        font-weight: 500;
+    }
+    
+    .section-card {
+        background: white;
+        border-radius: 16px;
+        padding: 32px;
+        margin-bottom: 32px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+    
+    .section-title {
+        font-size: 20px;
+        font-weight: 700;
+        color: #1f2937;
+        margin-bottom: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    
+    .company-card {
+        border: 2px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 16px;
+        transition: all 0.3s ease;
+        cursor: pointer;
+    }
+    
+    .company-card:hover {
+        border-color: #667eea;
+        background: #f9fafb;
+        transform: translateX(4px);
+    }
+    
+    .company-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+    }
+    
+    .company-name {
+        font-size: 18px;
+        font-weight: 600;
+        color: #1f2937;
+    }
+    
+    .company-badge {
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    
+    .company-badge.active {
+        background: #d1fae5;
+        color: #059669;
+    }
+    
+    .company-badge.suspended {
+        background: #fee2e2;
+        color: #dc2626;
+    }
+    
+    .company-stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        margin-top: 16px;
+    }
+    
+    .company-stat {
+        text-align: center;
+        padding: 12px;
+        background: #f9fafb;
+        border-radius: 8px;
+    }
+    
+    .company-stat-value {
+        font-size: 20px;
+        font-weight: 700;
+        color: #667eea;
+    }
+    
+    .company-stat-label {
+        font-size: 12px;
+        color: #6b7280;
+        margin-top: 4px;
+    }
+    
+    .enrollment-item {
+        display: flex;
+        align-items: center;
+        padding: 16px;
+        border-bottom: 1px solid #e5e7eb;
+    }
+    
+    .enrollment-item:last-child {
+        border-bottom: none;
+    }
+    
+    .patient-avatar {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 700;
+        font-size: 18px;
+        margin-right: 16px;
+    }
+    
+    .enrollment-details {
+        flex: 1;
+    }
+    
+    .patient-name {
+        font-weight: 600;
+        color: #1f2937;
+        margin-bottom: 4px;
+    }
+    
+    .insurance-info {
+        font-size: 13px;
+        color: #6b7280;
+    }
+    
+    .enrollment-date {
+        font-size: 12px;
+        color: #9ca3af;
+    }
+    
+    .action-buttons {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-top: 32px;
+    }
+    
+    .action-btn {
+        padding: 16px 24px;
+        border-radius: 12px;
+        font-weight: 600;
+        text-align: center;
+        text-decoration: none;
+        transition: all 0.3s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+    }
+    
+    .action-btn:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    }
+    
+    .action-btn.primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    
+    .action-btn.success {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+    }
+    
+    .action-btn.warning {
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        color: white;
+    }
+    
+    .expiring-badge {
+        background: #fef3c7;
+        color: #d97706;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 11px;
+        font-weight: 600;
+        margin-left: 8px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="insurance-dashboard">
+    <div class="container-fluid">
+        <!-- Header -->
+        <div class="dashboard-header">
+            <h1><i class="bi bi-shield-fill-check me-3"></i>Insurance Management Dashboard</h1>
+            <p class="text-muted mb-0">Comprehensive insurance company and patient enrollment management</p>
+        </div>
+        
+        <!-- Statistics Cards -->
+        <div class="stat-cards">
+            <div class="stat-card blue">
+                <div class="stat-icon">
+                    <i class="bi bi-building"></i>
+                </div>
+                <div class="stat-value">{{ stats.active_companies }}</div>
+                <div class="stat-label">Active Companies</div>
+            </div>
+            
+            <div class="stat-card green">
+                <div class="stat-icon">
+                    <i class="bi bi-file-earmark-medical"></i>
+                </div>
+                <div class="stat-value">{{ stats.active_plans }}</div>
+                <div class="stat-label">Active Plans</div>
+            </div>
+            
+            <div class="stat-card purple">
+                <div class="stat-icon">
+                    <i class="bi bi-people"></i>
+                </div>
+                <div class="stat-value">{{ stats.enrolled_patients }}</div>
+                <div class="stat-label">Enrolled Patients</div>
+            </div>
+            
+            <div class="stat-card orange">
+                <div class="stat-icon">
+                    <i class="bi bi-exclamation-triangle"></i>
+                </div>
+                <div class="stat-value">{{ stats.expiring_soon }}</div>
+                <div class="stat-label">Expiring Soon</div>
+            </div>
+            
+            <div class="stat-card cyan">
+                <div class="stat-icon">
+                    <i class="bi bi-clipboard-data"></i>
+                </div>
+                <div class="stat-value">{{ stats.total_companies }}</div>
+                <div class="stat-label">Total Companies</div>
+            </div>
+            
+            <div class="stat-card red">
+                <div class="stat-icon">
+                    <i class="bi bi-star"></i>
+                </div>
+                <div class="stat-value">{{ stats.total_plans }}</div>
+                <div class="stat-label">Total Plans</div>
+            </div>
+        </div>
+        
+        <!-- Action Buttons -->
+        <div class="action-buttons">
+            <a href="{% url 'hospital:insurance_company_create' %}" class="action-btn primary">
+                <i class="bi bi-plus-circle"></i>
+                Add New Company
+            </a>
+            <a href="{% url 'hospital:insurance_company_list' %}" class="action-btn success">
+                <i class="bi bi-list-ul"></i>
+                View All Companies
+            </a>
+            <a href="{% url 'hospital:insurance_claims_dashboard' %}" class="action-btn warning">
+                <i class="bi bi-receipt"></i>
+                Manage Claims
+            </a>
+        </div>
+        
+        <!-- Insurance Companies -->
+        <div class="section-card">
+            <div class="section-title">
+                <span><i class="bi bi-building me-2"></i>Top Insurance Companies</span>
+                <a href="{% url 'hospital:insurance_company_list' %}" class="btn btn-sm btn-outline-primary">
+                    View All <i class="bi bi-arrow-right ms-1"></i>
+                </a>
+            </div>
+            
+            {% if companies %}
+                {% for company in companies %}
+                <div class="company-card" onclick="window.location.href='{% url 'hospital:insurance_company_detail' company.pk %}'">
+                    <div class="company-header">
+                        <div>
+                            <div class="company-name">{{ company.name }}</div>
+                            <small class="text-muted">{{ company.code }}</small>
+                        </div>
+                        <span class="company-badge {{ company.status }}">{{ company.get_status_display }}</span>
+                    </div>
+                    
+                    <div class="company-stats">
+                        <div class="company-stat">
+                            <div class="company-stat-value">{{ company.enrolled_count }}</div>
+                            <div class="company-stat-label">Patients</div>
+                        </div>
+                        <div class="company-stat">
+                            <div class="company-stat-value">{{ company.plans.count }}</div>
+                            <div class="company-stat-label">Plans</div>
+                        </div>
+                        <div class="company-stat">
+                            <div class="company-stat-value">{{ company.payment_terms_days }}</div>
+                            <div class="company-stat-label">Payment Days</div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle me-2"></i>
+                    No insurance companies registered yet. <a href="{% url 'hospital:insurance_company_create' %}">Add your first company</a>.
+                </div>
+            {% endif %}
+        </div>
+        
+        <div class="row">
+            <!-- Recent Enrollments -->
+            <div class="col-md-6">
+                <div class="section-card">
+                    <div class="section-title">
+                        <i class="bi bi-person-check me-2"></i>Recent Enrollments
+                    </div>
+                    
+                    {% if recent_enrollments %}
+                        {% for enrollment in recent_enrollments %}
+                        <div class="enrollment-item">
+                            <div class="patient-avatar">
+                                {{ enrollment.patient.first_name.0 }}{{ enrollment.patient.last_name.0 }}
+                            </div>
+                            <div class="enrollment-details">
+                                <div class="patient-name">{{ enrollment.patient.full_name }}</div>
+                                <div class="insurance-info">
+                                    {{ enrollment.insurance_company.name }}
+                                    {% if enrollment.insurance_plan %}
+                                        - {{ enrollment.insurance_plan.plan_name }}
+                                    {% endif %}
+                                </div>
+                                <div class="enrollment-date">
+                                    Member ID: {{ enrollment.member_id }} | 
+                                    Enrolled: {{ enrollment.created|date:"M d, Y" }}
+                                </div>
+                            </div>
+                            <span class="badge bg-success">Active</span>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted">No recent enrollments</p>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <!-- Expiring Soon -->
+            <div class="col-md-6">
+                <div class="section-card">
+                    <div class="section-title">
+                        <i class="bi bi-clock-history me-2"></i>Expiring Soon (30 Days)
+                    </div>
+                    
+                    {% if expiring_soon %}
+                        {% for enrollment in expiring_soon %}
+                        <div class="enrollment-item">
+                            <div class="patient-avatar" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
+                                {{ enrollment.patient.first_name.0 }}{{ enrollment.patient.last_name.0 }}
+                            </div>
+                            <div class="enrollment-details">
+                                <div class="patient-name">
+                                    {{ enrollment.patient.full_name }}
+                                    <span class="expiring-badge">
+                                        <i class="bi bi-exclamation-circle me-1"></i>Expiring
+                                    </span>
+                                </div>
+                                <div class="insurance-info">
+                                    {{ enrollment.insurance_company.name }}
+                                </div>
+                                <div class="enrollment-date">
+                                    Expires: {{ enrollment.expiry_date|date:"M d, Y" }}
+                                </div>
+                            </div>
+                            <a href="{% url 'hospital:patient_detail' enrollment.patient.pk %}" class="btn btn-sm btn-outline-warning">
+                                <i class="bi bi-arrow-clockwise"></i> Renew
+                            </a>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted">No expiring enrollments in the next 30 days</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+

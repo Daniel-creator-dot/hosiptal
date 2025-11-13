@@ -1,0 +1,148 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}{{ transfer.transfer_number }} - Store Transfer{% endblock %}
+{% block page_title %}Store Transfer: {{ transfer.transfer_number }}{% endblock %}
+{% block page_subtitle %}{{ transfer.from_store.name }} → {{ transfer.to_store.name }}{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-8">
+        <div class="modern-card">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Transfer Information</h6>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="text-muted small">Transfer Number</label>
+                    <div><strong>{{ transfer.transfer_number }}</strong></div>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="text-muted small">Status</label>
+                    <div>
+                        {% if transfer.status == 'pending' %}
+                            <span class="badge-modern badge-secondary">Pending</span>
+                        {% elif transfer.status == 'approved' %}
+                            <span class="badge-modern badge-warning">Approved</span>
+                        {% elif transfer.status == 'in_transit' %}
+                            <span class="badge-modern badge-info">In Transit</span>
+                        {% elif transfer.status == 'completed' %}
+                            <span class="badge-modern badge-success">Completed</span>
+                        {% else %}
+                            <span class="badge-modern badge-danger">Cancelled</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="text-muted small">From Store</label>
+                    <div><strong>{{ transfer.from_store.name }}</strong></div>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="text-muted small">To Store</label>
+                    <div><strong>{{ transfer.to_store.name }}</strong></div>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="text-muted small">Transfer Date</label>
+                    <div>{{ transfer.transfer_date|date:"M d, Y" }}</div>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="text-muted small">Requested By</label>
+                    <div>
+                        {% if transfer.requested_by %}
+                            {{ transfer.requested_by.user.get_full_name|default:transfer.requested_by.user.username }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </div>
+                </div>
+                {% if transfer.approved_by %}
+                <div class="col-md-6 mb-3">
+                    <label class="text-muted small">Approved By</label>
+                    <div>
+                        {% if transfer.approved_by.user %}
+                            {{ transfer.approved_by.user.get_full_name|default:transfer.approved_by.user.username }}
+                        {% else %}
+                            {{ transfer.approved_by }}
+                        {% endif %}
+                    </div>
+                    {% if transfer.approved_at %}
+                    <div class="text-muted small">{{ transfer.approved_at|date:"M d, Y H:i" }}</div>
+                    {% endif %}
+                </div>
+                {% endif %}
+                {% if transfer.received_by %}
+                <div class="col-md-6 mb-3">
+                    <label class="text-muted small">Received By</label>
+                    <div>
+                        {% if transfer.received_by.user %}
+                            {{ transfer.received_by.user.get_full_name|default:transfer.received_by.user.username }}
+                        {% else %}
+                            {{ transfer.received_by }}
+                        {% endif %}
+                    </div>
+                    {% if transfer.received_at %}
+                    <div class="text-muted small">{{ transfer.received_at|date:"M d, Y H:i" }}</div>
+                    {% endif %}
+                </div>
+                {% endif %}
+                {% if transfer.notes %}
+                <div class="col-md-12 mb-3">
+                    <label class="text-muted small">Notes</label>
+                    <div>{{ transfer.notes }}</div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Transfer Items -->
+<div class="modern-card">
+    <h6 style="font-weight: 600; margin-bottom: 16px;">Transfer Items</h6>
+    {% if lines %}
+    <div class="table-responsive">
+        <table class="table modern-table">
+            <thead>
+                <tr>
+                    <th>Item Code</th>
+                    <th>Item Name</th>
+                    <th>Quantity</th>
+                    <th>Unit</th>
+                    <th>Unit Cost</th>
+                    <th>Line Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for line in lines %}
+                <tr>
+                    <td><code>{{ line.item_code }}</code></td>
+                    <td><strong>{{ line.item_name }}</strong></td>
+                    <td>{{ line.quantity|intcomma }}</td>
+                    <td>{{ line.unit_of_measure }}</td>
+                    <td>GHS {{ line.unit_cost|floatformat:2|intcomma }}</td>
+                    <td><strong>GHS {{ line.line_total|floatformat:2|intcomma }}</strong></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr style="background: var(--light);">
+                    <td colspan="5" style="text-align: right; font-weight: 600;">Total:</td>
+                    <td>
+                        <strong style="font-size: 18px;">
+                            GHS {{ total_value|floatformat:2|intcomma }}
+                        </strong>
+                    </td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-muted text-center py-4">No items in this transfer</p>
+    {% endif %}
+</div>
+
+<div class="mt-3">
+    <a href="{% url 'hospital:store_transfers_list' %}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Transfers
+    </a>
+</div>
+{% endblock %}
+

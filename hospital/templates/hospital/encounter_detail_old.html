@@ -1,0 +1,239 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Encounter - HMS{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Encounter Details</h1>
+    <div>
+        {% if encounter.status == 'active' %}
+        <a href="{% url 'hospital:consultation_view' encounter_id=encounter.pk %}" class="btn btn-primary-modern">
+            <i class="bi bi-stethoscope"></i> Start Consultation
+        </a>
+        {% endif %}
+        <a href="{% url 'hospital:patient_flow' encounter.pk %}" class="btn btn-success">
+            <i class="bi bi-diagram-3"></i> Patient Flow
+        </a>
+        <a href="{% url 'hospital:encounter_list' %}" class="btn btn-secondary">
+            <i class="bi bi-arrow-left"></i> Back to List
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-4 mb-4">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5>Encounter Information</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Patient:</strong> <a href="{% url 'hospital:patient_detail' encounter.patient.pk %}">{{ encounter.patient.full_name }}</a></p>
+                <p><strong>MRN:</strong> {{ encounter.patient.mrn }}</p>
+                <p><strong>Type:</strong> {{ encounter.get_encounter_type_display }}</p>
+                <p><strong>Status:</strong> <span class="badge bg-{% if encounter.status == 'active' %}success{% elif encounter.status == 'completed' %}secondary{% else %}danger{% endif %}">{{ encounter.get_status_display }}</span></p>
+                {% if encounter.current_activity %}
+                <p><strong>Current Activity:</strong> 
+                    {% for activity in encounter.get_activities_list %}
+                    <span class="badge bg-{% if activity == 'Consulting' %}primary{% elif activity == 'Lab' %}info{% elif activity == 'Pharmacy' %}warning{% elif activity == 'Imaging' %}secondary{% else %}dark{% endif %} me-1">
+                        {{ activity }}
+                    </span>
+                    {% endfor %}
+                </p>
+                {% endif %}
+                <p><strong>Started:</strong> {{ encounter.started_at|date:"M d, Y H:i" }}</p>
+                {% if encounter.ended_at %}
+                <p><strong>Ended:</strong> {{ encounter.ended_at|date:"M d, Y H:i" }}</p>
+                <p><strong>Duration:</strong> {{ encounter.get_duration_minutes }} minutes</p>
+                {% endif %}
+                <p><strong>Location:</strong> {{ encounter.location.name|default:"-" }}</p>
+                <p><strong>Provider:</strong> {{ encounter.provider.user.get_full_name|default:"-" }}</p>
+                {% if encounter.get_total_cost > 0 %}
+                <p><strong>Total Cost:</strong> GHS {{ encounter.get_total_cost|floatformat:2|intcomma }}</p>
+                {% endif %}
+            </div>
+        </div>
+        
+        <div class="card mt-3">
+            <div class="card-header bg-info text-white">
+                <h5>Clinical Information</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Chief Complaint:</strong></p>
+                <p>{{ encounter.chief_complaint|linebreaks }}</p>
+                {% if encounter.diagnosis %}
+                <p><strong>Diagnosis:</strong></p>
+                <p>{{ encounter.diagnosis|linebreaks }}</p>
+                {% endif %}
+                {% if encounter.notes %}
+                <p><strong>Notes:</strong></p>
+                <p>{{ encounter.notes|linebreaks }}</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-8">
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Vital Signs</h5>
+                <a href="{% url 'hospital:record_vitals' encounter.pk %}" class="btn btn-sm btn-primary">
+                    <i class="bi bi-plus-circle"></i> Add Vitals
+                </a>
+            </div>
+            <div class="card-body">
+                {% if latest_vitals %}
+                <div class="row">
+                    <div class="col-md-3">
+                        <strong>BP:</strong> {{ latest_vitals.systolic_bp }}/{{ latest_vitals.diastolic_bp }} mmHg
+                    </div>
+                    <div class="col-md-3">
+                        <strong>Pulse:</strong> {{ latest_vitals.pulse|default:"-" }} bpm
+                    </div>
+                    <div class="col-md-3">
+                        <strong>Temp:</strong> {{ latest_vitals.temperature|default:"-" }} °C
+                    </div>
+                    <div class="col-md-3">
+                        <strong>SpO2:</strong> {{ latest_vitals.spo2|default:"-" }}%
+                    </div>
+                </div>
+                <div class="row mt-2">
+                    <div class="col-md-3">
+                        <strong>Weight:</strong> {{ latest_vitals.weight|default:"-" }} kg
+                    </div>
+                    <div class="col-md-3">
+                        <strong>Height:</strong> {{ latest_vitals.height|default:"-" }} cm
+                    </div>
+                    <div class="col-md-3">
+                        <strong>Resp Rate:</strong> {{ latest_vitals.respiratory_rate|default:"-" }} /min
+                    </div>
+                    <div class="col-md-3">
+                        <small class="text-muted">Recorded: {{ latest_vitals.recorded_at|date:"M d, Y H:i" }}</small>
+                    </div>
+                </div>
+                {% else %}
+                <p class="text-muted">No vital signs recorded yet</p>
+                {% endif %}
+                
+                {% if vitals|length > 1 %}
+                <hr>
+                <h6>Vital Signs History</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Date/Time</th>
+                                <th>BP</th>
+                                <th>Pulse</th>
+                                <th>Temp</th>
+                                <th>SpO2</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for vital in vitals|slice:":10" %}
+                            <tr>
+                                <td>{{ vital.recorded_at|date:"M d, H:i" }}</td>
+                                <td>{{ vital.systolic_bp }}/{{ vital.diastolic_bp }}</td>
+                                <td>{{ vital.pulse|default:"-" }}</td>
+                                <td>{{ vital.temperature|default:"-" }}</td>
+                                <td>{{ vital.spo2|default:"-" }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        {% if referrals %}
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Referrals</h5>
+                {% if encounter.status == 'active' %}
+                <a href="{% url 'hospital:create_referral' encounter_id=encounter.pk %}" class="btn btn-sm btn-primary">
+                    <i class="bi bi-plus-circle"></i> Create Referral
+                </a>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Specialist</th>
+                                <th>Specialty</th>
+                                <th>Status</th>
+                                <th>Priority</th>
+                                <th>Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for referral in referrals %}
+                            <tr>
+                                <td>{{ referral.specialist.staff.user.get_full_name }}</td>
+                                <td>{{ referral.specialty.name }}</td>
+                                <td>
+                                    <span class="badge bg-{% if referral.status == 'pending' %}warning{% elif referral.status == 'accepted' %}info{% elif referral.status == 'completed' %}success{% elif referral.status == 'declined' %}danger{% else %}secondary{% endif %}">
+                                        {{ referral.get_status_display }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <span class="badge bg-{% if referral.priority == 'stat' %}danger{% elif referral.priority == 'urgent' %}warning{% else %}secondary{% endif %}">
+                                        {{ referral.get_priority_display }}
+                                    </span>
+                                </td>
+                                <td>{{ referral.referred_date|date:"M d, Y H:i" }}</td>
+                                <td>
+                                    <a href="{% url 'hospital:referral_detail' referral_id=referral.pk %}" class="btn btn-sm btn-outline-primary">
+                                        View
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        
+        <div class="card">
+            <div class="card-header">
+                <h5>Orders</h5>
+            </div>
+            <div class="card-body">
+                {% if orders %}
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Status</th>
+                            <th>Priority</th>
+                            <th>Requested By</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for order in orders %}
+                        <tr>
+                            <td>{{ order.get_order_type_display }}</td>
+                            <td><span class="badge bg-{% if order.status == 'pending' %}warning{% elif order.status == 'completed' %}success{% else %}info{% endif %}">{{ order.get_status_display }}</span></td>
+                            <td><span class="badge bg-{% if order.priority == 'stat' %}danger{% elif order.priority == 'urgent' %}warning{% else %}secondary{% endif %}">{{ order.get_priority_display }}</span></td>
+                            <td>{{ order.requested_by.user.get_full_name }}</td>
+                            <td>{{ order.requested_at|date:"M d, Y H:i" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="text-muted">No orders yet</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+

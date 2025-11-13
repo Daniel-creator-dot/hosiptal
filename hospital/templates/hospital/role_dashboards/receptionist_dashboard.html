@@ -1,0 +1,362 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Receptionist Dashboard{% endblock %}
+
+{% block extra_css %}
+<style>
+    .dashboard-card {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        padding: 24px;
+        margin-bottom: 24px;
+        border-left: 4px solid #20c997;
+    }
+    
+    .stat-card {
+        background: linear-gradient(135deg, #20c997 0%, #17a2b8 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    
+    .stat-number {
+        font-size: 2.5rem;
+        font-weight: bold;
+        margin-bottom: 8px;
+    }
+    
+    .stat-label {
+        font-size: 0.9rem;
+        opacity: 0.9;
+    }
+    
+    .appointment-card {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        border-left: 4px solid #20c997;
+    }
+    
+    .patient-card {
+        background: white;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        transition: all 0.3s ease;
+    }
+    
+    .patient-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transform: translateY(-2px);
+    }
+    
+    .priority-high { border-left-color: #dc3545; }
+    .priority-medium { border-left-color: #ffc107; }
+    .priority-low { border-left-color: #28a745; }
+    
+    .action-btn {
+        background: #20c997;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        text-decoration: none;
+        display: inline-block;
+        margin: 4px;
+        transition: all 0.3s ease;
+    }
+    
+    .action-btn:hover {
+        background: #1a9d8a;
+        color: white;
+        text-decoration: none;
+        transform: translateY(-1px);
+    }
+    
+    .btn-success { background: #28a745; }
+    .btn-warning { background: #ffc107; color: #212529; }
+    .btn-primary { background: #007bff; }
+    .btn-danger { background: #dc3545; }
+    .btn-info { background: #17a2b8; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2 class="mb-1">
+                            <i class="bi bi-telephone me-2"></i>
+                            Receptionist Dashboard
+                        </h2>
+                        <p class="text-muted mb-0">
+                            Welcome back, {{ staff.user.get_full_name|default:staff.user.username }}
+                        </p>
+                    </div>
+                    <div class="text-end">
+                        <span class="badge bg-info fs-6">{{ staff.get_profession_display }}</span>
+                        <br>
+                        <small class="text-muted">{{ staff.department.name }}</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-number">{{ stats.today_appointments }}</div>
+                <div class="stat-label">Today's Appointments</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%);">
+                <div class="stat-number">{{ stats.pending_registrations }}</div>
+                <div class="stat-label">Pending Registrations</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #6f42c1 0%, #e83e8c 100%);">
+                <div class="stat-number">{{ stats.walk_in_patients }}</div>
+                <div class="stat-label">Walk-in Patients</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);">
+                <div class="stat-number">{{ stats.total_patients_today }}</div>
+                <div class="stat-label">Total Patients Today</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Today's Appointments -->
+        <div class="col-md-6">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-calendar-check me-2"></i>
+                    Today's Appointments
+                </h5>
+                {% if today_appointments %}
+                    {% for appointment in today_appointments %}
+                    <div class="appointment-card">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">
+                                    <a href="{% url 'hospital:patient_detail' appointment.patient.pk %}" class="text-decoration-none">
+                                        {{ appointment.patient.full_name }}
+                                    </a>
+                                </h6>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-clock me-1"></i>
+                                    {{ appointment.started_at|time:"g:i A" }}
+                                </p>
+                                <small class="text-muted">
+                                    Provider: {{ appointment.provider.user.get_full_name|default:appointment.provider.user.username }}
+                                </small>
+                                <br>
+                                <small class="text-muted">
+                                    MRN: {{ appointment.patient.mrn }}
+                                </small>
+                            </div>
+                            <div>
+                                <a href="{% url 'hospital:encounter_detail' appointment.pk %}" class="action-btn btn-primary">
+                                    <i class="bi bi-eye me-1"></i>View
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-calendar-x text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No appointments scheduled for today</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Pending Registrations -->
+        <div class="col-md-6">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-person-plus me-2"></i>
+                    Pending Registrations
+                </h5>
+                {% if pending_registrations %}
+                    {% for patient in pending_registrations %}
+                    <div class="patient-card">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">
+                                    <a href="{% url 'hospital:patient_detail' patient.pk %}" class="text-decoration-none">
+                                        {{ patient.full_name }}
+                                    </a>
+                                </h6>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-clock me-1"></i>
+                                    Registered: {{ patient.created|date:"M d, Y g:i A" }}
+                                </p>
+                                <small class="text-muted">
+                                    MRN: {{ patient.mrn }} | Age: {{ patient.age }}
+                                </small>
+                            </div>
+                            <div>
+                                <a href="{% url 'hospital:patient_detail' patient.pk %}" class="action-btn">
+                                    <i class="bi bi-eye me-1"></i>Review
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-check-circle text-success" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No pending registrations</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Walk-in Patients -->
+        <div class="col-md-8">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-person-walking me-2"></i>
+                    Walk-in Patients
+                </h5>
+                {% if walk_in_patients %}
+                    {% for encounter in walk_in_patients %}
+                    <div class="patient-card">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">
+                                    <a href="{% url 'hospital:patient_detail' encounter.patient.pk %}" class="text-decoration-none">
+                                        {{ encounter.patient.full_name }}
+                                    </a>
+                                </h6>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-clock me-1"></i>
+                                    Arrived: {{ encounter.started_at|date:"M d, Y g:i A" }}
+                                </p>
+                                <small class="text-muted">
+                                    MRN: {{ encounter.patient.mrn }} | Age: {{ encounter.patient.age }}
+                                </small>
+                            </div>
+                            <div>
+                                <a href="{% url 'hospital:encounter_detail' encounter.pk %}" class="action-btn btn-warning">
+                                    <i class="bi bi-arrow-right me-1"></i>Process
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-person-walking text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No walk-in patients today</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Quick Stats -->
+        <div class="col-md-4">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-graph-up me-2"></i>
+                    Quick Stats
+                </h5>
+                <div class="row text-center">
+                    <div class="col-6 mb-3">
+                        <div class="stat-number text-primary">{{ stats.today_appointments }}</div>
+                        <div class="stat-label text-muted">Appointments</div>
+                    </div>
+                    <div class="col-6 mb-3">
+                        <div class="stat-number text-success">{{ stats.walk_in_patients }}</div>
+                        <div class="stat-label text-muted">Walk-ins</div>
+                    </div>
+                    <div class="col-6">
+                        <div class="stat-number text-warning">{{ stats.pending_registrations }}</div>
+                        <div class="stat-label text-muted">Pending</div>
+                    </div>
+                    <div class="col-6">
+                        <div class="stat-number text-info">{{ stats.total_patients_today }}</div>
+                        <div class="stat-label text-muted">Total Today</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="row">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-lightning me-2"></i>
+                    Quick Actions
+                </h5>
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="{% url 'hospital:patient_create' %}" class="action-btn">
+                        <i class="bi bi-person-plus me-1"></i>New Patient
+                    </a>
+                    <a href="{% url 'hospital:encounter_create' %}" class="action-btn">
+                        <i class="bi bi-plus-circle me-1"></i>New Encounter
+                    </a>
+                    <a href="#" class="action-btn btn-warning">
+                        <i class="bi bi-calendar-plus me-1"></i>Schedule Appointment
+                    </a>
+                    <a href="#" class="action-btn btn-success">
+                        <i class="bi bi-printer me-1"></i>Print ID Card
+                    </a>
+                    <a href="{% url 'hospital:global_search' %}" class="action-btn">
+                        <i class="bi bi-search me-1"></i>Search
+                    </a>
+                    <a href="{% url 'hospital:reports_daily' %}" class="action-btn btn-info">
+                        <i class="bi bi-graph-up me-1"></i>Reports
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

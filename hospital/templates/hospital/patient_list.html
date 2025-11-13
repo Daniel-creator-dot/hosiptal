@@ -1,0 +1,294 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Patients - HMS{% endblock %}
+{% block page_title %}Patients{% endblock %}
+{% block page_subtitle %}Manage patient records and information{% endblock %}
+
+{% block extra_css %}
+<style>
+    .search-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        border: 1px solid var(--border);
+        margin-bottom: 24px;
+    }
+    
+    .patient-card {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        border: 1px solid var(--border);
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        margin-bottom: 16px;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .patient-card::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 4px;
+        height: 100%;
+        background: linear-gradient(180deg, var(--primary) 0%, var(--secondary) 100%);
+        transform: scaleY(0);
+        transition: transform 0.3s ease;
+    }
+    
+    .patient-card:hover {
+        transform: translateX(4px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+        border-color: var(--primary);
+    }
+    
+    .patient-card:hover::before {
+        transform: scaleY(1);
+    }
+    
+    .patient-avatar {
+        width: 56px;
+        height: 56px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        font-weight: 700;
+        color: white;
+        flex-shrink: 0;
+    }
+    
+    .patient-info h5 {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--dark);
+        margin: 0 0 4px 0;
+    }
+    
+    .patient-info h5 a {
+        color: inherit;
+        text-decoration: none;
+    }
+    
+    .patient-info h5 a:hover {
+        color: var(--primary);
+    }
+    
+    .mrn-badge {
+        font-size: 12px;
+        color: var(--primary);
+        font-weight: 600;
+        margin-bottom: 8px;
+    }
+    
+    .patient-meta {
+        font-size: 13px;
+        color: var(--gray);
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+    }
+    
+    .patient-meta i {
+        margin-right: 4px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Search Card -->
+<div class="search-card">
+    <form method="get" class="row g-3 align-items-end">
+        <div class="col-md-8">
+            <label class="form-label" style="font-size: 13px; font-weight: 600; color: var(--gray);">Search Patients</label>
+            <input type="text" class="form-control form-control-modern" name="q" placeholder="Search by name, MRN, phone, or email..." value="{{ query }}">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label" style="font-size: 13px; font-weight: 600; color: var(--gray);">Source</label>
+            <select class="form-select form-control-modern" name="source">
+                <option value="all" {% if source == 'all' %}selected{% endif %}>All ({{ new_count|add:legacy_count }})</option>
+                <option value="new" {% if source == 'new' %}selected{% endif %}>New System ({{ new_count }})</option>
+                <option value="legacy" {% if source == 'legacy' %}selected{% endif %}>Imported Legacy ({{ legacy_count }})</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-primary-modern btn-modern w-100">
+                <i class="bi bi-search"></i> Search
+            </button>
+        </div>
+    </form>
+    {% if legacy_count > 0 %}
+    <div class="alert alert-info mt-3 mb-0" style="font-size: 13px;">
+        <i class="bi bi-info-circle"></i> <strong>{{ legacy_count|intcomma }} imported legacy patients</strong> are now available! 
+        {% if source == 'legacy' %}
+        <span class="badge bg-success">Showing first {{ total_count|intcomma }} of {{ legacy_count|intcomma }} legacy patients</span>
+        <span class="badge bg-warning text-dark ms-2">Displaying up to 10,000 patients for performance</span>
+        {% elif source == 'all' %}
+        <span class="badge bg-info">Showing both new and legacy (first 500 legacy for performance)</span>
+        {% else %}
+        Use the "Source" filter above to view them.
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<!-- Action Bar -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h5 style="font-weight: 600; color: var(--dark); margin: 0;">
+            {% if query %}
+            Search Results for "{{ query }}"
+            {% else %}
+            All Patients
+            {% endif %}
+        </h5>
+        <p style="font-size: 13px; color: var(--gray); margin: 4px 0 0 0;">
+            {% if page_obj and page_obj.paginator.count > 0 %}
+            Showing {{ page_obj.start_index }} - {{ page_obj.end_index }} of {{ page_obj.paginator.count }} patients
+            {% elif total_count %}
+            Total: {{ total_count }} patients
+            {% endif %}
+        </p>
+    </div>
+    <div>
+        <a href="{% url 'hospital:patient_create' %}" class="btn btn-primary-modern btn-modern me-2">
+            <i class="bi bi-plus-circle"></i> New Patient
+        </a>
+        
+        <!-- Export Dropdown -->
+        <div class="btn-group">
+            <button type="button" class="btn btn-outline-primary btn-modern dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-download"></i> Export
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li>
+                    <h6 class="dropdown-header">Export All Patients ({{ total_count }})</h6>
+                </li>
+                <li><hr class="dropdown-divider"></li>
+                <li>
+                    <a class="dropdown-item" href="{% url 'hospital:export_patients_excel' %}?source={{ source }}{% if query %}&q={{ query }}{% endif %}">
+                        <i class="bi bi-file-earmark-excel text-success"></i> Export to Excel (.xlsx)
+                    </a>
+                </li>
+                <li>
+                    <a class="dropdown-item" href="{% url 'hospital:export_patients_pdf' %}?source={{ source }}{% if query %}&q={{ query }}{% endif %}">
+                        <i class="bi bi-file-earmark-pdf text-danger"></i> Export to PDF
+                    </a>
+                </li>
+                <li>
+                    <a class="dropdown-item" href="{% url 'hospital:export_patients_csv' %}?source={{ source }}{% if query %}&q={{ query }}{% endif %}">
+                        <i class="bi bi-file-earmark-text text-primary"></i> Export to CSV
+                    </a>
+                </li>
+                <li><hr class="dropdown-divider"></li>
+                <li class="px-3 py-2" style="font-size: 11px; color: #6c757d;">
+                    <i class="bi bi-info-circle"></i> Exports include {{ source }} patients{% if query %} matching "{{ query }}"{% endif %}
+                </li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- Patient Cards -->
+{% if page_obj and page_obj.paginator.count > 0 %}
+    {% for patient in page_obj %}
+    <div class="patient-card">
+        <div class="d-flex align-items-start gap-3">
+            <div class="patient-avatar">
+                {{ patient.initials|upper }}
+            </div>
+            <div class="patient-info flex-grow-1">
+                <h5>
+                    <a href="{{ patient.view_url }}">{{ patient.name }}</a>
+                    {% if patient.source == 'legacy' %}
+                    <span class="badge bg-secondary" style="font-size: 10px; font-weight: 500; margin-left: 8px;">Legacy</span>
+                    {% else %}
+                    <span class="badge bg-primary" style="font-size: 10px; font-weight: 500; margin-left: 8px;">New</span>
+                    {% endif %}
+                </h5>
+                <div class="mrn-badge">MRN: {{ patient.mrn }}</div>
+                <div class="patient-meta">
+                    <span><i class="bi bi-calendar3"></i> Age: {{ patient.age }} years</span>
+                    <span><i class="bi bi-gender-ambiguous"></i> {{ patient.gender }}</span>
+                    {% if patient.phone %}
+                    <span><i class="bi bi-telephone"></i> {{ patient.phone }}</span>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="d-flex gap-2">
+                <a href="{{ patient.view_url }}" class="btn btn-sm btn-outline-primary" style="border-radius: 8px;">
+                    <i class="bi bi-eye"></i> View
+                </a>
+                {% if patient.source == 'new' %}
+                <a href="{{ patient.edit_url }}" class="btn btn-sm btn-outline-secondary" style="border-radius: 8px;">
+                    <i class="bi bi-pencil"></i> Edit
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+    
+    <!-- Pagination -->
+    {% if page_obj.has_other_pages %}
+    <nav aria-label="Page navigation" class="mt-4">
+        <ul class="pagination justify-content-center">
+            {% if page_obj.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?page=1{% if query %}&q={{ query }}{% endif %}{% if source %}&source={{ source }}{% endif %}" style="border-radius: 10px 0 0 10px; border-color: var(--border);">
+                        First
+                    </a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if query %}&q={{ query }}{% endif %}{% if source %}&source={{ source }}{% endif %}" style="border-color: var(--border);">
+                        Previous
+                    </a>
+                </li>
+            {% endif %}
+            <li class="page-item active">
+                <span class="page-link" style="background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); border: none; border-radius: 10px; margin: 0 5px;">
+                    Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+                </span>
+            </li>
+            {% if page_obj.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if query %}&q={{ query }}{% endif %}{% if source %}&source={{ source }}{% endif %}" style="border-color: var(--border);">
+                        Next
+                    </a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}{% if query %}&q={{ query }}{% endif %}{% if source %}&source={{ source }}{% endif %}" style="border-radius: 0 10px 10px 0; border-color: var(--border);">
+                        Last
+                    </a>
+                </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+{% elif not page_obj or page_obj.paginator.count == 0 %}
+    <div class="modern-card text-center" style="padding: 60px 20px;">
+        <div style="font-size: 64px; margin-bottom: 20px; opacity: 0.3;">👥</div>
+        <h5 style="color: var(--dark); margin-bottom: 8px;">No patients found</h5>
+        <p style="color: var(--gray); margin-bottom: 24px;">
+            {% if query %}Try a different search term{% else %}Start by adding your first patient{% endif %}
+        </p>
+        {% if not query %}
+        <a href="{% url 'hospital:patient_create' %}" class="btn btn-primary-modern btn-modern">
+            <i class="bi bi-plus-circle"></i> Add First Patient
+        </a>
+        {% endif %}
+    </div>
+{% else %}
+    <div class="alert alert-info">
+        <i class="bi bi-info-circle"></i> No patients to display on this page.
+        {% if query %}
+        <a href="{% url 'hospital:patient_list' %}" class="alert-link">Clear search</a>
+        {% endif %}
+    </div>
+{% endif %}
+{% endblock %}

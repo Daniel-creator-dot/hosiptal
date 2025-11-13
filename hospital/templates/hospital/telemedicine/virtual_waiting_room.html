@@ -1,0 +1,216 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Virtual Waiting Room - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    body {
+        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    }
+    
+    .waiting-header {
+        background: linear-gradient(135deg, #06b6d4 0%, #0284c7 100%);
+        color: white;
+        border-radius: 24px;
+        padding: 48px;
+        margin-bottom: 40px;
+        box-shadow: 0 20px 60px rgba(6, 182, 212, 0.3);
+        text-align: center;
+    }
+    
+    .big-queue-number {
+        font-size: 120px;
+        font-weight: 900;
+        line-height: 1;
+        background: white;
+        color: #06b6d4;
+        border-radius: 50%;
+        width: 200px;
+        height: 200px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 24px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+        animation: bounce 2s infinite;
+    }
+    
+    @keyframes bounce {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-10px); }
+    }
+    
+    .queue-patient-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 16px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        transition: all 0.3s;
+    }
+    
+    .queue-patient-card:hover {
+        transform: scale(1.02);
+        box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+    }
+    
+    .serving-now {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 32px;
+        margin-bottom: 32px;
+        box-shadow: 0 8px 30px rgba(16, 185, 129, 0.3);
+        animation: glow 2s infinite;
+    }
+    
+    @keyframes glow {
+        0%, 100% { box-shadow: 0 8px 30px rgba(16, 185, 129, 0.3); }
+        50% { box-shadow: 0 8px 40px rgba(16, 185, 129, 0.5), 0 0 60px rgba(16, 185, 129, 0.3); }
+    }
+    
+    .connection-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    
+    .status-excellent { background: #d1fae5; color: #065f46; }
+    .status-good { background: #dbeafe; color: #1e40af; }
+    .status-fair { background: #fef3c7; color: #92400e; }
+    .status-poor { background: #fee2e2; color: #991b1b; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="waiting-header">
+        <h1 style="font-size: 48px; font-weight: 800; margin-bottom: 16px;">
+            <i class="bi bi-camera-video me-3"></i>Virtual Waiting Room
+        </h1>
+        <p style="font-size: 20px; opacity: 0.95; margin-bottom: 0;">
+            Please wait comfortably. We'll call you when ready.
+        </p>
+        <div style="margin-top: 24px; font-size: 16px; opacity: 0.9;">
+            <i class="bi bi-people-fill me-2"></i>
+            <strong>{{ total_waiting }}</strong> patient{{ total_waiting|pluralize }} waiting
+            <i class="bi bi-clock-history ms-4 me-2"></i>
+            Avg wait: <strong>~{{ average_wait }} minutes</strong>
+        </div>
+    </div>
+    
+    <!-- Now Being Served -->
+    {% if being_served %}
+    <div class="serving-now">
+        <div class="d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center gap-4">
+                <div style="font-size: 64px;">
+                    <i class="bi bi-check-circle-fill"></i>
+                </div>
+                <div>
+                    <h3 class="mb-2">NOW SERVING</h3>
+                    {% for entry in being_served %}
+                        <div style="font-size: 24px; font-weight: 700;">
+                            Queue #{{ entry.queue_number }} - {{ entry.patient.full_name }}
+                        </div>
+                        <div style="font-size: 16px; opacity: 0.9;">
+                            Dr. {{ entry.consultation.doctor.user.get_full_name }}
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Queue List -->
+    <div style="background: white; border-radius: 20px; padding: 40px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+        <h4 class="mb-4"><i class="bi bi-list-ol me-2"></i>Waiting Queue</h4>
+        
+        {% if waiting_queue %}
+            {% for entry in waiting_queue %}
+            <div class="queue-patient-card">
+                <div class="row align-items-center">
+                    <div class="col-md-1 text-center">
+                        <div style="background: linear-gradient(135deg, #06b6d4, #0891b2); color: white; width: 70px; height: 70px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 32px; font-weight: 800;">
+                            #{{ entry.queue_number }}
+                        </div>
+                    </div>
+                    <div class="col-md-5">
+                        <h5 class="mb-1">{{ entry.patient.full_name }}</h5>
+                        <div style="font-size: 14px; color: #6b7280;">
+                            <i class="bi bi-person-badge me-1"></i>Dr. {{ entry.consultation.doctor.user.get_full_name }}
+                        </div>
+                        <div style="font-size: 13px; color: #9ca3af; margin-top: 4px;">
+                            Checked in: {{ entry.check_in_time|date:"g:i A" }}
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="d-flex flex-column gap-2">
+                            {% if entry.device_ready %}
+                                <span class="connection-status status-excellent">
+                                    <i class="bi bi-check-circle-fill"></i> Device Ready
+                                </span>
+                            {% else %}
+                                <span class="connection-status status-fair">
+                                    <i class="bi bi-hourglass-split"></i> Preparing...
+                                </span>
+                            {% endif %}
+                            
+                            <span class="connection-status status-{{ entry.connection_quality }}">
+                                <i class="bi bi-wifi"></i> {{ entry.connection_quality|title }}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="col-md-3 text-end">
+                        <div style="font-size: 42px; font-weight: 800; color: #06b6d4;">~{{ entry.estimated_wait_minutes }}</div>
+                        <div style="font-size: 14px; color: #6b7280;">minutes estimated</div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-emoji-smile" style="font-size: 96px; color: #10b981;"></i>
+                <h4 class="mt-4" style="color: #6b7280;">All Clear!</h4>
+                <p class="text-muted">No patients in the waiting room right now.</p>
+            </div>
+        {% endif %}
+    </div>
+    
+    <!-- Auto-refresh notice -->
+    <div class="text-center mt-4">
+        <small class="text-muted">
+            <i class="bi bi-arrow-clockwise me-2"></i>
+            This page automatically refreshes every 15 seconds for real-time updates
+        </small>
+    </div>
+</div>
+
+<script>
+// Auto-refresh every 15 seconds
+setInterval(function() {
+    location.reload();
+}, 15000);
+
+// Notification sound when position changes (optional)
+// Can be enhanced with WebSocket for real-time updates
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+

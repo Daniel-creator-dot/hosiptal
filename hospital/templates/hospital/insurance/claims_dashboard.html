@@ -1,0 +1,414 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block extra_css %}
+<style>
+    .claims-dashboard {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 60px 0;
+        min-height: calc(100vh - 70px);
+    }
+    
+    .dashboard-header {
+        background: white;
+        border-radius: 20px;
+        padding: 40px;
+        margin-bottom: 40px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+    }
+    
+    .dashboard-header h1 {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: 700;
+        margin-bottom: 10px;
+    }
+    
+    .stat-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 24px;
+        margin-bottom: 40px;
+    }
+    
+    .stat-card {
+        background: white;
+        border-radius: 16px;
+        padding: 28px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .stat-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+    }
+    
+    .stat-card.blue::before { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+    .stat-card.green::before { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
+    .stat-card.orange::before { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); }
+    .stat-card.purple::before { background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); }
+    .stat-card.red::before { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
+    .stat-card.cyan::before { background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%); }
+    
+    .stat-card:hover {
+        transform: translateY(-8px);
+        box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+    }
+    
+    .stat-icon {
+        width: 60px;
+        height: 60px;
+        border-radius: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+        margin-bottom: 16px;
+    }
+    
+    .stat-card.blue .stat-icon { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+    .stat-card.green .stat-icon { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; }
+    .stat-card.orange .stat-icon { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; }
+    .stat-card.red .stat-icon { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; }
+    .stat-card.cyan .stat-icon { background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%); color: white; }
+    
+    .stat-value {
+        font-size: 32px;
+        font-weight: 700;
+        margin-bottom: 8px;
+    }
+    
+    .stat-label {
+        color: #6b7280;
+        font-size: 14px;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .content-card {
+        background: white;
+        border-radius: 16px;
+        padding: 32px;
+        margin-bottom: 30px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+    
+    .section-title {
+        font-size: 20px;
+        font-weight: 600;
+        margin-bottom: 24px;
+        color: #1f2937;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    
+    .claims-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+    }
+    
+    .claims-table thead th {
+        background: #f9fafb;
+        padding: 16px;
+        text-align: left;
+        font-weight: 600;
+        color: #374151;
+        border-bottom: 2px solid #e5e7eb;
+    }
+    
+    .claims-table tbody td {
+        padding: 16px;
+        border-bottom: 1px solid #f3f4f6;
+    }
+    
+    .claims-table tbody tr:hover {
+        background: #f9fafb;
+    }
+    
+    .badge-status {
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    
+    .badge-pending { background: #fef3c7; color: #92400e; }
+    .badge-submitted { background: #dbeafe; color: #1e40af; }
+    .badge-approved { background: #d1fae5; color: #065f46; }
+    .badge-paid { background: #d1fae5; color: #065f46; }
+    .badge-rejected { background: #fee2e2; color: #991b1b; }
+    
+    .action-buttons {
+        display: flex;
+        gap: 12px;
+        margin-top: 24px;
+    }
+    
+    .btn-modern {
+        padding: 12px 28px;
+        border-radius: 10px;
+        font-weight: 600;
+        border: none;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+    
+    .btn-primary-modern {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    
+    .btn-primary-modern:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        color: white;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="claims-dashboard">
+    <div class="container">
+        <!-- Header -->
+        <div class="dashboard-header">
+            <h1><i class="bi bi-file-earmark-medical-fill me-3"></i>Insurance Claims Dashboard</h1>
+            <p class="text-muted mb-0">Manage and track insurance claims for {{ current_month }} {{ current_year }}</p>
+        </div>
+        
+        <!-- Statistics Cards -->
+        <div class="stat-cards">
+            <div class="stat-card blue">
+                <div class="stat-icon">
+                    <i class="bi bi-clock-history"></i>
+                </div>
+                <div class="stat-value">{{ stats.total_pending_claims|intcomma }}</div>
+                <div class="stat-label">Pending Claims</div>
+            </div>
+            
+            <div class="stat-card orange">
+                <div class="stat-icon">
+                    <i class="bi bi-send-check"></i>
+                </div>
+                <div class="stat-value">{{ stats.total_submitted_claims|intcomma }}</div>
+                <div class="stat-label">Submitted Claims</div>
+            </div>
+            
+            <div class="stat-card green">
+                <div class="stat-icon">
+                    <i class="bi bi-check-circle-fill"></i>
+                </div>
+                <div class="stat-value">{{ stats.total_paid_claims|intcomma }}</div>
+                <div class="stat-label">Paid Claims</div>
+            </div>
+            
+            <div class="stat-card red">
+                <div class="stat-icon">
+                    <i class="bi bi-x-circle-fill"></i>
+                </div>
+                <div class="stat-value">{{ stats.total_rejected_claims|intcomma }}</div>
+                <div class="stat-label">Rejected Claims</div>
+            </div>
+            
+            <div class="stat-card cyan">
+                <div class="stat-icon">
+                    <i class="bi bi-currency-exchange"></i>
+                </div>
+                <div class="stat-value">GH₵ {{ stats.total_outstanding_amount|floatformat:2|intcomma }}</div>
+                <div class="stat-label">Outstanding Amount</div>
+            </div>
+        </div>
+        
+        <!-- Action Buttons -->
+        <div class="action-buttons">
+            <a href="{% url 'hospital:insurance_claim_items_list' %}" class="btn btn-modern btn-primary-modern">
+                <i class="bi bi-list-ul"></i>
+                View All Claims
+            </a>
+            <a href="{% url 'hospital:monthly_claims_list' %}" class="btn btn-modern btn-primary-modern">
+                <i class="bi bi-calendar-month"></i>
+                Monthly Claims
+            </a>
+        </div>
+        
+        <!-- Monthly Claims Summary -->
+        {% if monthly_claims %}
+        <div class="content-card">
+            <div class="section-title">
+                <i class="bi bi-calendar-check"></i>
+                Monthly Claims - {{ current_month }} {{ current_year }}
+            </div>
+            
+            <div class="table-responsive">
+                <table class="claims-table">
+                    <thead>
+                        <tr>
+                            <th>Claim Number</th>
+                            <th>Payer</th>
+                            <th>Items</th>
+                            <th>Total Billed</th>
+                            <th>Total Paid</th>
+                            <th>Outstanding</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for claim in monthly_claims %}
+                        <tr>
+                            <td><strong>{{ claim.claim_number }}</strong></td>
+                            <td>{{ claim.payer.name }}</td>
+                            <td>{{ claim.item_count }}</td>
+                            <td>GH₵ {{ claim.total_billed_amount|floatformat:2|intcomma }}</td>
+                            <td>GH₵ {{ claim.total_paid_amount|floatformat:2|intcomma }}</td>
+                            <td>GH₵ {{ claim.outstanding_amount|floatformat:2|intcomma }}</td>
+                            <td>
+                                <span class="badge-status badge-{{ claim.status }}">
+                                    {{ claim.get_status_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:monthly_claim_detail' claim.pk %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-eye"></i> View
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Recent Claims -->
+        {% if recent_claims %}
+        <div class="content-card">
+            <div class="section-title">
+                <i class="bi bi-clock-history"></i>
+                Recent Claim Items
+            </div>
+            
+            <div class="table-responsive">
+                <table class="claims-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Patient</th>
+                            <th>Service</th>
+                            <th>Payer</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for claim in recent_claims %}
+                        <tr>
+                            <td>{{ claim.service_date }}</td>
+                            <td>
+                                <strong>{{ claim.patient.full_name }}</strong><br>
+                                <small class="text-muted">MRN: {{ claim.patient.mrn }}</small>
+                            </td>
+                            <td>{{ claim.service_description|truncatewords:8 }}</td>
+                            <td>{{ claim.payer.name }}</td>
+                            <td>GH₵ {{ claim.billed_amount|floatformat:2|intcomma }}</td>
+                            <td>
+                                <span class="badge-status badge-{{ claim.claim_status }}">
+                                    {{ claim.get_claim_status_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:insurance_claim_item_detail' claim.pk %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-eye"></i> View
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="text-center mt-3">
+                <a href="{% url 'hospital:insurance_claim_items_list' %}" class="btn btn-link">
+                    View All Claim Items <i class="bi bi-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Claims by Status -->
+        {% if claims_by_status %}
+        <div class="content-card">
+            <div class="section-title">
+                <i class="bi bi-pie-chart"></i>
+                Claims by Status
+            </div>
+            
+            <div class="table-responsive">
+                <table class="claims-table">
+                    <thead>
+                        <tr>
+                            <th>Status</th>
+                            <th>Count</th>
+                            <th>Total Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in claims_by_status %}
+                        <tr>
+                            <td>
+                                <span class="badge-status badge-{{ item.claim_status }}">
+                                    {{ item.claim_status|upper }}
+                                </span>
+                            </td>
+                            <td><strong>{{ item.count|intcomma }}</strong></td>
+                            <td><strong>GH₵ {{ item.total_amount|floatformat:2|intcomma }}</strong></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Empty State -->
+        {% if not recent_claims and not monthly_claims %}
+        <div class="content-card text-center py-5">
+            <i class="bi bi-inbox" style="font-size: 64px; color: #d1d5db;"></i>
+            <h3 class="mt-4 mb-3">No Insurance Claims Yet</h3>
+            <p class="text-muted mb-4">Claims are automatically generated when patients with insurance receive services.</p>
+            <div class="d-flex gap-3 justify-content-center">
+                <a href="{% url 'hospital:insurance_management_dashboard' %}" class="btn btn-primary">
+                    <i class="bi bi-shield-check me-2"></i>Manage Insurance
+                </a>
+                <a href="{% url 'hospital:patient_list' %}" class="btn btn-outline-primary">
+                    <i class="bi bi-people me-2"></i>View Patients
+                </a>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+

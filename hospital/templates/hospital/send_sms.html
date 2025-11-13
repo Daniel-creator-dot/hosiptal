@@ -1,0 +1,231 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Send SMS - HMS{% endblock %}
+{% block page_title %}Send SMS Notification{% endblock %}
+
+{% block extra_css %}
+<style>
+    .message-templates {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+    .template-btn {
+        margin: 5px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="modern-card">
+    <div class="mb-4">
+        <h5>Send SMS</h5>
+        <p class="text-muted">Send SMS notifications to patients for lab results, appointments, and other important information.</p>
+    </div>
+
+    <!-- Message Templates -->
+    <div class="message-templates mb-4">
+        <strong>Quick Templates:</strong>
+        <div class="mt-2">
+            <button type="button" class="btn btn-sm btn-outline-primary template-btn" onclick="loadTemplate('lab_result')">
+                <i class="bi bi-file-earmark-medical"></i> Lab Result Ready
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-primary template-btn" onclick="loadTemplate('appointment_reminder')">
+                <i class="bi bi-calendar-check"></i> Appointment Reminder
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-primary template-btn" onclick="loadTemplate('payment_reminder')">
+                <i class="bi bi-cash-coin"></i> Payment Reminder
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-secondary template-btn" onclick="clearMessage()">
+                <i class="bi bi-x-circle"></i> Clear
+            </button>
+        </div>
+    </div>
+
+    <form method="post" id="smsForm">
+        {% csrf_token %}
+        
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <label class="form-label">Recipient Type</label>
+                <select name="recipient_type" class="form-select form-control-modern" id="recipientType" onchange="updateRecipientInfo()">
+                    <option value="custom">Custom Phone Number</option>
+                    <option value="patient" {% if recipient_type == 'patient' %}selected{% endif %}>Patient</option>
+                    <option value="staff">Staff</option>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Message Type</label>
+                <select name="message_type" class="form-select form-control-modern" id="messageType" onchange="updateMessageTemplate()">
+                    <option value="custom">Custom Message</option>
+                    <option value="lab_result" {% if message_type == 'lab_result' %}selected{% endif %}>Lab Result Ready</option>
+                    <option value="appointment_reminder" {% if message_type == 'appointment_reminder' %}selected{% endif %}>Appointment Reminder</option>
+                    <option value="payment_reminder" {% if message_type == 'payment_reminder' %}selected{% endif %}>Payment Reminder</option>
+                    <option value="general">General Notification</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="mb-3" id="patientSelectDiv" style="display: none;">
+            <label class="form-label">Select Patient</label>
+            <select name="patient_id" class="form-select form-control-modern" id="patientSelect" onchange="loadPatientPhone()">
+                <option value="">-- Select Patient --</option>
+            </select>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Recipient Name</label>
+            <input type="text" name="recipient_name" class="form-control form-control-modern" 
+                   value="{{ recipient_name }}" placeholder="Recipient name (optional)">
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Phone Number <span class="text-danger">*</span></label>
+            <input type="text" name="phone_number" id="phoneNumber" class="form-control form-control-modern" 
+                   value="{{ phone_number }}" placeholder="233XXXXXXXXX or 0XXXXXXXXX" required>
+            <small class="text-muted">Format: 233XXXXXXXXX (Ghana) or 0XXXXXXXXX</small>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Message <span class="text-danger">*</span></label>
+            <textarea name="message" id="messageText" class="form-control form-control-modern" rows="8" 
+                      placeholder="Enter your message here..." required>{{ default_message }}</textarea>
+            <small class="text-muted">
+                <span id="charCount">0</span> characters (SMS messages are limited to 160 characters per message)
+            </small>
+        </div>
+
+        <div class="d-flex justify-content-between">
+            <a href="{% url 'hospital:sms_notifications' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to SMS History
+            </a>
+            <div>
+                <button type="button" class="btn btn-outline-primary" onclick="previewMessage()">
+                    <i class="bi bi-eye"></i> Preview
+                </button>
+                <button type="submit" class="btn btn-primary-modern">
+                    <i class="bi bi-send"></i> Send SMS
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+
+<!-- Preview Modal -->
+<div class="modal fade" id="previewModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">SMS Preview</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p><strong>To:</strong> <span id="previewPhone"></span></p>
+                <p><strong>Message:</strong></p>
+                <div class="alert alert-info" id="previewMessage" style="white-space: pre-wrap;"></div>
+                <p class="text-muted"><small>Estimated messages: <span id="previewCount"></span></small></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" onclick="document.getElementById('smsForm').submit()">
+                    Confirm & Send
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const templates = {
+    'lab_result': `Dear [Name],
+
+Your lab test results are ready.
+Please visit the hospital or check your patient portal.
+
+Thank you.
+PrimeCare Hospital`,
+    
+    'appointment_reminder': `Dear [Name],
+
+Your appointment with Dr. [Doctor]
+is scheduled for [Date] at [Time].
+
+Please arrive 15 minutes early.
+
+Reply STOP to opt out.
+PrimeCare Hospital`,
+    
+    'payment_reminder': `Dear [Name],
+
+You have an outstanding balance of GHS [Amount]
+on invoice [Invoice Number].
+Please settle at your earliest convenience.
+
+Thank you.
+PrimeCare Hospital`
+};
+
+function loadTemplate(type) {
+    const messageField = document.getElementById('messageText');
+    const messageType = document.getElementById('messageType');
+    messageType.value = type;
+    
+    if (templates[type]) {
+        messageField.value = templates[type];
+        updateCharCount();
+    }
+}
+
+function clearMessage() {
+    document.getElementById('messageText').value = '';
+    document.getElementById('messageType').value = 'custom';
+    updateCharCount();
+}
+
+function updateCharCount() {
+    const message = document.getElementById('messageText').value;
+    const count = message.length;
+    document.getElementById('charCount').textContent = count;
+}
+
+function updateRecipientInfo() {
+    const type = document.getElementById('recipientType').value;
+    const patientDiv = document.getElementById('patientSelectDiv');
+    if (type === 'patient') {
+        patientDiv.style.display = 'block';
+        // TODO: Load patients via AJAX
+    } else {
+        patientDiv.style.display = 'none';
+    }
+}
+
+function updateMessageTemplate() {
+    const type = document.getElementById('messageType').value;
+    if (type !== 'custom' && templates[type]) {
+        loadTemplate(type);
+    }
+}
+
+function previewMessage() {
+    const phone = document.getElementById('phoneNumber').value;
+    const message = document.getElementById('messageText').value;
+    
+    document.getElementById('previewPhone').textContent = phone || 'Not set';
+    document.getElementById('previewMessage').textContent = message || 'No message';
+    
+    // Calculate estimated message count (160 chars per SMS)
+    const messages = Math.ceil(message.length / 160);
+    document.getElementById('previewCount').textContent = messages;
+    
+    const modal = new bootstrap.Modal(document.getElementById('previewModal'));
+    modal.show();
+}
+
+// Update character count as user types
+document.getElementById('messageText').addEventListener('input', updateCharCount);
+updateCharCount();
+</script>
+{% endblock %}
+

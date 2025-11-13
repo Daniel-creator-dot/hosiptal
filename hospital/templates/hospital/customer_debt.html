@@ -1,0 +1,223 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Customer Debt - Cashier - HMS{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 style="font-weight: 700;">
+            <i class="bi bi-exclamation-triangle"></i> Customer Debt Report
+        </h1>
+        <p class="text-muted mb-0">Patients with outstanding balances</p>
+    </div>
+    <div>
+        <a href="{% url 'hospital:cashier_dashboard' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </a>
+    </div>
+</div>
+
+<!-- Summary Card -->
+<div class="modern-card mb-4">
+    <div class="row text-center">
+        <div class="col-md-3">
+            <h3 style="font-size: 2rem; font-weight: bold; color: var(--danger);">
+                GHS {{ total_debt|floatformat:0|intcomma }}
+            </h3>
+            <p style="margin: 0; color: var(--gray);">Total Outstanding Debt</p>
+        </div>
+        <div class="col-md-3">
+            <h3 style="font-size: 2rem; font-weight: bold; color: var(--primary);">
+                {{ patient_count }}
+            </h3>
+            <p style="margin: 0; color: var(--gray);">Patients with Debt</p>
+        </div>
+        <div class="col-md-3">
+            <div class="small text-muted mb-2">Debt Breakdown:</div>
+            <div style="font-size: 0.85rem;">
+                {% if total_invoice_debt > 0 %}<div>📄 Invoices: GHS {{ total_invoice_debt|floatformat:0 }}</div>{% endif %}
+                {% if total_lab_debt > 0 %}<div>🧪 Labs: GHS {{ total_lab_debt|floatformat:0 }}</div>{% endif %}
+                {% if total_pharmacy_debt > 0 %}<div>💊 Pharmacy: GHS {{ total_pharmacy_debt|floatformat:0 }}</div>{% endif %}
+                {% if total_bed_debt > 0 %}<div>🛏️ Beds: GHS {{ total_bed_debt|floatformat:0 }}</div>{% endif %}
+            </div>
+        </div>
+        <div class="col-md-3">
+            <form method="get" class="d-flex align-items-end">
+                <div class="flex-grow-1 me-2">
+                    <input type="number" name="min_debt" class="form-control-modern" value="{{ min_debt }}" placeholder="Min Debt Amount" step="0.01" min="0">
+                </div>
+                <button type="submit" class="btn btn-primary-modern">Filter</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Filter Form -->
+<div class="modern-card mb-4">
+    <form method="get" class="row g-3">
+        <div class="col-md-8">
+            <input type="text" name="q" class="form-control-modern" value="{{ query }}" placeholder="Search by patient name, MRN, or phone...">
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-primary-modern w-100">Search</button>
+        </div>
+        <div class="col-md-2">
+            <a href="{% url 'hospital:customer_debt' %}" class="btn btn-outline-secondary w-100">Clear</a>
+        </div>
+    </form>
+</div>
+
+<!-- Debt List -->
+{% if patient_debts %}
+    {% for item in patient_debts %}
+    <div class="modern-card mb-3">
+        <div class="row align-items-center">
+            <div class="col-md-3">
+                <h5 style="margin: 0 0 5px 0; font-weight: 600;">
+                    <a href="{% url 'hospital:patient_detail' item.patient.pk %}" style="text-decoration: none; color: inherit;">
+                        {{ item.patient.full_name }}
+                    </a>
+                </h5>
+                <div style="font-size: 0.9rem; color: var(--gray);">
+                    MRN: {{ item.patient.mrn }}<br>
+                    {% if item.patient.phone %}{{ item.patient.phone }}{% endif %}
+                </div>
+            </div>
+            <div class="col-md-2 text-center">
+                <div style="font-size: 1.8rem; font-weight: bold; color: var(--danger);">
+                    GHS {{ item.total_debt|floatformat:2|intcomma }}
+                </div>
+                <div style="font-size: 0.85rem; color: var(--gray);">Total Debt</div>
+            </div>
+            <div class="col-md-2 text-center">
+                <div style="font-size: 1.2rem; font-weight: 600; color: var(--gray); margin-bottom: 8px;">
+                    Debt Sources:
+                </div>
+                <div style="font-size: 0.8rem; line-height: 1.8;">
+                    {% if item.invoice_debt > 0 %}<div><span class="badge bg-danger">📄 {{ item.invoice_count }}</span> Invoice{{ item.invoice_count|pluralize }}</div>{% endif %}
+                    {% if item.lab_debt > 0 %}<div><span class="badge bg-info">🧪 {{ item.unpaid_labs_count }}</span> Lab{{ item.unpaid_labs_count|pluralize }}</div>{% endif %}
+                    {% if item.pharmacy_debt > 0 %}<div><span class="badge bg-success">💊 {{ item.unpaid_prescriptions_count }}</span> Rx</div>{% endif %}
+                    {% if item.bed_debt > 0 %}<div><span class="badge bg-warning text-dark">🛏️ {{ item.active_admissions_count }}</span> Bed{{ item.active_admissions_count|pluralize }}</div>{% endif %}
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div style="font-size: 0.9rem; margin-bottom: 12px; font-weight: 600; color: var(--dark);">
+                    <i class="bi bi-list-ul"></i> Outstanding Items:
+                </div>
+                
+                <!-- Invoice Debt -->
+                {% if item.invoice_debt > 0 %}
+                <div style="font-size: 0.85rem; margin-bottom: 8px; padding: 6px; background-color: #fff5f5; border-left: 3px solid var(--danger); border-radius: 3px;">
+                    <div style="margin-bottom: 4px;">
+                        <span class="badge bg-danger me-1">📄</span>
+                        <strong>Invoices:</strong> <span style="color: var(--danger); font-weight: 700;">GHS {{ item.invoice_debt|floatformat:2 }}</span>
+                        <span style="color: var(--gray); font-size: 0.8rem;">({{ item.invoice_count }} invoice{{ item.invoice_count|pluralize }})</span>
+                    </div>
+                    {% for inv in item.invoices %}
+                    <div style="font-size: 0.75rem; color: var(--gray); margin-left: 20px; margin-bottom: 2px;">
+                        • {{ inv.invoice_number }} - <strong>GHS {{ inv.balance|floatformat:2 }}</strong>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                
+                <!-- Lab Debt -->
+                {% if item.lab_debt > 0 %}
+                <div style="font-size: 0.85rem; margin-bottom: 8px; padding: 6px; background-color: #f0f8ff; border-left: 3px solid var(--info); border-radius: 3px;">
+                    <div style="margin-bottom: 4px;">
+                        <span class="badge bg-info me-1">🧪</span>
+                        <strong>Lab Tests:</strong> <span style="color: var(--info); font-weight: 700;">GHS {{ item.lab_debt|floatformat:2 }}</span>
+                        <span style="color: var(--gray); font-size: 0.8rem;">({{ item.unpaid_labs_count }} test{{ item.unpaid_labs_count|pluralize }})</span>
+                    </div>
+                    {% for lab in item.unpaid_labs %}
+                    <div style="font-size: 0.75rem; color: var(--gray); margin-left: 20px; margin-bottom: 2px;">
+                        • {{ lab.test.name }} - <strong>GHS {{ lab.test.price|floatformat:2 }}</strong>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                
+                <!-- Pharmacy Debt -->
+                {% if item.pharmacy_debt > 0 %}
+                <div style="font-size: 0.85rem; margin-bottom: 8px; padding: 6px; background-color: #f0fff4; border-left: 3px solid var(--success); border-radius: 3px;">
+                    <div style="margin-bottom: 4px;">
+                        <span class="badge bg-success me-1">💊</span>
+                        <strong>Pharmacy:</strong> <span style="color: var(--success); font-weight: 700;">GHS {{ item.pharmacy_debt|floatformat:2 }}</span>
+                        <span style="color: var(--gray); font-size: 0.8rem;">({{ item.unpaid_prescriptions_count }} prescription{{ item.unpaid_prescriptions_count|pluralize }})</span>
+                    </div>
+                    {% for rx in item.unpaid_prescriptions %}
+                    <div style="font-size: 0.75rem; color: var(--gray); margin-left: 20px; margin-bottom: 2px;">
+                        • {{ rx.drug.name }} x{{ rx.quantity }} - <strong>GHS {{ rx.total_price|floatformat:2 }}</strong>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                
+                <!-- Bed Charges Debt -->
+                {% if item.bed_debt > 0 %}
+                <div style="font-size: 0.85rem; margin-bottom: 8px; padding: 6px; background-color: #fffbf0; border-left: 3px solid var(--warning); border-radius: 3px;">
+                    <div style="margin-bottom: 4px;">
+                        <span class="badge bg-warning text-dark me-1">🛏️</span>
+                        <strong>Bed Charges:</strong> <span style="color: #856404; font-weight: 700;">GHS {{ item.bed_debt|floatformat:2 }}</span>
+                        <span style="color: var(--gray); font-size: 0.8rem;">({{ item.active_admissions_count }} admission{{ item.active_admissions_count|pluralize }})</span>
+                    </div>
+                    {% for admission in item.active_admissions %}
+                    <div style="font-size: 0.75rem; color: var(--gray); margin-left: 20px; margin-bottom: 2px;">
+                        • {{ admission.ward.name }} - Bed {{ admission.bed.bed_number }} ({{ admission.bed_charges.days_admitted }} day{{ admission.bed_charges.days_admitted|pluralize }}) - <strong>GHS {{ admission.bed_charges.current_charges|floatformat:2 }}</strong>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                
+                {% if item.invoice_debt == 0 and item.lab_debt == 0 and item.pharmacy_debt == 0 and item.bed_debt == 0 %}
+                <div class="alert alert-success" style="font-size: 0.85rem; padding: 10px; margin: 0;">
+                    <i class="bi bi-check-circle"></i> <strong>No outstanding debt</strong><br>
+                    <small>All payments up to date</small>
+                </div>
+                {% endif %}
+            </div>
+            <div class="col-md-1 text-end">
+                <a href="{% url 'hospital:cashier_patient_invoices' item.patient.pk %}" class="btn btn-sm btn-outline-primary">
+                    View
+                </a>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+    
+    <!-- Pagination -->
+    {% if patient_debts.has_other_pages %}
+    <nav aria-label="Page navigation" class="mt-4">
+        <ul class="pagination justify-content-center">
+            {% if patient_debts.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?page=1{% if query %}&q={{ query }}{% endif %}{% if min_debt %}&min_debt={{ min_debt }}{% endif %}">First</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ patient_debts.previous_page_number }}{% if query %}&q={{ query }}{% endif %}{% if min_debt %}&min_debt={{ min_debt }}{% endif %}">Previous</a>
+                </li>
+            {% endif %}
+            <li class="page-item active">
+                <span class="page-link">Page {{ patient_debts.number }} of {{ patient_debts.paginator.num_pages }}</span>
+            </li>
+            {% if patient_debts.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ patient_debts.next_page_number }}{% if query %}&q={{ query }}{% endif %}{% if min_debt %}&min_debt={{ min_debt }}{% endif %}">Next</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ patient_debts.paginator.num_pages }}{% if query %}&q={{ query }}{% endif %}{% if min_debt %}&min_debt={{ min_debt }}{% endif %}">Last</a>
+                </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+{% else %}
+    <div class="modern-card text-center py-5">
+        <i class="bi bi-check-circle" style="font-size: 64px; color: var(--success); opacity: 0.3;"></i>
+        <h4 style="margin-top: 24px; color: var(--gray);">No outstanding debts</h4>
+        <p style="color: var(--gray);">All patients have paid their invoices</p>
+    </div>
+{% endif %}
+{% endblock %}
+

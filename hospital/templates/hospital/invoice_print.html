@@ -1,0 +1,467 @@
+{% load hospital_extras %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice {{ invoice.invoice_number }} - Printable</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Arial', sans-serif;
+            font-size: 12px;
+            line-height: 1.6;
+            color: #333;
+            padding: 20px;
+        }
+        
+        .invoice-container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border: 1px solid #ddd;
+        }
+        
+        .header {
+            border-bottom: 3px solid #2c3e50;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            color: #2c3e50;
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+        
+        .header p {
+            color: #7f8c8d;
+            margin: 3px 0;
+        }
+        
+        .invoice-details {
+            display: table;
+            width: 100%;
+            margin-bottom: 30px;
+        }
+        
+        .invoice-details > div {
+            display: table-cell;
+            width: 50%;
+            vertical-align: top;
+        }
+        
+        .invoice-info {
+            background: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        
+        .invoice-info h3 {
+            color: #2c3e50;
+            font-size: 16px;
+            margin-bottom: 10px;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 5px;
+        }
+        
+        .info-row {
+            margin: 8px 0;
+        }
+        
+        .info-label {
+            font-weight: bold;
+            color: #2c3e50;
+            min-width: 120px;
+            display: inline-block;
+        }
+        
+        .section-title {
+            background: #3498db;
+            color: white;
+            padding: 10px 15px;
+            font-size: 16px;
+            font-weight: bold;
+            margin: 30px 0 15px 0;
+            border-radius: 3px;
+        }
+        
+        .services-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        
+        .services-table thead {
+            background: #2c3e50;
+            color: white;
+        }
+        
+        .services-table th {
+            padding: 12px 8px;
+            text-align: left;
+            font-weight: bold;
+            border: 1px solid #2c3e50;
+        }
+        
+        .services-table th.text-center {
+            text-align: center;
+        }
+        
+        .services-table th.text-right {
+            text-align: right;
+        }
+        
+        .services-table tbody tr {
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .services-table tbody tr:nth-child(even) {
+            background: #f8f9fa;
+        }
+        
+        .services-table tbody tr:hover {
+            background: #e3f2fd;
+        }
+        
+        .services-table td {
+            padding: 10px 8px;
+            border: 1px solid #ddd;
+        }
+        
+        .service-code {
+            font-weight: bold;
+            color: #2980b9;
+        }
+        
+        .service-category {
+            font-size: 10px;
+            color: #7f8c8d;
+            font-style: italic;
+            display: block;
+            margin-top: 2px;
+        }
+        
+        .service-description {
+            color: #2c3e50;
+        }
+        
+        .service-details {
+            font-size: 10px;
+            color: #7f8c8d;
+            margin-top: 3px;
+        }
+        
+        .quantity-badge {
+            background: #3498db;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-weight: bold;
+            display: inline-block;
+        }
+        
+        .discount {
+            color: #27ae60;
+            font-weight: bold;
+        }
+        
+        .totals-section {
+            margin-top: 30px;
+            float: right;
+            width: 350px;
+        }
+        
+        .totals-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .totals-table tr {
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .totals-table td {
+            padding: 10px;
+        }
+        
+        .totals-table td:first-child {
+            text-align: right;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        
+        .totals-table td:last-child {
+            text-align: right;
+            font-weight: bold;
+        }
+        
+        .total-row {
+            background: #2c3e50;
+            color: white;
+            font-size: 18px;
+        }
+        
+        .balance-row {
+            background: #e74c3c;
+            color: white;
+            font-size: 18px;
+        }
+        
+        .balance-row.paid {
+            background: #27ae60;
+        }
+        
+        .summary-box {
+            clear: both;
+            background: #e8f4f8;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            margin-top: 30px;
+        }
+        
+        .summary-box strong {
+            color: #2c3e50;
+        }
+        
+        .footer {
+            margin-top: 50px;
+            padding-top: 20px;
+            border-top: 2px solid #2c3e50;
+            text-align: center;
+            color: #7f8c8d;
+            font-size: 11px;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 3px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        
+        .status-paid {
+            background: #27ae60;
+            color: white;
+        }
+        
+        .status-partial {
+            background: #f39c12;
+            color: white;
+        }
+        
+        .status-issued {
+            background: #3498db;
+            color: white;
+        }
+        
+        .status-overdue {
+            background: #e74c3c;
+            color: white;
+        }
+        
+        @media print {
+            body {
+                padding: 0;
+            }
+            
+            .invoice-container {
+                border: none;
+                padding: 0;
+            }
+            
+            .no-print {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="invoice-container">
+        <!-- Header -->
+        <div class="header">
+            <h1>HOSPITAL INVOICE</h1>
+            <p><strong>Hospital Management System</strong></p>
+            <p>Professional Healthcare Services</p>
+        </div>
+        
+        <!-- Invoice Details -->
+        <div class="invoice-details">
+            <div style="padding-right: 20px;">
+                <div class="invoice-info">
+                    <h3>Patient Information</h3>
+                    <div class="info-row">
+                        <span class="info-label">Patient Name:</span>
+                        {{ invoice.patient.full_name }}
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">MRN:</span>
+                        {{ invoice.patient.mrn }}
+                    </div>
+                    {% if invoice.patient.phone %}
+                    <div class="info-row">
+                        <span class="info-label">Phone:</span>
+                        {{ invoice.patient.phone }}
+                    </div>
+                    {% endif %}
+                    {% if invoice.encounter %}
+                    <div class="info-row">
+                        <span class="info-label">Encounter Type:</span>
+                        {{ invoice.encounter.get_encounter_type_display }}
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Visit Date:</span>
+                        {{ invoice.encounter.start_time|date:"F d, Y" }}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            <div style="padding-left: 20px;">
+                <div class="invoice-info">
+                    <h3>Invoice Details</h3>
+                    <div class="info-row">
+                        <span class="info-label">Invoice Number:</span>
+                        <strong style="color: #e74c3c;">{{ invoice.invoice_number }}</strong>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Issue Date:</span>
+                        {{ invoice.issued_at|date:"F d, Y" }}
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Due Date:</span>
+                        {{ invoice.due_at|date:"F d, Y" }}
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Payer:</span>
+                        {{ invoice.payer.name }}
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Status:</span>
+                        <span class="status-badge status-{{ invoice.status }}">
+                            {{ invoice.get_status_display|upper }}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Services Section -->
+        <div class="section-title">
+            &#x1F4CB; SERVICES PROVIDED - DETAILED BREAKDOWN
+        </div>
+        
+        <table class="services-table">
+            <thead>
+                <tr>
+                    <th style="width: 5%">#</th>
+                    <th style="width: 15%">Service Code</th>
+                    <th style="width: 35%">Service Description</th>
+                    <th style="width: 10%" class="text-center">Qty</th>
+                    <th style="width: 13%" class="text-right">Unit Price</th>
+                    <th style="width: 10%" class="text-right">Discount</th>
+                    <th style="width: 12%" class="text-right">Line Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for line in invoice.lines.all %}
+                <tr>
+                    <td class="text-center">{{ forloop.counter }}</td>
+                    <td>
+                        <span class="service-code">{{ line.service_code.code }}</span>
+                        {% if line.service_code.category %}
+                        <span class="service-category">&#x1F3F7; {{ line.service_code.category }}</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="service-description"><strong>{{ line.description }}</strong></div>
+                        {% if line.service_code.description and line.service_code.description != line.description %}
+                        <div class="service-details">{{ line.service_code.description }}</div>
+                        {% endif %}
+                    </td>
+                    <td class="text-center">
+                        <span class="quantity-badge">{{ line.quantity }}</span>
+                    </td>
+                    <td class="text-right">GHS {{ line.unit_price|floatformat:2 }}</td>
+                    <td class="text-right">
+                        {% if line.discount_amount > 0 %}
+                        <span class="discount">-GHS {{ line.discount_amount|floatformat:2 }}</span>
+                        {% else %}
+                        -
+                        {% endif %}
+                    </td>
+                    <td class="text-right"><strong>GHS {{ line.line_total|floatformat:2 }}</strong></td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" class="text-center" style="padding: 30px; color: #7f8c8d;">
+                        No services have been added to this invoice
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        
+        <!-- Totals -->
+        <div class="totals-section">
+            <table class="totals-table">
+                <tr>
+                    <td>Subtotal:</td>
+                    <td>GHS {{ invoice.total_amount|floatformat:2 }}</td>
+                </tr>
+                {% if invoice.total_amount != invoice.balance %}
+                <tr>
+                    <td style="color: #27ae60;">Less: Payments Received:</td>
+                    <td style="color: #27ae60;">-GHS {{ invoice.total_amount|sub:invoice.balance|floatformat:2 }}</td>
+                </tr>
+                {% endif %}
+                <tr class="{% if invoice.balance > 0 %}balance-row{% else %}balance-row paid{% endif %}">
+                    <td>OUTSTANDING BALANCE:</td>
+                    <td>GHS {{ invoice.balance|floatformat:2 }}</td>
+                </tr>
+            </table>
+        </div>
+        
+        <!-- Summary Box -->
+        {% if invoice.lines.all %}
+        <div class="summary-box">
+            <strong>&#x2705; Service Summary:</strong> 
+            This invoice includes <strong>{{ invoice.lines.all|length }}</strong> service{{ invoice.lines.all|length|pluralize }} 
+            {% if invoice.encounter %}
+            provided during {{ invoice.encounter.get_encounter_type_display }} on {{ invoice.encounter.start_time|date:"F d, Y" }}
+            {% endif %}.
+            {% if invoice.balance > 0 %}
+            <br><strong style="color: #e74c3c;">&#x26A0; PAYMENT REQUIRED:</strong> Outstanding balance of <strong>GHS {{ invoice.balance|floatformat:2 }}</strong> is due by {{ invoice.due_at|date:"F d, Y" }}.
+            {% else %}
+            <br><strong style="color: #27ae60;">&#x2714; PAID IN FULL:</strong> Thank you for your payment.
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Footer -->
+        <div class="footer">
+            <p><strong>Hospital Management System</strong></p>
+            <p>This is a computer-generated invoice and does not require a signature.</p>
+            <p>For inquiries, please contact the billing department.</p>
+            <p style="margin-top: 10px; font-size: 10px;">Generated on {{ now|date:"F d, Y \a\t H:i" }}</p>
+        </div>
+        
+        <!-- Print Button (hidden when printing) -->
+        <div class="no-print" style="text-align: center; margin-top: 30px;">
+            <button onclick="window.print()" style="background: #3498db; color: white; border: none; padding: 12px 30px; font-size: 16px; border-radius: 5px; cursor: pointer;">
+                &#x1F5A8; Print Invoice
+            </button>
+            <button onclick="window.close()" style="background: #95a5a6; color: white; border: none; padding: 12px 30px; font-size: 16px; border-radius: 5px; cursor: pointer; margin-left: 10px;">
+                &#x274C; Close
+            </button>
+        </div>
+    </div>
+</body>
+</html>
+

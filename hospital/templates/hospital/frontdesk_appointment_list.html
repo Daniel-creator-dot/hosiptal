@@ -1,0 +1,220 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}All Appointments{% endblock %}
+
+{% block extra_css %}
+<style>
+    .filter-card {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    .appointment-row {
+        transition: all 0.3s ease;
+    }
+    .appointment-row:hover {
+        background-color: #f8f9fa;
+    }
+    .status-badge {
+        padding: 0.35rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+    .status-scheduled { background-color: #6c757d; color: white; }
+    .status-confirmed { background-color: #17a2b8; color: white; }
+    .status-completed { background-color: #28a745; color: white; }
+    .status-cancelled { background-color: #dc3545; color: white; }
+    .status-no_show { background-color: #ffc107; color: #212529; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h2><i class="bi bi-list-ul"></i> All Appointments</h2>
+            <p class="text-muted">Search and manage all patient appointments</p>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{% url 'hospital:frontdesk_appointment_create' %}" class="btn btn-primary btn-lg">
+                <i class="bi bi-plus-circle"></i> Create New Appointment
+            </a>
+        </div>
+    </div>
+    
+    <!-- Filters -->
+    <div class="filter-card">
+        <form method="get" class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label">Search</label>
+                <input type="text" name="search" class="form-control" placeholder="Patient name, MRN, or reason..." value="{{ search_query }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Status</label>
+                <select name="status" class="form-control">
+                    <option value="">All Status</option>
+                    {% for value, label in status_choices %}
+                    <option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Department</label>
+                <select name="department" class="form-control">
+                    <option value="">All Departments</option>
+                    {% for dept in departments %}
+                    <option value="{{ dept.id }}" {% if department_filter == dept.id|stringformat:"s" %}selected{% endif %}>{{ dept.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Date From</label>
+                <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Date To</label>
+                <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+            </div>
+            <div class="col-md-1 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-search"></i> Filter
+                </button>
+            </div>
+        </form>
+        {% if search_query or status_filter or department_filter or date_from or date_to %}
+        <div class="mt-2">
+            <a href="{% url 'hospital:frontdesk_appointment_list' %}" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-x-circle"></i> Clear Filters
+            </a>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Appointments Table -->
+    <div class="card">
+        <div class="card-body">
+            {% if page_obj %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Date & Time</th>
+                            <th>Patient</th>
+                            <th>MRN</th>
+                            <th>Phone</th>
+                            <th>Provider</th>
+                            <th>Department</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for appointment in page_obj %}
+                        <tr class="appointment-row">
+                            <td>
+                                <strong>{{ appointment.appointment_date|date:"M d, Y" }}</strong><br>
+                                <small class="text-muted">{{ appointment.appointment_date|time:"h:i A" }}</small>
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:patient_detail' appointment.patient.pk %}">
+                                    {{ appointment.patient.full_name }}
+                                </a>
+                            </td>
+                            <td>{{ appointment.patient.mrn }}</td>
+                            <td>
+                                {% if appointment.patient.phone_number %}
+                                    <i class="bi bi-telephone"></i> {{ appointment.patient.phone_number }}
+                                {% else %}
+                                    <span class="text-muted">No phone</span>
+                                {% endif %}
+                            </td>
+                            <td>Dr. {{ appointment.provider.user.get_full_name }}</td>
+                            <td>{{ appointment.department.name }}</td>
+                            <td>
+                                <span class="status-badge status-{{ appointment.status }}">
+                                    {{ appointment.get_status_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <a href="{% url 'hospital:frontdesk_appointment_detail' appointment.pk %}" 
+                                       class="btn btn-outline-primary" title="View Details">
+                                        <i class="bi bi-eye"></i>
+                                    </a>
+                                    <a href="{% url 'hospital:frontdesk_appointment_edit' appointment.pk %}" 
+                                       class="btn btn-outline-secondary" title="Edit">
+                                        <i class="bi bi-pencil"></i>
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination -->
+            {% if page_obj.has_other_pages %}
+            <nav aria-label="Page navigation" class="mt-4">
+                <ul class="pagination justify-content-center">
+                    {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page=1{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if department_filter %}&department={{ department_filter }}{% endif %}">First</a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if department_filter %}&department={{ department_filter }}{% endif %}">Previous</a>
+                    </li>
+                    {% endif %}
+                    
+                    <li class="page-item active">
+                        <span class="page-link">
+                            Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+                        </span>
+                    </li>
+                    
+                    {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if department_filter %}&department={{ department_filter }}{% endif %}">Next</a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if department_filter %}&department={{ department_filter }}{% endif %}">Last</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i> No appointments found matching your criteria.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Back to Dashboard -->
+    <div class="mt-4">
+        <a href="{% url 'hospital:frontdesk_appointment_dashboard' %}" class="btn btn-outline-primary">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </a>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+

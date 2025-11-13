@@ -1,0 +1,167 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+{% load hospital_extras %}
+
+{% block title %}Invoice {{ invoice.invoice_number }} - HMS{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Invoice {{ invoice.invoice_number }}</h1>
+    <a href="{% url 'hospital:invoice_list' %}" class="btn btn-secondary">
+        <i class="bi bi-arrow-left"></i> Back to List
+    </a>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h5>Invoice Details</h5>
+            </div>
+            <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <p><strong>Patient:</strong> <a href="{% url 'hospital:patient_detail' invoice.patient.pk %}">{{ invoice.patient.full_name }}</a></p>
+                        <p><strong>MRN:</strong> {{ invoice.patient.mrn }}</p>
+                        {% if invoice.encounter %}
+                        <p><strong>Encounter:</strong> {{ invoice.encounter.get_encounter_type_display }}</p>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-6">
+                        <p><strong>Payer:</strong> {{ invoice.payer.name }}</p>
+                        <p><strong>Issued Date:</strong> {{ invoice.issued_at|date:"M d, Y" }}</p>
+                        <p><strong>Due Date:</strong> {{ invoice.due_at|date:"M d, Y" }}</p>
+                        {% if days_overdue > 0 %}
+                        <p><strong>Days Overdue:</strong> <span class="badge bg-danger">{{ days_overdue }}</span></p>
+                        {% endif %}
+                    </div>
+                </div>
+                
+                <h5 class="mb-3 mt-4"><i class="bi bi-list-check"></i> Services Provided</h5>
+                
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 5%">#</th>
+                            <th style="width: 15%">Service Code</th>
+                            <th style="width: 30%">Service Description</th>
+                            <th style="width: 10%" class="text-center">Quantity</th>
+                            <th style="width: 15%" class="text-end">Unit Price</th>
+                            <th style="width: 10%" class="text-end">Discount</th>
+                            <th style="width: 15%" class="text-end">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for line in lines %}
+                        <tr>
+                            <td>{{ forloop.counter }}</td>
+                            <td>
+                                <strong>{{ line.service_code.code }}</strong>
+                                {% if line.service_code.category %}
+                                <br><small class="text-muted"><i class="bi bi-tag"></i> {{ line.service_code.category }}</small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <strong>{{ line.description }}</strong>
+                                {% if line.service_code.description and line.service_code.description != line.description %}
+                                <br><small class="text-muted">{{ line.service_code.description }}</small>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                <span class="badge bg-secondary">{{ line.quantity }}</span>
+                            </td>
+                            <td class="text-end">GHS {{ line.unit_price|floatformat:2 }}</td>
+                            <td class="text-end">
+                                {% if line.discount_amount > 0 %}
+                                <span class="text-success">-GHS {{ line.discount_amount|floatformat:2 }}</span>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end"><strong>GHS {{ line.line_total|floatformat:2 }}</strong></td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="7" class="text-center text-muted py-4">
+                                <i class="bi bi-inbox" style="font-size: 2rem;"></i>
+                                <p class="mb-0 mt-2">No services added to this invoice yet</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot class="table-light">
+                        {% if lines %}
+                        <tr>
+                            <td colspan="6" class="text-end"><strong>Subtotal:</strong></td>
+                            <td class="text-end"><strong>GHS {{ invoice.total_amount|floatformat:2|intcomma }}</strong></td>
+                        </tr>
+                        {% if invoice.total_amount != invoice.balance %}
+                        <tr>
+                            <td colspan="6" class="text-end text-success"><strong>Amount Paid:</strong></td>
+                            <td class="text-end text-success"><strong>-GHS {{ invoice.total_amount|sub:invoice.balance|floatformat:2|intcomma }}</strong></td>
+                        </tr>
+                        {% endif %}
+                        <tr style="font-size: 1.1rem; background-color: #f8f9fa;">
+                            <td colspan="6" class="text-end"><strong>Outstanding Balance:</strong></td>
+                            <td class="text-end">
+                                <strong style="color: {% if invoice.balance > 0 %}#dc3545{% else %}#198754{% endif %};">
+                                    GHS {{ invoice.balance|floatformat:2|intcomma }}
+                                </strong>
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </tfoot>
+                </table>
+                
+                {% if lines %}
+                <div class="alert alert-info mt-3">
+                    <i class="bi bi-info-circle"></i> 
+                    <strong>Summary:</strong> 
+                    {{ lines|length }} service{{ lines|length|pluralize }} rendered
+                    {% if invoice.encounter %}
+                    during {{ invoice.encounter.get_encounter_type_display }} on {{ invoice.encounter.start_time|date:"M d, Y" }}
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card mb-3">
+            <div class="card-header bg-{% if invoice.status == 'paid' %}success{% elif invoice.status == 'overdue' %}danger{% else %}warning{% endif %} text-white">
+                <h5>Status</h5>
+            </div>
+            <div class="card-body">
+                <h4>
+                    <span class="badge bg-{% if invoice.status == 'paid' %}success{% elif invoice.status == 'overdue' %}danger{% elif invoice.status == 'issued' %}warning{% else %}secondary{% endif %}">
+                        {{ invoice.get_status_display }}
+                    </span>
+                </h4>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h5>Actions</h5>
+            </div>
+            <div class="card-body">
+                <a href="{% url 'hospital:invoice_print' invoice.pk %}" class="btn btn-outline-primary w-100 mb-2" target="_blank">
+                    <i class="bi bi-printer"></i> Print Invoice
+                </a>
+                {% if invoice.status == 'draft' %}
+                <a href="{% url 'admin:hospital_invoice_change' invoice.pk %}" class="btn btn-primary w-100 mb-2">
+                    <i class="bi bi-pencil"></i> Edit Invoice
+                </a>
+                {% endif %}
+                {% if invoice.status != 'paid' and invoice.balance > 0 %}
+                <button class="btn btn-success w-100" data-bs-toggle="modal" data-bs-target="#paymentModal">
+                    <i class="bi bi-credit-card"></i> Record Payment
+                </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

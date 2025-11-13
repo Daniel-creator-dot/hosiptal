@@ -1,0 +1,293 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Admission Details - {{ admission.encounter.patient.full_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .admission-hero {
+        background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+        color: white;
+        border-radius: 20px;
+        padding: 40px;
+        margin-bottom: 30px;
+        box-shadow: 0 10px 30px rgba(16, 185, 129, 0.3);
+    }
+    
+    .detail-card {
+        background: white;
+        border-radius: 15px;
+        padding: 25px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        border: 1px solid #E5E7EB;
+    }
+    
+    .detail-row {
+        display: flex;
+        padding: 12px 0;
+        border-bottom: 1px solid #F3F4F6;
+    }
+    
+    .detail-row:last-child {
+        border-bottom: none;
+    }
+    
+    .detail-label {
+        font-weight: 600;
+        color: #6B7280;
+        width: 200px;
+        flex-shrink: 0;
+    }
+    
+    .detail-value {
+        color: #1F2937;
+        flex-grow: 1;
+    }
+    
+    .status-badge {
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-weight: 600;
+        font-size: 14px;
+        display: inline-block;
+    }
+    
+    .status-admitted {
+        background: #DEF7EC;
+        color: #03543F;
+    }
+    
+    .status-discharged {
+        background: #E1EFFE;
+        color: #1E429F;
+    }
+    
+    .action-btn {
+        padding: 12px 24px;
+        border-radius: 10px;
+        font-weight: 600;
+        transition: all 0.3s;
+        border: none;
+        cursor: pointer;
+    }
+    
+    .action-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Hero Section -->
+    <div class="admission-hero">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h2 class="mb-2">
+                    <i class="bi bi-hospital"></i> Admission Details
+                </h2>
+                <p class="mb-0 opacity-75">Patient: {{ admission.encounter.patient.full_name }}</p>
+            </div>
+            <div class="text-end">
+                <span class="status-badge status-{{ admission.status }}">
+                    {{ admission.get_status_display }}
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Patient Information -->
+        <div class="col-md-6">
+            <div class="detail-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-person-circle text-primary"></i> Patient Information
+                </h5>
+                <div class="detail-row">
+                    <div class="detail-label">Name:</div>
+                    <div class="detail-value">{{ admission.encounter.patient.full_name }}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">MRN:</div>
+                    <div class="detail-value">{{ admission.encounter.patient.mrn }}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Age:</div>
+                    <div class="detail-value">{{ admission.encounter.patient.age }} years</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Gender:</div>
+                    <div class="detail-value">{{ admission.encounter.patient.get_gender_display }}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Phone:</div>
+                    <div class="detail-value">{{ admission.encounter.patient.phone_number|default:"N/A" }}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Admission Information -->
+        <div class="col-md-6">
+            <div class="detail-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-clipboard-heart text-success"></i> Admission Information
+                </h5>
+                <div class="detail-row">
+                    <div class="detail-label">Admission Date:</div>
+                    <div class="detail-value">{{ admission.admit_date|date:"d M Y, g:i A" }}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Duration:</div>
+                    <div class="detail-value">{{ admission.get_duration_days }} day{{ admission.get_duration_days|pluralize }}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Ward:</div>
+                    <div class="detail-value">{{ admission.ward.name|default:"N/A" }}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Bed:</div>
+                    <div class="detail-value">{{ admission.bed.bed_number|default:"N/A" }}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Admitting Doctor:</div>
+                    <div class="detail-value">{{ admission.admitting_doctor.user.get_full_name|default:"N/A" }}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Status:</div>
+                    <div class="detail-value">
+                        <span class="status-badge status-{{ admission.status }}">
+                            {{ admission.get_status_display }}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Clinical Information -->
+    <div class="row">
+        <div class="col-12">
+            <div class="detail-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-file-medical text-info"></i> Clinical Information
+                </h5>
+                <div class="detail-row">
+                    <div class="detail-label">Admission Reason:</div>
+                    <div class="detail-value">{{ admission.admission_reason|default:"N/A" }}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Diagnosis:</div>
+                    <div class="detail-value">{{ admission.diagnosis|default:"N/A" }}</div>
+                </div>
+                {% if admission.notes %}
+                <div class="detail-row">
+                    <div class="detail-label">Notes:</div>
+                    <div class="detail-value">{{ admission.notes }}</div>
+                </div>
+                {% endif %}
+                {% if admission.discharge_date %}
+                <div class="detail-row">
+                    <div class="detail-label">Discharge Date:</div>
+                    <div class="detail-value">{{ admission.discharge_date|date:"d M Y, g:i A" }}</div>
+                </div>
+                {% endif %}
+                {% if admission.discharge_notes %}
+                <div class="detail-row">
+                    <div class="detail-label">Discharge Notes:</div>
+                    <div class="detail-value">{{ admission.discharge_notes }}</div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- 💰 Bed Charges -->
+    {% if bed_charges %}
+    <div class="row">
+        <div class="col-12">
+            <div class="detail-card" style="border-left: 4px solid #F59E0B;">
+                <h5 class="mb-3">
+                    <i class="bi bi-currency-dollar text-warning"></i> Bed Charges
+                </h5>
+                <div class="detail-row">
+                    <div class="detail-label">Daily Rate:</div>
+                    <div class="detail-value"><strong>GHS {{ bed_charges.daily_rate|floatformat:2 }}</strong> per day</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Days Admitted:</div>
+                    <div class="detail-value"><strong>{{ bed_charges.days_admitted }}</strong> day{{ bed_charges.days_admitted|pluralize }}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Bed Location:</div>
+                    <div class="detail-value">{{ bed_charges.ward_name }} - Bed {{ bed_charges.bed_number }}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Period:</div>
+                    <div class="detail-value">
+                        {{ bed_charges.admission_date|date:"d M Y, g:i A" }} 
+                        {% if bed_charges.is_discharged %}
+                        → {{ bed_charges.discharge_date|date:"d M Y, g:i A" }}
+                        {% else %}
+                        → Present (ongoing)
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="detail-row" style="background: #FEF3C7; padding: 15px; border-radius: 8px; margin-top: 10px;">
+                    <div class="detail-label" style="font-size: 16px;">
+                        <i class="bi bi-calculator"></i> Total Bed Charges:
+                    </div>
+                    <div class="detail-value" style="font-size: 20px; font-weight: 700; color: #D97706;">
+                        GHS {{ bed_charges.current_charges|floatformat:2|intcomma }}
+                    </div>
+                </div>
+                {% if not bed_charges.is_discharged %}
+                <div class="alert alert-info mt-3 mb-0">
+                    <i class="bi bi-info-circle"></i> <strong>Note:</strong> This is the current charge based on {{ bed_charges.days_admitted }} day{{ bed_charges.days_admitted|pluralize }}. 
+                    Final charges will be calculated at discharge.
+                </div>
+                {% else %}
+                <div class="alert alert-success mt-3 mb-0">
+                    <i class="bi bi-check-circle"></i> <strong>Final charges calculated.</strong> Patient stayed for {{ bed_charges.days_admitted }} day{{ bed_charges.days_admitted|pluralize }}.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Action Buttons -->
+    <div class="row">
+        <div class="col-12">
+            <div class="detail-card">
+                <div class="d-flex gap-2">
+                    <a href="{% url 'hospital:admission_list_enhanced' %}" class="btn btn-secondary action-btn">
+                        <i class="bi bi-arrow-left me-2"></i>Back to List
+                    </a>
+                    <a href="{% url 'hospital:encounter_detail' admission.encounter.pk %}" class="btn btn-primary action-btn">
+                        <i class="bi bi-file-medical me-2"></i>View Encounter
+                    </a>
+                    {% if admission.encounter.patient %}
+                    <a href="{% url 'hospital:patient_detail' admission.encounter.patient.pk %}" class="btn btn-info action-btn">
+                        <i class="bi bi-person me-2"></i>View Patient
+                    </a>
+                    {% endif %}
+                    {% if admission.status == 'admitted' %}
+                    <a href="{% url 'hospital:discharge_patient' admission.pk %}" class="btn btn-success action-btn">
+                        <i class="bi bi-box-arrow-right me-2"></i>Discharge Patient
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+

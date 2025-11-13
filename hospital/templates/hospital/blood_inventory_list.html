@@ -1,0 +1,161 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="card shadow-sm mb-4" style="background: linear-gradient(135deg, #DC2626 0%, #991B1B 100%); color: white;">
+        <div class="card-body p-4">
+            <div class="row align-items-center">
+                <div class="col-md-8">
+                    <h2 class="mb-2">
+                        <i class="bi bi-box-seam-fill me-2"></i>
+                        Blood Inventory
+                    </h2>
+                    <p class="mb-0">Real-time blood unit tracking and management</p>
+                </div>
+                <div class="col-md-4 text-end">
+                    <a href="{% url 'hospital:blood_bank_dashboard' %}" class="btn btn-light">
+                        <i class="bi bi-arrow-left me-2"></i>Back to Dashboard
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label">Blood Group</label>
+                    <select name="blood_group" class="form-select" onchange="this.form.submit()">
+                        <option value="">All Blood Groups</option>
+                        {% for code, name in blood_groups %}
+                            <option value="{{ code }}" {% if blood_group_filter == code %}selected{% endif %}>{{ name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Component Type</label>
+                    <select name="component" class="form-select" onchange="this.form.submit()">
+                        <option value="">All Components</option>
+                        {% for code, name in components %}
+                            <option value="{{ code }}" {% if component_filter == code %}selected{% endif %}>{{ name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Status</label>
+                    <select name="status" class="form-select" onchange="this.form.submit()">
+                        <option value="available" {% if status_filter == 'available' %}selected{% endif %}>Available</option>
+                        <option value="reserved" {% if status_filter == 'reserved' %}selected{% endif %}>Reserved</option>
+                        <option value="issued" {% if status_filter == 'issued' %}selected{% endif %}>Issued</option>
+                        <option value="expired" {% if status_filter == 'expired' %}selected{% endif %}>Expired</option>
+                        <option value="" {% if not status_filter %}selected{% endif %}>All Status</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <a href="{% url 'hospital:blood_inventory_list' %}" class="btn btn-secondary w-100">
+                        <i class="bi bi-arrow-clockwise me-2"></i>Reset Filters
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Inventory List -->
+    <div class="card shadow-sm">
+        <div class="card-header bg-white">
+            <h5 class="mb-0">
+                <i class="bi bi-list-ul me-2"></i>
+                Blood Units ({{ inventory|length }})
+            </h5>
+        </div>
+        <div class="card-body p-0">
+            {% if inventory %}
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Unit Number</th>
+                                <th>Blood Group</th>
+                                <th>Component</th>
+                                <th>Volume</th>
+                                <th>Collection Date</th>
+                                <th>Expiry Date</th>
+                                <th>Days to Expiry</th>
+                                <th>Storage</th>
+                                <th>Status</th>
+                                <th>Donor</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for unit in inventory %}
+                            <tr class="{% if unit.is_expiring_soon %}table-warning{% endif %}">
+                                <td><strong>{{ unit.unit_number }}</strong></td>
+                                <td>
+                                    <span class="badge bg-primary">{{ unit.blood_group }}</span>
+                                </td>
+                                <td>{{ unit.get_component_type_display }}</td>
+                                <td>{{ unit.volume_ml }} mL</td>
+                                <td>{{ unit.collection_date|date:"M d, Y" }}</td>
+                                <td>{{ unit.expiry_date|date:"M d, Y" }}</td>
+                                <td>
+                                    {% if unit.days_until_expiry < 0 %}
+                                        <span class="badge bg-danger">Expired</span>
+                                    {% elif unit.days_until_expiry <= 7 %}
+                                        <span class="badge bg-warning text-dark">{{ unit.days_until_expiry }} days</span>
+                                    {% else %}
+                                        <span class="text-muted">{{ unit.days_until_expiry }} days</span>
+                                    {% endif %}
+                                </td>
+                                <td><small>{{ unit.storage_location }}</small></td>
+                                <td>
+                                    <span class="badge bg-{% if unit.status == 'available' %}success{% elif unit.status == 'reserved' %}warning{% elif unit.status == 'issued' %}info{% elif unit.status == 'expired' %}danger{% else %}secondary{% endif %}">
+                                        {{ unit.get_status_display }}
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if unit.donation.donor %}
+                                        <small>{{ unit.donation.donor.full_name }}<br>
+                                        {{ unit.donation.donor.donor_id }}</small>
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="text-center py-5">
+                    <i class="bi bi-inbox" style="font-size: 64px; opacity: 0.3;"></i>
+                    <p class="text-muted mt-3">No blood units in inventory</p>
+                    <a href="{% url 'hospital:donor_registration' %}" class="btn btn-primary mt-2">
+                        <i class="bi bi-person-plus me-2"></i>Register Donor & Start Collecting
+                    </a>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<style>
+.table-warning {
+    background-color: #FEF3C7 !important;
+}
+</style>
+{% endblock %}
+
+
+
+
+
+
+
+
+

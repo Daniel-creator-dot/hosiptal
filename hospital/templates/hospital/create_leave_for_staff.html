@@ -1,0 +1,209 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Create Leave for Staff - Admin - HMS{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-10">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h1><i class="bi bi-person-plus-fill"></i> Manually Create Leave for Staff</h1>
+                    <p class="text-muted mb-0">As admin, create and manage leave requests on behalf of any staff member</p>
+                </div>
+                <div>
+                    <a href="{% url 'hospital:hr_dashboard' %}" class="btn btn-outline-secondary me-2">
+                        <i class="bi bi-arrow-left"></i> HR Dashboard
+                    </a>
+                    <a href="{% url 'hospital:leave_approval_list' %}" class="btn btn-outline-primary">
+                        <i class="bi bi-list-check"></i> Approvals
+                    </a>
+                </div>
+            </div>
+
+            <div class="alert alert-info">
+                <h6><i class="bi bi-info-circle"></i> Admin Privileges</h6>
+                <ul class="mb-0">
+                    <li>You can create leave requests for any staff member</li>
+                    <li>Use "Auto-approve" to immediately approve without workflow</li>
+                    <li>Leave balance will be automatically deducted if approved</li>
+                    <li>Staff will receive notification about the leave</li>
+                </ul>
+            </div>
+
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-clipboard-check"></i> Create Leave Request</h5>
+                </div>
+                <div class="card-body">
+                    <form method="POST" id="leaveForm">
+                        {% csrf_token %}
+                        
+                        <div class="mb-4">
+                            <label class="form-label"><strong>Select Staff Member</strong> <span class="text-danger">*</span></label>
+                            <select name="staff" id="staffSelect" class="form-select form-select-lg" required>
+                                <option value="">-- Select staff member --</option>
+                                {% regroup all_staff by department as department_list %}
+                                {% for department in department_list %}
+                                <optgroup label="{{ department.grouper.name|default:'No Department' }}">
+                                    {% for staff_member in department.list %}
+                                    <option value="{{ staff_member.pk }}" 
+                                            data-annual="{{ staff_member.leave_balance.annual_leave|default:'0' }}"
+                                            data-sick="{{ staff_member.leave_balance.sick_leave|default:'0' }}"
+                                            data-casual="{{ staff_member.leave_balance.casual_leave|default:'0' }}">
+                                        {{ staff_member.user.get_full_name }} - {{ staff_member.get_profession_display }}
+                                    </option>
+                                    {% endfor %}
+                                </optgroup>
+                                {% endfor %}
+                            </select>
+                            <div id="balanceDisplay" class="mt-2" style="display: none;">
+                                <small class="text-muted">
+                                    <strong>Leave Balance:</strong> 
+                                    Annual: <span id="annualBalance" class="badge bg-primary">0</span> | 
+                                    Sick: <span id="sickBalance" class="badge bg-success">0</span> | 
+                                    Casual: <span id="casualBalance" class="badge bg-info">0</span>
+                                </small>
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="form-label"><strong>Leave Type</strong> <span class="text-danger">*</span></label>
+                            <select name="leave_type" class="form-select form-select-lg" required>
+                                <option value="">-- Select leave type --</option>
+                                <optgroup label="Regular Leave">
+                                    <option value="annual">📅 Annual Leave (Vacation)</option>
+                                    <option value="sick">🏥 Sick Leave (Medical)</option>
+                                    <option value="casual">☕ Casual Leave (Personal)</option>
+                                </optgroup>
+                                <optgroup label="Special Leave">
+                                    <option value="emergency">🚨 Emergency Leave</option>
+                                    <option value="maternity">👶 Maternity Leave</option>
+                                    <option value="paternity">👨‍👦 Paternity Leave</option>
+                                    <option value="bereavement">🕊️ Bereavement Leave</option>
+                                    <option value="study">📚 Study Leave</option>
+                                </optgroup>
+                                <optgroup label="Other">
+                                    <option value="compensatory">⏰ Compensatory Leave (Time Off)</option>
+                                    <option value="unpaid">💼 Unpaid Leave</option>
+                                </optgroup>
+                            </select>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label"><strong>Start Date</strong> <span class="text-danger">*</span></label>
+                                <input type="date" name="start_date" id="startDate" class="form-control form-control-lg" required>
+                                <small class="form-text text-muted">First day of leave</small>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label"><strong>End Date</strong> <span class="text-danger">*</span></label>
+                                <input type="date" name="end_date" id="endDate" class="form-control form-control-lg" required>
+                                <small class="form-text text-muted">Last day of leave (inclusive)</small>
+                            </div>
+                        </div>
+
+                        <div id="daysCalculated" class="alert alert-success" style="display: none;">
+                            <strong>📊 Total Days:</strong> <span id="totalDays">0</span> day(s)
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label"><strong>Reason for Leave</strong> <span class="text-danger">*</span></label>
+                            <textarea name="reason" class="form-control" rows="4" required 
+                                      placeholder="Provide a detailed reason for this leave request..."></textarea>
+                            <small class="form-text text-muted">This will be visible to the staff member</small>
+                        </div>
+
+                        <div class="card border-warning mb-3">
+                            <div class="card-header bg-warning bg-opacity-10">
+                                <h6 class="mb-0"><i class="bi bi-lightning-fill text-warning"></i> Admin Options</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="form-check form-switch">
+                                    <input type="checkbox" class="form-check-input" id="auto_approve" name="auto_approve" 
+                                           style="width: 3em; height: 1.5em;">
+                                    <label class="form-check-label ms-2" for="auto_approve">
+                                        <strong style="font-size: 1.1rem;">⚡ Auto-Approve Immediately</strong>
+                                        <br><small class="text-muted">Skip approval workflow and mark as approved right away. Leave balance will be deducted.</small>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+                            <a href="{% url 'hospital:hr_dashboard' %}" class="btn btn-lg btn-secondary">
+                                <i class="bi bi-x-circle"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-lg btn-success">
+                                <i class="bi bi-check-circle-fill"></i> Create Leave Request
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const staffSelect = document.getElementById('staffSelect');
+    const balanceDisplay = document.getElementById('balanceDisplay');
+    const startDate = document.getElementById('startDate');
+    const endDate = document.getElementById('endDate');
+    const daysCalculated = document.getElementById('daysCalculated');
+    const totalDays = document.getElementById('totalDays');
+
+    // Show leave balance when staff is selected
+    staffSelect.addEventListener('change', function() {
+        const selectedOption = this.options[this.selectedIndex];
+        if (selectedOption.value) {
+            const annual = selectedOption.getAttribute('data-annual');
+            const sick = selectedOption.getAttribute('data-sick');
+            const casual = selectedOption.getAttribute('data-casual');
+            
+            document.getElementById('annualBalance').textContent = annual + ' days';
+            document.getElementById('sickBalance').textContent = sick + ' days';
+            document.getElementById('casualBalance').textContent = casual + ' days';
+            
+            balanceDisplay.style.display = 'block';
+        } else {
+            balanceDisplay.style.display = 'none';
+        }
+    });
+
+    // Calculate working days (excluding weekends)
+    function calculateDays() {
+        if (startDate.value && endDate.value) {
+            const start = new Date(startDate.value);
+            const end = new Date(endDate.value);
+            
+            let workingDays = 0;
+            let currentDate = new Date(start);
+            
+            while (currentDate <= end) {
+                // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+                const dayOfWeek = currentDate.getDay();
+                // Count only Monday (1) to Friday (5)
+                if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                    workingDays++;
+                }
+                currentDate.setDate(currentDate.getDate() + 1);
+            }
+            
+            if (workingDays > 0) {
+                totalDays.textContent = workingDays + ' working day(s) (weekends excluded)';
+                daysCalculated.style.display = 'block';
+            } else {
+                daysCalculated.style.display = 'none';
+            }
+        }
+    }
+
+    startDate.addEventListener('change', calculateDays);
+    endDate.addEventListener('change', calculateDays);
+});
+</script>
+{% endblock %}
+

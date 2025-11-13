@@ -1,0 +1,1438 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Consultation - {{ patient.full_name }} - HMS{% endblock %}
+{% block page_title %}🩺 Clinical Consultation{% endblock %}
+{% block page_subtitle %}{{ patient.full_name }} · MRN: {{ patient.mrn }} · {{ encounter.get_encounter_type_display }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    :root {
+        --consult-primary: #6366F1;
+        --consult-success: #10B981;
+        --consult-warning: #F59E0B;
+        --consult-danger: #EF4444;
+        --consult-info: #3B82F6;
+    }
+
+    /* Hero Patient Card */
+    .patient-hero-card {
+        background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+        color: white;
+        border-radius: 20px;
+        padding: 32px;
+        margin-bottom: 30px;
+        box-shadow: 0 10px 30px rgba(99, 102, 241, 0.3);
+        position: relative;
+        overflow: hidden;
+    }
+
+    .patient-hero-card::before {
+        content: '';
+        position: absolute;
+        top: -50%;
+        right: -10%;
+        width: 400px;
+        height: 400px;
+        background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+        border-radius: 50%;
+    }
+
+    .patient-avatar {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 36px;
+        color: #6366F1;
+        font-weight: 700;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+
+    .patient-name {
+        font-size: 28px;
+        font-weight: 700;
+        margin-bottom: 8px;
+    }
+
+    .patient-meta {
+        display: flex;
+        gap: 24px;
+        flex-wrap: wrap;
+        font-size: 14px;
+        opacity: 0.95;
+    }
+
+    .patient-meta-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .vital-chip {
+        background: rgba(255,255,255,0.2);
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-size: 13px;
+        font-weight: 600;
+    }
+
+    /* Action Tabs */
+    .action-tabs {
+        background: white;
+        border-radius: 16px;
+        padding: 0;
+        margin-bottom: 24px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        overflow: hidden;
+    }
+
+    .tab-buttons {
+        display: flex;
+        border-bottom: 2px solid #f0f0f0;
+    }
+
+    .tab-btn {
+        flex: 1;
+        padding: 20px;
+        border: none;
+        background: transparent;
+        font-weight: 600;
+        color: #666;
+        cursor: pointer;
+        transition: all 0.3s;
+        border-bottom: 3px solid transparent;
+        position: relative;
+    }
+
+    .tab-btn.active {
+        color: var(--consult-primary);
+        border-bottom-color: var(--consult-primary);
+        background: #F9FAFB;
+    }
+
+    .tab-btn:hover:not(.active) {
+        background: #F9FAFB;
+        color: #333;
+    }
+
+    .tab-icon {
+        font-size: 24px;
+        display: block;
+        margin-bottom: 8px;
+    }
+
+    .tab-content-panel {
+        display: none;
+        padding: 30px;
+    }
+
+    .tab-content-panel.active {
+        display: block;
+        animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Quick Action Cards */
+    .quick-action-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+
+    .quick-action {
+        background: white;
+        border: 2px solid #e0e0e0;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s;
+        text-decoration: none;
+        color: inherit;
+    }
+
+    .quick-action:hover {
+        border-color: var(--consult-primary);
+        transform: translateY(-4px);
+        box-shadow: 0 8px 20px rgba(99, 102, 241, 0.2);
+    }
+
+    .quick-action-icon {
+        font-size: 40px;
+        color: var(--consult-primary);
+        margin-bottom: 12px;
+    }
+
+    .quick-action-title {
+        font-weight: 700;
+        color: #333;
+        margin-bottom: 4px;
+    }
+
+    .quick-action-subtitle {
+        font-size: 12px;
+        color: #666;
+    }
+
+    /* Prescription Builder */
+    .prescription-builder {
+        background: linear-gradient(135deg, #F0FDF4 0%, #ECFDF5 100%);
+        border: 2px solid #10B981;
+        border-radius: 16px;
+        padding: 24px;
+    }
+
+    .drug-search {
+        position: relative;
+        margin-bottom: 20px;
+    }
+
+    .drug-search input {
+        width: 100%;
+        padding: 14px 20px 14px 50px;
+        border: 2px solid #e0e0e0;
+        border-radius: 12px;
+        font-size: 16px;
+        transition: all 0.3s;
+    }
+
+    .drug-search input:focus {
+        border-color: var(--consult-primary);
+        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
+        outline: none;
+    }
+
+    .drug-search i {
+        position: absolute;
+        left: 18px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 20px;
+        color: #999;
+    }
+
+    .drug-suggestions {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: white;
+        border: 2px solid #e0e0e0;
+        border-top: none;
+        border-radius: 0 0 12px 12px;
+        max-height: 300px;
+        overflow-y: auto;
+        z-index: 1000;
+        display: none;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+    }
+
+    .drug-suggestions.show {
+        display: block;
+    }
+
+    .drug-suggestion-item {
+        padding: 12px 20px;
+        cursor: pointer;
+        border-bottom: 1px solid #f0f0f0;
+        transition: all 0.2s;
+    }
+
+    .drug-suggestion-item:hover {
+        background: #F9FAFB;
+    }
+
+    .drug-name {
+        font-weight: 600;
+        color: #333;
+    }
+
+    .drug-meta {
+        font-size: 12px;
+        color: #666;
+    }
+
+    .prescription-form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 16px;
+    }
+
+    .form-field {
+        margin-bottom: 16px;
+    }
+
+    .form-label-modern {
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 8px;
+        display: block;
+        font-size: 14px;
+    }
+
+    .form-input-modern {
+        width: 100%;
+        padding: 12px 16px;
+        border: 2px solid #E5E7EB;
+        border-radius: 8px;
+        transition: all 0.3s;
+        font-size: 14px;
+    }
+
+    .form-input-modern:focus {
+        border-color: var(--consult-primary);
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        outline: none;
+    }
+
+    /* Lab Order Builder */
+    .lab-test-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+        gap: 12px;
+        max-height: 400px;
+        overflow-y: auto;
+        padding: 16px;
+        background: #f9fafb;
+        border-radius: 12px;
+    }
+
+    .lab-test-checkbox-card {
+        background: white;
+        border: 2px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 16px;
+        cursor: pointer;
+        transition: all 0.3s;
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .lab-test-checkbox-card:hover {
+        border-color: var(--consult-primary);
+        background: #F9FAFB;
+    }
+
+    .lab-test-checkbox-card.selected {
+        border-color: var(--consult-primary);
+        background: #EEF2FF;
+    }
+
+    .lab-test-checkbox {
+        margin-top: 2px;
+    }
+
+    .lab-test-info {
+        flex: 1;
+    }
+
+    .lab-test-name {
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 4px;
+    }
+
+    .lab-test-meta {
+        font-size: 12px;
+        color: #666;
+    }
+
+    /* Timeline */
+    .clinical-timeline {
+        position: relative;
+        padding-left: 30px;
+    }
+
+    .clinical-timeline::before {
+        content: '';
+        position: absolute;
+        left: 9px;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: linear-gradient(to bottom, #6366F1, #8B5CF6);
+    }
+
+    .timeline-item {
+        position: relative;
+        padding-bottom: 30px;
+    }
+
+    .timeline-dot {
+        position: absolute;
+        left: -26px;
+        top: 4px;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: white;
+        border: 3px solid #6366F1;
+    }
+
+    .timeline-content {
+        background: white;
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+
+    .timeline-time {
+        font-size: 12px;
+        color: #666;
+        margin-bottom: 8px;
+    }
+
+    .timeline-title {
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 8px;
+    }
+
+    /* Problem List */
+    .problem-card {
+        background: white;
+        border-left: 4px solid #EF4444;
+        border-radius: 0 12px 12px 0;
+        padding: 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+    }
+
+    .problem-card.resolved {
+        border-left-color: #10B981;
+        opacity: 0.7;
+    }
+
+    .icd-code {
+        background: #F3F4F6;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-family: monospace;
+        font-size: 12px;
+        color: #374151;
+    }
+
+    /* Prescriptions */
+    .prescription-card {
+        background: white;
+        border: 2px solid #E5E7EB;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 16px;
+        transition: all 0.3s;
+    }
+
+    .prescription-card:hover {
+        border-color: #10B981;
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.1);
+    }
+
+    .drug-name-large {
+        font-size: 18px;
+        font-weight: 700;
+        color: #1F2937;
+        margin-bottom: 8px;
+    }
+
+    .drug-instructions {
+        background: #F9FAFB;
+        padding: 12px;
+        border-radius: 8px;
+        margin-top: 12px;
+        font-size: 13px;
+    }
+
+    /* Lab Results Display */
+    .lab-result-card {
+        background: linear-gradient(135deg, #DBEAFE 0%, #E0E7FF 100%);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+    }
+
+    .lab-result-card.abnormal {
+        background: linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%);
+    }
+
+    .result-value-large {
+        font-size: 32px;
+        font-weight: 700;
+        color: #1F2937;
+    }
+
+    /* Vital Signs Chart */
+    .vital-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 16px;
+    }
+
+    .vital-box {
+        background: white;
+        border: 2px solid #E5E7EB;
+        border-radius: 12px;
+        padding: 16px;
+        text-align: center;
+        transition: all 0.3s;
+    }
+
+    .vital-box:hover {
+        border-color: var(--consult-primary);
+        transform: translateY(-2px);
+    }
+
+    .vital-icon {
+        font-size: 28px;
+        color: var(--consult-primary);
+        margin-bottom: 8px;
+    }
+
+    .vital-value {
+        font-size: 24px;
+        font-weight: 700;
+        color: #1F2937;
+    }
+
+    .vital-label {
+        font-size: 12px;
+        color: #6B7280;
+        margin-top: 4px;
+    }
+
+    /* Action Buttons */
+    .btn-consult {
+        padding: 12px 24px;
+        border-radius: 10px;
+        font-weight: 600;
+        border: none;
+        cursor: pointer;
+        transition: all 0.3s;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+    }
+
+    .btn-consult.primary {
+        background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+        color: white;
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    }
+
+    .btn-consult.success {
+        background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+        color: white;
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    }
+
+    .btn-consult.danger {
+        background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%);
+        color: white;
+        box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+    }
+
+    .btn-consult:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+    }
+
+    /* Floating Action Menu */
+    .floating-action-menu {
+        position: fixed;
+        bottom: 30px;
+        right: 30px;
+        z-index: 1000;
+    }
+
+    .fab-main {
+        width: 64px;
+        height: 64px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+        color: white;
+        border: none;
+        font-size: 28px;
+        cursor: pointer;
+        box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4);
+        transition: all 0.3s;
+    }
+
+    .fab-main:hover {
+        transform: scale(1.1) rotate(90deg);
+    }
+
+    .fab-menu {
+        position: absolute;
+        bottom: 80px;
+        right: 0;
+        display: none;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .fab-menu.show {
+        display: flex;
+        animation: slideUp 0.3s ease;
+    }
+
+    @keyframes slideUp {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .fab-item {
+        background: white;
+        border: 2px solid #e0e0e0;
+        border-radius: 50px;
+        padding: 12px 20px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        cursor: pointer;
+        transition: all 0.3s;
+        white-space: nowrap;
+    }
+
+    .fab-item:hover {
+        border-color: var(--consult-primary);
+        background: #EEF2FF;
+    }
+
+    /* Status Badge Modern */
+    .status-badge-modern {
+        padding: 6px 16px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .status-pending { background: #FEF3C7; color: #92400E; }
+    .status-active { background: #DBEAFE; color: #1E40AF; }
+    .status-completed { background: #D1FAE5; color: #065F46; }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .patient-hero-card {
+            padding: 20px;
+        }
+        
+        .patient-name {
+            font-size: 22px;
+        }
+        
+        .tab-buttons {
+            flex-wrap: wrap;
+        }
+        
+        .tab-btn {
+            flex: 1 1 50%;
+        }
+        
+        .prescription-form-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    /* Search highlight */
+    .search-highlight {
+        background: #FEF3C7;
+        padding: 2px 4px;
+        border-radius: 4px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Patient Hero Card -->
+<div class="patient-hero-card">
+    <div class="d-flex align-items-start gap-4">
+        <div class="patient-avatar">
+            {{ patient.full_name|slice:":1"|upper }}
+        </div>
+        <div class="flex-grow-1">
+            <div class="patient-name">{{ patient.full_name }}</div>
+            <div class="patient-meta">
+                <div class="patient-meta-item">
+                    <i class="bi bi-credit-card-2-front"></i>
+                    <span>MRN: {{ patient.mrn }}</span>
+                </div>
+                <div class="patient-meta-item">
+                    <i class="bi bi-calendar-event"></i>
+                    <span>{{ patient.age }} years · {{ patient.get_gender_display }}</span>
+                </div>
+                <div class="patient-meta-item">
+                    <i class="bi bi-telephone"></i>
+                    <span>{{ patient.phone_number|default:"No phone" }}</span>
+                </div>
+                {% if patient.blood_type %}
+                <div class="patient-meta-item">
+                    <i class="bi bi-droplet"></i>
+                    <span>{{ patient.blood_type }}</span>
+                </div>
+                {% endif %}
+            </div>
+            
+            {% if latest_vitals %}
+            <div class="d-flex gap-2 mt-3 flex-wrap">
+                <span class="vital-chip"><i class="bi bi-heart-pulse me-1"></i>BP: {{ latest_vitals.systolic_bp }}/{{ latest_vitals.diastolic_bp }}</span>
+                <span class="vital-chip"><i class="bi bi-activity me-1"></i>Pulse: {{ latest_vitals.pulse|default:"--" }}</span>
+                <span class="vital-chip"><i class="bi bi-thermometer me-1"></i>Temp: {{ latest_vitals.temperature|default:"--" }}°C</span>
+                <span class="vital-chip"><i class="bi bi-lungs me-1"></i>SpO2: {{ latest_vitals.spo2|default:"--" }}%</span>
+            </div>
+            {% endif %}
+        </div>
+        <div>
+            <span class="status-badge-modern status-{{ encounter.status }}">
+                {{ encounter.get_status_display }}
+            </span>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="quick-action-grid">
+    <a href="#" onclick="switchTab('prescribe'); return false;" class="quick-action">
+        <div class="quick-action-icon"><i class="bi bi-capsule-pill"></i></div>
+        <div class="quick-action-title">Prescribe</div>
+        <div class="quick-action-subtitle">Medications</div>
+    </a>
+    <a href="#" onclick="switchTab('lab'); return false;" class="quick-action">
+        <div class="quick-action-icon"><i class="bi bi-flask"></i></div>
+        <div class="quick-action-title">Order Lab</div>
+        <div class="quick-action-subtitle">Tests & Panels</div>
+    </a>
+    <a href="#" onclick="switchTab('imaging'); return false;" class="quick-action">
+        <div class="quick-action-icon"><i class="bi bi-x-ray"></i></div>
+        <div class="quick-action-title">Order Imaging</div>
+        <div class="quick-action-subtitle">X-ray, CT, MRI</div>
+    </a>
+    <a href="#" onclick="switchTab('diagnosis'); return false;" class="quick-action">
+        <div class="quick-action-icon"><i class="bi bi-clipboard-pulse"></i></div>
+        <div class="quick-action-title">Diagnosis</div>
+        <div class="quick-action-subtitle">ICD-10 Codes</div>
+    </a>
+    <a href="#" onclick="switchTab('notes'); return false;" class="quick-action">
+        <div class="quick-action-icon"><i class="bi bi-journal-medical"></i></div>
+        <div class="quick-action-title">Clinical Notes</div>
+        <div class="quick-action-subtitle">SOAP Notes</div>
+    </a>
+    <a href="javascript:void(0)" onclick="showAdmitModal()" class="quick-action" style="border-color: #10B981;">
+        <div class="quick-action-icon" style="color: #10B981;"><i class="bi bi-hospital"></i></div>
+        <div class="quick-action-title">Admit Patient</div>
+        <div class="quick-action-subtitle">Inpatient Care</div>
+    </a>
+    <a href="{% url 'hospital:record_vitals' encounter.pk %}" class="quick-action">
+        <div class="quick-action-icon"><i class="bi bi-heart-pulse"></i></div>
+        <div class="quick-action-title">Vitals</div>
+        <div class="quick-action-subtitle">Record Now</div>
+    </a>
+</div>
+
+<!-- Main Content Tabs -->
+<div class="action-tabs">
+    <div class="tab-buttons">
+        <button class="tab-btn active" onclick="switchTab('prescribe')" data-tab="prescribe">
+            <i class="bi bi-capsule-pill tab-icon"></i>
+            <span>Prescribe ({{ existing_prescriptions|length }})</span>
+        </button>
+        <button class="tab-btn" onclick="switchTab('lab')" data-tab="lab">
+            <i class="bi bi-flask tab-icon"></i>
+            <span>Lab Tests ({{ recent_lab_results|length }})</span>
+        </button>
+        <button class="tab-btn" onclick="switchTab('diagnosis')" data-tab="diagnosis">
+            <i class="bi bi-clipboard-pulse tab-icon"></i>
+            <span>Diagnosis ({{ problems|length }})</span>
+        </button>
+        <button class="tab-btn" onclick="switchTab('history')" data-tab="history">
+            <i class="bi bi-clock-history tab-icon"></i>
+            <span>History</span>
+        </button>
+    </div>
+    
+    <!-- Tab Content: Prescribe -->
+    <div class="tab-content-panel active" id="prescribe-panel">
+        <div class="row g-4">
+            <div class="col-md-7">
+                <div class="prescription-builder">
+                    <h5 class="mb-4" style="color: #065F46; font-weight: 700;">
+                        <i class="bi bi-capsule-pill me-2"></i>New Prescription
+                    </h5>
+                    
+                    <form method="post" id="prescriptionForm">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="prescribe_drug">
+                        
+                        <!-- Drug Search -->
+                        <div class="drug-search">
+                            <i class="bi bi-search"></i>
+                            <input type="text" id="drugSearchInput" placeholder="Search for medications..." autocomplete="off" oninput="searchDrugs(this.value)">
+                            <div class="drug-suggestions" id="drugSuggestions">
+                                {% for drug in available_drugs|slice:":20" %}
+                                <div class="drug-suggestion-item" onclick="selectDrug('{{ drug.pk }}', '{{ drug.name }}', '{{ drug.strength }}', '{{ drug.form }}')">
+                                    <div class="drug-name">{{ drug.name }}</div>
+                                    <div class="drug-meta">{{ drug.strength }} · {{ drug.form }} · {{ drug.generic_name|default:"" }}</div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <input type="hidden" name="drug_id" id="selectedDrugId">
+                        </div>
+                        
+                        <!-- Prescription Details -->
+                        <div class="prescription-form-grid">
+                            <div class="form-field">
+                                <label class="form-label-modern">Dose</label>
+                                <input type="text" name="dose" class="form-input-modern" placeholder="e.g., 500mg, 2 tablets">
+                            </div>
+                            
+                            <div class="form-field">
+                                <label class="form-label-modern">Quantity</label>
+                                <input type="number" name="quantity" class="form-input-modern" value="1" min="1">
+                            </div>
+                            
+                            <div class="form-field">
+                                <label class="form-label-modern">Route</label>
+                                <select name="route" class="form-input-modern">
+                                    <option value="oral">Oral (PO)</option>
+                                    <option value="IV">Intravenous (IV)</option>
+                                    <option value="IM">Intramuscular (IM)</option>
+                                    <option value="subcutaneous">Subcutaneous (SC)</option>
+                                    <option value="topical">Topical</option>
+                                    <option value="inhalation">Inhalation</option>
+                                    <option value="rectal">Rectal (PR)</option>
+                                    <option value="sublingual">Sublingual (SL)</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-field">
+                                <label class="form-label-modern">Frequency</label>
+                                <select name="frequency" class="form-input-modern">
+                                    <option value="Once daily (OD)">Once daily (OD)</option>
+                                    <option value="Twice daily (BD)">Twice daily (BD)</option>
+                                    <option value="Three times daily (TDS)">Three times daily (TDS)</option>
+                                    <option value="Four times daily (QDS)">Four times daily (QDS)</option>
+                                    <option value="Every 4 hours">Every 4 hours</option>
+                                    <option value="Every 6 hours">Every 6 hours</option>
+                                    <option value="Every 8 hours">Every 8 hours</option>
+                                    <option value="Every 12 hours">Every 12 hours</option>
+                                    <option value="As needed (PRN)">As needed (PRN)</option>
+                                    <option value="At bedtime (HS)">At bedtime (HS)</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-field" style="grid-column: 1 / -1;">
+                                <label class="form-label-modern">Duration</label>
+                                <input type="text" name="duration" class="form-input-modern" placeholder="e.g., 7 days, 2 weeks, 1 month">
+                            </div>
+                            
+                            <div class="form-field" style="grid-column: 1 / -1;">
+                                <label class="form-label-modern">Special Instructions</label>
+                                <textarea name="instructions" class="form-input-modern" rows="3" placeholder="Additional instructions (e.g., 'Take with food', 'Avoid alcohol')"></textarea>
+                            </div>
+                        </div>
+                        
+                        <button type="submit" class="btn-consult success w-100 mt-3">
+                            <i class="bi bi-check-circle"></i>
+                            Add to Prescription
+                        </button>
+                    </form>
+                </div>
+            </div>
+            
+            <!-- Current Prescriptions -->
+            <div class="col-md-5">
+                <h5 class="mb-3" style="font-weight: 700;">
+                    <i class="bi bi-list-check me-2"></i>Current Prescriptions
+                    <span class="badge bg-primary">{{ existing_prescriptions|length }}</span>
+                </h5>
+                
+                {% if existing_prescriptions %}
+                    {% for prescription in existing_prescriptions|slice:":10" %}
+                    <div class="prescription-card">
+                        <div class="drug-name-large">{{ prescription.drug.name }}</div>
+                        <div class="text-muted mb-2">{{ prescription.drug.strength }} · {{ prescription.drug.form }}</div>
+                        
+                        <div class="d-flex gap-3 mb-2 flex-wrap">
+                            <span><strong>Dose:</strong> {{ prescription.dose }}</span>
+                            <span><strong>Route:</strong> {{ prescription.route|upper }}</span>
+                            <span><strong>Qty:</strong> {{ prescription.quantity }}</span>
+                        </div>
+                        
+                        <div class="drug-instructions">
+                            <strong>{{ prescription.frequency }}</strong> for {{ prescription.duration }}
+                            {% if prescription.instructions %}
+                            <div class="mt-1">💊 {{ prescription.instructions }}</div>
+                            {% endif %}
+                        </div>
+                        
+                        <div class="mt-2 text-muted" style="font-size: 12px;">
+                            Prescribed by {{ prescription.prescribed_by.user.get_full_name }} · {{ prescription.created|naturaltime }}
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="bi bi-inbox" style="font-size: 48px; color: #ccc;"></i>
+                        <p class="text-muted mt-3">No prescriptions yet</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Tab Content: Lab Tests -->
+    <div class="tab-content-panel" id="lab-panel">
+        <div class="row g-4">
+            <div class="col-md-7">
+                <h5 class="mb-4" style="font-weight: 700;">
+                    <i class="bi bi-flask me-2"></i>Order Laboratory Tests
+                </h5>
+                
+                <form method="post" id="labOrderForm">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="order_lab_test">
+                    
+                    <div class="mb-3">
+                        <input type="text" id="labTestSearch" class="form-input-modern" placeholder="🔍 Search lab tests..." oninput="filterLabTests(this.value)">
+                    </div>
+                    
+                    <div class="lab-test-grid" id="labTestGrid">
+                        {% for test in available_lab_tests %}
+                        <div class="lab-test-checkbox-card" onclick="toggleLabTest('{{ test.pk }}')">
+                            <input type="checkbox" name="test_ids" value="{{ test.pk }}" id="labtest_{{ test.pk }}" class="form-check-input lab-test-checkbox">
+                            <div class="lab-test-info">
+                                <div class="lab-test-name">{{ test.name }}</div>
+                                <div class="lab-test-meta">{{ test.code }} · {{ test.specimen_type }} · GHS {{ test.price|default:0 }}</div>
+                            </div>
+                        </div>
+                        {% empty %}
+                        <div class="text-center py-5">
+                            <p class="text-muted">No lab tests available</p>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    
+                    <div class="row mt-3 g-3">
+                        <div class="col-md-6">
+                            <label class="form-label-modern">Priority</label>
+                            <select name="priority" class="form-input-modern">
+                                <option value="routine">Routine</option>
+                                <option value="urgent">Urgent</option>
+                                <option value="stat">STAT (Immediate)</option>
+                            </select>
+                        </div>
+                        <div class="col-md-12">
+                            <label class="form-label-modern">Clinical Notes</label>
+                            <textarea name="notes" class="form-input-modern" rows="2" placeholder="Indication, clinical notes..."></textarea>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn-consult primary w-100 mt-3">
+                        <i class="bi bi-send"></i>
+                        Order Selected Tests (<span id="selectedCount">0</span>)
+                    </button>
+                </form>
+            </div>
+            
+            <!-- Lab Results -->
+            <div class="col-md-5">
+                <h5 class="mb-3" style="font-weight: 700;">
+                    <i class="bi bi-clipboard-data me-2"></i>Recent Lab Results
+                    <span class="badge bg-info">{{ recent_lab_results|length }}</span>
+                </h5>
+                
+                {% if recent_lab_results %}
+                    {% for result in recent_lab_results|slice:":10" %}
+                    <div class="lab-result-card {% if result.is_abnormal %}abnormal{% endif %}">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <div style="font-weight: 700; color: #1F2937;">{{ result.test.name }}</div>
+                                <div class="result-value-large">
+                                    {{ result.value|default:result.qualitative_result|default:"Pending" }}
+                                    <span style="font-size: 14px; font-weight: normal;">{{ result.units|default:"" }}</span>
+                                </div>
+                                <div class="mt-2 text-muted" style="font-size: 12px;">
+                                    {{ result.verified_at|naturaltime|default:"Pending verification" }}
+                                </div>
+                            </div>
+                            <div>
+                                {% if result.is_abnormal %}
+                                <span class="badge bg-danger">ABNORMAL</span>
+                                {% else %}
+                                <span class="badge bg-success">Normal</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        <div class="mt-2">
+                            <a href="{% url 'hospital:tabular_lab_report' result.pk %}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-eye me-1"></i>View Full
+                            </a>
+                            <a href="{% url 'hospital:print_lab_report' result.pk %}" target="_blank" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-printer me-1"></i>Print
+                            </a>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="bi bi-clipboard" style="font-size: 48px; color: #ccc;"></i>
+                        <p class="text-muted mt-3">No lab results yet</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Tab Content: Diagnosis -->
+    <div class="tab-content-panel" id="diagnosis-panel">
+        <div class="row g-4">
+            <div class="col-md-6">
+                <h5 class="mb-4" style="font-weight: 700;">
+                    <i class="bi bi-plus-circle me-2"></i>Add Diagnosis
+                </h5>
+                
+                <form method="post" id="diagnosisForm">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="save_diagnosis">
+                    
+                    <div class="form-field">
+                        <label class="form-label-modern">
+                            ICD-10 Code
+                            <span class="text-muted" style="font-size: 0.75rem; font-weight: normal;">- Start typing to search WHO codes</span>
+                        </label>
+                        <input type="text" 
+                               name="icd10_code" 
+                               class="form-input-modern" 
+                               list="diagnosisListConsult"
+                               placeholder="Type to search: e.g., 'J00' or 'Common Cold'"
+                               autocomplete="off">
+                        <datalist id="diagnosisListConsult">
+                            {% if diagnosis_codes %}
+                            {% for code in diagnosis_codes %}
+                            <option value="{{ code.code }}">{{ code.code }} - {{ code.short_description }}</option>
+                            {% endfor %}
+                            {% endif %}
+                        </datalist>
+                    </div>
+                    
+                    <div class="form-field">
+                        <label class="form-label-modern">Problem/Diagnosis</label>
+                        <input type="text" name="problem" class="form-input-modern" placeholder="e.g., Acute upper respiratory infection" required>
+                    </div>
+                    
+                    <div class="form-field">
+                        <label class="form-label-modern">Description</label>
+                        <textarea name="description" class="form-input-modern" rows="3" placeholder="Additional details..."></textarea>
+                    </div>
+                    
+                    <button type="submit" class="btn-consult primary w-100">
+                        <i class="bi bi-check-circle"></i>
+                        Add to Problem List
+                    </button>
+                </form>
+            </div>
+            
+            <div class="col-md-6">
+                <h5 class="mb-3" style="font-weight: 700;">
+                    <i class="bi bi-list-ul me-2"></i>Problem List
+                    <span class="badge bg-danger">{{ problems|length }}</span>
+                </h5>
+                
+                {% if problems %}
+                    {% for problem in problems %}
+                    <div class="problem-card {% if problem.status == 'resolved' %}resolved{% endif %}">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                {% if problem.icd10_code %}
+                                <span class="icd-code">{{ problem.icd10_code }}</span>
+                                {% endif %}
+                                <div style="font-weight: 700; margin-top: 8px;">{{ problem.problem }}</div>
+                                {% if problem.description %}
+                                <div class="text-muted mt-1" style="font-size: 13px;">{{ problem.description }}</div>
+                                {% endif %}
+                                <div class="text-muted mt-2" style="font-size: 12px;">
+                                    Added {{ problem.created|naturaltime }} by {{ problem.created_by.user.get_full_name }}
+                                </div>
+                            </div>
+                            <span class="badge bg-{% if problem.status == 'active' %}danger{% else %}success{% endif %}">
+                                {{ problem.get_status_display|upper }}
+                            </span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="bi bi-clipboard-check" style="font-size: 48px; color: #ccc;"></i>
+                        <p class="text-muted mt-3">No diagnoses recorded</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Tab Content: History -->
+    <div class="tab-content-panel" id="history-panel">
+        <h5 class="mb-4" style="font-weight: 700;">
+            <i class="bi bi-clock-history me-2"></i>Clinical Timeline
+        </h5>
+        
+        <div class="clinical-timeline">
+            <!-- Vitals History -->
+            {% if latest_vitals %}
+            <div class="timeline-item">
+                <div class="timeline-dot"></div>
+                <div class="timeline-content">
+                    <div class="timeline-time">{{ latest_vitals.recorded_at|naturaltime }}</div>
+                    <div class="timeline-title">Vital Signs Recorded</div>
+                    <div class="vital-grid mt-3">
+                        <div class="vital-box">
+                            <div class="vital-icon"><i class="bi bi-heart-pulse"></i></div>
+                            <div class="vital-value">{{ latest_vitals.systolic_bp }}/{{ latest_vitals.diastolic_bp }}</div>
+                            <div class="vital-label">Blood Pressure</div>
+                        </div>
+                        <div class="vital-box">
+                            <div class="vital-icon"><i class="bi bi-activity"></i></div>
+                            <div class="vital-value">{{ latest_vitals.pulse|default:"--" }}</div>
+                            <div class="vital-label">Pulse (bpm)</div>
+                        </div>
+                        <div class="vital-box">
+                            <div class="vital-icon"><i class="bi bi-thermometer"></i></div>
+                            <div class="vital-value">{{ latest_vitals.temperature|default:"--" }}</div>
+                            <div class="vital-label">Temp (°C)</div>
+                        </div>
+                        <div class="vital-box">
+                            <div class="vital-icon"><i class="bi bi-lungs"></i></div>
+                            <div class="vital-value">{{ latest_vitals.spo2|default:"--" }}</div>
+                            <div class="vital-label">SpO2 (%)</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+            
+            <!-- Clinical Notes -->
+            {% for note in clinical_notes %}
+            <div class="timeline-item">
+                <div class="timeline-dot" style="border-color: #10B981;"></div>
+                <div class="timeline-content">
+                    <div class="timeline-time">{{ note.created|naturaltime }}</div>
+                    <div class="timeline-title">{{ note.get_note_type_display }} Note</div>
+                    {% if note.subjective %}<p class="mb-1"><strong>S:</strong> {{ note.subjective }}</p>{% endif %}
+                    {% if note.objective %}<p class="mb-1"><strong>O:</strong> {{ note.objective }}</p>{% endif %}
+                    {% if note.assessment %}<p class="mb-1"><strong>A:</strong> {{ note.assessment }}</p>{% endif %}
+                    {% if note.plan %}<p class="mb-1"><strong>P:</strong> {{ note.plan }}</p>{% endif %}
+                    <div class="text-muted mt-2" style="font-size: 12px;">
+                        By {{ note.created_by.user.get_full_name }}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            
+            <!-- Encounter Start -->
+            <div class="timeline-item">
+                <div class="timeline-dot" style="border-color: #6366F1;"></div>
+                <div class="timeline-content">
+                    <div class="timeline-time">{{ encounter.started_at|naturaltime }}</div>
+                    <div class="timeline-title">Encounter Started</div>
+                    <p class="mb-1"><strong>Chief Complaint:</strong> {{ encounter.chief_complaint }}</p>
+                    <p class="mb-0 text-muted" style="font-size: 12px;">Provider: {{ encounter.provider.user.get_full_name }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Tab Content: Imaging Orders (similar structure) -->
+    <div class="tab-content-panel" id="imaging-panel">
+        <h5 class="mb-4" style="font-weight: 700;">
+            <i class="bi bi-x-ray me-2"></i>Order Imaging Studies
+        </h5>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="order_imaging">
+            
+            <div class="form-field">
+                <label class="form-label-modern">Imaging Type</label>
+                <select name="imaging_type" class="form-input-modern">
+                    <option value="X-Ray">X-Ray</option>
+                    <option value="CT Scan">CT Scan</option>
+                    <option value="MRI">MRI</option>
+                    <option value="Ultrasound">Ultrasound</option>
+                    <option value="Mammography">Mammography</option>
+                    <option value="Fluoroscopy">Fluoroscopy</option>
+                </select>
+            </div>
+            
+            <div class="form-field">
+                <label class="form-label-modern">Priority</label>
+                <select name="priority" class="form-input-modern">
+                    <option value="routine">Routine</option>
+                    <option value="urgent">Urgent</option>
+                    <option value="stat">STAT</option>
+                </select>
+            </div>
+            
+            <div class="form-field">
+                <label class="form-label-modern">Clinical Indication</label>
+                <textarea name="notes" class="form-input-modern" rows="3" placeholder="Reason for imaging, clinical notes..." required></textarea>
+            </div>
+            
+            <button type="submit" class="btn-consult primary w-100">
+                <i class="bi bi-send"></i>
+                Order Imaging Study
+            </button>
+        </form>
+    </div>
+    
+    <!-- Tab Content: Notes -->
+    <div class="tab-content-panel" id="notes-panel">
+        <h5 class="mb-4" style="font-weight: 700;">
+            <i class="bi bi-journal-medical me-2"></i>Clinical Documentation (SOAP)
+        </h5>
+        
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="save_note">
+            
+            <div class="form-field">
+                <label class="form-label-modern">Subjective (Patient's complaint)</label>
+                <textarea name="subjective" class="form-input-modern" rows="3" placeholder="Patient reports..."></textarea>
+            </div>
+            
+            <div class="form-field">
+                <label class="form-label-modern">Objective (Physical findings)</label>
+                <textarea name="objective" class="form-input-modern" rows="3" placeholder="On examination..."></textarea>
+            </div>
+            
+            <div class="form-field">
+                <label class="form-label-modern">Assessment (Diagnosis)</label>
+                <textarea name="assessment" class="form-input-modern" rows="2" placeholder="Impression/Diagnosis..."></textarea>
+            </div>
+            
+            <div class="form-field">
+                <label class="form-label-modern">Plan (Treatment plan)</label>
+                <textarea name="plan" class="form-input-modern" rows="3" placeholder="Treatment plan..."></textarea>
+            </div>
+            
+            <button type="submit" class="btn-consult success w-100">
+                <i class="bi bi-save"></i>
+                Save Clinical Note
+            </button>
+        </form>
+    </div>
+</div>
+
+<!-- Floating Action Menu -->
+<div class="floating-action-menu">
+    <div class="fab-menu" id="fabMenu">
+        <a href="{% url 'hospital:patient_detail' patient.pk %}" class="fab-item">
+            <i class="bi bi-person"></i>
+            <span>Patient Chart</span>
+        </a>
+        <a href="{% url 'hospital:record_vitals' encounter.pk %}" class="fab-item">
+            <i class="bi bi-heart-pulse"></i>
+            <span>Record Vitals</span>
+        </a>
+        <a href="{% url 'hospital:create_referral' encounter_id=encounter.pk %}" class="fab-item">
+            <i class="bi bi-arrow-right-circle"></i>
+            <span>Refer Patient</span>
+        </a>
+        <a href="{% url 'hospital:encounter_detail' encounter.pk %}" class="fab-item">
+            <i class="bi bi-file-medical"></i>
+            <span>Encounter Details</span>
+        </a>
+    </div>
+    <button class="fab-main" onclick="toggleFabMenu()">
+        <i class="bi bi-plus" id="fabIcon"></i>
+    </button>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Tab switching
+function switchTab(tabName) {
+    // Hide all panels
+    document.querySelectorAll('.tab-content-panel').forEach(panel => {
+        panel.classList.remove('active');
+    });
+    
+    // Remove active from all buttons
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    // Show selected panel
+    document.getElementById(tabName + '-panel').classList.add('active');
+    
+    // Activate button
+    document.querySelector(`[data-tab="GHS {tabName}"]`).classList.add('active');
+}
+
+// Drug search
+function searchDrugs(query) {
+    const suggestions = document.getElementById('drugSuggestions');
+    if (query.length > 0) {
+        suggestions.classList.add('show');
+        // Filter suggestions
+        const items = suggestions.querySelectorAll('.drug-suggestion-item');
+        items.forEach(item => {
+            const text = item.textContent.toLowerCase();
+            if (text.includes(query.toLowerCase())) {
+                item.style.display = 'block';
+            } else {
+                item.style.display = 'none';
+            }
+        });
+    } else {
+        suggestions.classList.remove('show');
+    }
+}
+
+// Select drug
+function selectDrug(id, name, strength, form) {
+    document.getElementById('selectedDrugId').value = id;
+    document.getElementById('drugSearchInput').value = `GHS {name} GHS {strength} GHS {form}`;
+    document.getElementById('drugSuggestions').classList.remove('show');
+}
+
+// Hide suggestions when clicking outside
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('.drug-search')) {
+        document.getElementById('drugSuggestions').classList.remove('show');
+    }
+});
+
+// Lab test selection
+function toggleLabTest(id) {
+    const checkbox = document.getElementById('labtest_' + id);
+    const card = checkbox.closest('.lab-test-checkbox-card');
+    
+    checkbox.checked = !checkbox.checked;
+    
+    if (checkbox.checked) {
+        card.classList.add('selected');
+    } else {
+        card.classList.remove('selected');
+    }
+    
+    updateSelectedCount();
+}
+
+function updateSelectedCount() {
+    const count = document.querySelectorAll('input[name="test_ids"]:checked').length;
+    document.getElementById('selectedCount').textContent = count;
+}
+
+// Filter lab tests
+function filterLabTests(query) {
+    const cards = document.querySelectorAll('.lab-test-checkbox-card');
+    cards.forEach(card => {
+        const text = card.textContent.toLowerCase();
+        if (text.includes(query.toLowerCase())) {
+            card.style.display = 'flex';
+        } else {
+            card.style.display = 'none';
+        }
+    });
+}
+
+// FAB Menu
+function toggleFabMenu() {
+    const menu = document.getElementById('fabMenu');
+    const icon = document.getElementById('fabIcon');
+    
+    menu.classList.toggle('show');
+    
+    if (menu.classList.contains('show')) {
+        icon.classList.remove('bi-plus');
+        icon.classList.add('bi-x');
+    } else {
+        icon.classList.remove('bi-x');
+        icon.classList.add('bi-plus');
+    }
+}
+
+// Admit Patient Modal
+function showAdmitModal() {
+    const modal = new bootstrap.Modal(document.getElementById('admitModal'));
+    modal.show();
+}
+
+function proceedToAdmission() {
+    window.location.href = "{% url 'hospital:admission_create' %}?encounter={{ encounter.pk }}";
+}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+    updateSelectedCount();
+    
+    // Keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+        // Alt + 1-4 for tab switching
+        if (e.altKey && e.key >= '1' && e.key <= '4') {
+            e.preventDefault();
+            const tabs = ['prescribe', 'lab', 'diagnosis', 'history'];
+            switchTab(tabs[e.key - 1]);
+        }
+        // Alt + A for admit patient
+        if (e.altKey && e.key === 'a') {
+            e.preventDefault();
+            showAdmitModal();
+        }
+    });
+});
+</script>
+
+<!-- Admit Patient Modal -->
+<div class="modal fade" id="admitModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="border-radius: 20px; border: none;">
+            <div class="modal-header" style="background: linear-gradient(135deg, #10B981 0%, #059669 100%); color: white; border-radius: 20px 20px 0 0;">
+                <h5 class="modal-title">
+                    <i class="bi bi-hospital me-2"></i>Admit Patient
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" style="padding: 30px;">
+                <div class="text-center mb-4">
+                    <div style="width: 80px; height: 80px; background: linear-gradient(135deg, #DEF7EC 0%, #BCF0DA 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px;">
+                        <i class="bi bi-hospital" style="font-size: 40px; color: #10B981;"></i>
+                    </div>
+                    <h5 class="mb-2">Admit {{ patient.full_name }} for Inpatient Care?</h5>
+                    <p class="text-muted mb-0">This will convert the encounter to inpatient status</p>
+                </div>
+                
+                <div class="alert alert-info" style="background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 12px;">
+                    <i class="bi bi-info-circle me-2"></i>
+                    <strong>Current Encounter:</strong> {{ encounter.get_encounter_type_display }}<br>
+                    <small class="text-muted">Will be changed to Inpatient upon admission</small>
+                </div>
+
+                <div class="d-grid gap-2">
+                    <button type="button" class="btn btn-success btn-lg" onclick="proceedToAdmission()" style="border-radius: 12px; padding: 14px;">
+                        <i class="bi bi-check-circle me-2"></i>Proceed to Admission
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" style="border-radius: 12px;">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

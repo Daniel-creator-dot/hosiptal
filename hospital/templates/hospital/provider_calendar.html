@@ -1,0 +1,240 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Provider Calendar - HMS{% endblock %}
+{% block page_title %}Provider Calendar{% endblock %}
+{% block page_subtitle %}{{ provider.user.get_full_name|default:provider.user.username }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .calendar-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 1px;
+        background: var(--border);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    
+    .calendar-day {
+        background: white;
+        padding: 12px;
+        min-height: 120px;
+        position: relative;
+    }
+    
+    .calendar-day.today {
+        background: #eff6ff;
+        border: 2px solid var(--primary);
+    }
+    
+    .calendar-day.other-month {
+        background: #f9fafb;
+        opacity: 0.6;
+    }
+    
+    .day-number {
+        font-weight: 600;
+        font-size: 14px;
+        margin-bottom: 8px;
+    }
+    
+    .appointment-block {
+        background: var(--primary);
+        color: white;
+        padding: 4px 6px;
+        border-radius: 4px;
+        font-size: 11px;
+        margin-bottom: 4px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .appointment-block:hover {
+        transform: scale(1.02);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    
+    .schedule-block {
+        background: #e0f2fe;
+        border-left: 3px solid var(--info);
+        padding: 4px 6px;
+        font-size: 10px;
+        margin-bottom: 4px;
+        border-radius: 3px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Provider Info Card -->
+<div class="modern-card mb-4">
+    <div class="row align-items-center">
+        <div class="col-md-6">
+            <h5 style="font-weight: 600; margin-bottom: 8px;">
+                {{ provider.user.get_full_name|default:provider.user.username }}
+            </h5>
+            <div style="font-size: 13px; color: var(--gray);">
+                <i class="bi bi-briefcase me-2"></i> {{ provider.department.name }}<br>
+                <i class="bi bi-person-badge me-2"></i> {{ provider.registration_number|default:"N/A" }}<br>
+                <i class="bi bi-telephone me-2"></i> {{ provider.phone_number|default:"N/A" }}
+            </div>
+        </div>
+        <div class="col-md-6 text-end">
+            <a href="{% url 'hospital:patient_create' %}" class="btn btn-primary-modern btn-modern">
+                <i class="bi bi-plus-circle"></i> New Appointment
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Schedule Summary -->
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="modern-card text-center">
+            <div style="font-size: 32px; font-weight: 800; color: var(--primary);">
+                {{ schedules.count }}
+            </div>
+            <div style="font-size: 12px; color: var(--gray);">Scheduled Days</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center">
+            <div style="font-size: 32px; font-weight: 800; color: var(--info);">
+                {{ appointments.count }}
+            </div>
+            <div style="font-size: 12px; color: var(--gray);">Appointments</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center">
+            <div style="font-size: 32px; font-weight: 800; color: var(--success);">
+                {{ appointments|length|add:"-1" }}
+            </div>
+            <div style="font-size: 12px; color: var(--gray);">Upcoming</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center">
+            <div style="font-size: 32px; font-weight: 800; color: var(--warning);">
+                0
+            </div>
+            <div style="font-size: 12px; color: var(--gray);">Today</div>
+        </div>
+    </div>
+</div>
+
+<!-- Calendar View -->
+<div class="modern-card mb-4">
+    <h5 style="font-weight: 600; margin-bottom: 20px;">Calendar: {{ start_date|date:"M d" }} - {{ end_date|date:"M d, Y" }}</h5>
+    
+    <!-- Week Headers -->
+    <div class="calendar-grid mb-2">
+        <div class="text-center fw-bold" style="padding: 12px; background: var(--light);">Mon</div>
+        <div class="text-center fw-bold" style="padding: 12px; background: var(--light);">Tue</div>
+        <div class="text-center fw-bold" style="padding: 12px; background: var(--light);">Wed</div>
+        <div class="text-center fw-bold" style="padding: 12px; background: var(--light);">Thu</div>
+        <div class="text-center fw-bold" style="padding: 12px; background: var(--light);">Fri</div>
+        <div class="text-center fw-bold" style="padding: 12px; background: var(--light);">Sat</div>
+        <div class="text-center fw-bold" style="padding: 12px; background: var(--light);">Sun</div>
+    </div>
+    
+    <!-- Calendar Days -->
+    <div class="calendar-grid">
+        {% for day in days %}
+        <div class="calendar-day {% if day == today %}today{% endif %}">
+            <div class="day-number">{{ day.day }}</div>
+            
+            <!-- Show schedules for this day -->
+            {% for schedule in schedules %}
+                {% if schedule.date == day %}
+                <div class="schedule-block">
+                    {{ schedule.start_time|time:"H:i" }} - {{ schedule.end_time|time:"H:i" }}
+                    {% if schedule.department %}
+                    <br><small>{{ schedule.department.name|truncatewords:2 }}</small>
+                    {% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
+            
+            <!-- Show appointments for this day -->
+            {% for appointment in appointments %}
+                {% if appointment.appointment_date.date == day %}
+                <div class="appointment-block" onclick="showAppointment('{{ appointment.id }}')">
+                    <strong>{{ appointment.appointment_date|time:"H:i" }}</strong>
+                    {% if appointment.patient %}
+                    <br>{{ appointment.patient.full_name|truncatewords:2 }}
+                    {% endif %}
+                    {% if appointment.reason %}
+                    <br><small>{{ appointment.reason|truncatewords:3 }}</small>
+                    {% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Upcoming Appointments List -->
+<div class="modern-card">
+    <h5 style="font-weight: 600; margin-bottom: 20px;">Upcoming Appointments</h5>
+    
+    {% if appointments %}
+        {% for appointment in appointments %}
+        <div class="d-flex align-items-start mb-3 pb-3" style="border-bottom: 1px solid var(--border);">
+            <div class="me-3">
+                <div style="width: 50px; height: 50px; background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); border-radius: 10px; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600;">
+                    {{ appointment.appointment_date|date:"d" }}
+                </div>
+            </div>
+            <div class="flex-grow-1">
+                <h6 style="margin: 0 0 5px 0; font-weight: 600;">
+                    {% if appointment.patient %}
+                    <a href="{% url 'hospital:patient_detail' appointment.patient.pk %}" style="text-decoration: none; color: inherit;">
+                        {{ appointment.patient.full_name }}
+                    </a>
+                    {% else %}
+                    Patient TBD
+                    {% endif %}
+                </h6>
+                <div style="font-size: 13px; color: var(--gray);">
+                    <i class="bi bi-clock me-2"></i>{{ appointment.appointment_date|date:"M d, Y H:i" }}
+                    {% if appointment.duration_minutes %}
+                    | Duration: {{ appointment.duration_minutes }} min
+                    {% endif %}
+                </div>
+                {% if appointment.reason %}
+                <div style="font-size: 13px; margin-top: 5px;">
+                    <strong>Reason:</strong> {{ appointment.reason|truncatewords:10 }}
+                </div>
+                {% endif %}
+                <div class="mt-2">
+                    <span class="badge-modern badge-{% if appointment.status == 'confirmed' %}success{% elif appointment.status == 'scheduled' %}info{% elif appointment.status == 'cancelled' %}danger{% else %}warning{% endif %}">
+                        {{ appointment.get_status_display }}
+                    </span>
+                </div>
+            </div>
+            <div>
+                <a href="/admin/hospital/appointment/{{ appointment.id }}/change/" class="btn btn-sm btn-outline-primary">
+                    View
+                </a>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+    <p class="text-muted text-center py-4">No upcoming appointments</p>
+    {% endif %}
+</div>
+
+<script>
+function showAppointment(appointmentId) {
+    window.location.href = '/admin/hospital/appointment/' + appointmentId + '/change/';
+}
+
+// Generate calendar days
+const startDate = new Date('{{ start_date|date:"Y-m-d" }}');
+const endDate = new Date('{{ end_date|date:"Y-m-d" }}');
+</script>
+{% endblock %}
+

@@ -1,0 +1,185 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Incident Log - HMS{% endblock %}
+{% block page_title %}Incident Log{% endblock %}
+{% block page_subtitle %}Safety incidents and adverse events tracking{% endblock %}
+
+{% block extra_css %}
+<style>
+    .incident-card {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        margin-bottom: 16px;
+        border-left: 4px solid;
+        transition: all 0.3s ease;
+    }
+    
+    .incident-card.severity-critical {
+        border-left-color: #dc2626;
+        background: #fef2f2;
+    }
+    
+    .incident-card.severity-major {
+        border-left-color: #f59e0b;
+        background: #fef3c7;
+    }
+    
+    .incident-card.severity-minor {
+        border-left-color: #3b82f6;
+        background: #dbeafe;
+    }
+    
+    .incident-card.severity-near_miss {
+        border-left-color: #10b981;
+        background: #d1fae5;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Filters -->
+<div class="modern-card mb-4">
+    <form method="get" class="row g-3">
+        <div class="col-md-3">
+            <label class="form-label">Incident Type</label>
+            <select name="type" class="form-select form-control-modern">
+                <option value="">All Types</option>
+                <option value="patient_fall" {% if request.GET.type == 'patient_fall' %}selected{% endif %}>Patient Fall</option>
+                <option value="medication_error" {% if request.GET.type == 'medication_error' %}selected{% endif %}>Medication Error</option>
+                <option value="equipment_failure" {% if request.GET.type == 'equipment_failure' %}selected{% endif %}>Equipment Failure</option>
+                <option value="workplace_injury" {% if request.GET.type == 'workplace_injury' %}selected{% endif %}>Workplace Injury</option>
+                <option value="security_breach" {% if request.GET.type == 'security_breach' %}selected{% endif %}>Security Breach</option>
+                <option value="other" {% if request.GET.type == 'other' %}selected{% endif %}>Other</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Severity</label>
+            <select name="severity" class="form-select form-control-modern">
+                <option value="">All Severities</option>
+                <option value="critical" {% if request.GET.severity == 'critical' %}selected{% endif %}>Critical</option>
+                <option value="major" {% if request.GET.severity == 'major' %}selected{% endif %}>Major</option>
+                <option value="minor" {% if request.GET.severity == 'minor' %}selected{% endif %}>Minor</option>
+                <option value="near_miss" {% if request.GET.severity == 'near_miss' %}selected{% endif %}>Near Miss</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Status</label>
+            <select name="status" class="form-select form-control-modern">
+                <option value="">All Status</option>
+                <option value="reported" {% if request.GET.status == 'reported' %}selected{% endif %}>Reported</option>
+                <option value="under_investigation" {% if request.GET.status == 'under_investigation' %}selected{% endif %}>Under Investigation</option>
+                <option value="resolved" {% if request.GET.status == 'resolved' %}selected{% endif %}>Resolved</option>
+                <option value="closed" {% if request.GET.status == 'closed' %}selected{% endif %}>Closed</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">&nbsp;</label>
+            <button type="submit" class="btn btn-primary-modern btn-modern w-100">
+                <i class="bi bi-filter"></i> Filter
+            </button>
+        </div>
+    </form>
+</div>
+
+<!-- Incidents List -->
+{% if incidents %}
+    {% for incident in incidents %}
+    <div class="incident-card severity-{{ incident.severity }}">
+        <div class="row align-items-start">
+            <div class="col-md-1 text-center">
+                <span class="badge-modern badge-{% if incident.severity == 'critical' %}danger{% elif incident.severity == 'major' %}warning{% elif incident.severity == 'minor' %}info{% else %}success{% endif %}" style="font-size: 14px; padding: 8px 12px;">
+                    {{ incident.get_severity_display }}
+                </span>
+            </div>
+            <div class="col-md-7">
+                <h6 style="margin: 0 0 8px 0; font-weight: 600; font-size: 18px;">
+                    {{ incident.get_incident_type_display }}
+                </h6>
+                <div style="font-size: 13px; color: var(--gray); margin-bottom: 8px;">
+                    <i class="bi bi-calendar"></i> {{ incident.incident_date|date:"M d, Y H:i" }}
+                    {% if incident.location %}
+                    | <i class="bi bi-geo-alt"></i> {{ incident.location }}
+                    {% endif %}
+                    {% if incident.patient %}
+                    | <i class="bi bi-person"></i> 
+                    <a href="{% url 'hospital:patient_detail' incident.patient.pk %}" style="text-decoration: none; color: inherit;">
+                        {{ incident.patient.full_name }}
+                    </a>
+                    {% endif %}
+                    {% if incident.staff %}
+                    | <i class="bi bi-person-badge"></i> {{ incident.staff.user.get_full_name|default:"-" }}
+                    {% endif %}
+                </div>
+                <div style="font-size: 14px; margin-bottom: 8px;">
+                    <strong>Description:</strong>
+                    <p style="margin: 4px 0 0 0; white-space: pre-wrap;">{{ incident.description|truncatewords:30 }}</p>
+                </div>
+                {% if incident.immediate_actions %}
+                <div style="font-size: 13px; background: #e0f2fe; padding: 8px; border-radius: 6px; margin-top: 8px;">
+                    <strong>Immediate Actions:</strong> {{ incident.immediate_actions|truncatewords:20 }}
+                </div>
+                {% endif %}
+            </div>
+            <div class="col-md-2">
+                <div style="font-size: 13px; margin-bottom: 8px;">
+                    <strong>Status:</strong><br>
+                    <span class="badge-modern badge-{% if incident.status == 'resolved' %}success{% elif incident.status == 'closed' %}secondary{% elif incident.status == 'under_investigation' %}warning{% else %}info{% endif %}">
+                        {{ incident.get_status_display }}
+                    </span>
+                </div>
+                {% if incident.reported_by %}
+                <div style="font-size: 12px; color: var(--gray);">
+                    <strong>Reported By:</strong><br>
+                    {{ incident.reported_by.user.get_full_name|default:"-" }}<br>
+                    <small>{{ incident.reported_at|date:"M d, H:i" }}</small>
+                </div>
+                {% endif %}
+            </div>
+            <div class="col-md-2 text-end">
+                <a href="/admin/hospital/incidentlog/{{ incident.id }}/change/" class="btn btn-sm btn-outline-primary mb-2">
+                    <i class="bi bi-eye"></i> View
+                </a>
+                {% if incident.status != 'closed' %}
+                <button class="btn btn-sm btn-primary-modern">Update Status</button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+    
+    <!-- Pagination -->
+    {% if incidents.has_other_pages %}
+    <nav aria-label="Page navigation">
+        <ul class="pagination justify-content-center">
+            {% if incidents.has_previous %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ incidents.previous_page_number }}{% if request.GET.type %}&type={{ request.GET.type }}{% endif %}{% if request.GET.severity %}&severity={{ request.GET.severity }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}">Previous</a>
+            </li>
+            {% endif %}
+            
+            {% for num in incidents.paginator.page_range %}
+            {% if incidents.number == num %}
+            <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+            {% else %}
+            <li class="page-item"><a class="page-link" href="?page={{ num }}{% if request.GET.type %}&type={{ request.GET.type }}{% endif %}{% if request.GET.severity %}&severity={{ request.GET.severity }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}">{{ num }}</a></li>
+            {% endif %}
+            {% endfor %}
+            
+            {% if incidents.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ incidents.next_page_number }}{% if request.GET.type %}&type={{ request.GET.type }}{% endif %}{% if request.GET.severity %}&severity={{ request.GET.severity }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}">Next</a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+{% else %}
+<div class="modern-card text-center py-5">
+    <p class="text-muted">No incidents found</p>
+    <a href="/admin/hospital/incidentlog/add/" class="btn btn-primary-modern">Report Incident</a>
+</div>
+{% endif %}
+{% endblock %}
+

@@ -1,0 +1,188 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Patient Header -->
+    <div class="card shadow-sm mb-4" style="background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%); color: white;">
+        <div class="card-body p-4">
+            <div class="row align-items-center">
+                <div class="col-md-8">
+                    <h3 class="mb-2">
+                        <i class="bi bi-person-circle me-2"></i>
+                        {{ patient.full_name }}
+                    </h3>
+                    <div class="d-flex gap-4">
+                        <span><i class="bi bi-card-text me-2"></i>MRN: {{ patient.mrn }}</span>
+                        <span><i class="bi bi-calendar me-2"></i>Age: {{ patient.age }} years</span>
+                        <span><i class="bi bi-gender-ambiguous me-2"></i>{{ patient.get_gender_display }}</span>
+                        {% if patient.phone_number %}
+                            <span><i class="bi bi-telephone me-2"></i>{{ patient.phone_number }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="col-md-4 text-end">
+                    <a href="{% url 'hospital:patient_detail' patient.pk %}" class="btn btn-light">
+                        <i class="bi bi-arrow-left me-2"></i>Back to Patient
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <p class="text-muted mb-1">Total Visits</p>
+                            <h3 class="mb-0">{{ stats.total_encounters }}</h3>
+                        </div>
+                        <div class="bg-primary bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-clipboard2-pulse text-primary" style="font-size: 24px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <p class="text-muted mb-1">Active</p>
+                            <h3 class="mb-0">{{ stats.active_encounters }}</h3>
+                        </div>
+                        <div class="bg-warning bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-clock-history text-warning" style="font-size: 24px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <p class="text-muted mb-1">Completed</p>
+                            <h3 class="mb-0">{{ stats.completed_encounters }}</h3>
+                        </div>
+                        <div class="bg-success bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-check-circle text-success" style="font-size: 24px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <p class="text-muted mb-1">Prescriptions</p>
+                            <h3 class="mb-0">{{ stats.total_prescriptions }}</h3>
+                        </div>
+                        <div class="bg-info bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-prescription2 text-info" style="font-size: 24px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Encounter Timeline -->
+    <div class="card shadow-sm">
+        <div class="card-header bg-white">
+            <h5 class="mb-0"><i class="bi bi-clock-history me-2"></i>Consultation History</h5>
+        </div>
+        <div class="card-body">
+            {% if encounters %}
+                <div class="timeline">
+                    {% for encounter in encounters %}
+                    <div class="card mb-3 border-start border-4 border-{{ encounter.status == 'active' }}primary{% if encounter.status == 'completed' %}success{% endif %}">
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-8">
+                                    <div class="d-flex align-items-center mb-2">
+                                        <span class="badge bg-{{ encounter.status == 'active' }}warning{% if encounter.status == 'completed' %}success{% elif encounter.status == 'cancelled' %}secondary{% endif %} me-2">
+                                            {{ encounter.get_status_display }}
+                                        </span>
+                                        <span class="badge bg-info me-2">{{ encounter.get_encounter_type_display }}</span>
+                                        <small class="text-muted">{{ encounter.started_at|date:"M d, Y H:i" }}</small>
+                                    </div>
+                                    
+                                    {% if encounter.chief_complaint %}
+                                        <p class="mb-2"><strong>Chief Complaint:</strong> {{ encounter.chief_complaint }}</p>
+                                    {% endif %}
+                                    
+                                    {% if encounter.diagnosis %}
+                                        <p class="mb-2"><strong>Diagnosis:</strong> {{ encounter.diagnosis }}</p>
+                                    {% endif %}
+                                    
+                                    {% if encounter.provider %}
+                                        <p class="mb-2 small text-muted">
+                                            <i class="bi bi-person-badge me-1"></i>
+                                            Dr. {{ encounter.provider.get_full_name }}
+                                            {% if encounter.provider.department %}
+                                                • {{ encounter.provider.department.name }}
+                                            {% endif %}
+                                        </p>
+                                    {% endif %}
+                                    
+                                    {% if encounter.status == 'completed' and encounter.ended_at %}
+                                        <p class="mb-0 small">
+                                            <i class="bi bi-clock me-1"></i>
+                                            Duration: {{ encounter.get_duration_minutes }} minutes
+                                        </p>
+                                    {% endif %}
+                                </div>
+                                <div class="col-md-4 text-end">
+                                    <div class="btn-group-vertical w-100" role="group">
+                                        <a href="{% url 'hospital:encounter_full_record' encounter.pk %}" 
+                                           class="btn btn-outline-primary btn-sm">
+                                            <i class="bi bi-file-medical"></i> Full Record
+                                        </a>
+                                        {% if encounter.status == 'active' %}
+                                            <a href="{% url 'hospital:consultation_view' encounter.pk %}" 
+                                               class="btn btn-primary btn-sm">
+                                                <i class="bi bi-arrow-right-circle"></i> Continue
+                                            </a>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="text-center py-5">
+                    <i class="bi bi-inbox" style="font-size: 64px; opacity: 0.3;"></i>
+                    <p class="text-muted mt-3">No consultation history found</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<style>
+.timeline {
+    position: relative;
+}
+</style>
+{% endblock %}
+
+
+
+
+
+
+
+
+
