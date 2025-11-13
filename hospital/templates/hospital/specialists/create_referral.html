@@ -26,6 +26,12 @@
                 </div>
                 <hr>
                 
+                <div id="noSpecialistsMessage" class="no-specialists-message">
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                    <strong>No specialists available for this specialty.</strong> 
+                    You can select a specialist from another specialty or contact admin to add specialists.
+                </div>
+                
                 <form method="post">
                     {% csrf_token %}
                     {% crispy form %}
@@ -35,12 +41,28 @@
     </div>
 </div>
 
+<style>
+.no-specialists-message {
+    background: #FEF3C7;
+    border: 1px solid #F59E0B;
+    border-radius: 6px;
+    padding: 12px;
+    margin-top: 10px;
+    color: #92400E;
+    display: none;
+}
+.no-specialists-message i {
+    color: #F59E0B;
+}
+</style>
+
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const specialtySelect = document.getElementById('id_specialty');
     const specialistSelect = document.getElementById('id_specialist');
+    const noSpecialistsMsg = document.getElementById('noSpecialistsMessage');
     // Capture the full unfiltered specialist options as a fallback
-    const allSpecialistOptionsHTML = specialistSelect ? specialistSelect.innerHTML : '';
+    let allSpecialistOptionsHTML = specialistSelect ? specialistSelect.innerHTML : '';
     
     // On load: if list is empty, try fetching all specialists as a fallback
     if (specialistSelect && (!specialistSelect.options || specialistSelect.options.length <= 1)) {
@@ -48,12 +70,18 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(response => response.json())
             .then(data => {
                 specialistSelect.innerHTML = '<option value="">---------</option>';
-                data.specialists.forEach(spec => {
-                    const option = document.createElement('option');
-                    option.value = spec.id;
-                    option.textContent = `${spec.name} (${spec.specialty})` + (spec.qualification ? ` - ${spec.qualification}` : '');
-                    specialistSelect.appendChild(option);
-                });
+                if (data.specialists && data.specialists.length > 0) {
+                    data.specialists.forEach(spec => {
+                        const option = document.createElement('option');
+                        option.value = spec.id;
+                        option.textContent = `${spec.name} (${spec.specialty})` + (spec.qualification ? ` - ${spec.qualification}` : '');
+                        specialistSelect.appendChild(option);
+                    });
+                    // Save this as fallback
+                    allSpecialistOptionsHTML = specialistSelect.innerHTML;
+                } else {
+                    specialistSelect.innerHTML = '<option value="">No specialists available</option>';
+                }
             })
             .catch(() => {
                 // Keep whatever is there if fetch fails
@@ -64,25 +92,41 @@ document.addEventListener('DOMContentLoaded', function() {
         specialtySelect.addEventListener('change', function() {
             const specialtyId = this.value;
             if (specialtyId) {
+                // Show loading state
+                specialistSelect.innerHTML = '<option value="">Loading...</option>';
+                specialistSelect.disabled = true;
+                
                 fetch(`/hms/api/specialists/by-specialty/?specialty_id=${specialtyId}`)
                     .then(response => response.json())
                     .then(data => {
+                        specialistSelect.disabled = false;
                         specialistSelect.innerHTML = '<option value="">---------</option>';
-                        data.specialists.forEach(spec => {
-                            const option = document.createElement('option');
-                            option.value = spec.id;
-                            option.textContent = spec.name + (spec.qualification ? ` - ${spec.qualification}` : '');
-                            specialistSelect.appendChild(option);
-                        });
+                        
+                        if (data.specialists && data.specialists.length > 0) {
+                            data.specialists.forEach(spec => {
+                                const option = document.createElement('option');
+                                option.value = spec.id;
+                                option.textContent = spec.name + (spec.qualification ? ` - ${spec.qualification}` : '');
+                                specialistSelect.appendChild(option);
+                            });
+                            noSpecialistsMsg.style.display = 'none';
+                        } else {
+                            // No specialists for this specialty - show all specialists with warning
+                            specialistSelect.innerHTML = allSpecialistOptionsHTML;
+                            noSpecialistsMsg.style.display = 'block';
+                        }
                     })
                     .catch(error => {
                         // Fallback: restore full list so user can still select a specialist
                         console.error('Specialist filter API error, falling back to full list:', error);
+                        specialistSelect.disabled = false;
                         specialistSelect.innerHTML = allSpecialistOptionsHTML;
+                        noSpecialistsMsg.style.display = 'block';
                     });
             } else {
                 // No specialty selected: show full list rather than empty
                 specialistSelect.innerHTML = allSpecialistOptionsHTML;
+                noSpecialistsMsg.style.display = 'none';
             }
         });
     }
