@@ -844,37 +844,95 @@ def patient_create(request):
 
 @login_required
 def patient_detail(request, pk):
-    """Patient detail view"""
+    """Comprehensive patient detail view with complete medical records"""
     patient = get_object_or_404(
         Patient.objects.select_related('primary_insurance').prefetch_related('encounters', 'invoices'),
         pk=pk, 
         is_deleted=False
     )
     
-    # Get related encounters using reverse relation
-    from .models import Encounter
+    # Get ALL related encounters with full details
+    from .models import Encounter, VitalSign, Order, Invoice, LabResult
     all_encounters = Encounter.objects.filter(
         patient=patient,
         is_deleted=False
-    ).defer('current_activity').select_related('provider__user', 'provider__department', 'location').order_by('-started_at')
+    ).select_related('provider__user', 'provider__department', 'location').order_by('-started_at')
     
-    encounters = all_encounters[:10]
-    active_encounters = all_encounters.filter(status='active')[:10]
+    encounters = all_encounters[:20]  # Show more encounters
+    active_encounters = all_encounters.filter(status='active')
+    completed_encounters = all_encounters.filter(status='completed')[:10]
     
-    # Get invoices using reverse relation
-    from .models import Invoice
-    invoices = Invoice.objects.filter(
+    # Get ALL vital signs history
+    all_vitals = VitalSign.objects.filter(
+        encounter__patient=patient,
+        is_deleted=False
+    ).select_related('encounter').order_by('-recorded_at')[:50]  # Last 50 vitals
+    
+    # Get ALL orders (lab, medication, imaging)
+    all_orders = Order.objects.filter(
+        encounter__patient=patient,
+        is_deleted=False
+    ).select_related('encounter', 'ordered_by__user').order_by('-requested_at')[:30]
+    
+    # Get ALL lab results
+    all_lab_results = LabResult.objects.filter(
+        order__encounter__patient=patient,
+        is_deleted=False
+    ).select_related('test', 'order__encounter').order_by('-resulted_at')[:30]
+    
+    # Get ALL medications/prescriptions
+    try:
+        from .models import Prescription
+        all_prescriptions = Prescription.objects.filter(
+            order__encounter__patient=patient,
+            is_deleted=False
+        ).select_related('drug', 'order__encounter', 'prescribed_by__user').order_by('-created')[:30]
+    except:
+        all_prescriptions = []
+    
+    # Get ALL invoices and billing history
+    all_invoices = Invoice.objects.filter(
         patient=patient,
         is_deleted=False
-    ).order_by('-issued_at')[:10]
+    ).order_by('-issued_at')[:20]
+    
+    # Calculate statistics
+    total_encounters = all_encounters.count()
+    total_vitals = VitalSign.objects.filter(encounter__patient=patient, is_deleted=False).count()
+    total_orders = Order.objects.filter(encounter__patient=patient, is_deleted=False).count()
+    total_lab_tests = LabResult.objects.filter(order__encounter__patient=patient, is_deleted=False).count()
+    
+    # Get latest vital signs
+    latest_vitals = all_vitals.first()
+    
+    # Calculate total billing
+    from decimal import Decimal
+    total_billed = sum([invoice.total_amount or Decimal('0.00') for invoice in all_invoices])
+    total_paid = sum([invoice.amount_paid or Decimal('0.00') for invoice in all_invoices])
+    total_outstanding = total_billed - total_paid
     
     context = {
         'patient': patient,
         'encounters': encounters,
         'active_encounters': active_encounters,
-        'invoices': invoices,
+        'completed_encounters': completed_encounters,
+        'all_vitals': all_vitals,
+        'latest_vitals': latest_vitals,
+        'all_orders': all_orders,
+        'all_lab_results': all_lab_results,
+        'all_prescriptions': all_prescriptions,
+        'invoices': all_invoices,
+        # Statistics
+        'total_encounters': total_encounters,
+        'total_vitals': total_vitals,
+        'total_orders': total_orders,
+        'total_lab_tests': total_lab_tests,
+        'total_billed': total_billed,
+        'total_paid': total_paid,
+        'total_outstanding': total_outstanding,
+        'now': timezone.now(),
     }
-    return render(request, 'hospital/patient_detail.html', context)
+    return render(request, 'hospital/patient_medical_record_sheet.html', context)
 
 
 @login_required
@@ -1100,6 +1158,100 @@ def encounter_detail(request, pk):
         'referrals': referrals,
     }
     return render(request, 'hospital/encounter_detail.html', context)
+
+
+@login_required
+def surgery_control(request, encounter_id):
+    """Control surgery start/complete/notes"""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    encounter = get_object_or_404(Encounter, pk=encounter_id, is_deleted=False)
+    
+    # Verify it's a surgery encounter
+    if encounter.encounter_type != 'surgery':
+        return JsonResponse({'error': 'This is not a surgery encounter'}, status=400)
+    
+    action = request.POST.get('action')
+    
+    if action == 'start':
+        # Start surgery
+        if encounter.status != 'active':
+            return JsonResponse({'error': 'Encounter is not active'}, status=400)
+        
+        # Update encounter start time and add initial note
+        encounter.started_at = timezone.now()
+        current_notes = encounter.notes or ''
+        encounter.notes = f"[SURGERY STARTED: {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}]\n\n{current_notes}"
+        encounter.save()
+        
+        messages.success(request, 'Surgery started successfully!')
+        return JsonResponse({
+            'success': True,
+            'message': 'Surgery started',
+            'started_at': encounter.started_at.isoformat()
+        })
+    
+    elif action == 'complete':
+        # Complete surgery
+        if encounter.status != 'active':
+            return JsonResponse({'error': 'Encounter is not active'}, status=400)
+        
+        # Mark as completed
+        encounter.status = 'completed'
+        encounter.ended_at = timezone.now()
+        current_notes = encounter.notes or ''
+        duration_minutes = encounter.get_duration_minutes() or 0
+        encounter.notes = f"{current_notes}\n\n[SURGERY COMPLETED: {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}]\nDuration: {duration_minutes} minutes"
+        encounter.save()
+        
+        messages.success(request, 'Surgery completed successfully!')
+        return JsonResponse({
+            'success': True,
+            'message': 'Surgery completed',
+            'ended_at': encounter.ended_at.isoformat(),
+            'duration_minutes': duration_minutes
+        })
+    
+    elif action == 'add_note':
+        # Add surgical note
+        note = request.POST.get('note', '').strip()
+        if not note:
+            return JsonResponse({'error': 'Note cannot be empty'}, status=400)
+        
+        current_notes = encounter.notes or ''
+        timestamp = timezone.now().strftime('%Y-%m-%d %H:%M:%S')
+        user_name = request.user.get_full_name() or request.user.username
+        encounter.notes = f"{current_notes}\n\n[{timestamp}] {user_name}: {note}"
+        encounter.save()
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Note added successfully'
+        })
+    
+    elif action == 'report_issue':
+        # Report complication/issue
+        issue = request.POST.get('issue', '').strip()
+        if not issue:
+            return JsonResponse({'error': 'Issue description cannot be empty'}, status=400)
+        
+        current_notes = encounter.notes or ''
+        timestamp = timezone.now().strftime('%Y-%m-%d %H:%M:%S')
+        user_name = request.user.get_full_name() or request.user.username
+        encounter.notes = f"{current_notes}\n\n[⚠️ COMPLICATION - {timestamp}] Reported by {user_name}:\n{issue}"
+        encounter.save()
+        
+        # You could also create an alert or notification here
+        messages.warning(request, f'Complication reported: {issue}')
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Issue reported and logged'
+        })
+    
+    else:
+        return JsonResponse({'error': 'Invalid action'}, status=400)
 
 
 @login_required

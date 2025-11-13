@@ -34,6 +34,10 @@ from .admin_auto_attendance import *
 
 # Revenue Stream Tracking
 from .admin_revenue_streams import *
+
+# Department Budgeting System
+from .admin_department_budgeting import *
+
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User
 from django.utils.html import format_html

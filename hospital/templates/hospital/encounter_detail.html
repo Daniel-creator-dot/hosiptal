@@ -86,16 +86,28 @@
         background: rgba(255,255,255,0.15);
         color: white;
         font-weight: 600;
-        cursor: pointer;
+        cursor: pointer !important;
         transition: all 0.3s;
         text-decoration: none;
         text-align: center;
+        display: block;
+        width: 100%;
     }
 
     .hero-btn:hover {
         background: white;
         color: #4F46E5;
         transform: translateX(4px);
+        box-shadow: 0 4px 12px rgba(255,255,255,0.3);
+    }
+
+    .hero-btn:active {
+        transform: translateX(2px) scale(0.98);
+    }
+
+    .hero-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed !important;
     }
 
     /* Info Cards Grid */
@@ -392,6 +404,64 @@
         font-size: 20px;
     }
 
+    /* Surgery Button Animations */
+    @keyframes pulse-glow {
+        0%, 100% {
+            box-shadow: 0 0 20px rgba(16, 185, 129, 0.5);
+            transform: scale(1);
+        }
+        50% {
+            box-shadow: 0 0 40px rgba(16, 185, 129, 0.8);
+            transform: scale(1.05);
+        }
+    }
+
+    /* Surgery Dashboard Panel */
+    .surgery-dashboard {
+        background: linear-gradient(135deg, #1E293B 0%, #0F172A 100%);
+        color: white;
+        border-radius: 20px;
+        padding: 40px;
+        margin-top: 30px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+
+    .surgery-timer {
+        font-size: 56px;
+        font-weight: 700;
+        text-align: center;
+        margin: 30px 0;
+        font-family: 'Monaco', 'Courier New', monospace;
+        color: #10B981;
+        text-shadow: 0 0 20px rgba(16, 185, 129, 0.5);
+    }
+
+    .surgery-phase {
+        background: rgba(255,255,255,0.1);
+        border-radius: 16px;
+        padding: 24px;
+        margin: 16px 0;
+        border-left: 4px solid #10B981;
+        transition: all 0.3s;
+    }
+
+    .surgery-phase:hover {
+        background: rgba(255,255,255,0.15);
+        transform: translateX(8px);
+    }
+
+    .surgery-phase.active {
+        background: rgba(16, 185, 129, 0.2);
+        border-left-color: #10B981;
+        box-shadow: 0 0 30px rgba(16, 185, 129, 0.3);
+    }
+
+    .surgery-phase.completed {
+        background: rgba(255,255,255,0.05);
+        border-left-color: #6B7280;
+        opacity: 0.7;
+    }
+
     /* Responsive */
     @media (max-width: 768px) {
         .hero-grid {
@@ -405,6 +475,10 @@
         
         .vital-card-grid {
             grid-template-columns: repeat(2, 1fr);
+        }
+
+        .surgery-timer {
+            font-size: 36px;
         }
     }
 </style>
@@ -448,10 +522,25 @@
         
         <!-- Actions -->
         <div class="hero-actions">
-            {% if encounter.status == 'active' %}
-            <a href="{% url 'hospital:consultation_view' encounter_id=encounter.pk %}" class="hero-btn">
-                <i class="bi bi-stethoscope me-2"></i>Start Consultation
-            </a>
+            {% if encounter.encounter_type == 'surgery' and encounter.status == 'active' %}
+                {% if not encounter.started_at or encounter.notes|length < 20 %}
+                <!-- Start Surgery Button -->
+                <button onclick="startSurgery(event)" id="startSurgeryBtn" class="hero-btn" style="background: linear-gradient(135deg, #10B981 0%, #059669 100%); border: none; animation: pulse-glow 2s infinite;">
+                    <i class="bi bi-play-circle-fill me-2"></i>Start Surgery
+                </button>
+                {% endif %}
+                <!-- Complete Surgery Button -->
+                <button onclick="completeSurgery(event)" id="completeSurgeryBtn" class="hero-btn" style="background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%); border: none;">
+                    <i class="bi bi-check-circle-fill me-2"></i>Complete Surgery
+                </button>
+                <!-- Surgery Dashboard -->
+                <a href="#surgery-dashboard" class="hero-btn" style="background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%); border: none;">
+                    <i class="bi bi-clipboard2-pulse me-2"></i>Surgery Dashboard
+                </a>
+            {% elif encounter.status == 'active' %}
+                <a href="{% url 'hospital:consultation_view' encounter_id=encounter.pk %}" class="hero-btn">
+                    <i class="bi bi-stethoscope me-2"></i>Start Consultation
+                </a>
             {% endif %}
             <a href="{% url 'hospital:patient_flow' encounter.pk %}" class="hero-btn">
                 <i class="bi bi-diagram-3 me-2"></i>Patient Flow
@@ -727,14 +816,83 @@
     </div>
 </div>
 
+<!-- Surgery Dashboard (Only for Surgery Encounters) -->
+{% if encounter.encounter_type == 'surgery' and encounter.status == 'active' %}
+<div class="surgery-dashboard" id="surgery-dashboard">
+    <div class="text-center mb-4">
+        <h2 style="font-size: 32px; font-weight: 700; margin-bottom: 8px;">
+            <i class="bi bi-clipboard2-pulse me-3"></i>Surgery in Progress
+        </h2>
+        <p style="opacity: 0.8; font-size: 16px;">{{ encounter.chief_complaint }}</p>
+    </div>
+
+    <!-- Surgery Timer -->
+    <div class="surgery-timer" id="surgeryTimer">
+        00:00:00
+    </div>
+    <div class="text-center mb-4" style="opacity: 0.8;">
+        <i class="bi bi-clock me-2"></i>Surgery Duration
+    </div>
+
+    <!-- Surgery Phases -->
+    <div class="row">
+        <div class="col-md-3">
+            <div class="surgery-phase" id="phase-prep">
+                <h5><i class="bi bi-1-circle me-2"></i>Pre-Op</h5>
+                <p class="mb-0" style="font-size: 13px; opacity: 0.8;">Patient preparation</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="surgery-phase" id="phase-anesthesia">
+                <h5><i class="bi bi-2-circle me-2"></i>Anesthesia</h5>
+                <p class="mb-0" style="font-size: 13px; opacity: 0.8;">Anesthesia administration</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="surgery-phase active" id="phase-procedure">
+                <h5><i class="bi bi-3-circle me-2"></i>Procedure</h5>
+                <p class="mb-0" style="font-size: 13px; opacity: 0.8;">Surgical intervention</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="surgery-phase" id="phase-recovery">
+                <h5><i class="bi bi-4-circle me-2"></i>Recovery</h5>
+                <p class="mb-0" style="font-size: 13px; opacity: 0.8;">Post-op monitoring</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="row g-3 mt-4">
+        <div class="col-md-4">
+            <button type="button" class="btn btn-light btn-lg w-100" onclick="recordSurgeryNote()" style="cursor: pointer;">
+                <i class="bi bi-journal-medical me-2"></i>Record Note
+            </button>
+        </div>
+        <div class="col-md-4">
+            <a href="{% url 'hospital:record_vitals' encounter.pk %}" class="btn btn-light btn-lg w-100" style="cursor: pointer;">
+                <i class="bi bi-activity me-2"></i>Record Vitals
+            </a>
+        </div>
+        <div class="col-md-4">
+            <button type="button" class="btn btn-danger btn-lg w-100" onclick="reportComplication()" style="cursor: pointer;">
+                <i class="bi bi-exclamation-triangle me-2"></i>Report Issue
+            </button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <!-- Complete Encounter Button -->
 {% if encounter.status == 'active' %}
 <div class="text-center my-5">
+    {% if encounter.encounter_type != 'surgery' %}
     <form method="post" action="/admin/hospital/encounter/{{ encounter.pk }}/change/" class="d-inline">
         <button type="button" class="btn btn-lg" style="background: linear-gradient(135deg, #10B981 0%, #059669 100%); color: white; padding: 16px 48px; border-radius: 12px; font-weight: 700; box-shadow: 0 6px 20px rgba(16, 185, 129, 0.3);" onclick="if(confirm('Mark this encounter as completed?')) window.location.href='/admin/hospital/encounter/{{ encounter.pk }}/change/'">
             <i class="bi bi-check-circle-fill me-2"></i>Complete Encounter
         </button>
     </form>
+    {% endif %}
 </div>
 {% endif %}
 
@@ -742,6 +900,224 @@
 
 {% block extra_js %}
 <script>
+// Surgery Timer
+let surgeryStartTime = new Date('{{ encounter.started_at|date:"c" }}');
+let timerInterval;
+
+function updateSurgeryTimer() {
+    const now = new Date();
+    const diff = Math.floor((now - surgeryStartTime) / 1000);
+    
+    const hours = Math.floor(diff / 3600);
+    const minutes = Math.floor((diff % 3600) / 60);
+    const seconds = diff % 60;
+    
+    const timerElement = document.getElementById('surgeryTimer');
+    if (timerElement) {
+        timerElement.textContent = 
+            String(hours).padStart(2, '0') + ':' +
+            String(minutes).padStart(2, '0') + ':' +
+            String(seconds).padStart(2, '0');
+    }
+}
+
+{% if encounter.encounter_type == 'surgery' and encounter.status == 'active' %}
+// Start timer if surgery is active
+timerInterval = setInterval(updateSurgeryTimer, 1000);
+updateSurgeryTimer();
+{% endif %}
+
+// Start Surgery Function
+function startSurgery(event) {
+    if (!confirm('Are you ready to start the surgery?\n\nThis will:\n• Begin the surgery timer\n• Record start time\n• Notify the surgical team')) {
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    formData.append('action', 'start');
+    
+    // Show loading
+    const btn = event.currentTarget || document.getElementById('startSurgeryBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Starting...';
+    
+    fetch('{% url "hospital:surgery_control" encounter.pk %}', {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Show success notification
+            showNotification('Surgery started successfully!', 'success');
+            // Start timer
+            surgeryStartTime = new Date();
+            if (!timerInterval) {
+                timerInterval = setInterval(updateSurgeryTimer, 1000);
+            }
+            updateSurgeryTimer();
+            // Scroll to dashboard
+            const dashboard = document.getElementById('surgery-dashboard');
+            if (dashboard) {
+                dashboard.scrollIntoView({ behavior: 'smooth' });
+            }
+            // Remove start button
+            btn.style.display = 'none';
+        } else {
+            showNotification(data.error || 'Failed to start surgery', 'error');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-play-circle-fill me-2"></i>Start Surgery';
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showNotification('An error occurred while starting the surgery', 'error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-play-circle-fill me-2"></i>Start Surgery';
+    });
+}
+
+// Complete Surgery Function
+function completeSurgery(event) {
+    if (!confirm('Are you sure you want to complete this surgery?\n\nPlease ensure:\n✓ All surgical notes are recorded\n✓ Post-op orders are entered\n✓ Patient is stable\n\nThis action will:\n• Stop the surgery timer\n• Mark encounter as completed\n• Close the surgical record')) {
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    formData.append('action', 'complete');
+    
+    // Show loading
+    const btn = event.currentTarget || document.getElementById('completeSurgeryBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Completing...';
+    
+    fetch('{% url "hospital:surgery_control" encounter.pk %}', {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification('Surgery completed successfully!', 'success');
+            // Stop timer
+            if (timerInterval) {
+                clearInterval(timerInterval);
+            }
+            // Reload page after 2 seconds
+            setTimeout(() => {
+                window.location.reload();
+            }, 2000);
+        } else {
+            showNotification(data.error || 'Failed to complete surgery', 'error');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-circle-fill me-2"></i>Complete Surgery';
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showNotification('An error occurred while completing the surgery', 'error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-circle-fill me-2"></i>Complete Surgery';
+    });
+}
+
+// Record Surgery Note
+function recordSurgeryNote() {
+    const note = prompt('Enter surgical note:', '');
+    if (note && note.trim()) {
+        const formData = new FormData();
+        formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+        formData.append('action', 'add_note');
+        formData.append('note', note.trim());
+        
+        fetch('{% url "hospital:surgery_control" encounter.pk %}', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Note recorded successfully', 'success');
+            } else {
+                showNotification(data.error || 'Failed to record note', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showNotification('An error occurred', 'error');
+        });
+    }
+}
+
+// Report Complication
+function reportComplication() {
+    const issue = prompt('Describe the complication or issue:', '');
+    if (issue && issue.trim()) {
+        const formData = new FormData();
+        formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+        formData.append('action', 'report_issue');
+        formData.append('issue', issue.trim());
+        
+        fetch('{% url "hospital:surgery_control" encounter.pk %}', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Issue reported and logged', 'error');
+            } else {
+                showNotification(data.error || 'Failed to report issue', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showNotification('An error occurred', 'error');
+        });
+    }
+}
+
+// Notification System
+function showNotification(message, type) {
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 20px 30px;
+        background: ${type === 'success' ? 'linear-gradient(135deg, #10B981 0%, #059669 100%)' : 'linear-gradient(135deg, #EF4444 0%, #DC2626 100%)'};
+        color: white;
+        border-radius: 12px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        z-index: 10000;
+        font-weight: 600;
+        font-size: 16px;
+        animation: slideIn 0.3s ease;
+        min-width: 300px;
+    `;
+    notification.innerHTML = `<i class="bi bi-${type === 'success' ? 'check-circle-fill' : 'exclamation-triangle-fill'} me-2"></i>${message}`;
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => notification.remove(), 300);
+    }, 4000);
+}
+
 // Auto-refresh encounter status every 30 seconds
 setInterval(() => {
     fetch('{% url "hospital:api_stats" %}')

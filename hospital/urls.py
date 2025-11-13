@@ -63,6 +63,7 @@ from . import views_biometric_rebuilt
 from . import views_patient_export
 from . import views_backup
 from . import views_accounting_advanced
+from . import views_budget
 app_name = 'hospital'
 
 urlpatterns = [
@@ -106,6 +107,7 @@ urlpatterns = [
     path('encounters/', views.encounter_list, name='encounter_list'),
     path('encounters/new/', views.encounter_create, name='encounter_create'),
     path('encounters/<uuid:pk>/', views.encounter_detail, name='encounter_detail'),
+    path('encounters/<uuid:encounter_id>/surgery-control/', views.surgery_control, name='surgery_control'),
     
     # Admission views
     path('admissions/', views_admission.admission_list_enhanced, name='admission_list'),
@@ -703,6 +705,14 @@ urlpatterns = [
     path('accounting/revenue-streams/', views_revenue_monitoring.revenue_streams_dashboard, name='revenue_streams_dashboard'),
     path('accounting/revenue-by-department/', views_revenue_monitoring.revenue_by_department_report, name='revenue_by_department'),
     path('accounting/api/revenue-streams/', views_revenue_monitoring.revenue_streams_api, name='revenue_streams_api'),
+    
+    # Department Budgeting System
+    path('budget/', views_budget.budget_dashboard, name='budget_dashboard'),
+    path('budget/period/create/', views_budget.create_budget_period, name='create_budget_period'),
+    path('budget/period/<uuid:period_id>/allocate/', views_budget.allocate_department_budgets, name='allocate_department_budgets'),
+    path('budget/department/<uuid:budget_id>/', views_budget.department_budget_detail, name='department_budget_detail'),
+    path('budget/my-department/', views_budget.my_department_budget, name='my_department_budget'),
+    path('budget/reports/vs-actual/', views_budget.budget_vs_actual_report, name='budget_vs_actual_report'),
     
     # 📬 Multi-Channel Notification Management
     path('notifications/preferences/<uuid:patient_id>/', views_notifications.notification_preferences, name='notification_preferences'),
