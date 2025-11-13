@@ -1,0 +1,193 @@
+# Render Blueprint Configuration
+# This file configures your HMS application for automatic deployment on Render
+
+services:
+  # Web Service - Django Application
+  - type: web
+    name: hms-web
+    env: python
+    region: oregon  # Change to your preferred region: oregon, frankfurt, singapore, etc.
+    plan: starter  # Options: starter (free), standard, pro, or custom
+    branch: main  # GitHub branch to deploy from
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn hms.wsgi:application --bind 0.0.0.0:$PORT --workers 4 --threads 2 --timeout 120 --access-logfile - --error-logfile - --log-level info"
+    healthCheckPath: /health/
+    
+    # Auto-deploy on push to main branch
+    autoDeploy: true
+    
+    # Environment Variables
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.5
+      
+      - key: DEBUG
+        value: false
+      
+      - key: SECRET_KEY
+        generateValue: true  # Render will auto-generate a secure secret key
+      
+      - key: ALLOWED_HOSTS
+        sync: false  # You'll set this manually in Render dashboard
+      
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hms-db
+          property: connectionString
+      
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: hms-redis
+          property: connectionString
+      
+      - key: USE_REDIS_CACHE
+        value: true
+      
+      - key: DATABASE_CONN_MAX_AGE
+        value: 600
+      
+      - key: DATABASE_CONN_HEALTH_CHECKS
+        value: true
+      
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false  # Set in Render dashboard with your frontend URL
+      
+      # SMS Configuration
+      - key: SMS_API_KEY
+        sync: false  # Set securely in Render dashboard
+      
+      - key: SMS_SENDER_ID
+        value: PrimeCare
+      
+      # Email Configuration
+      - key: EMAIL_BACKEND
+        value: django.core.mail.backends.smtp.EmailBackend
+      
+      - key: EMAIL_HOST
+        sync: false  # e.g., smtp.gmail.com
+      
+      - key: EMAIL_PORT
+        value: 587
+      
+      - key: EMAIL_USE_TLS
+        value: true
+      
+      - key: EMAIL_HOST_USER
+        sync: false
+      
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      
+      - key: DEFAULT_FROM_EMAIL
+        sync: false
+      
+      # Hospital Branding
+      - key: HOSPITAL_NAME
+        value: PrimeCare Hospital
+      
+      # Site URL (set to your production domain)
+      - key: SITE_URL
+        sync: false  # e.g., https://hms-web.onrender.com
+      
+      # Security Settings (Production)
+      - key: SECURE_SSL_REDIRECT
+        value: true
+      
+      - key: SECURE_PROXY_SSL_HEADER
+        value: HTTP_X_FORWARDED_PROTO,https
+
+  # Redis Service - For caching and Celery
+  - type: redis
+    name: hms-redis
+    region: oregon  # Match your web service region
+    plan: starter  # Options: starter (free with 25MB), standard, pro
+    maxmemoryPolicy: allkeys-lru  # Eviction policy when Redis is full
+    ipAllowList: []  # Empty means only Render services can connect
+
+  # Background Worker - Celery
+  - type: worker
+    name: hms-celery-worker
+    env: python
+    region: oregon
+    plan: starter
+    branch: main
+    buildCommand: "./build.sh"
+    startCommand: "celery -A hms worker --loglevel=info --concurrency=2"
+    
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.5
+      
+      - key: DEBUG
+        value: false
+      
+      - key: SECRET_KEY
+        fromService:
+          type: web
+          name: hms-web
+          envVarKey: SECRET_KEY
+      
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hms-db
+          property: connectionString
+      
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: hms-redis
+          property: connectionString
+      
+      - key: USE_REDIS_CACHE
+        value: true
+
+  # Background Scheduler - Celery Beat
+  - type: worker
+    name: hms-celery-beat
+    env: python
+    region: oregon
+    plan: starter
+    branch: main
+    buildCommand: "./build.sh"
+    startCommand: "celery -A hms beat --loglevel=info"
+    
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.5
+      
+      - key: DEBUG
+        value: false
+      
+      - key: SECRET_KEY
+        fromService:
+          type: web
+          name: hms-web
+          envVarKey: SECRET_KEY
+      
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hms-db
+          property: connectionString
+      
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: hms-redis
+          property: connectionString
+      
+      - key: USE_REDIS_CACHE
+        value: true
+
+# PostgreSQL Database
+databases:
+  - name: hms-db
+    region: oregon  # Match your web service region
+    plan: starter  # Options: starter (free with 1GB), standard, pro
+    databaseName: hms_production
+    user: hms_user
+    ipAllowList: []  # Empty means only Render services can connect
+    
+    # Automatic daily backups (available on paid plans)
+    # postgresMajorVersion: 15
+
