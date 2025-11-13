@@ -3,7 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
     curl \
     gcc \
@@ -11,9 +11,6 @@ RUN apt-get update && apt-get install -y \
     python3-dev \
     libpq-dev \
     libmagic1 \
-    libmagic-dev \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip
