@@ -9,6 +9,7 @@ from django.db.models import Q, Sum, F
 from django.db import models
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
 from datetime import timedelta
 import csv
 import logging
@@ -1161,18 +1162,25 @@ def encounter_detail(request, pk):
 
 
 @login_required
+@csrf_exempt
 def surgery_control(request, encounter_id):
     """Control surgery start/complete/notes"""
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Method not allowed'}, status=405)
-    
-    encounter = get_object_or_404(Encounter, pk=encounter_id, is_deleted=False)
-    
-    # Verify it's a surgery encounter
-    if encounter.encounter_type != 'surgery':
-        return JsonResponse({'error': 'This is not a surgery encounter'}, status=400)
-    
-    action = request.POST.get('action')
+    try:
+        if request.method != 'POST':
+            return JsonResponse({'error': 'Method not allowed'}, status=405)
+        
+        logger.info(f"Surgery control request for encounter {encounter_id}, action: {request.POST.get('action')}")
+        
+        encounter = get_object_or_404(Encounter, pk=encounter_id, is_deleted=False)
+        
+        # Verify it's a surgery encounter
+        if encounter.encounter_type != 'surgery':
+            return JsonResponse({'error': 'This is not a surgery encounter'}, status=400)
+        
+        action = request.POST.get('action')
+    except Exception as e:
+        logger.error(f"Error in surgery_control: {str(e)}", exc_info=True)
+        return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
     
     if action == 'start':
         # Start surgery
