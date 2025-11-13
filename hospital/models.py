@@ -1273,6 +1273,12 @@ class Invoice(BaseModel):
     def __str__(self):
         return f"Invoice {self.invoice_number} - {self.patient.full_name}"
     
+    @property
+    def amount_paid(self):
+        """Calculate amount paid from total amount and balance"""
+        from decimal import Decimal
+        return (self.total_amount or Decimal('0.00')) - (self.balance or Decimal('0.00'))
+    
     def save(self, *args, **kwargs):
         """Auto-generate invoice number and set defaults"""
         if not self.invoice_number:
