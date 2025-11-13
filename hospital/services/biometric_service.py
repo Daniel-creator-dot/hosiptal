@@ -37,6 +37,10 @@ def convert_numpy_types(obj: Any) -> Any:
     Returns:
         Converted object with Python native types
     """
+    if not NUMPY_AVAILABLE or np is None:
+        # If numpy not available, just return the object as-is
+        return obj
+    
     if isinstance(obj, np.bool_):
         return bool(obj)
     elif isinstance(obj, np.integer):
