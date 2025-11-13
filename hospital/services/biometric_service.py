@@ -8,7 +8,6 @@ import hashlib
 import io
 import json
 import time
-import numpy as np
 from decimal import Decimal
 from django.utils import timezone
 from django.contrib.auth.models import User
@@ -17,6 +16,15 @@ from typing import Optional, Dict, Tuple, List, Any
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Optional imports for biometric features
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    logger.warning("numpy not available - biometric features will be disabled")
+    NUMPY_AVAILABLE = False
+    np = None
 
 
 def convert_numpy_types(obj: Any) -> Any:
