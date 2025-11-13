@@ -1,0 +1,809 @@
+{% extends 'hospital/base.html' %}
+{% load humanize static %}
+
+{% block title %}Medical Record - {{ patient.full_name }} - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Print Styles */
+    @media print {
+        .no-print { display: none !important; }
+        .medical-sheet { box-shadow: none; }
+        body { background: white; }
+    }
+
+    /* Medical Sheet Container */
+    .medical-sheet {
+        background: white;
+        max-width: 1400px;
+        margin: 0 auto;
+        box-shadow: 0 0 30px rgba(0,0,0,0.1);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    /* Sheet Header */
+    .sheet-header {
+        background: linear-gradient(135deg, #1E40AF 0%, #1E3A8A 100%);
+        color: white;
+        padding: 40px;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .sheet-header::before {
+        content: '';
+        position: absolute;
+        top: -50%;
+        right: -20%;
+        width: 400px;
+        height: 400px;
+        background: radial-gradient(circle, rgba(255,255,255,0.1), transparent);
+        border-radius: 50%;
+    }
+
+    .hospital-logo {
+        font-size: 48px;
+        font-weight: 700;
+        margin-bottom: 10px;
+    }
+
+    /* Patient Info Grid */
+    .patient-info-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        padding: 30px;
+        background: #F9FAFB;
+        border-bottom: 3px solid #1E40AF;
+    }
+
+    .info-box {
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 4px solid #3B82F6;
+    }
+
+    .info-box-label {
+        font-size: 11px;
+        text-transform: uppercase;
+        color: #6B7280;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        margin-bottom: 5px;
+    }
+
+    .info-box-value {
+        font-size: 16px;
+        font-weight: 700;
+        color: #1F2937;
+    }
+
+    /* Section Tabs */
+    .record-tabs {
+        display: flex;
+        background: #F3F4F6;
+        padding: 0;
+        margin: 0;
+        list-style: none;
+        border-bottom: 2px solid #E5E7EB;
+        overflow-x: auto;
+    }
+
+    .record-tab {
+        padding: 15px 25px;
+        cursor: pointer;
+        border-bottom: 3px solid transparent;
+        transition: all 0.3s;
+        font-weight: 600;
+        color: #6B7280;
+        white-space: nowrap;
+    }
+
+    .record-tab:hover {
+        background: #E5E7EB;
+        color: #1F2937;
+    }
+
+    .record-tab.active {
+        background: white;
+        color: #1E40AF;
+        border-bottom-color: #1E40AF;
+    }
+
+    /* Record Tables */
+    .record-section {
+        display: none;
+        padding: 30px;
+    }
+
+    .record-section.active {
+        display: block;
+        animation: fadeIn 0.3s;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .record-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0 8px;
+    }
+
+    .record-table thead th {
+        background: #1E40AF;
+        color: white;
+        padding: 12px;
+        text-align: left;
+        font-weight: 600;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .record-table thead th:first-child {
+        border-radius: 8px 0 0 8px;
+    }
+
+    .record-table thead th:last-child {
+        border-radius: 0 8px 8px 0;
+    }
+
+    .record-table tbody tr {
+        background: white;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        transition: all 0.2s;
+    }
+
+    .record-table tbody tr:hover {
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        transform: scale(1.01);
+    }
+
+    .record-table tbody td {
+        padding: 15px 12px;
+        border-top: 1px solid #F3F4F6;
+        border-bottom: 1px solid #F3F4F6;
+    }
+
+    .record-table tbody td:first-child {
+        border-left: 1px solid #F3F4F6;
+        border-radius: 8px 0 0 8px;
+    }
+
+    .record-table tbody td:last-child {
+        border-right: 1px solid #F3F4F6;
+        border-radius: 0 8px 8px 0;
+    }
+
+    /* Status Badges */
+    .status-badge {
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .status-active { background: #D1FAE5; color: #065F46; }
+    .status-completed { background: #DBEAFE; color: #1E40AF; }
+    .status-pending { background: #FEF3C7; color: #92400E; }
+    .status-cancelled { background: #FEE2E2; color: #991B1B; }
+    .status-abnormal { background: #FEE2E2; color: #991B1B; }
+    .status-normal { background: #D1FAE5; color: #065F46; }
+
+    /* Statistics Cards */
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+
+    .stat-card {
+        background: linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border-left: 4px solid #3B82F6;
+    }
+
+    .stat-value {
+        font-size: 32px;
+        font-weight: 700;
+        color: #1E40AF;
+        margin-bottom: 5px;
+    }
+
+    .stat-label {
+        font-size: 13px;
+        color: #6B7280;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: #9CA3AF;
+    }
+
+    .empty-state i {
+        font-size: 64px;
+        margin-bottom: 20px;
+        opacity: 0.3;
+    }
+
+    /* Action Buttons */
+    .action-toolbar {
+        padding: 20px 30px;
+        background: #F9FAFB;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-top: 1px solid #E5E7EB;
+    }
+
+    .btn-modern {
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-weight: 600;
+        transition: all 0.3s;
+        border: none;
+    }
+
+    .btn-primary-modern {
+        background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+        color: white;
+    }
+
+    .btn-primary-modern:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .patient-info-grid {
+            grid-template-columns: 1fr;
+        }
+        .record-tabs {
+            flex-direction: column;
+        }
+        .record-table {
+            font-size: 12px;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="medical-sheet">
+    <!-- Header -->
+    <div class="sheet-header">
+        <div class="row align-items-center" style="position: relative; z-index: 1;">
+            <div class="col-md-8">
+                <div class="hospital-logo">
+                    <i class="bi bi-hospital-fill"></i> PrimeCare Medical Center
+                </div>
+                <h2 style="font-weight: 700; margin: 20px 0 10px 0;">COMPREHENSIVE MEDICAL RECORD</h2>
+                <h1 style="font-size: 36px; font-weight: 700; margin: 0;">{{ patient.full_name|upper }}</h1>
+            </div>
+            <div class="col-md-4 text-end">
+                <div style="background: rgba(255,255,255,0.2); padding: 20px; border-radius: 12px;">
+                    <div style="font-size: 14px; opacity: 0.9; margin-bottom: 5px;">Medical Record Number</div>
+                    <div style="font-size: 32px; font-weight: 700;">{{ patient.mrn }}</div>
+                    <div style="font-size: 14px; opacity: 0.9; margin-top: 10px;">Generated: {{ now|date:"M d, Y H:i" }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Patient Demographics -->
+    <div class="patient-info-grid">
+        <div class="info-box">
+            <div class="info-box-label">Date of Birth</div>
+            <div class="info-box-value">{{ patient.date_of_birth|date:"M d, Y" }}</div>
+        </div>
+        <div class="info-box">
+            <div class="info-box-label">Age</div>
+            <div class="info-box-value">{{ patient.age }} years</div>
+        </div>
+        <div class="info-box">
+            <div class="info-box-label">Gender</div>
+            <div class="info-box-value">{{ patient.get_gender_display }}</div>
+        </div>
+        <div class="info-box">
+            <div class="info-box-label">Blood Type</div>
+            <div class="info-box-value">{{ patient.blood_type|default:"Not specified" }}</div>
+        </div>
+        <div class="info-box">
+            <div class="info-box-label">Phone</div>
+            <div class="info-box-value">{{ patient.phone_number|default:"Not provided" }}</div>
+        </div>
+        <div class="info-box">
+            <div class="info-box-label">Email</div>
+            <div class="info-box-value">{{ patient.email|default:"Not provided" }}</div>
+        </div>
+    </div>
+
+    <!-- Statistics Overview -->
+    <div style="padding: 30px 30px 0 30px;">
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value">{{ total_encounters }}</div>
+                <div class="stat-label">Total Encounters</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ total_vitals }}</div>
+                <div class="stat-label">Vital Signs Recorded</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ total_lab_tests }}</div>
+                <div class="stat-label">Lab Tests</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ all_prescriptions|length }}</div>
+                <div class="stat-label">Prescriptions</div>
+            </div>
+            <div class="stat-card" style="background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%); border-left-color: #F59E0B;">
+                <div class="stat-value" style="color: #92400E;">GHS {{ total_outstanding|floatformat:2 }}</div>
+                <div class="stat-label">Outstanding Balance</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Record Tabs -->
+    <ul class="record-tabs">
+        <li class="record-tab active" onclick="showSection('encounters')">
+            <i class="bi bi-hospital me-2"></i>Encounters ({{ encounters|length }})
+        </li>
+        <li class="record-tab" onclick="showSection('vitals')">
+            <i class="bi bi-activity me-2"></i>Vital Signs ({{ all_vitals|length }})
+        </li>
+        <li class="record-tab" onclick="showSection('lab')">
+            <i class="bi bi-capsule me-2"></i>Lab Results ({{ all_lab_results|length }})
+        </li>
+        <li class="record-tab" onclick="showSection('medications')">
+            <i class="bi bi-prescription2 me-2"></i>Medications ({{ all_prescriptions|length }})
+        </li>
+        <li class="record-tab" onclick="showSection('orders')">
+            <i class="bi bi-file-medical me-2"></i>Orders ({{ all_orders|length }})
+        </li>
+        <li class="record-tab" onclick="showSection('billing')">
+            <i class="bi bi-currency-dollar me-2"></i>Billing ({{ invoices|length }})
+        </li>
+        <li class="record-tab" onclick="showSection('allergies')">
+            <i class="bi bi-exclamation-triangle me-2"></i>Allergies & Conditions
+        </li>
+    </ul>
+
+    <!-- Encounters Section -->
+    <div class="record-section active" id="section-encounters">
+        <h3 style="margin-bottom: 20px; color: #1F2937;">
+            <i class="bi bi-hospital me-2"></i>Encounter History
+        </h3>
+        {% if encounters %}
+        <table class="record-table">
+            <thead>
+                <tr>
+                    <th>Date & Time</th>
+                    <th>Type</th>
+                    <th>Chief Complaint</th>
+                    <th>Diagnosis</th>
+                    <th>Provider</th>
+                    <th>Location</th>
+                    <th>Status</th>
+                    <th>Duration</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for encounter in encounters %}
+                <tr onclick="window.location='{% url 'hospital:encounter_detail' encounter.pk %}'" style="cursor: pointer;">
+                    <td>
+                        <strong>{{ encounter.started_at|date:"M d, Y" }}</strong><br>
+                        <small style="color: #6B7280;">{{ encounter.started_at|date:"H:i" }}</small>
+                    </td>
+                    <td><span class="badge bg-primary">{{ encounter.get_encounter_type_display }}</span></td>
+                    <td>{{ encounter.chief_complaint|truncatewords:8 }}</td>
+                    <td>{{ encounter.diagnosis|truncatewords:8|default:"<em>Not specified</em>" }}</td>
+                    <td>{{ encounter.provider.user.get_full_name|default:"Not assigned" }}</td>
+                    <td>{{ encounter.location.name|default:"-" }}</td>
+                    <td>
+                        <span class="status-badge status-{{ encounter.status }}">
+                            {{ encounter.get_status_display }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if encounter.get_duration_minutes %}
+                            {{ encounter.get_duration_minutes }} min
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <i class="bi bi-inbox"></i>
+            <p>No encounters recorded</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Vital Signs Section -->
+    <div class="record-section" id="section-vitals">
+        <h3 style="margin-bottom: 20px; color: #1F2937;">
+            <i class="bi bi-activity me-2"></i>Vital Signs History
+        </h3>
+        {% if all_vitals %}
+        <table class="record-table">
+            <thead>
+                <tr>
+                    <th>Date & Time</th>
+                    <th>BP (mmHg)</th>
+                    <th>Pulse (bpm)</th>
+                    <th>Temp (°C)</th>
+                    <th>SpO2 (%)</th>
+                    <th>Resp Rate</th>
+                    <th>Weight (kg)</th>
+                    <th>Height (cm)</th>
+                    <th>BMI</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for vital in all_vitals %}
+                <tr>
+                    <td>
+                        <strong>{{ vital.recorded_at|date:"M d, Y" }}</strong><br>
+                        <small style="color: #6B7280;">{{ vital.recorded_at|date:"H:i" }}</small>
+                    </td>
+                    <td>
+                        <strong>{{ vital.systolic_bp }}/{{ vital.diastolic_bp }}</strong>
+                        {% if vital.systolic_bp > 140 or vital.diastolic_bp > 90 %}
+                        <i class="bi bi-exclamation-triangle text-danger"></i>
+                        {% endif %}
+                    </td>
+                    <td>{{ vital.pulse|default:"-" }}</td>
+                    <td>
+                        {{ vital.temperature|default:"-" }}
+                        {% if vital.temperature and vital.temperature > 38 %}
+                        <i class="bi bi-thermometer-high text-danger"></i>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {{ vital.spo2|default:"-" }}
+                        {% if vital.spo2 and vital.spo2 < 95 %}
+                        <i class="bi bi-exclamation-triangle text-danger"></i>
+                        {% endif %}
+                    </td>
+                    <td>{{ vital.respiratory_rate|default:"-" }}</td>
+                    <td>{{ vital.weight|default:"-" }}</td>
+                    <td>{{ vital.height|default:"-" }}</td>
+                    <td>
+                        {% if vital.bmi %}
+                            <strong>{{ vital.bmi }}</strong>
+                            <small>({{ vital.bmi_category }})</small>
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <i class="bi bi-activity"></i>
+            <p>No vital signs recorded</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Lab Results Section -->
+    <div class="record-section" id="section-lab">
+        <h3 style="margin-bottom: 20px; color: #1F2937;">
+            <i class="bi bi-capsule me-2"></i>Laboratory Results
+        </h3>
+        {% if all_lab_results %}
+        <table class="record-table">
+            <thead>
+                <tr>
+                    <th>Date Resulted</th>
+                    <th>Test Name</th>
+                    <th>Result</th>
+                    <th>Reference Range</th>
+                    <th>Unit</th>
+                    <th>Status</th>
+                    <th>Encounter</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for result in all_lab_results %}
+                <tr>
+                    <td>
+                        <strong>{{ result.resulted_at|date:"M d, Y" }}</strong><br>
+                        <small style="color: #6B7280;">{{ result.resulted_at|date:"H:i" }}</small>
+                    </td>
+                    <td><strong>{{ result.test.name }}</strong></td>
+                    <td style="font-weight: 700; font-size: 16px;">{{ result.result_value }}</td>
+                    <td>{{ result.test.reference_range|default:"-" }}</td>
+                    <td>{{ result.test.unit|default:"-" }}</td>
+                    <td>
+                        <span class="status-badge status-{{ result.status }}">
+                            {{ result.get_status_display }}
+                        </span>
+                    </td>
+                    <td>
+                        <small>{{ result.order.encounter.started_at|date:"M d, Y" }}</small>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <i class="bi bi-capsule"></i>
+            <p>No lab results available</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Medications Section -->
+    <div class="record-section" id="section-medications">
+        <h3 style="margin-bottom: 20px; color: #1F2937;">
+            <i class="bi bi-prescription2 me-2"></i>Medication History
+        </h3>
+        {% if all_prescriptions %}
+        <table class="record-table">
+            <thead>
+                <tr>
+                    <th>Date Prescribed</th>
+                    <th>Medication</th>
+                    <th>Dosage</th>
+                    <th>Frequency</th>
+                    <th>Duration</th>
+                    <th>Prescribed By</th>
+                    <th>Encounter</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for prescription in all_prescriptions %}
+                <tr>
+                    <td>
+                        <strong>{{ prescription.created|date:"M d, Y" }}</strong><br>
+                        <small style="color: #6B7280;">{{ prescription.created|date:"H:i" }}</small>
+                    </td>
+                    <td><strong>{{ prescription.drug.name }}</strong></td>
+                    <td>{{ prescription.dosage|default:"-" }}</td>
+                    <td>{{ prescription.frequency|default:"-" }}</td>
+                    <td>{{ prescription.duration_days|default:"-" }} days</td>
+                    <td>{{ prescription.prescribed_by.user.get_full_name|default:"-" }}</td>
+                    <td>
+                        <small>{{ prescription.order.encounter.started_at|date:"M d, Y" }}</small>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <i class="bi bi-prescription2"></i>
+            <p>No prescriptions on record</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Orders Section -->
+    <div class="record-section" id="section-orders">
+        <h3 style="margin-bottom: 20px; color: #1F2937;">
+            <i class="bi bi-file-medical me-2"></i>Orders History
+        </h3>
+        {% if all_orders %}
+        <table class="record-table">
+            <thead>
+                <tr>
+                    <th>Date Ordered</th>
+                    <th>Order Type</th>
+                    <th>Details</th>
+                    <th>Priority</th>
+                    <th>Status</th>
+                    <th>Ordered By</th>
+                    <th>Encounter</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for order in all_orders %}
+                <tr>
+                    <td>
+                        <strong>{{ order.requested_at|date:"M d, Y" }}</strong><br>
+                        <small style="color: #6B7280;">{{ order.requested_at|date:"H:i" }}</small>
+                    </td>
+                    <td><span class="badge bg-info">{{ order.get_order_type_display }}</span></td>
+                    <td>{{ order.notes|truncatewords:10|default:"No details" }}</td>
+                    <td>
+                        <span class="status-badge status-{{ order.priority }}">
+                            {{ order.get_priority_display }}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="status-badge status-{{ order.status }}">
+                            {{ order.get_status_display }}
+                        </span>
+                    </td>
+                    <td>{{ order.ordered_by.user.get_full_name|default:"-" }}</td>
+                    <td>
+                        <small>{{ order.encounter.started_at|date:"M d, Y" }}</small>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <i class="bi bi-file-medical"></i>
+            <p>No orders on record</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Billing Section -->
+    <div class="record-section" id="section-billing">
+        <h3 style="margin-bottom: 20px; color: #1F2937;">
+            <i class="bi bi-currency-dollar me-2"></i>Billing History
+        </h3>
+
+        <div class="row mb-4">
+            <div class="col-md-4">
+                <div class="info-box">
+                    <div class="info-box-label">Total Billed</div>
+                    <div class="info-box-value" style="color: #3B82F6;">GHS {{ total_billed|floatformat:2 }}</div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="info-box">
+                    <div class="info-box-label">Total Paid</div>
+                    <div class="info-box-value" style="color: #10B981;">GHS {{ total_paid|floatformat:2 }}</div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="info-box" style="border-left-color: #F59E0B;">
+                    <div class="info-box-label">Outstanding Balance</div>
+                    <div class="info-box-value" style="color: #F59E0B;">GHS {{ total_outstanding|floatformat:2 }}</div>
+                </div>
+            </div>
+        </div>
+
+        {% if invoices %}
+        <table class="record-table">
+            <thead>
+                <tr>
+                    <th>Invoice Number</th>
+                    <th>Date Issued</th>
+                    <th>Due Date</th>
+                    <th>Amount</th>
+                    <th>Paid</th>
+                    <th>Balance</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for invoice in invoices %}
+                <tr>
+                    <td><strong>{{ invoice.invoice_number }}</strong></td>
+                    <td>{{ invoice.issued_at|date:"M d, Y" }}</td>
+                    <td>{{ invoice.due_date|date:"M d, Y" }}</td>
+                    <td>GHS {{ invoice.total_amount|floatformat:2 }}</td>
+                    <td style="color: #10B981;">GHS {{ invoice.amount_paid|floatformat:2 }}</td>
+                    <td style="color: #F59E0B;">GHS {{ invoice.balance|floatformat:2 }}</td>
+                    <td>
+                        <span class="status-badge status-{{ invoice.status }}">
+                            {{ invoice.get_status_display }}
+                        </span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <i class="bi bi-currency-dollar"></i>
+            <p>No invoices on record</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Allergies & Conditions Section -->
+    <div class="record-section" id="section-allergies">
+        <h3 style="margin-bottom: 20px; color: #1F2937;">
+            <i class="bi bi-exclamation-triangle me-2"></i>Allergies & Chronic Conditions
+        </h3>
+
+        <div class="row">
+            <div class="col-md-6">
+                <div class="info-card" style="background: #FEF2F2; border-left: 4px solid #EF4444; padding: 20px; border-radius: 8px;">
+                    <h5 style="color: #991B1B; margin-bottom: 15px;">
+                        <i class="bi bi-exclamation-octagon me-2"></i>Allergies
+                    </h5>
+                    {% if patient.allergies %}
+                        <p style="margin: 0; white-space: pre-wrap; line-height: 1.8;">{{ patient.allergies }}</p>
+                    {% else %}
+                        <p style="margin: 0; color: #6B7280;"><em>No known allergies recorded</em></p>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="info-card" style="background: #FEF3C7; border-left: 4px solid #F59E0B; padding: 20px; border-radius: 8px;">
+                    <h5 style="color: #92400E; margin-bottom: 15px;">
+                        <i class="bi bi-heart-pulse me-2"></i>Chronic Conditions
+                    </h5>
+                    {% if patient.chronic_conditions %}
+                        <p style="margin: 0; white-space: pre-wrap; line-height: 1.8;">{{ patient.chronic_conditions }}</p>
+                    {% else %}
+                        <p style="margin: 0; color: #6B7280;"><em>No chronic conditions recorded</em></p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="info-card" style="background: #EFF6FF; border-left: 4px solid #3B82F6; padding: 20px; border-radius: 8px;">
+                    <h5 style="color: #1E40AF; margin-bottom: 15px;">
+                        <i class="bi bi-prescription2 me-2"></i>Current Medications
+                    </h5>
+                    {% if patient.medications %}
+                        <p style="margin: 0; white-space: pre-wrap; line-height: 1.8;">{{ patient.medications }}</p>
+                    {% else %}
+                        <p style="margin: 0; color: #6B7280;"><em>No current medications recorded</em></p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Action Toolbar -->
+    <div class="action-toolbar no-print">
+        <div>
+            <button onclick="window.print()" class="btn btn-primary-modern me-2">
+                <i class="bi bi-printer me-2"></i>Print Medical Record
+            </button>
+            <a href="{% url 'hospital:patient_edit' patient.pk %}" class="btn btn-modern" style="background: #6B7280; color: white;">
+                <i class="bi bi-pencil me-2"></i>Edit Patient
+            </a>
+        </div>
+        <div>
+            <a href="{% url 'hospital:patient_list' %}" class="btn btn-modern" style="background: white; border: 1px solid #E5E7EB;">
+                <i class="bi bi-arrow-left me-2"></i>Back to Patients
+            </a>
+        </div>
+    </div>
+</div>
+
+<script>
+function showSection(sectionName) {
+    // Hide all sections
+    document.querySelectorAll('.record-section').forEach(section => {
+        section.classList.remove('active');
+    });
+    
+    // Remove active class from all tabs
+    document.querySelectorAll('.record-tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    
+    // Show selected section
+    document.getElementById('section-' + sectionName).classList.add('active');
+    
+    // Add active class to clicked tab
+    event.target.classList.add('active');
+}
+</script>
+{% endblock %}
+

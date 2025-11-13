@@ -1,0 +1,174 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}{{ budget.department.name }} Budget - HMS{% endblock %}
+
+{% block page_title %}{{ budget.department.name }} Budget{% endblock %}
+{% block page_subtitle %}{{ budget.budget_period.name }}{% endblock %}
+
+{% block content %}
+
+<div class="mb-3">
+    <a href="{% url 'hospital:budget_dashboard' %}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Budget Dashboard
+    </a>
+</div>
+
+<!-- Budget Overview -->
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="modern-card text-center" style="border-left: 4px solid #2196f3;">
+            <div style="font-size: 12px; color: #666; margin-bottom: 8px;">ALLOCATED BUDGET</div>
+            <h3 style="color: #2196f3; margin: 0;">GHS {{ budget.allocated_amount|floatformat:2|intcomma }}</h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center" style="border-left: 4px solid #f44336;">
+            <div style="font-size: 12px; color: #666; margin-bottom: 8px;">SPENT</div>
+            <h3 style="color: #f44336; margin: 0;">GHS {{ budget.spent_amount|floatformat:2|intcomma }}</h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center" style="border-left: 4px solid #4caf50;">
+            <div style="font-size: 12px; color: #666; margin-bottom: 8px;">AVAILABLE</div>
+            <h3 style="color: {% if available < 0 %}#f44336{% else %}#4caf50{% endif %}; margin: 0;">
+                GHS {{ available|floatformat:2|intcomma }}
+            </h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center" style="border-left: 4px solid {% if utilization >= 90 %}#f44336{% elif utilization >= 75 %}#ff9800{% else %}#4caf50{% endif %};">
+            <div style="font-size: 12px; color: #666; margin-bottom: 8px;">UTILIZATION</div>
+            <h3 style="color: {% if utilization >= 90 %}#f44336{% elif utilization >= 75 %}#ff9800{% else %}#4caf50{% endif %}; margin: 0;">
+                {{ utilization|floatformat:1 }}%
+            </h3>
+        </div>
+    </div>
+</div>
+
+<!-- Budget Breakdown by Category -->
+<div class="modern-card mb-4">
+    <h5 class="mb-4"><i class="bi bi-pie-chart"></i> Budget Breakdown by Category</h5>
+    <div class="row">
+        <div class="col-md-3">
+            <div class="p-3" style="background: #e3f2fd; border-radius: 12px;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div style="font-size: 11px; color: #666;">Personnel</div>
+                        <h6 class="mb-0">GHS {{ budget.personnel_budget|floatformat:2|intcomma }}</h6>
+                    </div>
+                    <i class="bi bi-people" style="font-size: 24px; color: #2196f3;"></i>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="p-3" style="background: #f3e5f5; border-radius: 12px;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div style="font-size: 11px; color: #666;">Operational</div>
+                        <h6 class="mb-0">GHS {{ budget.operational_budget|floatformat:2|intcomma }}</h6>
+                    </div>
+                    <i class="bi bi-gear" style="font-size: 24px; color: #9c27b0;"></i>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="p-3" style="background: #e8f5e9; border-radius: 12px;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div style="font-size: 11px; color: #666;">Supplies</div>
+                        <h6 class="mb-0">GHS {{ budget.supplies_budget|floatformat:2|intcomma }}</h6>
+                    </div>
+                    <i class="bi bi-box-seam" style="font-size: 24px; color: #4caf50;"></i>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="p-3" style="background: #fff3e0; border-radius: 12px;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div style="font-size: 11px; color: #666;">Capital</div>
+                        <h6 class="mb-0">GHS {{ budget.capital_budget|floatformat:2|intcomma }}</h6>
+                    </div>
+                    <i class="bi bi-building-gear" style="font-size: 24px; color: #ff9800;"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Line Items -->
+<div class="modern-card mb-4">
+    <h5 class="mb-4"><i class="bi bi-list-ul"></i> Budget Line Items</h5>
+    <div class="modern-table">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Category</th>
+                    <th>Item</th>
+                    <th>Budgeted</th>
+                    <th>Spent</th>
+                    <th>Remaining</th>
+                    <th>%</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in line_items %}
+                <tr>
+                    <td><span class="badge bg-secondary">{{ item.get_category_display }}</span></td>
+                    <td>
+                        <strong>{{ item.item_name }}</strong>
+                        {% if item.description %}<br><small class="text-muted">{{ item.description|truncatewords:10 }}</small>{% endif %}
+                    </td>
+                    <td>GHS {{ item.budgeted_amount|floatformat:2|intcomma }}</td>
+                    <td>GHS {{ item.spent_amount|floatformat:2|intcomma }}</td>
+                    <td>
+                        <span class="badge bg-{% if item.get_remaining < 0 %}danger{% else %}success{% endif %}">
+                            GHS {{ item.get_remaining|floatformat:2|intcomma }}
+                        </span>
+                    </td>
+                    <td>{{ item.get_utilization_percentage|floatformat:0 }}%</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted">No line items. Add them via admin panel.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Recent Expenses -->
+<div class="modern-card">
+    <h5 class="mb-4"><i class="bi bi-receipt"></i> Recent Expenses</h5>
+    <div class="modern-table">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Description</th>
+                    <th>Category</th>
+                    <th>Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for expense in recent_expenses %}
+                <tr>
+                    <td>{{ expense.expense_date|date:"M d, Y" }}</td>
+                    <td>{{ expense.description }}</td>
+                    <td><span class="badge bg-info">{{ expense.expense_category }}</span></td>
+                    <td><strong>GHS {{ expense.amount|floatformat:2|intcomma }}</strong></td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="4" class="text-center text-muted">No expenses recorded yet.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% endblock %}
+
