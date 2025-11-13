@@ -872,13 +872,13 @@ def patient_detail(request, pk):
     all_orders = Order.objects.filter(
         encounter__patient=patient,
         is_deleted=False
-    ).select_related('encounter', 'ordered_by__user').order_by('-requested_at')[:30]
+    ).select_related('encounter', 'requested_by__user').order_by('-requested_at')[:30]
     
     # Get ALL lab results
     all_lab_results = LabResult.objects.filter(
         order__encounter__patient=patient,
         is_deleted=False
-    ).select_related('test', 'order__encounter').order_by('-resulted_at')[:30]
+    ).select_related('test', 'order__encounter').order_by('-verified_at')[:30]
     
     # Get ALL medications/prescriptions
     try:
