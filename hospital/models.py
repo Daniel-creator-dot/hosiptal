@@ -1,0 +1,1630 @@
+import uuid
+from django.db import models
+from django.contrib.auth.models import User
+from django.core.validators import RegexValidator
+from django.utils import timezone
+from model_utils.models import TimeStampedModel
+from django.db.models import Sum
+
+
+class BaseModel(TimeStampedModel):
+    """Base model with UUID primary key and soft delete"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    is_deleted = models.BooleanField(default=False)
+    
+    class Meta:
+        abstract = True
+
+
+# ==================== PATIENT & EMR MODULE ====================
+
+class Patient(BaseModel):
+    """Patient registration and demographics"""
+    GENDER_CHOICES = [
+        ('M', 'Male'),
+        ('F', 'Female'),
+        ('O', 'Other'),
+    ]
+    
+    BLOOD_TYPE_CHOICES = [
+        ('A+', 'A+'), ('A-', 'A-'), ('B+', 'B+'), ('B-', 'B-'),
+        ('AB+', 'AB+'), ('AB-', 'AB-'), ('O+', 'O+'), ('O-', 'O-'),
+    ]
+    
+    mrn = models.CharField(max_length=20, unique=True, default='', verbose_name="Medical Record Number")
+    national_id = models.CharField(max_length=20, unique=True, blank=True, null=True, verbose_name="National ID")
+    first_name = models.CharField(max_length=100, default='')
+    last_name = models.CharField(max_length=100, default='')
+    middle_name = models.CharField(max_length=100, blank=True)
+    date_of_birth = models.DateField(default='2000-01-01')
+    gender = models.CharField(max_length=1, choices=GENDER_CHOICES, default='M')
+    blood_type = models.CharField(max_length=3, choices=BLOOD_TYPE_CHOICES, blank=True)
+    
+    phone_regex = RegexValidator(regex=r'^\+?1?\d{9,15}$', message="Phone number must be entered in the format: '+999999999'. Up to 15 digits allowed.")
+    phone_number = models.CharField(validators=[phone_regex], max_length=17, blank=True)
+    email = models.EmailField(blank=True)
+    address = models.TextField(default='')
+    
+    # Emergency contact
+    next_of_kin_name = models.CharField(max_length=100, default='')
+    next_of_kin_phone = models.CharField(validators=[phone_regex], max_length=17, default='')
+    next_of_kin_relationship = models.CharField(max_length=50, default='')
+    
+    # Medical information
+    allergies = models.TextField(blank=True)
+    chronic_conditions = models.TextField(blank=True)
+    medications = models.TextField(blank=True)
+    
+    # Insurance information (primary payer)
+    primary_insurance = models.ForeignKey('Payer', on_delete=models.SET_NULL, null=True, blank=True, related_name='primary_patients')
+    insurance_company = models.CharField(max_length=200, blank=True, verbose_name="Insurance Company Name")
+    insurance_id = models.CharField(max_length=100, blank=True, verbose_name="Insurance ID/Policy Number")
+    insurance_member_id = models.CharField(max_length=100, blank=True, verbose_name="Insurance Member ID")
+    insurance_policy_number = models.CharField(max_length=100, blank=True, verbose_name="Policy Number (Legacy)")
+    insurance_group_number = models.CharField(max_length=100, blank=True, verbose_name="Group Number")
+    
+    # Profile picture
+    profile_picture = models.ImageField(upload_to='patient_profiles/', blank=True, null=True)
+    
+    class Meta:
+        ordering = ['last_name', 'first_name']
+    
+    def __str__(self):
+        return f"{self.first_name} {self.last_name} ({self.mrn})"
+    
+    @property
+    def full_name(self):
+        return f"{self.first_name} {self.middle_name} {self.last_name}".strip()
+    
+    @property
+    def age(self):
+        today = timezone.now().date()
+        return today.year - self.date_of_birth.year - ((today.month, today.day) < (self.date_of_birth.month, self.date_of_birth.day))
+    
+    def save(self, *args, **kwargs):
+        """Auto-generate Patient ID (MRN) if not provided"""
+        is_new = self.pk is None
+        
+        # Normalize national_id: convert empty strings to None (for unique constraint)
+        if self.national_id == '':
+            self.national_id = None
+        
+        if not self.mrn or self.mrn == '':
+            self.mrn = self.generate_mrn()
+        super().save(*args, **kwargs)
+        
+        # If this is a new patient and MRN was auto-generated, save again to ensure it's set
+        if is_new and not self.mrn:
+            self.mrn = self.generate_mrn()
+            super().save(update_fields=['mrn'], *args, **kwargs)
+    
+    @staticmethod
+    def generate_mrn():
+        """Generate a unique Patient ID (Medical Record Number) for PrimeCare Medical Center"""
+        from datetime import datetime
+        prefix = "PMC"  # PrimeCare Medical Center
+        year = datetime.now().year
+        # Get the last MRN for this year
+        last_patient = Patient.objects.filter(
+            mrn__startswith=f"{prefix}{year}"
+        ).order_by('-mrn').first()
+        
+        if last_patient and last_patient.mrn:
+            try:
+                last_num = int(last_patient.mrn.replace(f"{prefix}{year}", ""))
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}{year}{new_num:06d}"  # 6 digits for better scalability
+    
+    def get_active_encounters(self):
+        """Get all active encounters for this patient"""
+        return self.encounters.filter(status='active', is_deleted=False)
+    
+    def get_total_invoice_amount(self):
+        """Get total amount from all invoices"""
+        result = self.invoices.filter(is_deleted=False).aggregate(
+            total=Sum('total_amount')
+        )
+        return result['total'] or 0
+    
+    def get_outstanding_balance(self):
+        """Get total outstanding balance"""
+        result = self.invoices.filter(
+            is_deleted=False,
+            status__in=['issued', 'partially_paid', 'overdue']
+        ).aggregate(
+            total=Sum('balance')
+        )
+        return result['total'] or 0
+    
+    def get_active_insurance(self):
+        """Get active insurance information"""
+        from .models_insurance import PatientInsurance
+        from django.db.models import Q
+        return PatientInsurance.objects.filter(
+            patient=self,
+            is_active=True,
+            is_deleted=False
+        ).filter(
+            effective_date__lte=timezone.now().date()
+        ).filter(
+            Q(expiry_date__isnull=True) | Q(expiry_date__gte=timezone.now().date())
+        ).order_by('priority_order').first()
+    
+    def has_insurance(self):
+        """Check if patient has active insurance"""
+        insurance = self.get_active_insurance()
+        return insurance is not None
+
+
+class Encounter(BaseModel):
+    """Patient encounters/visits"""
+    ENCOUNTER_TYPES = [
+        ('outpatient', 'Outpatient'),
+        ('inpatient', 'Inpatient'),
+        ('er', 'Emergency'),
+        ('surgery', 'Surgery'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
+    ]
+    
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='encounters')
+    encounter_type = models.CharField(max_length=20, choices=ENCOUNTER_TYPES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
+    started_at = models.DateTimeField(default=timezone.now)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    location = models.ForeignKey('Ward', on_delete=models.SET_NULL, null=True, blank=True)
+    provider = models.ForeignKey('Staff', on_delete=models.SET_NULL, null=True, blank=True)
+    chief_complaint = models.TextField()
+    diagnosis = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+    # Note: This field requires migration 0015 to be applied
+    # Run: python manage.py migrate
+    current_activity = models.CharField(max_length=50, blank=True, null=True, help_text='Current department activity: Consulting, Lab, Pharmacy', db_column='current_activity')
+    
+    class Meta:
+        ordering = ['-started_at']
+    
+    def __str__(self):
+        return f"{self.patient.full_name} - {self.get_encounter_type_display()} ({self.started_at.strftime('%Y-%m-%d')})"
+    
+    def complete(self):
+        """Mark encounter as completed"""
+        if self.status != 'completed':
+            self.status = 'completed'
+            self.ended_at = timezone.now()
+            self.save()
+    
+    def update_activity(self, activity_type):
+        """Update current department activity"""
+        # Check if field exists in database (migration might not be applied yet)
+        try:
+            activity_mapping = {
+                'consulting': 'Consulting',
+                'lab': 'Lab',
+                'pharmacy': 'Pharmacy',
+                'imaging': 'Imaging',
+            }
+            activity_display = activity_mapping.get(activity_type.lower(), activity_type)
+            
+            # Update activity if not already set or if it's a logical progression
+            if not self.current_activity:
+                self.current_activity = activity_display
+            elif activity_display not in self.current_activity:
+                # Append if multiple activities
+                activities = [a.strip() for a in self.current_activity.split(',')]
+                if activity_display not in activities:
+                    activities.append(activity_display)
+                    self.current_activity = ', '.join(activities)
+            self.save(update_fields=['current_activity', 'modified'])
+        except Exception:
+            # Field doesn't exist yet - migration not applied
+            # Just update notes instead
+            pass
+    
+    def get_activities_list(self):
+        """Get list of active department activities"""
+        try:
+            if not self.current_activity:
+                return []
+            return [a.strip() for a in self.current_activity.split(',')]
+        except AttributeError:
+            # Field doesn't exist yet - migration not applied
+            return []
+    
+    def has_activity(self, activity_type):
+        """Check if encounter has a specific activity"""
+        try:
+            activity_mapping = {
+                'consulting': 'Consulting',
+                'lab': 'Lab',
+                'pharmacy': 'Pharmacy',
+                'imaging': 'Imaging',
+            }
+            activity_display = activity_mapping.get(activity_type.lower(), activity_type)
+            return activity_display in (self.current_activity or '')
+        except AttributeError:
+            # Field doesn't exist yet - migration not applied
+            return False
+    
+    def get_duration_minutes(self):
+        """Get encounter duration in minutes"""
+        if self.ended_at:
+            delta = self.ended_at - self.started_at
+            return int(delta.total_seconds() / 60)
+        return None
+    
+    def get_latest_vitals(self):
+        """Get the most recent vital signs"""
+        return self.vitals.filter(is_deleted=False).order_by('-recorded_at').first()
+    
+    def get_total_cost(self):
+        """Calculate total cost for this encounter"""
+        from decimal import Decimal
+        total = Decimal('0.00')
+        # Sum all orders' associated costs
+        for order in self.orders.filter(is_deleted=False):
+            if order.order_type == 'lab':
+                for result in order.lab_results.filter(is_deleted=False):
+                    if result.test.price:
+                        total += result.test.price
+            elif order.order_type == 'medication':
+                for prescription in order.prescriptions.filter(is_deleted=False):
+                    # Could add drug price calculation here
+                    pass
+        return total
+
+
+class VitalSign(BaseModel):
+    """
+    World-Class Vital Signs System with Advanced Clinical Features
+    Includes NEWS2 scoring, consciousness assessment, pain scale, and more
+    """
+    CONSCIOUSNESS_CHOICES = [
+        ('alert', 'Alert'),
+        ('cvpu', 'Confusion/New Disorientation'),
+        ('voice', 'Responds to Voice'),
+        ('pain', 'Responds to Pain'),
+        ('unresponsive', 'Unresponsive'),
+    ]
+    
+    PAIN_SCALE_CHOICES = [
+        (0, '0 - No Pain'),
+        (1, '1 - Minimal'),
+        (2, '2 - Mild'),
+        (3, '3 - Uncomfortable'),
+        (4, '4 - Moderate'),
+        (5, '5 - Distressing'),
+        (6, '6 - Severe'),
+        (7, '7 - Very Severe'),
+        (8, '8 - Intense'),
+        (9, '9 - Excruciating'),
+        (10, '10 - Unbearable'),
+    ]
+    
+    POSITION_CHOICES = [
+        ('sitting', 'Sitting'),
+        ('standing', 'Standing'),
+        ('lying', 'Lying'),
+        ('supine', 'Supine'),
+    ]
+    
+    encounter = models.ForeignKey(Encounter, on_delete=models.CASCADE, related_name='vitals')
+    recorded_at = models.DateTimeField(default=timezone.now, db_index=True)
+    recorded_by = models.ForeignKey('Staff', on_delete=models.SET_NULL, null=True)
+    
+    # Core Vital Signs
+    systolic_bp = models.PositiveIntegerField(null=True, blank=True, verbose_name="Systolic BP", 
+                                              help_text="mmHg")
+    diastolic_bp = models.PositiveIntegerField(null=True, blank=True, verbose_name="Diastolic BP",
+                                               help_text="mmHg")
+    pulse = models.PositiveIntegerField(null=True, blank=True, verbose_name="Heart Rate/Pulse",
+                                        help_text="beats per minute")
+    temperature = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True,
+                                     help_text="°C")
+    spo2 = models.PositiveIntegerField(null=True, blank=True, verbose_name="SpO2 (Oxygen Saturation)",
+                                       help_text="percentage")
+    respiratory_rate = models.PositiveIntegerField(null=True, blank=True, verbose_name="Respiratory Rate",
+                                                   help_text="breaths per minute")
+    
+    # Extended Vitals
+    weight = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
+                                 help_text="kg")
+    height = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
+                                 help_text="cm")
+    blood_glucose = models.DecimalField(max_digits=5, decimal_places=1, null=True, blank=True,
+                                       verbose_name="Blood Glucose", help_text="mmol/L or mg/dL")
+    
+    # Clinical Assessment
+    consciousness_level = models.CharField(max_length=20, choices=CONSCIOUSNESS_CHOICES, 
+                                          default='alert', verbose_name="Level of Consciousness")
+    pain_score = models.PositiveIntegerField(null=True, blank=True, choices=PAIN_SCALE_CHOICES,
+                                            verbose_name="Pain Score (0-10)")
+    supplemental_oxygen = models.BooleanField(default=False, verbose_name="On Supplemental O2")
+    oxygen_flow_rate = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True,
+                                          help_text="L/min")
+    
+    # Additional Context
+    position = models.CharField(max_length=20, choices=POSITION_CHOICES, blank=True,
+                               help_text="Patient position during measurement")
+    capillary_refill = models.PositiveIntegerField(null=True, blank=True, 
+                                                   help_text="seconds")
+    
+    # Calculated Scores (auto-calculated)
+    news2_score = models.PositiveIntegerField(null=True, blank=True, 
+                                             verbose_name="NEWS2 Score",
+                                             help_text="National Early Warning Score 2")
+    mews_score = models.PositiveIntegerField(null=True, blank=True,
+                                            verbose_name="MEWS Score", 
+                                            help_text="Modified Early Warning Score")
+    
+    # Flags
+    is_critical = models.BooleanField(default=False, db_index=True,
+                                     help_text="Flagged as critical/abnormal")
+    requires_escalation = models.BooleanField(default=False, db_index=True,
+                                             help_text="Requires immediate medical attention")
+    
+    notes = models.TextField(blank=True, verbose_name="Clinical Notes")
+    
+    class Meta:
+        ordering = ['-recorded_at']
+        verbose_name = "Vital Signs"
+        verbose_name_plural = "Vital Signs"
+        indexes = [
+            models.Index(fields=['-recorded_at', 'encounter']),
+            models.Index(fields=['is_critical', 'requires_escalation']),
+        ]
+    
+    def __str__(self):
+        return f"{self.encounter.patient.full_name} - Vitals ({self.recorded_at.strftime('%Y-%m-%d %H:%M')})"
+    
+    @property
+    def bmi(self):
+        """Calculate BMI if weight and height are available"""
+        if self.weight and self.height:
+            # BMI = weight (kg) / height (m)²
+            height_m = float(self.height) / 100
+            return round(float(self.weight) / (height_m ** 2), 1)
+        return None
+    
+    @property
+    def bmi_category(self):
+        """Get BMI category"""
+        bmi = self.bmi
+        if not bmi:
+            return None
+        if bmi < 18.5:
+            return "Underweight"
+        elif bmi < 25:
+            return "Normal"
+        elif bmi < 30:
+            return "Overweight"
+        else:
+            return "Obese"
+    
+    @property
+    def map_pressure(self):
+        """Calculate Mean Arterial Pressure"""
+        if self.systolic_bp and self.diastolic_bp:
+            return round((2 * self.diastolic_bp + self.systolic_bp) / 3, 1)
+        return None
+    
+    def calculate_news2_score(self):
+        """
+        Calculate NEWS2 (National Early Warning Score 2)
+        Used in UK hospitals for detecting deterioration
+        """
+        score = 0
+        
+        # Respiratory Rate
+        if self.respiratory_rate:
+            if self.respiratory_rate <= 8:
+                score += 3
+            elif self.respiratory_rate <= 11:
+                score += 1
+            elif self.respiratory_rate <= 20:
+                score += 0
+            elif self.respiratory_rate <= 24:
+                score += 2
+            else:
+                score += 3
+        
+        # SpO2
+        if self.spo2:
+            if self.supplemental_oxygen:
+                # Scale 2 for patients on oxygen
+                if self.spo2 <= 83:
+                    score += 3
+                elif self.spo2 <= 85:
+                    score += 2
+                elif self.spo2 <= 87:
+                    score += 1
+                elif self.spo2 <= 92:
+                    score += 0
+                elif self.spo2 <= 94:
+                    score += 1
+                elif self.spo2 <= 96:
+                    score += 2
+                else:
+                    score += 3
+            else:
+                # Scale 1 for patients breathing air
+                if self.spo2 <= 91:
+                    score += 3
+                elif self.spo2 <= 93:
+                    score += 2
+                elif self.spo2 <= 95:
+                    score += 1
+                else:
+                    score += 0
+        
+        # Supplemental Oxygen
+        if self.supplemental_oxygen:
+            score += 2
+        
+        # Temperature
+        if self.temperature:
+            temp = float(self.temperature)
+            if temp <= 35.0:
+                score += 3
+            elif temp <= 36.0:
+                score += 1
+            elif temp <= 38.0:
+                score += 0
+            elif temp <= 39.0:
+                score += 1
+            else:
+                score += 2
+        
+        # Systolic BP
+        if self.systolic_bp:
+            if self.systolic_bp <= 90:
+                score += 3
+            elif self.systolic_bp <= 100:
+                score += 2
+            elif self.systolic_bp <= 110:
+                score += 1
+            elif self.systolic_bp <= 219:
+                score += 0
+            else:
+                score += 3
+        
+        # Heart Rate
+        if self.pulse:
+            if self.pulse <= 40:
+                score += 3
+            elif self.pulse <= 50:
+                score += 1
+            elif self.pulse <= 90:
+                score += 0
+            elif self.pulse <= 110:
+                score += 1
+            elif self.pulse <= 130:
+                score += 2
+            else:
+                score += 3
+        
+        # Consciousness
+        if self.consciousness_level and self.consciousness_level != 'alert':
+            score += 3
+        
+        return score
+    
+    def calculate_mews_score(self):
+        """Calculate Modified Early Warning Score"""
+        score = 0
+        
+        # Respiratory Rate
+        if self.respiratory_rate:
+            if self.respiratory_rate < 9:
+                score += 2
+            elif self.respiratory_rate <= 14:
+                score += 0
+            elif self.respiratory_rate <= 20:
+                score += 1
+            elif self.respiratory_rate <= 29:
+                score += 2
+            else:
+                score += 3
+        
+        # Heart Rate
+        if self.pulse:
+            if self.pulse < 40:
+                score += 2
+            elif self.pulse <= 50:
+                score += 1
+            elif self.pulse <= 100:
+                score += 0
+            elif self.pulse <= 110:
+                score += 1
+            elif self.pulse <= 129:
+                score += 2
+            else:
+                score += 3
+        
+        # Systolic BP
+        if self.systolic_bp:
+            if self.systolic_bp < 70:
+                score += 3
+            elif self.systolic_bp <= 80:
+                score += 2
+            elif self.systolic_bp <= 100:
+                score += 1
+            elif self.systolic_bp <= 199:
+                score += 0
+            else:
+                score += 2
+        
+        # Temperature
+        if self.temperature:
+            temp = float(self.temperature)
+            if temp < 35:
+                score += 2
+            elif temp <= 38.4:
+                score += 0
+            else:
+                score += 2
+        
+        # Consciousness
+        if self.consciousness_level:
+            if self.consciousness_level == 'alert':
+                score += 0
+            elif self.consciousness_level in ['voice', 'cvpu']:
+                score += 1
+            elif self.consciousness_level == 'pain':
+                score += 2
+            else:  # unresponsive
+                score += 3
+        
+        return score
+    
+    def check_critical_values(self):
+        """Check if any vital signs are in critical range"""
+        critical = False
+        escalate = False
+        
+        # Critical Vital Ranges
+        if self.systolic_bp:
+            if self.systolic_bp < 90 or self.systolic_bp > 180:
+                critical = True
+            if self.systolic_bp < 70 or self.systolic_bp > 200:
+                escalate = True
+        
+        if self.pulse:
+            if self.pulse < 50 or self.pulse > 120:
+                critical = True
+            if self.pulse < 40 or self.pulse > 140:
+                escalate = True
+        
+        if self.temperature:
+            temp = float(self.temperature)
+            if temp < 36.0 or temp > 38.5:
+                critical = True
+            if temp < 35.0 or temp > 40.0:
+                escalate = True
+        
+        if self.spo2:
+            if self.spo2 < 92:
+                critical = True
+            if self.spo2 < 88:
+                escalate = True
+        
+        if self.respiratory_rate:
+            if self.respiratory_rate < 12 or self.respiratory_rate > 20:
+                critical = True
+            if self.respiratory_rate < 8 or self.respiratory_rate > 30:
+                escalate = True
+        
+        if self.consciousness_level and self.consciousness_level not in ['alert', 'cvpu']:
+            critical = True
+            escalate = True
+        
+        return critical, escalate
+    
+    def save(self, *args, **kwargs):
+        """Auto-calculate scores and flags before saving"""
+        # Calculate early warning scores
+        self.news2_score = self.calculate_news2_score()
+        self.mews_score = self.calculate_mews_score()
+        
+        # Check for critical values
+        self.is_critical, self.requires_escalation = self.check_critical_values()
+        
+        super().save(*args, **kwargs)
+
+
+# ==================== STAFF & HR MODULE ====================
+
+class Department(BaseModel):
+    """Hospital departments"""
+    name = models.CharField(max_length=100, unique=True)
+    code = models.CharField(max_length=10, unique=True, blank=True)
+    description = models.TextField(blank=True)
+    head_of_department = models.ForeignKey('Staff', on_delete=models.SET_NULL, null=True, blank=True, related_name='headed_departments')
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['name']
+    
+    def __str__(self):
+        return self.name
+
+
+class Staff(BaseModel):
+    """Staff profiles - Enhanced with auto-ID generation"""
+    PROFESSION_CHOICES = [
+        ('doctor', 'Doctor'),
+        ('nurse', 'Nurse'),
+        ('pharmacist', 'Pharmacist'),
+        ('lab_technician', 'Lab Technician'),
+        ('radiologist', 'Radiologist'),
+        ('admin', 'Administrator'),
+        ('receptionist', 'Receptionist'),
+        ('cashier', 'Cashier'),
+    ]
+    
+    BLOOD_GROUP_CHOICES = [
+        ('A+', 'A+'),
+        ('A-', 'A-'),
+        ('B+', 'B+'),
+        ('B-', 'B-'),
+        ('O+', 'O+'),
+        ('O-', 'O-'),
+        ('AB+', 'AB+'),
+        ('AB-', 'AB-'),
+    ]
+    
+    MARITAL_STATUS_CHOICES = [
+        ('single', 'Single'),
+        ('married', 'Married'),
+        ('divorced', 'Divorced'),
+        ('widowed', 'Widowed'),
+    ]
+    
+    # Basic Information
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='staff')
+    employee_id = models.CharField(max_length=20, unique=True, blank=True)
+    profession = models.CharField(max_length=20, choices=PROFESSION_CHOICES)
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name='staff')
+    
+    # Professional Details
+    registration_number = models.CharField(max_length=50, blank=True, help_text='Medical council registration number')
+    license_number = models.CharField(max_length=50, blank=True, help_text='Professional license number')
+    specialization = models.CharField(max_length=200, blank=True, help_text='Area of specialization')
+    
+    # Contact Information
+    phone_number = models.CharField(max_length=17, blank=True)
+    personal_email = models.EmailField(blank=True, help_text='Personal email address')
+    address = models.TextField(blank=True, help_text='Residential address')
+    city = models.CharField(max_length=100, blank=True)
+    
+    # Personal Details
+    date_of_birth = models.DateField(null=True, blank=True)
+    gender = models.CharField(max_length=10, choices=[
+        ('male', 'Male'),
+        ('female', 'Female'),
+        ('other', 'Other'),
+    ], blank=True)
+    blood_group = models.CharField(max_length=3, choices=BLOOD_GROUP_CHOICES, blank=True)
+    marital_status = models.CharField(max_length=20, choices=MARITAL_STATUS_CHOICES, blank=True)
+    
+    # Emergency Contact
+    emergency_contact_name = models.CharField(max_length=200, blank=True)
+    emergency_contact_relationship = models.CharField(max_length=100, blank=True)
+    emergency_contact_phone = models.CharField(max_length=17, blank=True)
+    
+    # Employment Details
+    date_of_joining = models.DateField(null=True, blank=True)
+    employment_status = models.CharField(max_length=20, choices=[
+        ('active', 'Active'),
+        ('on_leave', 'On Leave'),
+        ('suspended', 'Suspended'),
+        ('terminated', 'Terminated'),
+        ('retired', 'Retired'),
+    ], default='active')
+    
+    # Banking Details (for payroll)
+    bank_name = models.CharField(max_length=100, blank=True)
+    bank_account_number = models.CharField(max_length=50, blank=True)
+    bank_branch = models.CharField(max_length=100, blank=True)
+    
+    # Additional
+    is_active = models.BooleanField(default=True)
+    staff_notes = models.TextField(blank=True, help_text='Additional notes about staff member')
+    
+    class Meta:
+        ordering = ['user__last_name', 'user__first_name']
+    
+    def __str__(self):
+        return f"{self.user.get_full_name()} ({self.get_profession_display()})"
+    
+    def save(self, *args, **kwargs):
+        """Auto-generate employee ID if not provided"""
+        if not self.employee_id:
+            self.employee_id = self.generate_employee_id()
+        super().save(*args, **kwargs)
+    
+    def generate_employee_id(self):
+        """Generate employee ID: DEPT-PROF-NUMBER"""
+        # Get department code (first 3 letters)
+        dept_code = self.department.code[:3].upper() if self.department and self.department.code else 'GEN'
+        
+        # Get profession code
+        profession_codes = {
+            'doctor': 'DOC',
+            'nurse': 'NUR',
+            'pharmacist': 'PHA',
+            'lab_technician': 'LAB',
+            'radiologist': 'RAD',
+            'admin': 'ADM',
+            'receptionist': 'REC',
+            'cashier': 'CSH',
+        }
+        prof_code = profession_codes.get(self.profession, 'STF')
+        
+        # Get next sequential number for this department-profession combination
+        prefix = f"{dept_code}-{prof_code}"
+        
+        # Find highest existing number with this prefix
+        existing = Staff.objects.filter(
+            employee_id__startswith=prefix,
+            is_deleted=False
+        ).order_by('-employee_id').first()
+        
+        if existing and existing.employee_id:
+            try:
+                # Extract number from employee_id (format: DEPT-PROF-NUMBER)
+                parts = existing.employee_id.split('-')
+                if len(parts) >= 3:
+                    last_num = int(parts[2])
+                    new_num = last_num + 1
+                else:
+                    new_num = 1
+            except (ValueError, IndexError):
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}-{new_num:04d}"
+    
+    @property
+    def phone(self):
+        """Alias for phone_number for compatibility"""
+        return self.phone_number
+    
+    @property
+    def age(self):
+        """Calculate age from date of birth"""
+        if self.date_of_birth:
+            from datetime import date
+            today = date.today()
+            return today.year - self.date_of_birth.year - ((today.month, today.day) < (self.date_of_birth.month, self.date_of_birth.day))
+        return None
+    
+    @property
+    def years_of_service(self):
+        """Calculate years of service"""
+        if self.date_of_joining:
+            from datetime import date
+            today = date.today()
+            return today.year - self.date_of_joining.year - ((today.month, today.day) < (self.date_of_joining.month, self.date_of_joining.day))
+        return None
+    
+    @property
+    def years_until_retirement(self):
+        """Calculate years until retirement (assuming retirement at 60)"""
+        if self.date_of_birth:
+            from datetime import date
+            today = date.today()
+            retirement_age = 60
+            current_age = self.age or 0
+            years_left = retirement_age - current_age
+            return max(0, years_left) if years_left > 0 else 0
+        return None
+    
+    @property
+    def retirement_date(self):
+        """Calculate retirement date (assuming retirement at 60)"""
+        if self.date_of_birth:
+            from datetime import date
+            retirement_age = 60
+            birth_year = self.date_of_birth.year
+            retirement_year = birth_year + retirement_age
+            return date(retirement_year, self.date_of_birth.month, self.date_of_birth.day)
+        return None
+    
+    def is_birthday_today(self):
+        """Check if today is staff's birthday"""
+        if self.date_of_birth:
+            from datetime import date
+            today = date.today()
+            return (today.month == self.date_of_birth.month and 
+                    today.day == self.date_of_birth.day)
+        return False
+    
+    def is_birthday_soon(self, days=7):
+        """Check if birthday is within next N days"""
+        if self.date_of_birth:
+            from datetime import date, timedelta
+            today = date.today()
+            
+            # Create this year's birthday
+            this_year_birthday = date(today.year, self.date_of_birth.month, self.date_of_birth.day)
+            
+            # If birthday already passed this year, check next year
+            if this_year_birthday < today:
+                this_year_birthday = date(today.year + 1, self.date_of_birth.month, self.date_of_birth.day)
+            
+            # Check if within next N days
+            days_until = (this_year_birthday - today).days
+            return 0 <= days_until <= days
+        return False
+    
+    def days_until_birthday(self):
+        """Calculate days until next birthday"""
+        if self.date_of_birth:
+            from datetime import date
+            today = date.today()
+            
+            # Create this year's birthday
+            this_year_birthday = date(today.year, self.date_of_birth.month, self.date_of_birth.day)
+            
+            # If birthday already passed this year, use next year
+            if this_year_birthday < today:
+                this_year_birthday = date(today.year + 1, self.date_of_birth.month, self.date_of_birth.day)
+            
+            return (this_year_birthday - today).days
+        return None
+    
+    @staticmethod
+    def get_birthdays_today():
+        """Get all staff with birthdays today"""
+        from datetime import date
+        today = date.today()
+        return Staff.objects.filter(
+            date_of_birth__month=today.month,
+            date_of_birth__day=today.day,
+            is_active=True,
+            is_deleted=False
+        )
+    
+    @staticmethod
+    def get_upcoming_birthdays(days=7):
+        """Get staff with birthdays in next N days"""
+        from datetime import date, timedelta
+        today = date.today()
+        upcoming = []
+        
+        # Get all active staff with birthdays
+        staff_with_birthdays = Staff.objects.filter(
+            date_of_birth__isnull=False,
+            is_active=True,
+            is_deleted=False
+        )
+        
+        for staff in staff_with_birthdays:
+            if staff.is_birthday_soon(days):
+                upcoming.append(staff)
+        
+        return upcoming
+
+
+# ==================== FACILITY & BEDS MODULE ====================
+
+class Ward(BaseModel):
+    """Hospital wards"""
+    WARD_TYPES = [
+        ('general', 'General Ward'),
+        ('icu', 'ICU'),
+        ('hdu', 'HDU'),
+        ('maternity', 'Maternity'),
+        ('paediatric', 'Paediatric'),
+        ('surgery', 'Surgery'),
+        ('emergency', 'Emergency'),
+    ]
+    
+    name = models.CharField(max_length=100, unique=True)
+    code = models.CharField(max_length=10, unique=True, blank=True)
+    ward_type = models.CharField(max_length=20, choices=WARD_TYPES)
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name='wards')
+    capacity = models.PositiveIntegerField(default=1)
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['name']
+    
+    def __str__(self):
+        return f"{self.name} ({self.get_ward_type_display()})"
+
+
+class Bed(BaseModel):
+    """Hospital beds"""
+    BED_TYPES = [
+        ('general', 'General'),
+        ('icu', 'ICU'),
+        ('hdu', 'HDU'),
+        ('maternity', 'Maternity'),
+        ('paediatric', 'Paediatric'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('available', 'Available'),
+        ('occupied', 'Occupied'),
+        ('maintenance', 'Maintenance'),
+        ('reserved', 'Reserved'),
+    ]
+    
+    ward = models.ForeignKey(Ward, on_delete=models.CASCADE, related_name='beds')
+    bed_number = models.CharField(max_length=10)
+    bed_type = models.CharField(max_length=20, choices=BED_TYPES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='available')
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['ward', 'bed_number']
+        unique_together = ['ward', 'bed_number']
+    
+    def __str__(self):
+        return f"{self.ward.name} - Bed {self.bed_number}"
+    
+    def is_available(self):
+        """Check if bed is available"""
+        return self.status == 'available' and self.is_active
+    
+    def occupy(self):
+        """Mark bed as occupied"""
+        self.status = 'occupied'
+        self.save()
+    
+    def vacate(self):
+        """Mark bed as available"""
+        self.status = 'available'
+        self.save()
+
+
+class Admission(BaseModel):
+    """Patient admissions"""
+    STATUS_CHOICES = [
+        ('admitted', 'Admitted'),
+        ('discharged', 'Discharged'),
+        ('transferred', 'Transferred'),
+    ]
+    
+    encounter = models.OneToOneField(Encounter, on_delete=models.CASCADE, related_name='admission', null=True, blank=True)
+    ward = models.ForeignKey(Ward, on_delete=models.CASCADE, related_name='admissions', null=True, blank=True)
+    bed = models.ForeignKey(Bed, on_delete=models.CASCADE, related_name='admissions', null=True, blank=True)
+    admit_date = models.DateTimeField(default=timezone.now)
+    discharge_date = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='admitted')
+    admitting_doctor = models.ForeignKey(Staff, on_delete=models.SET_NULL, null=True)
+    diagnosis_icd10 = models.CharField(max_length=10, blank=True)
+    notes = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['-admit_date']
+    
+    def __str__(self):
+        patient_name = self.encounter.patient.full_name if self.encounter else "Unknown"
+        ward_name = self.ward.name if self.ward else "Unknown"
+        return f"{patient_name} - {ward_name}"
+    
+    def discharge(self):
+        """Discharge patient and free up bed"""
+        self.status = 'discharged'
+        self.discharge_date = timezone.now()
+        
+        if self.bed:
+            self.bed.vacate()
+        
+        if self.encounter:
+            self.encounter.complete()
+        
+        self.save()
+    
+    def get_duration_days(self):
+        """Get admission duration in days"""
+        if self.discharge_date:
+            delta = self.discharge_date - self.admit_date
+            return delta.days
+        else:
+            delta = timezone.now() - self.admit_date
+            return delta.days
+
+
+# ==================== ORDERS & LAB MODULE ====================
+
+class Order(BaseModel):
+    """Medical orders (lab, imaging, medications)"""
+    ORDER_TYPES = [
+        ('lab', 'Laboratory'),
+        ('imaging', 'Imaging'),
+        ('medication', 'Medication'),
+        ('procedure', 'Procedure'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('in_progress', 'In Progress'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
+    ]
+    
+    PRIORITY_CHOICES = [
+        ('routine', 'Routine'),
+        ('urgent', 'Urgent'),
+        ('stat', 'STAT'),
+    ]
+    
+    encounter = models.ForeignKey(Encounter, on_delete=models.CASCADE, related_name='orders')
+    order_type = models.CharField(max_length=20, choices=ORDER_TYPES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default='routine')
+    requested_by = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='orders_requested')
+    notes = models.TextField(blank=True)
+    requested_at = models.DateTimeField(default=timezone.now)
+    
+    class Meta:
+        ordering = ['-requested_at']
+    
+    def __str__(self):
+        return f"{self.encounter.patient.full_name} - {self.get_order_type_display()}"
+
+
+class LabTest(BaseModel):
+    """Laboratory test catalog"""
+    code = models.CharField(max_length=20, unique=True)
+    name = models.CharField(max_length=200)
+    specimen_type = models.CharField(max_length=50)
+    tat_minutes = models.PositiveIntegerField(default=60, verbose_name="Turnaround Time (minutes)")
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['name']
+    
+    def __str__(self):
+        return f"{self.code} - {self.name}"
+
+
+class LabResult(BaseModel):
+    """Laboratory test results"""
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='lab_results')
+    test = models.ForeignKey(LabTest, on_delete=models.CASCADE, related_name='results')
+    status = models.CharField(max_length=20, choices=[
+        ('pending', 'Pending'),
+        ('in_progress', 'In Progress'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
+    ], default='pending')
+    
+    value = models.CharField(max_length=100, blank=True)
+    units = models.CharField(max_length=20, blank=True)
+    range_low = models.CharField(max_length=20, blank=True)
+    range_high = models.CharField(max_length=20, blank=True)
+    is_abnormal = models.BooleanField(default=False)
+    # Structured details for panel tests (e.g., FBC components) or qualitative outcomes
+    details = models.JSONField(null=True, blank=True)
+    qualitative_result = models.CharField(max_length=50, blank=True, help_text='For qualitative tests: Reactive/Non-reactive/Positive/Negative')
+    
+    verified_by = models.ForeignKey(Staff, on_delete=models.SET_NULL, null=True, blank=True)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['-created']
+    
+    def __str__(self):
+        patient_name = self.order.encounter.patient.full_name if self.order.encounter else "Unknown"
+        return f"{patient_name} - {self.test.name}"
+
+
+# ==================== PHARMACY MODULE ====================
+
+class Drug(BaseModel):
+    """Pharmacy drug formulary"""
+    atc_code = models.CharField(max_length=20, blank=True, verbose_name="ATC Code")
+    name = models.CharField(max_length=200)
+    generic_name = models.CharField(max_length=200, blank=True)
+    strength = models.CharField(max_length=50)
+    form = models.CharField(max_length=50)  # tablet, capsule, injection, etc.
+    pack_size = models.CharField(max_length=50)
+    is_controlled = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    
+    # Pricing fields
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Selling price per unit")
+    cost_price = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Cost from supplier")
+    
+    class Meta:
+        ordering = ['name']
+    
+    def __str__(self):
+        return f"{self.name} {self.strength} {self.form}"
+
+
+class PharmacyStock(BaseModel):
+    """Pharmacy inventory"""
+    drug = models.ForeignKey(Drug, on_delete=models.CASCADE, related_name='stock')
+    batch_number = models.CharField(max_length=50)
+    expiry_date = models.DateField()
+    location = models.CharField(max_length=100, default='Main Pharmacy')
+    quantity_on_hand = models.PositiveIntegerField(default=0)
+    reorder_level = models.PositiveIntegerField(default=10)
+    unit_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    
+    class Meta:
+        ordering = ['drug__name', 'expiry_date']
+    
+    def __str__(self):
+        return f"{self.drug.name} - Batch {self.batch_number}"
+
+
+class Prescription(BaseModel):
+    """E-prescriptions"""
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='prescriptions')
+    drug = models.ForeignKey(Drug, on_delete=models.CASCADE, related_name='prescriptions')
+    quantity = models.PositiveIntegerField()
+    dose = models.CharField(max_length=100)
+    route = models.CharField(max_length=50)  # oral, IV, IM, etc.
+    frequency = models.CharField(max_length=50)  # daily, twice daily, etc.
+    duration = models.CharField(max_length=50)  # 7 days, 2 weeks, etc.
+    instructions = models.TextField(blank=True)
+    
+    prescribed_by = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='prescriptions')
+    
+    class Meta:
+        ordering = ['-created']
+    
+    def __str__(self):
+        patient_name = self.order.encounter.patient.full_name if self.order.encounter else "Unknown"
+        return f"{patient_name} - {self.drug.name}"
+    
+    @property
+    def total_cost(self):
+        """Calculate total cost of prescription"""
+        from decimal import Decimal
+        unit_price = getattr(self.drug, 'unit_price', Decimal('0.00'))
+        return unit_price * self.quantity
+
+
+# ==================== BILLING MODULE ====================
+
+class Payer(BaseModel):
+    """Insurance/insurance payers"""
+    PAYER_TYPES = [
+        ('nhis', 'NHIS'),
+        ('private', 'Private Insurance'),
+        ('cash', 'Cash'),
+        ('corporate', 'Corporate'),
+    ]
+    
+    name = models.CharField(max_length=200)
+    payer_type = models.CharField(max_length=20, choices=PAYER_TYPES)
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['name']
+    
+    def __str__(self):
+        return self.name
+
+
+class ServiceCode(BaseModel):
+    """Service codes for billing"""
+    code = models.CharField(max_length=20, unique=True)
+    description = models.CharField(max_length=200)
+    category = models.CharField(max_length=50)
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['code']
+    
+    def __str__(self):
+        return f"{self.code} - {self.description}"
+
+
+class PriceBook(BaseModel):
+    """Pricing for different payers"""
+    payer = models.ForeignKey(Payer, on_delete=models.CASCADE, related_name='price_books')
+    service_code = models.ForeignKey(ServiceCode, on_delete=models.CASCADE, related_name='price_books')
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2)
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        unique_together = ['payer', 'service_code']
+        ordering = ['payer', 'service_code']
+    
+    def __str__(self):
+        return f"{self.payer.name} - {self.service_code.description}"
+
+
+class Invoice(BaseModel):
+    """Patient invoices"""
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('issued', 'Issued'),
+        ('paid', 'Paid'),
+        ('partially_paid', 'Partially Paid'),
+        ('overdue', 'Overdue'),
+        ('cancelled', 'Cancelled'),
+    ]
+    
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='invoices')
+    encounter = models.ForeignKey(Encounter, on_delete=models.CASCADE, related_name='invoices', null=True, blank=True)
+    payer = models.ForeignKey(Payer, on_delete=models.CASCADE, related_name='invoices')
+    invoice_number = models.CharField(max_length=50, unique=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    issued_at = models.DateTimeField(default=timezone.now)
+    due_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-issued_at']
+    
+    def __str__(self):
+        return f"Invoice {self.invoice_number} - {self.patient.full_name}"
+    
+    def save(self, *args, **kwargs):
+        """Auto-generate invoice number and set defaults"""
+        if not self.invoice_number:
+            self.invoice_number = self.generate_invoice_number()
+        
+        # Set default due date if not provided (30 days from issue)
+        if not self.due_at:
+            from datetime import timedelta
+            self.due_at = self.issued_at + timedelta(days=30)
+        
+        # Only calculate totals if invoice has been saved before (has lines)
+        # This prevents issues with new invoices that don't have lines yet
+        if self.pk:
+            self.calculate_totals()
+        
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_invoice_number():
+        """Generate a unique invoice number"""
+        from datetime import datetime
+        prefix = "INV"
+        year = datetime.now().year
+        month = datetime.now().month
+        # Get the last invoice for this month
+        last_invoice = Invoice.objects.filter(
+            invoice_number__startswith=f"{prefix}{year}{month:02d}"
+        ).order_by('-invoice_number').first()
+        
+        if last_invoice and last_invoice.invoice_number:
+            try:
+                last_num = int(last_invoice.invoice_number.replace(f"{prefix}{year}{month:02d}", ""))
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}{year}{month:02d}{new_num:05d}"
+    
+    def calculate_totals(self):
+        """Calculate total amount and balance from invoice lines and payments"""
+        from decimal import Decimal
+        
+        # Calculate total from invoice lines
+        total = Decimal('0.00')
+        try:
+            for line in self.lines.filter(is_deleted=False):
+                total += line.line_total
+        except:
+            # If lines don't exist yet (new invoice), keep total as 0
+            pass
+        
+        self.total_amount = total
+        
+        # Calculate balance based on payments made
+        if self.status == 'paid':
+            # Fully paid invoices have zero balance
+            self.balance = Decimal('0.00')
+        else:
+            # Calculate payments made against this invoice
+            total_paid = Decimal('0.00')
+            try:
+                # Get all payment receipts for this invoice
+                from .models_accounting import PaymentReceipt
+                receipts = PaymentReceipt.objects.filter(
+                    invoice=self,
+                    is_deleted=False
+                )
+                total_paid = sum([r.amount_paid for r in receipts], Decimal('0.00'))
+            except:
+                # If PaymentReceipt doesn't exist or error, check transactions
+                try:
+                    from .models_accounting import Transaction
+                    transactions = Transaction.objects.filter(
+                        invoice=self,
+                        transaction_type='payment_received',
+                        is_deleted=False
+                    )
+                    total_paid = sum([t.amount for t in transactions], Decimal('0.00'))
+                except:
+                    pass
+            
+            # Balance = Total - Payments Made
+            self.balance = total - total_paid
+            
+            # Auto-update status based on balance
+            if self.balance <= 0 and total > 0:
+                self.status = 'paid'
+            elif self.balance < total and self.balance > 0:
+                self.status = 'partially_paid'
+            elif self.status == 'draft' and total > 0:
+                # Don't auto-change draft status
+                pass
+    
+    def update_totals(self):
+        """Calculate and save totals"""
+        self.calculate_totals()
+        self.save(update_fields=['total_amount', 'balance'])
+    
+    def mark_as_paid(self, amount=None, payment_method='cash', processed_by=None, reference_number=''):
+        """Mark invoice as paid and create proper accounting entries"""
+        from decimal import Decimal
+        from .models_accounting import Transaction, PaymentReceipt
+        
+        if amount is None:
+            amount = self.balance
+        
+        # Record the payment as a Transaction
+        transaction = Transaction.objects.create(
+            transaction_type='payment_received',
+            invoice=self,
+            patient=self.patient,
+            amount=amount,
+            payment_method=payment_method,
+            reference_number=reference_number,
+            processed_by=processed_by,
+            transaction_date=timezone.now(),
+            notes=f'Payment for Invoice {self.invoice_number}'
+        )
+        
+        # Create payment receipt
+        PaymentReceipt.objects.create(
+            transaction=transaction,
+            invoice=self,
+            patient=self.patient,
+            amount_paid=amount,
+            payment_method=payment_method,
+            received_by=processed_by,
+            receipt_date=timezone.now(),
+            notes=f'Payment for Invoice {self.invoice_number}'
+        )
+        
+        # Update invoice status and balance
+        if amount >= self.balance:
+            self.status = 'paid'
+            self.balance = Decimal('0.00')
+        else:
+            self.status = 'partially_paid'
+            self.balance -= Decimal(str(amount))
+        self.save()
+        
+        return transaction
+    
+    def get_days_overdue(self):
+        """Get number of days overdue"""
+        if self.status == 'overdue' or (self.status in ['issued', 'partially_paid'] and self.due_at < timezone.now()):
+            delta = timezone.now() - self.due_at
+            return delta.days
+        return 0
+
+
+class InvoiceLine(BaseModel):
+    """Invoice line items"""
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='lines')
+    service_code = models.ForeignKey(ServiceCode, on_delete=models.CASCADE, related_name='invoice_lines')
+    description = models.CharField(max_length=200)
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2)
+    tax_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    line_total = models.DecimalField(max_digits=10, decimal_places=2)
+    
+    class Meta:
+        ordering = ['created']
+    
+    def __str__(self):
+        return f"{self.invoice.invoice_number} - {self.description}"
+    
+    def save(self, *args, **kwargs):
+        """Calculate line total before saving"""
+        from decimal import Decimal
+        subtotal = Decimal(str(self.quantity)) * Decimal(str(self.unit_price))
+        self.line_total = subtotal - Decimal(str(self.discount_amount)) + Decimal(str(self.tax_amount))
+        super().save(*args, **kwargs)
+        
+        # Recalculate invoice totals
+        if self.invoice:
+            self.invoice.calculate_totals()
+            self.invoice.save()
+
+
+# ==================== NEW FEATURES: APPOINTMENTS ====================
+
+class Appointment(BaseModel):
+    """Patient appointments"""
+    STATUS_CHOICES = [
+        ('scheduled', 'Scheduled'),
+        ('confirmed', 'Confirmed'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
+        ('no_show', 'No Show'),
+    ]
+    
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='appointments')
+    provider = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='appointments')
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name='appointments')
+    appointment_date = models.DateTimeField()
+    duration_minutes = models.PositiveIntegerField(default=30)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='scheduled')
+    reason = models.TextField()
+    notes = models.TextField(blank=True)
+    reminder_sent = models.BooleanField(default=False)
+    
+    class Meta:
+        ordering = ['-appointment_date']
+    
+    def __str__(self):
+        return f"{self.patient.full_name} - {self.appointment_date.strftime('%Y-%m-%d %H:%M')}"
+    
+    def is_past_due(self):
+        """Check if appointment is past due"""
+        return self.appointment_date < timezone.now() and self.status in ['scheduled', 'confirmed']
+
+
+# ==================== NEW FEATURES: MEDICAL RECORDS ====================
+
+class MedicalRecord(BaseModel):
+    """Medical records/documents"""
+    RECORD_TYPES = [
+        ('lab_result', 'Lab Result'),
+        ('imaging', 'Imaging Report'),
+        ('prescription', 'Prescription'),
+        ('discharge_summary', 'Discharge Summary'),
+        ('consultation_note', 'Consultation Note'),
+        ('surgical_report', 'Surgical Report'),
+        ('other', 'Other'),
+    ]
+    
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='medical_records')
+    encounter = models.ForeignKey(Encounter, on_delete=models.CASCADE, related_name='medical_records', null=True, blank=True)
+    record_type = models.CharField(max_length=20, choices=RECORD_TYPES)
+    title = models.CharField(max_length=200)
+    document = models.FileField(upload_to='medical_records/', blank=True, null=True)
+    content = models.TextField(blank=True)
+    created_by = models.ForeignKey(Staff, on_delete=models.SET_NULL, null=True)
+    
+    class Meta:
+        ordering = ['-created']
+    
+    def __str__(self):
+        return f"{self.title} - {self.patient.full_name}"
+
+
+# ==================== NEW FEATURES: NOTIFICATIONS ====================
+
+class Notification(BaseModel):
+    """System notifications"""
+    NOTIFICATION_TYPES = [
+        ('appointment_reminder', 'Appointment Reminder'),
+        ('lab_result_ready', 'Lab Result Ready'),
+        ('invoice_overdue', 'Invoice Overdue'),
+        ('low_stock', 'Low Stock Alert'),
+        ('bed_available', 'Bed Available'),
+        ('order_urgent', 'Urgent Order'),
+        ('other', 'Other'),
+    ]
+    
+    recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
+    notification_type = models.CharField(max_length=20, choices=NOTIFICATION_TYPES)
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
+    related_object_id = models.UUIDField(null=True, blank=True)
+    related_object_type = models.CharField(max_length=50, blank=True)
+    
+    class Meta:
+        ordering = ['-created']
+    
+    def __str__(self):
+        return f"{self.title} - {self.recipient.username}"
+    
+    def mark_as_read(self):
+        """Mark notification as read"""
+        if not self.is_read:
+            self.is_read = True
+            self.read_at = timezone.now()
+            self.save()
+
+
+# Import advanced models to ensure they're registered
+# This must be at the end to avoid circular imports
+try:
+    from . import models_advanced  # noqa
+except ImportError:
+    pass
+
+# Import workflow and accounting models
+try:
+    from . import models_workflow  # noqa
+    from . import models_accounting  # noqa
+    from . import models_hr  # noqa
+except ImportError:
+    pass
+
+# Import missing features models
+try:
+    from . import models_missing_features  # noqa
+except ImportError:
+    pass
+
+# Import specialist models
+try:
+    from . import models_specialists  # noqa
+except ImportError:
+    pass
+
+# Import procurement models
+try:
+    from . import models_procurement  # noqa
+except ImportError:
+    pass
+
+# Import pricing models
+try:
+    from . import models_pricing  # noqa
+except ImportError:
+    pass
+
+# Import diagnosis models
+try:
+    from . import models_diagnosis  # noqa
+except ImportError:
+    pass
+
+# Import blood bank models
+try:
+    from . import models_blood_bank  # noqa
+except ImportError:
+    pass
+
+# Import login tracking models
+try:
+    from . import models_login_tracking  # noqa
+except ImportError:
+    pass
+
+# Import medical records models
+try:
+    from . import models_medical_records  # noqa
+except ImportError:
+    pass
+
+# Import HR activities models
+try:
+    from . import models_hr_activities  # noqa
+except ImportError:
+    pass
+
+# Import HOD models
+try:
+    from . import models_hod_simple  # noqa
+except ImportError:
+    pass

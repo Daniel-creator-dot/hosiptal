@@ -1,0 +1,756 @@
+{% extends 'hospital/base.html' %}
+{% load humanize static %}
+
+{% block title %}Encounter - {{ encounter.patient.full_name }} - HMS{% endblock %}
+{% block page_title %}📋 Patient Encounter{% endblock %}
+{% block page_subtitle %}{{ encounter.get_encounter_type_display }} · Started {{ encounter.started_at|naturaltime }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Hero Section */
+    .encounter-hero {
+        background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%);
+        color: white;
+        border-radius: 20px;
+        padding: 40px;
+        margin-bottom: 30px;
+        box-shadow: 0 10px 40px rgba(79, 70, 229, 0.3);
+        position: relative;
+        overflow: hidden;
+    }
+
+    .encounter-hero::after {
+        content: '';
+        position: absolute;
+        top: -100px;
+        right: -100px;
+        width: 300px;
+        height: 300px;
+        background: radial-gradient(circle, rgba(255,255,255,0.1), transparent);
+        border-radius: 50%;
+    }
+
+    .hero-grid {
+        display: grid;
+        grid-template-columns: 1fr 2fr 1fr;
+        gap: 30px;
+        align-items: center;
+    }
+
+    .patient-avatar-large {
+        width: 100px;
+        height: 100px;
+        border-radius: 50%;
+        background: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 48px;
+        color: #4F46E5;
+        font-weight: 700;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+    }
+
+    .patient-details h2 {
+        font-size: 32px;
+        font-weight: 700;
+        margin-bottom: 8px;
+    }
+
+    .patient-info-row {
+        display: flex;
+        gap: 24px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+        font-size: 15px;
+        opacity: 0.95;
+    }
+
+    .info-badge {
+        background: rgba(255,255,255,0.2);
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-weight: 500;
+    }
+
+    .hero-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .hero-btn {
+        padding: 12px 20px;
+        border-radius: 10px;
+        border: 2px solid rgba(255,255,255,0.3);
+        background: rgba(255,255,255,0.15);
+        color: white;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+        text-decoration: none;
+        text-align: center;
+    }
+
+    .hero-btn:hover {
+        background: white;
+        color: #4F46E5;
+        transform: translateX(4px);
+    }
+
+    /* Info Cards Grid */
+    .info-cards-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 24px;
+        margin-bottom: 30px;
+    }
+
+    .info-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+        border-left: 4px solid transparent;
+        transition: all 0.3s;
+    }
+
+    .info-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+    }
+
+    .info-card.primary { border-left-color: #4F46E5; }
+    .info-card.success { border-left-color: #10B981; }
+    .info-card.warning { border-left-color: #F59E0B; }
+    .info-card.danger { border-left-color: #EF4444; }
+
+    .info-card-header {
+        display: flex;
+        justify-content: between;
+        align-items: center;
+        margin-bottom: 16px;
+    }
+
+    .info-card-title {
+        font-size: 16px;
+        font-weight: 700;
+        color: #1F2937;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .info-card-icon {
+        font-size: 28px;
+        color: #4F46E5;
+    }
+
+    .info-card-content {
+        color: #6B7280;
+        line-height: 1.6;
+    }
+
+    .info-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #F3F4F6;
+    }
+
+    .info-item:last-child {
+        border-bottom: none;
+    }
+
+    .info-label {
+        font-weight: 600;
+        color: #6B7280;
+    }
+
+    .info-value {
+        color: #1F2937;
+        font-weight: 500;
+    }
+
+    /* Activity Feed */
+    .activity-feed {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+
+    .activity-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 12px;
+        border-bottom: 2px solid #F3F4F6;
+    }
+
+    .activity-title {
+        font-size: 20px;
+        font-weight: 700;
+        color: #1F2937;
+    }
+
+    .activity-item {
+        display: flex;
+        gap: 16px;
+        padding: 16px;
+        border-radius: 12px;
+        margin-bottom: 12px;
+        transition: all 0.3s;
+        background: #F9FAFB;
+    }
+
+    .activity-item:hover {
+        background: #F3F4F6;
+        transform: translateX(4px);
+    }
+
+    .activity-icon-circle {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: #EEF2FF;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .activity-icon-circle i {
+        font-size: 22px;
+        color: #4F46E5;
+    }
+
+    .activity-details {
+        flex: 1;
+    }
+
+    .activity-action {
+        font-weight: 600;
+        color: #1F2937;
+        margin-bottom: 4px;
+    }
+
+    .activity-meta {
+        font-size: 13px;
+        color: #6B7280;
+    }
+
+    .activity-time {
+        font-size: 12px;
+        color: #9CA3AF;
+        white-space: nowrap;
+    }
+
+    /* Vitals Chart */
+    .vitals-dashboard {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+
+    .vital-card-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 16px;
+    }
+
+    .vital-card {
+        background: linear-gradient(135deg, #F0F9FF 0%, #E0F2FE 100%);
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        border: 2px solid #BAE6FD;
+        transition: all 0.3s;
+    }
+
+    .vital-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 20px rgba(59, 130, 246, 0.2);
+    }
+
+    .vital-card.alert {
+        background: linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%);
+        border-color: #FCA5A5;
+    }
+
+    .vital-value-display {
+        font-size: 28px;
+        font-weight: 700;
+        color: #0C4A6E;
+        margin: 8px 0;
+    }
+
+    .vital-label-display {
+        font-size: 12px;
+        color: #475569;
+        text-transform: uppercase;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+    }
+
+    .vital-icon-display {
+        font-size: 32px;
+        color: #0EA5E9;
+    }
+
+    /* Orders Table Enhanced */
+    .orders-table-modern {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0 12px;
+    }
+
+    .orders-table-modern thead th {
+        background: #F9FAFB;
+        padding: 16px;
+        font-weight: 700;
+        color: #374151;
+        text-transform: uppercase;
+        font-size: 12px;
+        letter-spacing: 0.5px;
+    }
+
+    .orders-table-modern tbody tr {
+        background: white;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        transition: all 0.3s;
+    }
+
+    .orders-table-modern tbody tr:hover {
+        transform: scale(1.01);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    }
+
+    .orders-table-modern tbody td {
+        padding: 16px;
+    }
+
+    .orders-table-modern tbody td:first-child {
+        border-radius: 12px 0 0 12px;
+    }
+
+    .orders-table-modern tbody td:last-child {
+        border-radius: 0 12px 12px 0;
+    }
+
+    /* Priority Badge */
+    .priority-badge-modern {
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+
+    .priority-stat { background: #FEE2E2; color: #991B1B; }
+    .priority-urgent { background: #FED7AA; color: #9A3412; }
+    .priority-routine { background: #DBEAFE; color: #1E40AF; }
+
+    /* Section Panels */
+    .section-panel {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+
+    .section-header-modern {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 2px solid #F3F4F6;
+    }
+
+    .section-title-modern {
+        font-size: 20px;
+        font-weight: 700;
+        color: #1F2937;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .section-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        background: #EEF2FF;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #4F46E5;
+        font-size: 20px;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .hero-grid {
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+        
+        .info-cards-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .vital-card-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Hero Section -->
+<div class="encounter-hero">
+    <div class="hero-grid">
+        <!-- Patient Avatar -->
+        <div class="text-center">
+            <div class="patient-avatar-large mx-auto">
+                {{ encounter.patient.full_name|slice:":1"|upper }}
+            </div>
+            <div class="mt-3">
+                <span class="badge-modern badge-light" style="background: rgba(255,255,255,0.2); color: white; padding: 8px 16px;">
+                    {{ encounter.get_encounter_type_display }}
+                </span>
+            </div>
+        </div>
+        
+        <!-- Patient Details -->
+        <div class="patient-details">
+            <h2>{{ encounter.patient.full_name }}</h2>
+            <div class="patient-info-row">
+                <span class="info-badge"><i class="bi bi-credit-card me-1"></i>MRN: {{ encounter.patient.mrn }}</span>
+                <span class="info-badge"><i class="bi bi-calendar me-1"></i>{{ encounter.patient.age }} years</span>
+                <span class="info-badge"><i class="bi bi-gender-ambiguous me-1"></i>{{ encounter.patient.get_gender_display }}</span>
+                {% if encounter.patient.blood_type %}
+                <span class="info-badge"><i class="bi bi-droplet me-1"></i>{{ encounter.patient.blood_type }}</span>
+                {% endif %}
+            </div>
+            <div class="patient-info-row mt-2">
+                <span class="info-badge"><i class="bi bi-telephone me-1"></i>{{ encounter.patient.phone_number|default:"No phone" }}</span>
+                {% if encounter.patient.email %}
+                <span class="info-badge"><i class="bi bi-envelope me-1"></i>{{ encounter.patient.email }}</span>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Actions -->
+        <div class="hero-actions">
+            {% if encounter.status == 'active' %}
+            <a href="{% url 'hospital:consultation_view' encounter_id=encounter.pk %}" class="hero-btn">
+                <i class="bi bi-stethoscope me-2"></i>Start Consultation
+            </a>
+            {% endif %}
+            <a href="{% url 'hospital:patient_flow' encounter.pk %}" class="hero-btn">
+                <i class="bi bi-diagram-3 me-2"></i>Patient Flow
+            </a>
+            <a href="{% url 'hospital:record_vitals' encounter.pk %}" class="hero-btn">
+                <i class="bi bi-heart-pulse me-2"></i>Record Vitals
+            </a>
+            <a href="{% url 'hospital:patient_detail' encounter.patient.pk %}" class="hero-btn">
+                <i class="bi bi-person me-2"></i>Patient Chart
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Info Cards Grid -->
+<div class="info-cards-grid">
+    <!-- Encounter Info -->
+    <div class="info-card primary">
+        <div class="info-card-header">
+            <div class="info-card-title">
+                <div class="section-icon">
+                    <i class="bi bi-hospital"></i>
+                </div>
+                Encounter Details
+            </div>
+        </div>
+        <div class="info-card-content">
+            <div class="info-item">
+                <span class="info-label">Status:</span>
+                <span class="info-value">
+                    <span class="badge bg-{% if encounter.status == 'active' %}success{% elif encounter.status == 'completed' %}secondary{% else %}danger{% endif %}">
+                        {{ encounter.get_status_display }}
+                    </span>
+                </span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Started:</span>
+                <span class="info-value">{{ encounter.started_at|date:"M d, Y H:i" }}</span>
+            </div>
+            {% if encounter.ended_at %}
+            <div class="info-item">
+                <span class="info-label">Ended:</span>
+                <span class="info-value">{{ encounter.ended_at|date:"M d, Y H:i" }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Duration:</span>
+                <span class="info-value">{{ encounter.get_duration_minutes }} minutes</span>
+            </div>
+            {% endif %}
+            <div class="info-item">
+                <span class="info-label">Location:</span>
+                <span class="info-value">{{ encounter.location.name|default:"-" }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Provider:</span>
+                <span class="info-value">{{ encounter.provider.user.get_full_name|default:"-" }}</span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Clinical Info -->
+    <div class="info-card success">
+        <div class="info-card-header">
+            <div class="info-card-title">
+                <div class="section-icon">
+                    <i class="bi bi-clipboard-pulse"></i>
+                </div>
+                Clinical Information
+            </div>
+        </div>
+        <div class="info-card-content">
+            <div class="mb-3">
+                <strong class="d-block mb-1" style="color: #059669;">Chief Complaint:</strong>
+                <p class="mb-0">{{ encounter.chief_complaint|default:"Not specified" }}</p>
+            </div>
+            {% if encounter.diagnosis %}
+            <div class="mb-3">
+                <strong class="d-block mb-1" style="color: #059669;">Diagnosis:</strong>
+                <p class="mb-0">{{ encounter.diagnosis }}</p>
+            </div>
+            {% endif %}
+            {% if encounter.notes %}
+            <div>
+                <strong class="d-block mb-1" style="color: #059669;">Notes:</strong>
+                <p class="mb-0">{{ encounter.notes }}</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Cost Info -->
+    {% if encounter.get_total_cost > 0 %}
+    <div class="info-card warning">
+        <div class="info-card-header">
+            <div class="info-card-title">
+                <div class="section-icon">
+                    <i class="bi bi-currency-exchange"></i>
+                </div>
+                Financial Summary
+            </div>
+        </div>
+        <div class="info-card-content">
+            <div style="text-align: center; padding: 20px;">
+                <div style="font-size: 36px; font-weight: 700; color: #D97706;">
+                    GHS {{ encounter.get_total_cost|floatformat:2 }}
+                </div>
+                <div class="text-muted mt-2">Total Cost</div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Vital Signs Dashboard -->
+{% if latest_vitals %}
+<div class="vitals-dashboard mb-4">
+    <div class="section-header-modern">
+        <div class="section-title-modern">
+            <div class="section-icon">
+                <i class="bi bi-activity"></i>
+            </div>
+            Vital Signs
+        </div>
+        <a href="{% url 'hospital:record_vitals' encounter.pk %}" class="btn btn-sm btn-primary">
+            <i class="bi bi-plus-circle me-1"></i>Add New
+        </a>
+    </div>
+    
+    <div class="vital-card-grid">
+        <div class="vital-card {% if latest_vitals.systolic_bp > 140 or latest_vitals.diastolic_bp > 90 %}alert{% endif %}">
+            <div class="vital-icon-display"><i class="bi bi-heart-pulse"></i></div>
+            <div class="vital-value-display">{{ latest_vitals.systolic_bp }}/{{ latest_vitals.diastolic_bp }}</div>
+            <div class="vital-label-display">Blood Pressure (mmHg)</div>
+        </div>
+        
+        <div class="vital-card">
+            <div class="vital-icon-display"><i class="bi bi-activity"></i></div>
+            <div class="vital-value-display">{{ latest_vitals.pulse|default:"--" }}</div>
+            <div class="vital-label-display">Pulse (bpm)</div>
+        </div>
+        
+        <div class="vital-card {% if latest_vitals.temperature > 38 %}alert{% endif %}">
+            <div class="vital-icon-display"><i class="bi bi-thermometer"></i></div>
+            <div class="vital-value-display">{{ latest_vitals.temperature|default:"--" }}</div>
+            <div class="vital-label-display">Temperature (°C)</div>
+        </div>
+        
+        <div class="vital-card {% if latest_vitals.spo2 < 95 %}alert{% endif %}">
+            <div class="vital-icon-display"><i class="bi bi-lungs"></i></div>
+            <div class="vital-value-display">{{ latest_vitals.spo2|default:"--" }}</div>
+            <div class="vital-label-display">SpO2 (%)</div>
+        </div>
+        
+        <div class="vital-card">
+            <div class="vital-icon-display"><i class="bi bi-speedometer2"></i></div>
+            <div class="vital-value-display">{{ latest_vitals.respiratory_rate|default:"--" }}</div>
+            <div class="vital-label-display">Resp Rate (/min)</div>
+        </div>
+        
+        <div class="vital-card">
+            <div class="vital-icon-display"><i class="bi bi-person"></i></div>
+            <div class="vital-value-display">{{ latest_vitals.weight|default:"--" }}</div>
+            <div class="vital-label-display">Weight (kg)</div>
+        </div>
+    </div>
+    
+    <div class="text-muted text-center mt-3" style="font-size: 13px;">
+        Recorded {{ latest_vitals.recorded_at|naturaltime }}
+    </div>
+</div>
+{% endif %}
+
+<!-- Activity Feed -->
+<div class="row g-4">
+    <!-- Orders -->
+    <div class="col-md-6">
+        <div class="section-panel">
+            <div class="section-header-modern">
+                <div class="section-title-modern">
+                    <div class="section-icon">
+                        <i class="bi bi-file-earmark-medical"></i>
+                    </div>
+                    Orders & Tests
+                </div>
+            </div>
+            
+            {% if orders %}
+            <table class="orders-table-modern">
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th>Priority</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for order in orders|slice:":10" %}
+                    <tr>
+                        <td>
+                            <strong>{{ order.get_order_type_display }}</strong>
+                            {% if order.notes %}
+                            <div class="text-muted small">{{ order.notes|truncatewords:8 }}</div>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="badge bg-{% if order.status == 'completed' %}success{% elif order.status == 'in_progress' %}info{% else %}warning{% endif %}">
+                                {{ order.get_status_display }}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="priority-badge-modern priority-{{ order.priority }}">
+                                {{ order.get_priority_display }}
+                            </span>
+                        </td>
+                        <td>{{ order.requested_at|date:"M d, H:i" }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox" style="font-size: 56px; color: #ddd;"></i>
+                <p class="text-muted mt-3">No orders yet</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Referrals -->
+    <div class="col-md-6">
+        <div class="section-panel">
+            <div class="section-header-modern">
+                <div class="section-title-modern">
+                    <div class="section-icon">
+                        <i class="bi bi-arrow-right-circle"></i>
+                    </div>
+                    Referrals
+                </div>
+                {% if encounter.status == 'active' %}
+                <a href="{% url 'hospital:create_referral' encounter_id=encounter.pk %}" class="btn btn-sm btn-primary">
+                    <i class="bi bi-plus-circle me-1"></i>Create
+                </a>
+                {% endif %}
+            </div>
+            
+            {% if referrals %}
+                {% for referral in referrals %}
+                <div class="activity-item">
+                    <div class="activity-icon-circle">
+                        <i class="bi bi-person-badge"></i>
+                    </div>
+                    <div class="activity-details">
+                        <div class="activity-action">{{ referral.specialty.name }}</div>
+                        <div class="activity-meta">
+                            To: {{ referral.specialist.staff.user.get_full_name }}
+                            <br>
+                            Status: <span class="badge bg-{% if referral.status == 'completed' %}success{% elif referral.status == 'accepted' %}info{% elif referral.status == 'declined' %}danger{% else %}warning{% endif %} badge-sm">{{ referral.get_status_display }}</span>
+                        </div>
+                    </div>
+                    <div class="activity-time">
+                        {{ referral.referred_date|naturaltime }}
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="text-center py-5">
+                    <i class="bi bi-arrow-right-circle" style="font-size: 56px; color: #ddd;"></i>
+                    <p class="text-muted mt-3">No referrals</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Complete Encounter Button -->
+{% if encounter.status == 'active' %}
+<div class="text-center my-5">
+    <form method="post" action="/admin/hospital/encounter/{{ encounter.pk }}/change/" class="d-inline">
+        <button type="button" class="btn btn-lg" style="background: linear-gradient(135deg, #10B981 0%, #059669 100%); color: white; padding: 16px 48px; border-radius: 12px; font-weight: 700; box-shadow: 0 6px 20px rgba(16, 185, 129, 0.3);" onclick="if(confirm('Mark this encounter as completed?')) window.location.href='/admin/hospital/encounter/{{ encounter.pk }}/change/'">
+            <i class="bi bi-check-circle-fill me-2"></i>Complete Encounter
+        </button>
+    </form>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Auto-refresh encounter status every 30 seconds
+setInterval(() => {
+    fetch('{% url "hospital:api_stats" %}')
+        .then(response => response.json())
+        .then(data => {
+            // Could update stats here
+        })
+        .catch(error => console.error('Error:', error));
+}, 30000);
+</script>
+{% endblock %}
+

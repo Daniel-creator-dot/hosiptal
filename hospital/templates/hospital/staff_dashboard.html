@@ -1,0 +1,282 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}My Dashboard - {{ staff.user.get_full_name }} - HMS{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="mb-4">
+        <h1 style="font-weight: 700;"><i class="bi bi-person-circle"></i> Welcome, {{ staff.user.get_full_name }}!</h1>
+        <p class="text-muted">{{ staff.get_profession_display }} | {{ staff.department.name if staff.department else 'No Department' }}</p>
+    </div>
+
+    <!-- Quick Stats -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card border-start border-primary border-4">
+                <div class="card-body">
+                    <h6 class="text-muted">Annual Leave</h6>
+                    <h3 class="text-primary">{{ leave_balance.annual_leave }} days</h3>
+                    <small class="text-muted">Available</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-start border-success border-4">
+                <div class="card-body">
+                    <h6 class="text-muted">Sick Leave</h6>
+                    <h3 class="text-success">{{ leave_balance.sick_leave }} days</h3>
+                    <small class="text-muted">Available</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-start border-warning border-4">
+                <div class="card-body">
+                    <h6 class="text-muted">Pending Requests</h6>
+                    <h3 class="text-warning">{{ pending_leaves }}</h3>
+                    <small class="text-muted">Awaiting approval</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-start border-info border-4">
+                <div class="card-body">
+                    <h6 class="text-muted">Attendance</h6>
+                    <h3 class="text-info">{{ attendance_count }} days</h3>
+                    <small class="text-muted">This month</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="card mb-4 border-primary">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0"><i class="bi bi-lightning-fill"></i> Quick Actions</h5>
+        </div>
+        <div class="card-body">
+            <div class="row g-2 mb-2">
+                <div class="col-md-3">
+                    <a href="{% url 'hospital:staff_leave_request_create' %}" class="btn btn-success w-100">
+                        <i class="bi bi-calendar-plus"></i> Request Leave
+                    </a>
+                </div>
+                <div class="col-md-3">
+                    <a href="{% url 'hospital:staff_leave_list' %}" class="btn btn-primary w-100">
+                        <i class="bi bi-list-ul"></i> My Leave Requests
+                    </a>
+                </div>
+                <div class="col-md-3">
+                    <a href="{% url 'hospital:staff_training_history' %}" class="btn btn-info w-100">
+                        <i class="bi bi-book"></i> My Trainings
+                    </a>
+                </div>
+                <div class="col-md-3">
+                    <a href="{% url 'hospital:staff_profile' %}" class="btn btn-secondary w-100">
+                        <i class="bi bi-person-badge"></i> My Profile
+                    </a>
+                </div>
+            </div>
+            
+            <div class="row g-2">
+                <div class="col-md-6">
+                    <a href="/hms/biometric/login/" class="btn btn-outline-primary w-100">
+                        <i class="bi bi-fingerprint me-2"></i> Biometric Login
+                    </a>
+                </div>
+                <div class="col-md-6">
+                    <a href="/hms/biometric/my-profile/" class="btn btn-outline-success w-100">
+                        <i class="bi bi-shield-check me-2"></i> My Biometric Profile
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Left Column -->
+        <div class="col-md-8">
+            <!-- Upcoming Leaves -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-calendar-check"></i> Approved Upcoming Leaves</h5>
+                </div>
+                <div class="card-body">
+                    {% if upcoming_leaves %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Leave Type</th>
+                                    <th>Start Date</th>
+                                    <th>End Date</th>
+                                    <th>Days</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for leave in upcoming_leaves %}
+                                <tr>
+                                    <td><span class="badge bg-info">{{ leave.get_leave_type_display }}</span></td>
+                                    <td>{{ leave.start_date|date:"M d, Y" }}</td>
+                                    <td>{{ leave.end_date|date:"M d, Y" }}</td>
+                                    <td>{{ leave.days_requested }} day{{ leave.days_requested|pluralize }}</td>
+                                    <td><span class="badge bg-success">{{ leave.get_status_display }}</span></td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted text-center py-3">No upcoming leaves</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Upcoming Shifts -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-clock"></i> My Upcoming Shifts</h5>
+                </div>
+                <div class="card-body">
+                    {% if upcoming_shifts %}
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Shift Type</th>
+                                    <th>Time</th>
+                                    <th>Department</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for shift in upcoming_shifts %}
+                                <tr>
+                                    <td>{{ shift.shift_date|date:"M d, Y" }}</td>
+                                    <td><span class="badge bg-secondary">{{ shift.get_shift_type_display }}</span></td>
+                                    <td>{{ shift.start_time }} - {{ shift.end_time }}</td>
+                                    <td>{{ shift.department.name }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted text-center py-3">No upcoming shifts scheduled</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column -->
+        <div class="col-md-4">
+            <!-- Latest Performance Review -->
+            {% if latest_review %}
+            <div class="card mb-4">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0"><i class="bi bi-star"></i> Latest Performance Review</h5>
+                </div>
+                <div class="card-body">
+                    <p><strong>Period:</strong> {{ latest_review.review_period_start|date:"M Y" }} - {{ latest_review.review_period_end|date:"M Y" }}</p>
+                    <p><strong>Overall Rating:</strong></p>
+                    <h4>
+                        <span class="badge bg-{% if latest_review.overall_rating == 'outstanding' %}success{% elif latest_review.overall_rating == 'excellent' %}primary{% elif latest_review.overall_rating == 'good' %}info{% else %}warning{% endif %}">
+                            {{ latest_review.get_overall_rating_display }}
+                        </span>
+                    </h4>
+                    {% if latest_review.overall_score %}
+                    <p><strong>Score:</strong> {{ latest_review.overall_score }}/5.0</p>
+                    {% endif %}
+                    <a href="{% url 'hospital:staff_performance_reviews' %}" class="btn btn-outline-info btn-sm w-100 mt-2">
+                        View All Reviews
+                    </a>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Recent Trainings -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-mortarboard"></i> Recent Trainings</h5>
+                </div>
+                <div class="card-body">
+                    {% if recent_trainings %}
+                    <ul class="list-group list-group-flush">
+                        {% for training in recent_trainings %}
+                        <li class="list-group-item px-0">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <strong>{{ training.training_title|truncatewords:5 }}</strong>
+                                    <br><small class="text-muted">{{ training.start_date|date:"M d, Y" }}</small>
+                                </div>
+                                <span class="badge bg-{% if training.status == 'completed' %}success{% elif training.status == 'in_progress' %}warning{% else %}secondary{% endif %}">
+                                    {{ training.get_status_display }}
+                                </span>
+                            </div>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    <a href="{% url 'hospital:staff_training_history' %}" class="btn btn-outline-secondary btn-sm w-100 mt-2">
+                        View All Trainings
+                    </a>
+                    {% else %}
+                    <p class="text-muted text-center py-3">No training records</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Leave Balance Details -->
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-calendar-event"></i> Leave Balance</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between">
+                            <span>Annual Leave:</span>
+                            <strong>{{ leave_balance.annual_leave }} days</strong>
+                        </div>
+                        <div class="progress" style="height: 8px;">
+                            <div class="progress-bar bg-primary" style="width: {% widthratio leave_balance.annual_leave 30 100 %}%"></div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between">
+                            <span>Sick Leave:</span>
+                            <strong>{{ leave_balance.sick_leave }} days</strong>
+                        </div>
+                        <div class="progress" style="height: 8px;">
+                            <div class="progress-bar bg-success" style="width: {% widthratio leave_balance.sick_leave 15 100 %}%"></div>
+                        </div>
+                    </div>
+                    <div class="mb-0">
+                        <div class="d-flex justify-content-between">
+                            <span>Casual Leave:</span>
+                            <strong>{{ leave_balance.casual_leave }} days</strong>
+                        </div>
+                        <div class="progress" style="height: 8px;">
+                            <div class="progress-bar bg-info" style="width: {% widthratio leave_balance.casual_leave 10 100 %}%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,108 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Staff Shifts - HMS{% endblock %}
+{% block page_title %}Staff Shifts & Timetable{% endblock %}
+
+{% block content %}
+<!-- Filters and Actions -->
+<div class="modern-card mb-4">
+    <div class="row g-3 align-items-end">
+        <div class="col-md-3">
+            <label class="form-label">Date</label>
+            <input type="date" name="date" value="{{ date_filter }}" class="form-control form-control-modern" id="date_filter">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Staff</label>
+            <select name="staff" class="form-select form-control-modern" id="staff_filter">
+                <option value="">All Staff</option>
+                {% for s in staff_list %}
+                <option value="{{ s.pk }}" {% if staff_filter == s.pk|stringformat:"s" %}selected{% endif %}>
+                    {{ s.user.get_full_name|default:s.user.username }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Department</label>
+            <select name="department" class="form-select form-control-modern" id="dept_filter">
+                <option value="">All Departments</option>
+                {% for dept in departments %}
+                <option value="{{ dept.pk }}" {% if department_filter == dept.pk|stringformat:"s" %}selected{% endif %}>
+                    {{ dept.name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <a href="{% url 'hospital:staff_shift_create' %}" class="btn btn-primary-modern w-100">
+                <i class="bi bi-plus-circle"></i> Add Shift
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Shifts by Date -->
+{% if shifts_by_date %}
+    {% for date_key, shifts in shifts_by_date.items %}
+    <div class="modern-card mb-4">
+        <h6 style="font-weight: 600; margin-bottom: 16px;">
+            <i class="bi bi-calendar"></i> {{ shifts.0.shift_date|date:"l, F d, Y" }}
+        </h6>
+        <div class="row g-3">
+            {% for shift in shifts %}
+            <div class="col-md-6">
+                <div style="background: var(--light); padding: 16px; border-radius: 8px; border-left: 4px solid var(--primary);">
+                    <div class="row align-items-center">
+                        <div class="col-md-6">
+                            <strong>{{ shift.staff.user.get_full_name|default:shift.staff.user.username }}</strong><br>
+                            <small class="text-muted">{{ shift.get_shift_type_display }}</small><br>
+                            <small>{{ shift.start_time|time:"H:i" }} - {{ shift.end_time|time:"H:i" }}</small>
+                        </div>
+                        <div class="col-md-4">
+                            <small><strong>Dept:</strong> {{ shift.department.name }}</small><br>
+                            {% if shift.location %}
+                            <small><strong>Location:</strong> {{ shift.location.name }}</small>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-2">
+                            {% if shift.is_confirmed %}
+                            <span class="badge-modern badge-success">Confirmed</span>
+                            {% else %}
+                            <span class="badge-modern badge-warning">Pending</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+{% else %}
+<div class="modern-card">
+    <p class="text-muted text-center py-4">No shifts scheduled</p>
+</div>
+{% endif %}
+
+<script>
+document.getElementById('date_filter').addEventListener('change', function() {
+    const params = new URLSearchParams(window.location.search);
+    params.set('date', this.value);
+    window.location.search = params.toString();
+});
+
+document.getElementById('staff_filter').addEventListener('change', function() {
+    const params = new URLSearchParams(window.location.search);
+    params.set('staff', this.value);
+    window.location.search = params.toString();
+});
+
+document.getElementById('dept_filter').addEventListener('change', function() {
+    const params = new URLSearchParams(window.location.search);
+    params.set('department', this.value);
+    window.location.search = params.toString();
+});
+</script>
+{% endblock %}
+

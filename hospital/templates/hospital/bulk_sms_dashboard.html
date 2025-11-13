@@ -1,0 +1,652 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Bulk SMS Dashboard - HMS{% endblock %}
+{% block page_title %}📱 Bulk SMS Dashboard{% endblock %}
+{% block page_subtitle %}Select recipients from database and send bulk SMS messages{% endblock %}
+
+{% block extra_css %}
+<style>
+    .recipient-card {
+        border: 2px solid var(--border);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        transition: all 0.2s;
+        cursor: pointer;
+        background: white;
+    }
+    
+    .recipient-card:hover {
+        border-color: var(--primary);
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+        transform: translateY(-2px);
+    }
+    
+    .recipient-card.selected {
+        border-color: var(--primary);
+        background: #f0f4ff;
+    }
+    
+    .recipient-info {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .recipient-details {
+        flex: 1;
+    }
+    
+    .recipient-name {
+        font-weight: 600;
+        font-size: 16px;
+        color: var(--dark);
+        margin-bottom: 4px;
+    }
+    
+    .recipient-meta {
+        font-size: 13px;
+        color: var(--gray);
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+    
+    .recipient-meta span {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+    
+    .section-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 16px 24px;
+        border-radius: 12px 12px 0 0;
+        font-weight: 600;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .section-header .badge {
+        background: rgba(255, 255, 255, 0.3);
+        color: white;
+        padding: 4px 12px;
+        border-radius: 20px;
+    }
+    
+    .selected-summary {
+        position: sticky;
+        top: 80px;
+        z-index: 100;
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        margin-bottom: 24px;
+    }
+    
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--gray);
+    }
+    
+    .empty-state i {
+        font-size: 64px;
+        margin-bottom: 16px;
+        opacity: 0.3;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Info Alert -->
+{% if total_staff == 0 and total_patients == 0 and has_phone == '1' %}
+<div class="alert alert-info mb-4">
+    <i class="bi bi-info-circle"></i> 
+    <strong>No recipients found with phone numbers.</strong> 
+    Try changing "Phone Status" to "All" to see all staff and patients, or check if phone numbers are entered in the database.
+</div>
+{% endif %}
+
+<!-- Summary of Selected Recipients -->
+<div class="selected-summary" id="selectedSummary" style="display: none;">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h6 class="mb-1" style="font-weight: 600;">Selected Recipients</h6>
+            <p class="text-muted mb-0" style="font-size: 14px;">
+                <span id="selectedCount">0</span> recipient(s) selected
+            </p>
+        </div>
+        <div>
+            <button type="button" class="btn btn-sm btn-outline-secondary me-2" id="clearSelection">
+                Clear All
+            </button>
+            <button type="button" class="btn btn-primary btn-modern" id="openSendModal">
+                <i class="bi bi-send"></i> Send SMS to Selected
+            </button>
+        </div>
+    </div>
+    <div id="selectedRecipientsList" class="border rounded p-3" style="max-height: 150px; overflow-y: auto; background: #f8f9fa; font-size: 13px;">
+        <small class="text-muted">No recipients selected</small>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="modern-card mb-4">
+    <form method="get" class="row g-3 align-items-end">
+        <div class="col-md-4">
+            <label for="search" class="form-label">Search</label>
+            <input type="text" name="search" id="search" value="{{ search }}" 
+                   placeholder="Search by name, phone, MRN, employee ID..." 
+                   class="form-control form-control-modern">
+        </div>
+        <div class="col-md-2">
+            <label for="type" class="form-label">Type</label>
+            <select name="type" id="type" class="form-select form-control-modern">
+                <option value="all" {% if recipient_type == 'all' %}selected{% endif %}>All</option>
+                <option value="staff" {% if recipient_type == 'staff' %}selected{% endif %}>Staff Only</option>
+                <option value="patient" {% if recipient_type == 'patient' %}selected{% endif %}>Patients Only</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label for="has_phone" class="form-label">Phone Status</label>
+            <select name="has_phone" id="has_phone" class="form-select form-control-modern">
+                <option value="0" {% if has_phone == '0' %}selected{% endif %}>All</option>
+                <option value="1" {% if has_phone == '1' %}selected{% endif %}>With Phone Only</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-primary-modern w-100">Filter</button>
+        </div>
+        <div class="col-md-2">
+            <a href="{% url 'hospital:bulk_sms_dashboard' %}" class="btn btn-outline-secondary w-100">Clear</a>
+        </div>
+    </form>
+    <div class="mt-3">
+        <a href="{% url 'hospital:birthday_reminders' %}" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-balloon"></i> Go to Birthday Dashboard
+        </a>
+        <a href="{% url 'hospital:sms_notifications' %}" class="btn btn-sm btn-outline-secondary ms-2">
+            <i class="bi bi-chat-dots"></i> View SMS History
+        </a>
+    </div>
+</div>
+
+<!-- Statistics -->
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="modern-card text-center">
+            <h3 class="mb-0" style="color: #10b981;">{{ total_staff }}</h3>
+            <p class="text-muted mb-0">{% if has_phone == '1' %}Staff with Phone{% else %}Total Staff{% endif %}</p>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="modern-card text-center">
+            <h3 class="mb-0" style="color: #3b82f6;">{{ total_patients }}</h3>
+            <p class="text-muted mb-0">{% if has_phone == '1' %}Patients with Phone{% else %}Total Patients{% endif %}</p>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="modern-card text-center">
+            <h3 class="mb-0" style="color: #667eea;">{{ total_staff|add:total_patients }}</h3>
+            <p class="text-muted mb-0">Total Available</p>
+        </div>
+    </div>
+</div>
+
+<!-- Debug Info (remove in production) -->
+{% if False %}
+<div class="alert alert-warning">
+    Debug: recipient_type={{ recipient_type }}, total_staff={{ total_staff }}, total_patients={{ total_patients }}, 
+    has_phone={{ has_phone }}, staff_page_obj exists={{ staff_page_obj|yesno:"Yes,No" }}, 
+    patient_page_obj exists={{ patient_page_obj|yesno:"Yes,No" }}
+</div>
+{% endif %}
+
+<div class="row">
+    <!-- Staff Section -->
+    {% if recipient_type == 'all' or recipient_type == 'staff' %}
+    <div class="{% if recipient_type == 'all' %}col-md-6{% else %}col-md-12{% endif %} mb-4">
+        <div class="modern-card p-0">
+            <div class="section-header">
+                <span><i class="bi bi-people"></i> Staff Members</span>
+                <span class="badge">{{ total_staff }}</span>
+            </div>
+            <div class="p-3">
+                {% if staff_page_obj %}
+                    {% if staff_page_obj.object_list|length > 0 %}
+                    <div class="mb-3">
+                        <input type="checkbox" id="selectAllStaff" class="form-check-input">
+                        <label for="selectAllStaff" class="form-check-label ms-2"><strong>Select All on Page</strong></label>
+                    </div>
+                    
+                    <div id="staffList">
+                        {% for staff in staff_page_obj %}
+                        <div class="recipient-card" data-type="staff" data-id="{{ staff.id }}" data-name="{{ staff.user.get_full_name|default:staff.user.username }}" data-phone="{{ staff.phone_number }}">
+                            <div class="recipient-info">
+                                <div class="recipient-details">
+                                    <div class="recipient-name">{{ staff.user.get_full_name|default:staff.user.username }}</div>
+                                    <div class="recipient-meta">
+                                        <span><i class="bi bi-building"></i> {{ staff.department.name|default:"No Department" }}</span>
+                                        <span><i class="bi bi-telephone"></i> {{ staff.phone_number|default:"No Phone" }}</span>
+                                        {% if staff.employee_id %}<span><i class="bi bi-badge"></i> {{ staff.employee_id }}</span>{% endif %}
+                                        {% if staff.get_profession_display %}<span><i class="bi bi-briefcase"></i> {{ staff.get_profession_display }}</span>{% endif %}
+                                    </div>
+                                </div>
+                                <input type="checkbox" class="form-check-input recipient-checkbox" style="width: 20px; height: 20px;" 
+                                       {% if not staff.phone_number %}disabled title="No phone number"{% endif %}>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    
+                    <!-- Pagination -->
+                    {% if staff_page_obj.has_other_pages %}
+                    <nav>
+                        <ul class="pagination justify-content-center mt-3">
+                            {% if staff_page_obj.has_previous %}
+                            <li class="page-item">
+                                <a class="page-link" href="?{% for key, value in request.GET.items %}{% if key != 'staff_page' %}{{ key }}={{ value }}&{% endif %}{% endfor %}staff_page={{ staff_page_obj.previous_page_number }}">Previous</a>
+                            </li>
+                            {% endif %}
+                            <li class="page-item active">
+                                <span class="page-link">Page {{ staff_page_obj.number }} of {{ staff_page_obj.paginator.num_pages }}</span>
+                            </li>
+                            {% if staff_page_obj.has_next %}
+                            <li class="page-item">
+                                <a class="page-link" href="?{% for key, value in request.GET.items %}{% if key != 'staff_page' %}{{ key }}={{ value }}&{% endif %}{% endfor %}staff_page={{ staff_page_obj.next_page_number }}">Next</a>
+                            </li>
+                            {% endif %}
+                        </ul>
+                    </nav>
+                    {% endif %}
+                    {% else %}
+                    <div class="empty-state">
+                        <i class="bi bi-person-x"></i>
+                        <p class="mb-2">No staff members found</p>
+                        <small class="text-muted">
+                            {% if has_phone == '1' %}
+                            No staff with phone numbers found. Try changing "Phone Status" to "All" or check if phone numbers are entered.
+                            {% else %}
+                            Try adjusting your search filters or check if staff records exist in the database.
+                            {% endif %}
+                        </small>
+                    </div>
+                    {% endif %}
+                {% else %}
+                <div class="empty-state">
+                    <i class="bi bi-person-x"></i>
+                    <p class="mb-2">Staff section not loaded</p>
+                    <small class="text-muted">Select "All" or "Staff Only" in the filter to see staff members.</small>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Patients Section -->
+    {% if recipient_type == 'all' or recipient_type == 'patient' %}
+    <div class="{% if recipient_type == 'all' %}col-md-6{% else %}col-md-12{% endif %} mb-4">
+        <div class="modern-card p-0">
+            <div class="section-header">
+                <span><i class="bi bi-person"></i> Patients</span>
+                <span class="badge">{{ total_patients }}</span>
+            </div>
+            <div class="p-3">
+                {% if patient_page_obj %}
+                    {% if patient_page_obj.object_list|length > 0 %}
+                    <div class="mb-3">
+                        <input type="checkbox" id="selectAllPatients" class="form-check-input">
+                        <label for="selectAllPatients" class="form-check-label ms-2"><strong>Select All on Page</strong></label>
+                    </div>
+                    
+                    <div id="patientList">
+                        {% for patient in patient_page_obj %}
+                        <div class="recipient-card" data-type="patient" data-id="{{ patient.id }}" data-name="{{ patient.full_name }}" data-phone="{{ patient.phone_number }}">
+                            <div class="recipient-info">
+                                <div class="recipient-details">
+                                    <div class="recipient-name">{{ patient.full_name }}</div>
+                                    <div class="recipient-meta">
+                                        <span><i class="bi bi-card-text"></i> MRN: {{ patient.mrn|default:"-" }}</span>
+                                        <span><i class="bi bi-telephone"></i> {{ patient.phone_number|default:"No Phone" }}</span>
+                                        {% if patient.age %}<span><i class="bi bi-calendar"></i> Age: {{ patient.age }}</span>{% endif %}
+                                        {% if patient.gender %}<span><i class="bi bi-gender-ambiguous"></i> {{ patient.get_gender_display }}</span>{% endif %}
+                                    </div>
+                                </div>
+                                <input type="checkbox" class="form-check-input recipient-checkbox" style="width: 20px; height: 20px;"
+                                       {% if not patient.phone_number %}disabled title="No phone number"{% endif %}>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    
+                    <!-- Pagination -->
+                    {% if patient_page_obj.has_other_pages %}
+                    <nav>
+                        <ul class="pagination justify-content-center mt-3">
+                            {% if patient_page_obj.has_previous %}
+                            <li class="page-item">
+                                <a class="page-link" href="?{% for key, value in request.GET.items %}{% if key != 'patient_page' %}{{ key }}={{ value }}&{% endif %}{% endfor %}patient_page={{ patient_page_obj.previous_page_number }}">Previous</a>
+                            </li>
+                            {% endif %}
+                            <li class="page-item active">
+                                <span class="page-link">Page {{ patient_page_obj.number }} of {{ patient_page_obj.paginator.num_pages }}</span>
+                            </li>
+                            {% if patient_page_obj.has_next %}
+                            <li class="page-item">
+                                <a class="page-link" href="?{% for key, value in request.GET.items %}{% if key != 'patient_page' %}{{ key }}={{ value }}&{% endif %}{% endfor %}patient_page={{ patient_page_obj.next_page_number }}">Next</a>
+                            </li>
+                            {% endif %}
+                        </ul>
+                    </nav>
+                    {% endif %}
+                    {% else %}
+                    <div class="empty-state">
+                        <i class="bi bi-person-x"></i>
+                        <p class="mb-2">No patients found</p>
+                        <small class="text-muted">
+                            {% if has_phone == '1' %}
+                            No patients with phone numbers found. Try changing "Phone Status" to "All" or check if phone numbers are entered.
+                            {% else %}
+                            Try adjusting your search filters or check if patient records exist in the database.
+                            {% endif %}
+                        </small>
+                    </div>
+                    {% endif %}
+                {% else %}
+                <div class="empty-state">
+                    <i class="bi bi-person-x"></i>
+                    <p class="mb-2">Patients section not loaded</p>
+                    <small class="text-muted">Select "All" or "Patients Only" in the filter to see patients.</small>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Send SMS Modal -->
+<div class="modal fade" id="sendSmsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Send Bulk SMS</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="bulkSmsForm" method="post" action="{% url 'hospital:send_bulk_sms' %}">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Recipients (<span id="modalRecipientCount">0</span> selected)</label>
+                        <div id="modalRecipientsList" class="border rounded p-3" style="max-height: 200px; overflow-y: auto; background: #f8f9fa;">
+                            <small class="text-muted">No recipients selected</small>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Message Type</label>
+                        <select name="message_type" class="form-select">
+                            <option value="custom">Custom Message</option>
+                            <option value="appointment">Appointment Reminder</option>
+                            <option value="lab_result">Lab Result</option>
+                            <option value="payment">Payment Reminder</option>
+                            <option value="reminder">General Reminder</option>
+                            <option value="birthday">Birthday</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Message <small class="text-muted">(Use {name} for recipient name, {first_name} for first name)</small></label>
+                        <textarea name="message" id="smsMessage" class="form-control" rows="8" required></textarea>
+                        <small class="text-muted">Character count: <span id="charCount">0</span></small>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="insertName">Insert {name}</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="insertFirstName">Insert {first_name}</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="loadTemplate">Load Template</button>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="sendBulkBtn">
+                        <i class="bi bi-send"></i> Send to All Selected
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Function to get CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const sendModal = new bootstrap.Modal(document.getElementById('sendSmsModal'));
+    let selectedRecipients = new Map();
+    
+    // Update selected summary
+    function updateSummary() {
+        const count = selectedRecipients.size;
+        const countSpan = document.getElementById('selectedCount');
+        const summaryDiv = document.getElementById('selectedSummary');
+        const summaryList = document.getElementById('selectedRecipientsList');
+        
+        if (countSpan) countSpan.textContent = count;
+        if (summaryDiv) summaryDiv.style.display = count > 0 ? 'block' : 'none';
+        
+        if (summaryList && count > 0) {
+            const listItems = Array.from(selectedRecipients.values()).slice(0, 10).map(r => 
+                `<span class="badge bg-primary me-1 mb-1">GHS {r.name}</span>`
+            ).join('');
+            summaryList.innerHTML = listItems + (count > 10 ? `<small class="text-muted">... and GHS {count - 10} more</small>` : '');
+        } else if (summaryList) {
+            summaryList.innerHTML = '<small class="text-muted">No recipients selected</small>';
+        }
+    }
+    
+    // Handle recipient card clicks
+    document.querySelectorAll('.recipient-card').forEach(card => {
+        const checkbox = card.querySelector('.recipient-checkbox');
+        
+        card.addEventListener('click', function(e) {
+            if (e.target !== checkbox && e.target !== card.querySelector('label')) {
+                checkbox.checked = !checkbox.checked;
+                handleCheckboxChange(checkbox, card);
+            }
+        });
+        
+        checkbox.addEventListener('change', function() {
+            handleCheckboxChange(this, card);
+        });
+    });
+    
+    function handleCheckboxChange(checkbox, card) {
+        // Skip if checkbox is disabled (no phone number)
+        if (checkbox.disabled) {
+            alert('This person does not have a phone number. Cannot send SMS.');
+            checkbox.checked = false;
+            return;
+        }
+        
+        const id = card.dataset.id;
+        const type = card.dataset.type;
+        const name = card.dataset.name;
+        const phone = card.dataset.phone;
+        
+        if (!phone || phone === 'No Phone' || phone.trim() === '') {
+            checkbox.checked = false;
+            checkbox.disabled = true;
+            alert('This person does not have a phone number. Cannot send SMS.');
+            return;
+        }
+        
+        if (checkbox.checked) {
+            selectedRecipients.set(id, { id, type, name, phone });
+            card.classList.add('selected');
+        } else {
+            selectedRecipients.delete(id);
+            card.classList.remove('selected');
+        }
+        updateSummary();
+    }
+    
+    // Select all handlers
+    document.getElementById('selectAllStaff')?.addEventListener('change', function() {
+        document.querySelectorAll('#staffList .recipient-checkbox:not(:disabled)').forEach(cb => {
+            cb.checked = this.checked;
+            const card = cb.closest('.recipient-card');
+            if (card) {
+                const phone = card.dataset.phone;
+                if (this.checked && phone && phone !== 'No Phone' && phone.trim() !== '') {
+                    const id = card.dataset.id;
+                    selectedRecipients.set(id, {
+                        id: id,
+                        type: card.dataset.type,
+                        name: card.dataset.name,
+                        phone: phone
+                    });
+                    card.classList.add('selected');
+                } else {
+                    selectedRecipients.delete(card.dataset.id);
+                    card.classList.remove('selected');
+                }
+            }
+        });
+        updateSummary();
+    });
+    
+    document.getElementById('selectAllPatients')?.addEventListener('change', function() {
+        document.querySelectorAll('#patientList .recipient-checkbox:not(:disabled)').forEach(cb => {
+            cb.checked = this.checked;
+            const card = cb.closest('.recipient-card');
+            if (card) {
+                const phone = card.dataset.phone;
+                if (this.checked && phone && phone !== 'No Phone' && phone.trim() !== '') {
+                    const id = card.dataset.id;
+                    selectedRecipients.set(id, {
+                        id: id,
+                        type: card.dataset.type,
+                        name: card.dataset.name,
+                        phone: phone
+                    });
+                    card.classList.add('selected');
+                } else {
+                    selectedRecipients.delete(card.dataset.id);
+                    card.classList.remove('selected');
+                }
+            }
+        });
+        updateSummary();
+    });
+    
+    // Clear selection
+    document.getElementById('clearSelection')?.addEventListener('click', function() {
+        selectedRecipients.clear();
+        document.querySelectorAll('.recipient-checkbox').forEach(cb => cb.checked = false);
+        document.querySelectorAll('.recipient-card').forEach(card => card.classList.remove('selected'));
+        updateSummary();
+    });
+    
+    // Open send modal
+    document.getElementById('openSendModal')?.addEventListener('click', function() {
+        if (selectedRecipients.size === 0) {
+            alert('Please select at least one recipient');
+            return;
+        }
+        
+        const modalCount = document.getElementById('modalRecipientCount');
+        const modalList = document.getElementById('modalRecipientsList');
+        
+        if (modalCount) modalCount.textContent = selectedRecipients.size;
+        if (modalList) {
+            const list = Array.from(selectedRecipients.values()).map(r => 
+                `<div class="mb-1"><strong>GHS {r.name}</strong> (GHS {r.phone}) <span class="badge bg-secondary">GHS {r.type}</span></div>`
+            ).join('');
+            modalList.innerHTML = list;
+        }
+        
+        // Add hidden inputs for form
+        const form = document.getElementById('bulkSmsForm');
+        // Remove existing hidden inputs
+        document.querySelectorAll('input[name="recipients"], input[name="recipient_types"]').forEach(el => el.remove());
+        
+        // Add new hidden inputs
+        selectedRecipients.forEach((recipient, id) => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'recipients';
+            input.value = id;
+            form.appendChild(input);
+            
+            const typeInput = document.createElement('input');
+            typeInput.type = 'hidden';
+            typeInput.name = 'recipient_types';
+            typeInput.value = recipient.type;
+            form.appendChild(typeInput);
+        });
+        
+        sendModal.show();
+    });
+    
+    // Character count
+    document.getElementById('smsMessage')?.addEventListener('input', function() {
+        const count = this.value.length;
+        document.getElementById('charCount').textContent = count;
+    });
+    
+    // Insert placeholders
+    document.getElementById('insertName')?.addEventListener('click', function() {
+        const textarea = document.getElementById('smsMessage');
+        const cursorPos = textarea.selectionStart;
+        const text = textarea.value;
+        textarea.value = text.substring(0, cursorPos) + '{name}' + text.substring(cursorPos);
+        textarea.focus();
+    });
+    
+    document.getElementById('insertFirstName')?.addEventListener('click', function() {
+        const textarea = document.getElementById('smsMessage');
+        const cursorPos = textarea.selectionStart;
+        const text = textarea.value;
+        textarea.value = text.substring(0, cursorPos) + '{first_name}' + text.substring(cursorPos);
+        textarea.focus();
+    });
+    
+    document.getElementById('loadTemplate')?.addEventListener('click', function() {
+        const template = `Dear {name},
+
+This is an important message from PrimeCare Hospital.
+
+Thank you for your attention.
+
+Best regards,
+PrimeCare Hospital Team`;
+        document.getElementById('smsMessage').value = template;
+    });
+});
+</script>
+{% endblock %}
+

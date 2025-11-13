@@ -1,0 +1,186 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Medical Equipment - HMS{% endblock %}
+{% block page_title %}Medical Equipment{% endblock %}
+{% block page_subtitle %}Equipment registry and maintenance tracking{% endblock %}
+
+{% block extra_css %}
+<style>
+    .equipment-card {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        margin-bottom: 16px;
+        border: 1px solid var(--border);
+        transition: all 0.3s ease;
+    }
+    
+    .equipment-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transform: translateY(-2px);
+    }
+    
+    .equipment-card.status-operational {
+        border-left: 4px solid #10b981;
+    }
+    
+    .equipment-card.status-maintenance {
+        border-left: 4px solid #f59e0b;
+    }
+    
+    .equipment-card.status-out_of_service {
+        border-left: 4px solid #dc2626;
+    }
+    
+    .maintenance-warning {
+        background: #fef3c7;
+        padding: 8px 12px;
+        border-radius: 6px;
+        border-left: 3px solid #f59e0b;
+        margin-top: 8px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Filters -->
+<div class="modern-card mb-4">
+    <form method="get" class="row g-3">
+        <div class="col-md-3">
+            <label class="form-label">Location</label>
+            <select name="location" class="form-select form-control-modern">
+                <option value="">All Locations</option>
+                {% for loc in locations %}
+                <option value="{{ loc }}" {% if request.GET.location == loc %}selected{% endif %}>
+                    {{ loc }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Status</label>
+            <select name="status" class="form-select form-control-modern">
+                <option value="">All Status</option>
+                <option value="operational" {% if request.GET.status == 'operational' %}selected{% endif %}>Operational</option>
+                <option value="maintenance" {% if request.GET.status == 'maintenance' %}selected{% endif %}>Under Maintenance</option>
+                <option value="out_of_service" {% if request.GET.status == 'out_of_service' %}selected{% endif %}>Out of Service</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">
+                <input type="checkbox" name="maintenance_due" value="1" {% if request.GET.maintenance_due == '1' %}checked{% endif %}>
+                Maintenance Due
+            </label>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">&nbsp;</label>
+            <button type="submit" class="btn btn-primary-modern btn-modern w-100">
+                <i class="bi bi-filter"></i> Filter
+            </button>
+        </div>
+    </form>
+</div>
+
+<!-- Equipment List -->
+{% if equipment %}
+    {% for item in equipment %}
+    <div class="equipment-card status-{{ item.status }}">
+        <div class="row align-items-center">
+            <div class="col-md-3">
+                <h6 style="margin: 0 0 5px 0; font-weight: 600; font-size: 18px;">
+                    {{ item.name }}
+                </h6>
+                <div style="font-size: 12px; color: var(--gray);">
+                    <i class="bi bi-tag"></i> {{ item.equipment_number }}<br>
+                    <i class="bi bi-briefcase"></i> {{ item.category|default:"-" }}<br>
+                    <i class="bi bi-geo-alt"></i> {{ item.location }}
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div style="font-size: 13px;">
+                    <strong>Status:</strong> 
+                    <span class="badge-modern badge-{% if item.status == 'operational' %}success{% elif item.status == 'maintenance' %}warning{% else %}danger{% endif %}">
+                        {{ item.get_status_display }}
+                    </span><br>
+                    <strong>Manufacturer:</strong> {{ item.manufacturer|default:"-" }}<br>
+                    <strong>Model:</strong> {{ item.model|default:"-" }}<br>
+                    <strong>Serial Number:</strong> {{ item.serial_number|default:"-" }}
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div style="font-size: 13px;">
+                    <strong>Purchase Date:</strong> {{ item.purchase_date|date:"M Y"|default:"-" }}<br>
+                    <strong>Warranty Until:</strong> 
+                    {% if item.warranty_expiry_date %}
+                        {% if item.warranty_expiry_date < timezone.now.date %}
+                            <span style="color: var(--danger);">{{ item.warranty_expiry_date|date:"M d, Y" }} (Expired)</span>
+                        {% else %}
+                            {{ item.warranty_expiry_date|date:"M d, Y" }}
+                        {% endif %}
+                    {% else %}
+                        -
+                    {% endif %}<br>
+                    <strong>Next Maintenance:</strong>
+                    {% if item.next_maintenance_due %}
+                        {% if item.next_maintenance_due <= timezone.now.date %}
+                            <span style="color: var(--danger); font-weight: 600;">{{ item.next_maintenance_due|date:"M d, Y" }} (Due!)</span>
+                        {% else %}
+                            {{ item.next_maintenance_due|date:"M d, Y" }}
+                        {% endif %}
+                    {% else %}
+                        -
+                    {% endif %}
+                </div>
+                {% if item.next_maintenance_due and item.next_maintenance_due <= timezone.now.date %}
+                <div class="maintenance-warning">
+                    <i class="bi bi-exclamation-triangle"></i> Maintenance overdue!
+                </div>
+                {% endif %}
+            </div>
+            <div class="col-md-3 text-end">
+                <a href="/admin/hospital/medicalequipment/{{ item.id }}/change/" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-pencil"></i> Edit
+                </a>
+                {% if item.status == 'operational' %}
+                <button class="btn btn-sm btn-outline-warning">Schedule Maintenance</button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+    
+    <!-- Pagination -->
+    {% if equipment.has_other_pages %}
+    <nav aria-label="Page navigation">
+        <ul class="pagination justify-content-center">
+            {% if equipment.has_previous %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ equipment.previous_page_number }}{% if request.GET.location %}&location={{ request.GET.location }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}">Previous</a>
+            </li>
+            {% endif %}
+            
+            {% for num in equipment.paginator.page_range %}
+            {% if equipment.number == num %}
+            <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+            {% else %}
+            <li class="page-item"><a class="page-link" href="?page={{ num }}{% if request.GET.location %}&location={{ request.GET.location }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}">{{ num }}</a></li>
+            {% endif %}
+            {% endfor %}
+            
+            {% if equipment.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ equipment.next_page_number }}{% if request.GET.location %}&location={{ request.GET.location }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}">Next</a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+{% else %}
+<div class="modern-card text-center py-5">
+    <p class="text-muted">No equipment found</p>
+    <a href="/admin/hospital/medicalequipment/add/" class="btn btn-primary-modern">Add Equipment</a>
+</div>
+{% endif %}
+{% endblock %}
+

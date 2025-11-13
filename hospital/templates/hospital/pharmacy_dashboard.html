@@ -1,0 +1,341 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Pharmacy Dashboard - HMS{% endblock %}
+{% block page_title %}Pharmacy Dashboard{% endblock %}
+{% block page_subtitle %}Manage medications, prescriptions, and inventory{% endblock %}
+
+{% block content %}
+<!-- Statistics Cards -->
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="modern-card stat-card-primary text-center">
+            <div class="stat-icon" style="width: 48px; height: 48px; border-radius: 12px; margin: 0 auto 12px; display: flex; align-items: center; justify-content: center;">
+                <i class="bi bi-capsule" style="font-size: 24px;"></i>
+            </div>
+            <div class="stat-value" style="font-size: 32px; font-weight: 700;">{{ total_drugs }}</div>
+            <div class="stat-label">Total Drugs</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card stat-card-info text-center">
+            <div class="stat-icon" style="width: 48px; height: 48px; border-radius: 12px; margin: 0 auto 12px; display: flex; align-items: center; justify-content: center;">
+                <i class="bi bi-prescription" style="font-size: 24px;"></i>
+            </div>
+            <div class="stat-value" style="font-size: 32px; font-weight: 700;">{{ total_prescriptions }}</div>
+            <div class="stat-label">Total Prescriptions</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card stat-card-warning text-center">
+            <div class="stat-icon" style="width: 48px; height: 48px; border-radius: 12px; margin: 0 auto 12px; display: flex; align-items: center; justify-content: center;">
+                <i class="bi bi-exclamation-triangle" style="font-size: 24px;"></i>
+            </div>
+            <div class="stat-value" style="font-size: 32px; font-weight: 700;">{{ pending_prescriptions }}</div>
+            <div class="stat-label">Pending Orders</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card stat-card-success text-center">
+            <div class="stat-icon" style="width: 48px; height: 48px; border-radius: 12px; margin: 0 auto 12px; display: flex; align-items: center; justify-content: center;">
+                <i class="bi bi-currency-exchange" style="font-size: 24px;"></i>
+            </div>
+            <div class="stat-value" style="font-size: 28px; font-weight: 700;">GHS {{ stock_value|floatformat:0|intcomma }}</div>
+            <div class="stat-label">Stock Value</div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- Pending Orders -->
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin: 0;">
+                    <i class="bi bi-clock-history me-2"></i>Pending Medication Orders
+                </h5>
+                <span class="badge-modern badge-warning">{{ pending_orders|length }}</span>
+            </div>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Patient</th>
+                            <th>Requested By</th>
+                            <th>Time</th>
+                            <th>Priority</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for order in pending_orders %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'hospital:patient_detail' order.encounter.patient.pk %}" style="text-decoration: none; font-weight: 600;">
+                                    {{ order.encounter.patient.full_name }}
+                                </a>
+                            </td>
+                            <td>{{ order.requested_by.user.get_full_name|default:order.requested_by.user.username }}</td>
+                            <td>{{ order.requested_at|timesince }} ago</td>
+                            <td>
+                                <span class="badge-modern badge-{% if order.priority == 'stat' %}danger{% elif order.priority == 'urgent' %}warning{% else %}info{% endif %}">
+                                    {{ order.get_priority_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <button type="button" class="btn btn-success" 
+                                            onclick="updateOrderStatus('{{ order.pk }}', 'start')"
+                                            title="Start Processing">
+                                        <i class="bi bi-play-circle"></i>
+                                    </button>
+                                    <a href="{% url 'hospital:encounter_detail' order.encounter.pk %}" class="btn btn-outline-primary">
+                                        View
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="5" class="text-center text-muted py-3">No pending orders</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Today's Prescriptions -->
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin: 0;">
+                    <i class="bi bi-calendar-check me-2"></i>Today's Prescriptions
+                </h5>
+                <span class="badge-modern badge-info">{{ today_prescriptions|length }}</span>
+            </div>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Patient</th>
+                            <th>Drug</th>
+                            <th>Quantity</th>
+                            <th>Prescribed By</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for prescription in today_prescriptions %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'hospital:patient_detail' prescription.order.encounter.patient.pk %}" style="text-decoration: none; font-weight: 600;">
+                                    {{ prescription.order.encounter.patient.full_name }}
+                                </a>
+                            </td>
+                            <td>{{ prescription.drug.name }}</td>
+                            <td>{{ prescription.quantity }}</td>
+                            <td>{{ prescription.prescribed_by.user.get_full_name|default:prescription.prescribed_by.user.username }}</td>
+                            <td>
+                                <a href="{% url 'hospital:encounter_detail' prescription.order.encounter.pk %}" class="btn btn-sm btn-outline-primary">
+                                    View
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="5" class="text-center text-muted py-3">No prescriptions today</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Stock Alerts -->
+<div class="row g-4 mt-2">
+    <!-- Low Stock -->
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin: 0; color: var(--warning);">
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i>Low Stock Alerts
+                </h5>
+                <span class="badge-modern badge-warning">{{ low_stock|length }}</span>
+            </div>
+            <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Drug</th>
+                            <th>Qty on Hand</th>
+                            <th>Reorder Level</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stock in low_stock %}
+                        <tr>
+                            <td>
+                                <strong>{{ stock.drug.name }}</strong><br>
+                                <small class="text-muted">{{ stock.location }}</small>
+                            </td>
+                            <td>
+                                <span class="badge-modern badge-danger">{{ stock.quantity_on_hand }}</span>
+                            </td>
+                            <td>{{ stock.reorder_level }}</td>
+                            <td>
+                                <a href="{% url 'hospital:pharmacy_stock_list' %}?q={{ stock.drug.name }}" class="btn btn-sm btn-outline-warning">
+                                    Manage
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-3">No low stock items</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Expiring Soon -->
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin: 0; color: var(--danger);">
+                    <i class="bi bi-calendar-x me-2"></i>Expiring Soon (30 days)
+                </h5>
+                <span class="badge-modern badge-danger">{{ expiring_stock|length }}</span>
+            </div>
+            <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Drug</th>
+                            <th>Batch</th>
+                            <th>Expiry Date</th>
+                            <th>Qty</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stock in expiring_stock %}
+                        <tr>
+                            <td><strong>{{ stock.drug.name }}</strong></td>
+                            <td>{{ stock.batch_number }}</td>
+                            <td>
+                                <span class="badge-modern badge-danger">{{ stock.expiry_date|date:"d/m/Y" }}</span>
+                            </td>
+                            <td>{{ stock.quantity_on_hand }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-3">No expiring stock</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mt-4">
+    <div class="row g-3">
+        <div class="col-md-4">
+            <a href="{% url 'hospital:pharmacy_stock_list' %}" class="btn btn-primary-modern w-100">
+                <i class="bi bi-box-seam"></i> View Full Stock Inventory
+            </a>
+        </div>
+        <div class="col-md-4">
+            <a href="{% url 'hospital:pharmacy_requests_list' %}" class="btn btn-outline-primary-modern w-100">
+                <i class="bi bi-list-check"></i> View My Requests
+            </a>
+        </div>
+        <div class="col-md-4">
+            <a href="{% url 'hospital:pharmacy_request_create' %}" class="btn btn-warning-modern w-100">
+                <i class="bi bi-cart-plus"></i> Request Stock
+            </a>
+        </div>
+    </div>
+</div>
+
+<script>
+let autoRefreshTimer;
+
+function updateOrderStatus(orderId, action) {
+    const formData = new FormData();
+    formData.append('action', action);
+    formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    
+    fetch(`/hms/api/order/${orderId}/update-status/`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Refresh the page to show updated status
+            clearTimeout(autoRefreshTimer);
+            location.reload();
+        } else {
+            alert(data.error || 'Error updating order status');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error updating order status');
+    });
+}
+
+// Auto-refresh every 30 seconds
+function refreshDashboard() {
+    fetch(`/hms/api/dashboard-stats/?type=pharmacy`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Update stats badges if needed
+                updateStatsBadges(data.stats);
+            }
+        })
+        .catch(error => console.error('Error refreshing stats:', error));
+}
+
+function updateStatsBadges(stats) {
+    // Update pending orders badge
+    const pendingBadge = document.querySelector('.badge-modern.badge-warning');
+    if (pendingBadge && stats.pending_orders !== undefined) {
+        // Could update badge count here if needed
+    }
+}
+
+// Set up auto-refresh
+autoRefreshTimer = setInterval(() => {
+    refreshDashboard();
+    // Full page refresh every 2 minutes
+    if (Math.random() < 0.1) {
+        location.reload();
+    }
+}, 30000);
+
+// Pause refresh on user interaction
+document.addEventListener('mousemove', () => {
+    clearInterval(autoRefreshTimer);
+    autoRefreshTimer = setInterval(() => {
+        refreshDashboard();
+        if (Math.random() < 0.1) {
+            location.reload();
+        }
+    }, 30000);
+});
+</script>
+{% endblock %}
+

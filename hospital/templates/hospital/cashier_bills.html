@@ -1,0 +1,239 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Bills - Cashier - HMS{% endblock %}
+{% block page_title %}All Bills{% endblock %}
+{% block page_subtitle %}View and manage patient bills{% endblock %}
+
+{% block extra_css %}
+<style>
+    .bill-card {
+        background: white;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        border-left: 4px solid;
+        transition: all 0.2s;
+    }
+    
+    .bill-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transform: translateY(-2px);
+    }
+    
+    .bill-card.issued {
+        border-left-color: var(--warning);
+    }
+    
+    .bill-card.partially_paid {
+        border-left-color: var(--info);
+    }
+    
+    .bill-card.paid {
+        border-left-color: var(--success);
+    }
+    
+    .bill-card.cancelled {
+        border-left-color: var(--gray);
+        opacity: 0.7;
+    }
+    
+    .filter-tabs {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+    }
+    
+    .filter-tab {
+        padding: 8px 16px;
+        border-radius: 8px;
+        text-decoration: none;
+        font-weight: 500;
+        transition: all 0.2s;
+        border: 2px solid transparent;
+    }
+    
+    .filter-tab.active {
+        background: var(--primary);
+        color: white;
+    }
+    
+    .filter-tab:not(.active) {
+        background: var(--light);
+        color: var(--dark);
+        border-color: var(--border);
+    }
+    
+    .filter-tab:not(.active):hover {
+        background: var(--border);
+    }
+    
+    .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        border: 1px solid var(--border);
+    }
+    
+    .stat-value {
+        font-size: 28px;
+        font-weight: 700;
+        margin: 8px 0;
+    }
+    
+    .stat-label {
+        font-size: 13px;
+        color: var(--gray);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Statistics -->
+<div class="row g-4 mb-4">
+    <div class="col-md-4">
+        <div class="stat-card">
+            <div class="stat-label">Issued Bills</div>
+            <div class="stat-value" style="color: var(--warning);">{{ total_issued }}</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="stat-card">
+            <div class="stat-label">Paid Bills</div>
+            <div class="stat-value" style="color: var(--success);">{{ total_paid }}</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="stat-card">
+            <div class="stat-label">Outstanding Amount</div>
+            <div class="stat-value" style="color: var(--danger);">GHS {{ total_outstanding|floatformat:2|intcomma }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters and Search -->
+<div class="modern-card mb-4">
+    <div class="row g-3 align-items-end">
+        <div class="col-md-8">
+            <form method="get" action="{% url 'hospital:cashier_bills' %}" class="d-flex gap-2">
+                <input 
+                    type="text" 
+                    name="q" 
+                    value="{{ request.GET.q }}" 
+                    class="form-control form-control-modern" 
+                    placeholder="Search by bill number, patient name, or MRN..."
+                >
+                <input type="hidden" name="status" value="{{ status_filter }}">
+                <button type="submit" class="btn btn-primary-modern">
+                    <i class="bi bi-search"></i> Search
+                </button>
+            </form>
+        </div>
+        <div class="col-md-4">
+            <div class="filter-tabs">
+                <a href="?status=" class="filter-tab {% if not status_filter %}active{% endif %}">All</a>
+                <a href="?status=issued" class="filter-tab {% if status_filter == 'issued' %}active{% endif %}">Issued</a>
+                <a href="?status=partially_paid" class="filter-tab {% if status_filter == 'partially_paid' %}active{% endif %}">Partially Paid</a>
+                <a href="?status=paid" class="filter-tab {% if status_filter == 'paid' %}active{% endif %}">Paid</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Bills List -->
+<div class="modern-card">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 style="font-weight: 600; margin: 0;">
+            {% if status_filter %}
+                {{ status_filter|capfirst }} Bills
+            {% else %}
+                All Bills
+            {% endif %}
+            <span class="badge-modern badge-info ms-2">{{ bills_count }}</span>
+        </h5>
+        <a href="{% url 'hospital:cashier_dashboard' %}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </a>
+    </div>
+    
+    {% if bills %}
+        {% for bill in bills %}
+        <div class="bill-card paid">
+            <div class="row align-items-center">
+                <div class="col-md-6">
+                    <h6 style="margin: 0 0 4px 0; font-weight: 600;">
+                        <a href="{% url 'hospital:patient_detail' bill.patient.pk %}" style="text-decoration: none; color: inherit;">
+                            {{ bill.patient.full_name }}
+                        </a>
+                    </h6>
+                    <div style="font-size: 13px; color: var(--gray); margin-bottom: 4px;">
+                        <i class="bi bi-receipt"></i> Receipt #{{ bill.receipt_number }} |
+                        MRN: {{ bill.patient.mrn }}
+                        {% if bill.invoice %}
+                        | Invoice: {{ bill.invoice.invoice_number }}
+                        {% endif %}
+                    </div>
+                    <div style="font-size: 12px; color: var(--gray);">
+                        <i class="bi bi-calendar"></i> Paid: {{ bill.receipt_date|date:"M d, Y H:i" }}
+                        {% if bill.service_type %}
+                        | <span class="badge-modern badge-info">{{ bill.get_service_type_display }}</span>
+                        {% endif %}
+                        {% if bill.payment_method == 'cash' %}
+                        | <span class="badge-modern badge-warning">Cash</span>
+                        {% elif bill.payment_method == 'card' %}
+                        | <span class="badge-modern badge-info">Card</span>
+                        {% elif bill.payment_method == 'mobile_money' %}
+                        | <span class="badge-modern badge-success">Mobile Money</span>
+                        {% else %}
+                        | <span class="badge-modern badge-secondary">{{ bill.get_payment_method_display }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="col-md-3 text-center">
+                    <div style="font-size: 16px; font-weight: 600; color: var(--success);">
+                        Amount: GHS {{ bill.amount_paid|floatformat:2|intcomma }}
+                    </div>
+                    {% if bill.received_by %}
+                    <div style="font-size: 11px; color: var(--gray);">
+                        By: {{ bill.received_by.get_full_name|default:bill.received_by.username }}
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="col-md-3 text-end">
+                    <span class="badge-modern badge-success me-2">
+                        <i class="bi bi-check-circle"></i> PAID
+                    </span>
+                    <a href="{% url 'hospital:receipt_print' bill.pk %}" target="_blank" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-printer"></i> Print
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+        
+        {% if bills_count >= 50 %}
+        <div class="alert alert-info mt-3">
+            <i class="bi bi-info-circle"></i> Showing first 50 results. Use search and filters to narrow down.
+        </div>
+        {% endif %}
+    {% else %}
+        <div class="text-center py-5">
+            <i class="bi bi-receipt" style="font-size: 48px; color: var(--gray); margin-bottom: 16px;"></i>
+            <p class="text-muted">No bills found</p>
+            {% if request.GET.q or status_filter %}
+            <p class="text-muted" style="font-size: 14px;">
+                Try adjusting your search criteria or filters
+            </p>
+            <a href="{% url 'hospital:cashier_bills' %}" class="btn btn-outline-primary mt-2">
+                Clear Filters
+            </a>
+            {% endif %}
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
+

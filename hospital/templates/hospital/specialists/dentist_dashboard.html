@@ -1,0 +1,208 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Dentist Dashboard - HMS{% endblock %}
+{% block page_title %}Dentist Dashboard{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Statistics Cards -->
+    <div class="col-md-3">
+        <div class="modern-card text-center mb-4">
+            <div class="card-icon bg-warning text-white">
+                <i class="bi bi-hourglass-split" style="font-size: 2rem;"></i>
+            </div>
+            <h3 class="mt-3">{{ stats.pending_referrals_count }}</h3>
+            <p class="text-muted">Pending Referrals</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center mb-4">
+            <div class="card-icon bg-info text-white">
+                <i class="bi bi-check-circle" style="font-size: 2rem;"></i>
+            </div>
+            <h3 class="mt-3">{{ stats.active_referrals_count }}</h3>
+            <p class="text-muted">Active Referrals</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center mb-4">
+            <div class="card-icon bg-success text-white">
+                <i class="bi bi-calendar-day" style="font-size: 2rem;"></i>
+            </div>
+            <h3 class="mt-3">{{ stats.total_charts_today }}</h3>
+            <p class="text-muted">Charts Today</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center mb-4">
+            <div class="card-icon bg-primary text-white">
+                <i class="bi bi-calendar-month" style="font-size: 2rem;"></i>
+            </div>
+            <h3 class="mt-3">{{ stats.total_charts_this_month }}</h3>
+            <p class="text-muted">Charts This Month</p>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Pending Referrals -->
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5><i class="bi bi-hourglass-split text-warning"></i> Pending Referrals</h5>
+                <a href="{% url 'hospital:referral_list' %}" class="btn btn-sm btn-outline-primary">View All</a>
+            </div>
+            {% if pending_referrals %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Patient</th>
+                            <th>Referring Doctor</th>
+                            <th>Priority</th>
+                            <th>Date</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for referral in pending_referrals %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'hospital:patient_detail' referral.patient.pk %}">
+                                    {{ referral.patient.full_name }}
+                                </a>
+                            </td>
+                            <td>{{ referral.referring_doctor.user.get_full_name }}</td>
+                            <td>
+                                <span class="badge bg-{% if referral.priority == 'stat' %}danger{% elif referral.priority == 'urgent' %}warning{% else %}secondary{% endif %}">
+                                    {{ referral.get_priority_display }}
+                                </span>
+                            </td>
+                            <td>{{ referral.referred_date|date:"M d, Y" }}</td>
+                            <td>
+                                <a href="{% url 'hospital:referral_detail' referral.pk %}" class="btn btn-sm btn-primary">
+                                    View
+                                </a>
+                                {% if referral.encounter %}
+                                <a href="{% url 'hospital:dental_consultation_encounter' referral.encounter.pk %}" class="btn btn-sm btn-success">
+                                    <i class="bi bi-tooth"></i> Start Consultation
+                                </a>
+                                {% elif referral.patient %}
+                                <a href="{% url 'hospital:dental_consultation' referral.patient.pk %}" class="btn btn-sm btn-success">
+                                    <i class="bi bi-tooth"></i> Start Consultation
+                                </a>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i> No pending referrals.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Recent Dental Charts -->
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5><i class="bi bi-clipboard-data text-primary"></i> Recent Dental Charts</h5>
+            </div>
+            {% if recent_dental_charts %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Patient</th>
+                            <th>Date</th>
+                            <th>Encounter</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for chart in recent_dental_charts %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'hospital:patient_detail' chart.patient.pk %}">
+                                    {{ chart.patient.full_name }}
+                                </a>
+                            </td>
+                            <td>{{ chart.chart_date|date:"M d, Y" }}</td>
+                            <td>
+                                {% if chart.encounter %}
+                                    <a href="{% url 'hospital:encounter_detail' chart.encounter.pk %}">
+                                        View Encounter
+                                    </a>
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if chart.encounter %}
+                                <a href="{% url 'hospital:dental_consultation_encounter' chart.encounter.pk %}" class="btn btn-sm btn-primary">
+                                    <i class="bi bi-pencil"></i> Edit Chart
+                                </a>
+                                {% elif chart.patient %}
+                                <a href="{% url 'hospital:dental_consultation' chart.patient.pk %}" class="btn btn-sm btn-primary">
+                                    <i class="bi bi-pencil"></i> Edit Chart
+                                </a>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i> No recent dental charts.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <!-- Quick Actions -->
+    <div class="col-md-12">
+        <div class="modern-card">
+            <h5><i class="bi bi-lightning-charge text-primary"></i> Quick Actions</h5>
+            <div class="d-flex flex-wrap gap-2 mt-3">
+                <a href="{% url 'hospital:referral_list' %}" class="btn btn-outline-primary">
+                    <i class="bi bi-list-ul"></i> View All Referrals
+                </a>
+                <a href="{% url 'hospital:specialist_dashboard' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-people"></i> All Specialists
+                </a>
+                <a href="{% url 'hospital:dashboard' %}" class="btn btn-outline-info">
+                    <i class="bi bi-house"></i> Main Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .card-icon {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 10px;
+    }
+    .modern-card h3 {
+        font-size: 2rem;
+        font-weight: 700;
+        margin: 0;
+    }
+</style>
+{% endblock %}

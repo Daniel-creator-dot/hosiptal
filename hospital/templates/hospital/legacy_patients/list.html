@@ -1,0 +1,343 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Legacy Patient Management - HMS{% endblock %}
+{% block page_title %}🗂️ Legacy Patient Management{% endblock %}
+{% block page_subtitle %}Manage and migrate patients from the old system{% endblock %}
+
+{% block extra_css %}
+<style>
+    .migration-stats-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 30px;
+        margin-bottom: 30px;
+        box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+    }
+    
+    .stat-box {
+        text-align: center;
+        padding: 20px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        backdrop-filter: blur(10px);
+    }
+    
+    .stat-number {
+        font-size: 2.5rem;
+        font-weight: 800;
+        margin-bottom: 8px;
+    }
+    
+    .stat-label {
+        font-size: 0.9rem;
+        opacity: 0.9;
+    }
+    
+    .progress-ring {
+        width: 120px;
+        height: 120px;
+        margin: 0 auto;
+    }
+    
+    .patient-row {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 12px;
+        border-left: 4px solid #e9ecef;
+        transition: all 0.3s;
+    }
+    
+    .patient-row:hover {
+        transform: translateX(4px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    
+    .patient-row.migrated {
+        border-left-color: #28a745;
+        background: linear-gradient(90deg, rgba(40, 167, 69, 0.05) 0%, white 5%);
+    }
+    
+    .patient-row.not-migrated {
+        border-left-color: #ffc107;
+        background: linear-gradient(90deg, rgba(255, 193, 7, 0.05) 0%, white 5%);
+    }
+    
+    .badge-migrated {
+        background: #28a745;
+        color: white;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+    
+    .badge-not-migrated {
+        background: #ffc107;
+        color: #212529;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+    
+    .filter-pills {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+    
+    .filter-pill {
+        padding: 10px 20px;
+        border-radius: 25px;
+        background: #f8f9fa;
+        border: 2px solid transparent;
+        cursor: pointer;
+        transition: all 0.3s;
+        text-decoration: none;
+        color: #495057;
+        font-weight: 600;
+    }
+    
+    .filter-pill:hover {
+        background: #e9ecef;
+        color: #212529;
+        text-decoration: none;
+    }
+    
+    .filter-pill.active {
+        background: #007bff;
+        color: white;
+        border-color: #007bff;
+    }
+    
+    .action-btn {
+        padding: 8px 16px;
+        border-radius: 8px;
+        font-weight: 600;
+        text-decoration: none;
+        display: inline-block;
+        transition: all 0.3s;
+        border: none;
+        cursor: pointer;
+    }
+    
+    .btn-migrate {
+        background: #28a745;
+        color: white;
+    }
+    
+    .btn-view {
+        background: #007bff;
+        color: white;
+    }
+    
+    .btn-migrate:hover, .btn-view:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        color: white;
+        text-decoration: none;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Statistics Card -->
+    <div class="migration-stats-card">
+        <div class="row align-items-center">
+            <div class="col-md-3">
+                <div class="stat-box">
+                    <div class="stat-number">{{ total_legacy|intcomma }}</div>
+                    <div class="stat-label">Total Legacy Patients</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-box">
+                    <div class="stat-number">{{ total_migrated|intcomma }}</div>
+                    <div class="stat-label">Migrated to HMS</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-box">
+                    <div class="stat-number">{{ total_not_migrated|intcomma }}</div>
+                    <div class="stat-label">Pending Migration</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="text-center">
+                    <div class="display-4 fw-bold mb-2">{{ migration_percentage }}%</div>
+                    <div class="stat-label">Migration Progress</div>
+                    <div class="progress mt-3" style="height: 10px; background: rgba(255,255,255,0.2);">
+                        <div class="progress-bar" role="progressbar" style="width: {{ migration_percentage }}%; background: #28a745;" aria-valuenow="{{ migration_percentage }}" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search and Filters -->
+    <div class="modern-card mb-4">
+        <div class="row align-items-center">
+            <div class="col-md-6">
+                <form method="GET" action="{% url 'hospital:legacy_patient_list' %}" class="d-flex gap-2">
+                    <input type="text" name="q" class="form-control" placeholder="Search by name, PID, phone..." value="{{ search_query }}">
+                    <button type="submit" class="btn btn-primary-modern">
+                        <i class="bi bi-search me-1"></i>Search
+                    </button>
+                </form>
+            </div>
+            <div class="col-md-6 text-end">
+                <a href="{% url 'hospital:migration_dashboard' %}" class="btn btn-primary-modern">
+                    <i class="bi bi-speedometer2 me-1"></i>Migration Dashboard
+                </a>
+            </div>
+        </div>
+        
+        <div class="filter-pills mt-3">
+            <span class="fw-bold text-muted">Filter:</span>
+            <a href="?status=all{% if search_query %}&q={{ search_query }}{% endif %}" 
+               class="filter-pill {% if filter_status == 'all' %}active{% endif %}">
+                All Patients
+            </a>
+            <a href="?status=migrated{% if search_query %}&q={{ search_query }}{% endif %}" 
+               class="filter-pill {% if filter_status == 'migrated' %}active{% endif %}">
+                Migrated
+            </a>
+            <a href="?status=not_migrated{% if search_query %}&q={{ search_query }}{% endif %}" 
+               class="filter-pill {% if filter_status == 'not_migrated' %}active{% endif %}">
+                Not Migrated
+            </a>
+        </div>
+    </div>
+
+    <!-- Patient List -->
+    <div class="modern-card">
+        <h5 class="mb-3">
+            <i class="bi bi-people me-2"></i>
+            Legacy Patients
+            <span class="badge bg-secondary ms-2">{{ page_obj.paginator.count }} results</span>
+        </h5>
+
+        {% if page_obj %}
+            {% for item in page_obj %}
+            <div class="patient-row {% if item.is_migrated %}migrated{% else %}not-migrated{% endif %}">
+                <div class="row align-items-center">
+                    <div class="col-md-5">
+                        <h6 class="mb-1">
+                            <i class="bi bi-person me-2"></i>
+                            {{ item.legacy_patient.full_name }}
+                        </h6>
+                        <div class="text-muted small">
+                            <span class="me-3">
+                                <i class="bi bi-hash me-1"></i>PID: {{ item.legacy_patient.pid }}
+                            </span>
+                            {% if item.legacy_patient.DOB %}
+                            <span class="me-3">
+                                <i class="bi bi-calendar me-1"></i>DOB: {{ item.legacy_patient.DOB }}
+                            </span>
+                            {% endif %}
+                            {% if item.legacy_patient.sex %}
+                            <span>
+                                <i class="bi bi-gender-ambiguous me-1"></i>{{ item.legacy_patient.sex }}
+                            </span>
+                            {% endif %}
+                        </div>
+                        <div class="text-muted small mt-1">
+                            {% if item.legacy_patient.display_phone %}
+                            <span class="me-3">
+                                <i class="bi bi-telephone me-1"></i>{{ item.legacy_patient.display_phone }}
+                            </span>
+                            {% endif %}
+                            {% if item.legacy_patient.city %}
+                            <span>
+                                <i class="bi bi-geo-alt me-1"></i>{{ item.legacy_patient.city }}
+                            </span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        {% if item.is_migrated %}
+                            <span class="badge-migrated">
+                                <i class="bi bi-check-circle me-1"></i>Migrated
+                            </span>
+                            <div class="small text-muted mt-1">
+                                MRN: {{ item.django_patient.mrn }}
+                            </div>
+                        {% else %}
+                            <span class="badge-not-migrated">
+                                <i class="bi bi-exclamation-circle me-1"></i>Not Migrated
+                            </span>
+                            <div class="small text-muted mt-1">
+                                Expected MRN: {{ item.mrn }}
+                            </div>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <a href="{% url 'hospital:legacy_patient_detail' pid=item.legacy_patient.pid %}" 
+                           class="action-btn btn-view me-2">
+                            <i class="bi bi-eye me-1"></i>View Details
+                        </a>
+                        {% if not item.is_migrated %}
+                            <form method="POST" action="{% url 'hospital:migrate_legacy_patient' pid=item.legacy_patient.pid %}" style="display: inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="action-btn btn-migrate" 
+                                        onclick="return confirm('Migrate {{ item.legacy_patient.full_name }} to HMS?')">
+                                    <i class="bi bi-arrow-right-circle me-1"></i>Migrate Now
+                                </button>
+                            </form>
+                        {% else %}
+                            <a href="{% url 'hospital:patient_detail' pk=item.django_patient.pk %}" 
+                               class="action-btn btn-migrate">
+                                <i class="bi bi-folder-open me-1"></i>Open Record
+                            </a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+
+            <!-- Pagination -->
+            {% if page_obj.has_other_pages %}
+            <nav aria-label="Page navigation" class="mt-4">
+                <ul class="pagination justify-content-center">
+                    {% if page_obj.has_previous %}
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}{% if filter_status != 'all' %}&status={{ filter_status }}{% endif %}">Previous</a>
+                        </li>
+                    {% endif %}
+                    
+                    {% for num in page_obj.paginator.page_range %}
+                        {% if page_obj.number == num %}
+                            <li class="page-item active"><a class="page-link" href="#">{{ num }}</a></li>
+                        {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
+                            <li class="page-item"><a class="page-link" href="?page={{ num }}{% if search_query %}&q={{ search_query }}{% endif %}{% if filter_status != 'all' %}&status={{ filter_status }}{% endif %}">{{ num }}</a></li>
+                        {% endif %}
+                    {% endfor %}
+                    
+                    {% if page_obj.has_next %}
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}{% if filter_status != 'all' %}&status={{ filter_status }}{% endif %}">Next</a>
+                        </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+        {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-search text-muted" style="font-size: 4rem;"></i>
+                <h4 class="mt-3">No patients found</h4>
+                <p class="text-muted">Try adjusting your search or filters</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+

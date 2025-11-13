@@ -1,0 +1,152 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Create Bill - HMS{% endblock %}
+{% block page_title %}Create Bill{% endblock %}
+{% block page_subtitle %}{{ encounter.patient.full_name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8">
+        <div class="modern-card mb-4">
+            <h5 style="font-weight: 600; margin-bottom: 20px;">Bill Information</h5>
+            
+            {% if has_bill %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i> A bill has already been issued for this encounter.
+            </div>
+            {% endif %}
+            
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <strong>Patient:</strong><br>
+                    <a href="{% url 'hospital:patient_detail' encounter.patient.pk %}">{{ encounter.patient.full_name }}</a>
+                </div>
+                <div class="col-md-6">
+                    <strong>Invoice Number:</strong><br>
+                    {{ invoice.invoice_number }}
+                </div>
+            </div>
+            
+            <div class="mb-3" style="background: var(--light); padding: 16px; border-radius: 8px;">
+                <strong>Total Invoice Amount:</strong>
+                <span style="font-size: 24px; font-weight: 700; color: var(--primary); margin-left: 12px;">
+                    GHS {{ invoice.total_amount|floatformat:2|intcomma }}
+                </span>
+            </div>
+            
+            <form method="post">
+                {% csrf_token %}
+                
+                <div class="mb-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="has_insurance" name="has_insurance">
+                        <label class="form-check-label" for="has_insurance">
+                            <strong>Patient has Insurance Coverage</strong>
+                        </label>
+                    </div>
+                </div>
+                
+                <div id="insurance-section" style="display: none;">
+                    <div class="mb-3">
+                        <label class="form-label">Insurance Coverage Amount</label>
+                        <input type="number" name="insurance_covered" step="0.01" min="0" max="{{ invoice.total_amount }}" 
+                               value="0" class="form-control form-control-modern" id="insurance_amount">
+                        <small class="text-muted">Enter the amount covered by insurance</small>
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">Notes</label>
+                    <textarea name="notes" class="form-control form-control-modern" rows="3" placeholder="Additional notes for the bill"></textarea>
+                </div>
+                
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle"></i> 
+                    <strong>Note:</strong> 
+                    {% if invoice.payer %}
+                    Insurance payer: {{ invoice.payer.name }}. A payment request will be created for the patient portion.
+                    {% else %}
+                    This is a cash bill. A payment request will be created for immediate payment.
+                    {% endif %}
+                </div>
+                
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-primary-modern btn-modern">
+                        <i class="bi bi-receipt"></i> Issue Bill
+                    </button>
+                    <a href="{% url 'hospital:patient_flow' encounter.pk %}" class="btn btn-outline-secondary">
+                        Cancel
+                    </a>
+                </div>
+            </form>
+        </div>
+        
+        <!-- Invoice Lines -->
+        {% if invoice.lines.exists %}
+        <div class="modern-card">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Invoice Items</h6>
+            <div class="table-responsive">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Description</th>
+                            <th>Qty</th>
+                            <th>Unit Price</th>
+                            <th>Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for line in invoice.lines.all %}
+                        <tr>
+                            <td>{{ line.description }}</td>
+                            <td>{{ line.quantity }}</td>
+                            <td>GHS {{ line.unit_price|floatformat:2 }}</td>
+                            <td><strong>GHS {{ line.line_total|floatformat:2 }}</strong></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <th colspan="3" class="text-end">Total:</th>
+                            <th>GHS {{ invoice.total_amount|floatformat:2|intcomma }}</th>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    
+    <div class="col-md-4">
+        <div class="modern-card">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Encounter Info</h6>
+            <div style="font-size: 14px;">
+                <strong>Encounter:</strong><br>
+                {{ encounter.get_encounter_type_display }}<br>
+                <small class="text-muted">{{ encounter.started_at|date:"M d, Y H:i" }}</small>
+            </div>
+            
+            {% if encounter.provider %}
+            <div style="font-size: 14px; margin-top: 12px;">
+                <strong>Provider:</strong><br>
+                {{ encounter.provider.user.get_full_name|default:encounter.provider.user.username }}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('has_insurance').addEventListener('change', function() {
+    const insuranceSection = document.getElementById('insurance-section');
+    if (this.checked) {
+        insuranceSection.style.display = 'block';
+    } else {
+        insuranceSection.style.display = 'none';
+        document.getElementById('insurance_amount').value = 0;
+    }
+});
+</script>
+{% endblock %}
+

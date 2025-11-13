@@ -1,0 +1,176 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load math_filters %}
+
+{% block content %}
+<div class="container-fluid">
+    <h2>{{ title }}</h2>
+    <p class="text-muted">🔒 Payment verification required before dispensing medication</p>
+    
+    <!-- Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card border-left-danger shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Pending Payment</h6>
+                    <h2 class="text-danger">{{ stats.pending_payment }}</h2>
+                    <small>Cannot dispense - awaiting payment</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card border-left-success shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Paid - Ready to Dispense</h6>
+                    <h2 class="text-success">{{ stats.paid_ready }}</h2>
+                    <small>Payment verified ✅</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card border-left-info shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Already Dispensed</h6>
+                    <h2 class="text-info">{{ stats.dispensed }}</h2>
+                    <small>Completed</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card border-left-primary shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Total Prescriptions</h6>
+                    <h2>{{ stats.total }}</h2>
+                    <small>All prescriptions</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- Pending Payment -->
+        <div class="col-md-6">
+            <div class="card shadow">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0">🔒 Pending Payment ({{ stats.pending_payment }})</h5>
+                </div>
+                <div class="card-body" style="max-height: 500px; overflow-y: auto;">
+                    {% if pending_payment %}
+                        {% for rx in pending_payment %}
+                        <div class="card mb-2" style="border-left: 4px solid #dc3545;">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div style="flex: 1;">
+                                        <h6>{{ rx.drug.name }} {{ rx.drug.strength }}</h6>
+                                        <p class="mb-1"><strong>Patient:</strong> {{ rx.order.encounter.patient.full_name }}</p>
+                                        <p class="mb-1"><small><strong>Quantity:</strong> {{ rx.quantity }} units</small></p>
+                                        <p class="mb-1"><small><strong>Total Cost:</strong> <strong class="text-primary">GHS {{ rx.total_cost|floatformat:2 }}</strong> ({{ rx.quantity }} × GHS {{ rx.drug.unit_price|default:"0.00" }})</small></p>
+                                        <p class="mb-1"><small>Dose: {{ rx.dose }}, {{ rx.frequency }}</small></p>
+                                        <p class="mb-1"><small>Prescribed: {{ rx.created|date:"M d, Y" }}</small></p>
+                                        <p class="mb-0"><strong class="text-danger">🔒 SEND TO CASHIER</strong></p>
+                                    </div>
+                                    <div>
+                                        <a href="{% url 'hospital:pharmacy_dispense_enforced' rx.id %}" 
+                                           class="btn btn-danger btn-sm">
+                                            <i class="bi bi-exclamation-triangle"></i> View Details
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted text-center py-4">No prescriptions pending payment</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Paid & Ready to Dispense -->
+        <div class="col-md-6">
+            <div class="card shadow">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">✅ Paid - Ready to Dispense ({{ stats.paid_ready }})</h5>
+                </div>
+                <div class="card-body" style="max-height: 500px; overflow-y: auto;">
+                    {% if paid_ready_to_dispense %}
+                        {% for rx in paid_ready_to_dispense %}
+                        <div class="card mb-2" style="border-left: 4px solid #28a745;">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <h6>{{ rx.drug.name }} {{ rx.drug.strength }}</h6>
+                                        <p class="mb-1"><strong>Patient:</strong> {{ rx.order.encounter.patient.full_name }}</p>
+                                        <p class="mb-1"><small>Quantity: {{ rx.quantity }}</small></p>
+                                        <p class="mb-1"><small>Dose: {{ rx.dose }}, {{ rx.frequency }}</small></p>
+                                        <p class="mb-0"><strong class="text-success">✅ PAYMENT VERIFIED</strong></p>
+                                        <small class="text-muted">Receipt: {{ rx.dispensing_record.payment_receipt.receipt_number }}</small>
+                                    </div>
+                                    <div>
+                                        <a href="{% url 'hospital:pharmacy_dispense_enforced' rx.id %}" 
+                                           class="btn btn-success btn-sm">
+                                            <i class="bi bi-capsule"></i> Dispense Now
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted text-center py-4">No medications ready to dispense</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Recently Dispensed -->
+    {% if already_dispensed %}
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <div class="card shadow">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">📋 Recently Dispensed ({{ stats.dispensed }})</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Drug</th>
+                                    <th>Patient</th>
+                                    <th>Quantity</th>
+                                    <th>Receipt</th>
+                                    <th>Dispensed By</th>
+                                    <th>Dispensed At</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for rx in already_dispensed %}
+                                <tr>
+                                    <td>{{ rx.drug.name }}</td>
+                                    <td>{{ rx.order.encounter.patient.full_name }}</td>
+                                    <td>{{ rx.dispensing_record.quantity_dispensed }}/{{ rx.quantity }}</td>
+                                    <td>{{ rx.dispensing_record.payment_receipt.receipt_number }}</td>
+                                    <td>{{ rx.dispensing_record.dispensed_by.user.get_full_name|default:"-" }}</td>
+                                    <td>{{ rx.dispensing_record.dispensed_at|date:"M d, h:i A" }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+
+
+
+

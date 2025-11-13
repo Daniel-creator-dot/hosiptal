@@ -1,0 +1,191 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block extra_css %}
+<style>
+    .patient-bill-card {
+        border-left: 4px solid #0d6efd;
+        margin-bottom: 20px;
+        transition: all 0.3s;
+    }
+    .patient-bill-card:hover {
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        transform: translateY(-2px);
+    }
+    .service-badge {
+        font-size: 0.75rem;
+        padding: 4px 8px;
+    }
+    .service-item {
+        padding: 8px;
+        border-bottom: 1px solid #e9ecef;
+    }
+    .service-item:last-child {
+        border-bottom: none;
+    }
+    .total-amount {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #198754;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2>{{ title }}</h2>
+            <p class="text-muted">All pending services grouped by patient - Process combined payment</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:centralized_cashier_dashboard' %}" class="btn btn-secondary me-2">
+                <i class="bi bi-arrow-left"></i> Back to Dashboard
+            </a>
+            <a href="{% url 'hospital:cashier_all_pending_bills' %}" class="btn btn-outline-primary">
+                <i class="bi bi-list-ul"></i> View All Bills
+            </a>
+        </div>
+    </div>
+    
+    <!-- Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card bg-primary text-white">
+                <div class="card-body">
+                    <h6>Total Patients</h6>
+                    <h2>{{ total_patients }}</h2>
+                    <small>With pending bills</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card bg-success text-white">
+                <div class="card-body">
+                    <h6>Total Services</h6>
+                    <h2>{{ total_services }}</h2>
+                    <small>Pending services</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card bg-warning text-dark">
+                <div class="card-body">
+                    <h6>Total Amount</h6>
+                    <h2>GHS {{ total_amount|floatformat:2 }}</h2>
+                    <small>Pending revenue</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Search -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <form method="GET" class="input-group">
+                <input type="text" 
+                       name="search" 
+                       class="form-control form-control-lg" 
+                       placeholder="Search by patient name or MRN..."
+                       value="{{ search }}">
+                <button class="btn btn-primary" type="submit">
+                    <i class="bi bi-search"></i> Search
+                </button>
+                {% if search %}
+                <a href="{% url 'hospital:cashier_patient_bills' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-x"></i> Clear
+                </a>
+                {% endif %}
+            </form>
+        </div>
+    </div>
+    
+    <!-- Patient Bills -->
+    {% if patients_bills %}
+        {% for patient_bill in patients_bills %}
+        <div class="card patient-bill-card shadow">
+            <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="mb-0">
+                        <i class="bi bi-person-circle"></i> {{ patient_bill.patient.full_name }}
+                    </h5>
+                    <small class="text-muted">MRN: {{ patient_bill.patient.mrn }} | 
+                        Phone: {{ patient_bill.patient.phone_number|default:"N/A" }}</small>
+                </div>
+                <div class="text-end">
+                    <div class="total-amount">GHS {{ patient_bill.total|floatformat:2 }}</div>
+                    <small class="text-muted">{{ patient_bill.services|length }} service(s)</small>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-8">
+                        <h6 class="mb-3">Services:</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Type</th>
+                                        <th>Service</th>
+                                        <th class="text-end">Amount</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for service in patient_bill.services %}
+                                    <tr class="service-item">
+                                        <td>
+                                            {% if service.type == 'lab' %}
+                                                <span class="badge bg-info service-badge">🧪 Lab</span>
+                                            {% elif service.type == 'pharmacy' %}
+                                                <span class="badge bg-success service-badge">💊 Pharmacy</span>
+                                            {% elif service.type == 'imaging' %}
+                                                <span class="badge service-badge" style="background: linear-gradient(135deg, #6f42c1 0%, #8e44ad 100%); color: white;">📷 Imaging</span>
+                                            {% elif service.type == 'consultation' %}
+                                                <span class="badge bg-primary service-badge">👨‍⚕️ Consultation</span>
+                                            {% elif service.type == 'bed' %}
+                                                <span class="badge bg-warning text-dark service-badge">🛏️ Bed</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary service-badge">{{ service.type|title }}</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ service.name }}</td>
+                                        <td class="text-end"><strong>GHS {{ service.price|floatformat:2 }}</strong></td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                                <tfoot>
+                                    <tr>
+                                        <th colspan="2" class="text-end">TOTAL:</th>
+                                        <th class="text-end text-success">GHS {{ patient_bill.total|floatformat:2 }}</th>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="d-grid gap-2">
+                            <a href="{% url 'hospital:cashier_process_patient_combined_payment' patient_bill.patient.id %}" 
+                               class="btn btn-success btn-lg">
+                                <i class="bi bi-cash-coin"></i> Process Combined Payment
+                            </a>
+                            <small class="text-muted text-center">
+                                Pay for all {{ patient_bill.services|length }} service(s) at once
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="card shadow">
+            <div class="card-body text-center py-5">
+                <i class="bi bi-check-circle" style="font-size: 4em; color: #28a745;"></i>
+                <h4 class="mt-3">No Pending Bills</h4>
+                <p class="text-muted">All services have been paid for!</p>
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
+

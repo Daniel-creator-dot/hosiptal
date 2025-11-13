@@ -1,0 +1,198 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Leave Request {{ leave_request.request_number|default:"DRAFT" }} - HMS{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-10">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1><i class="bi bi-calendar-event"></i> Leave Request Details</h1>
+                <a href="{% url 'hospital:staff_leave_list' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Back to List
+                </a>
+            </div>
+
+            <div class="row">
+                <!-- Main Details -->
+                <div class="col-md-8">
+                    <div class="card mb-4">
+                        <div class="card-header bg-{% if leave_request.status == 'approved' %}success{% elif leave_request.status == 'rejected' %}danger{% elif leave_request.status == 'pending' %}warning{% else %}secondary{% endif %} text-white">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">{{ leave_request.request_number|default:"DRAFT" }}</h5>
+                                <span class="badge bg-light text-dark" style="font-size: 1rem;">
+                                    {{ leave_request.get_status_display }}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <p><strong>Leave Type:</strong><br>
+                                    <span class="badge bg-info" style="font-size: 0.95rem;">{{ leave_request.get_leave_type_display }}</span></p>
+                                </div>
+                                <div class="col-md-6">
+                                    <p><strong>Days Requested:</strong><br>
+                                    <span class="badge bg-primary" style="font-size: 0.95rem;">{{ leave_request.days_requested }} day{{ leave_request.days_requested|pluralize }}</span></p>
+                                </div>
+                            </div>
+
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <p><strong>Start Date:</strong><br>{{ leave_request.start_date|date:"F d, Y (l)" }}</p>
+                                </div>
+                                <div class="col-md-6">
+                                    <p><strong>End Date:</strong><br>{{ leave_request.end_date|date:"F d, Y (l)" }}</p>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <p><strong>Reason:</strong></p>
+                                <div class="alert alert-light">{{ leave_request.reason }}</div>
+                            </div>
+
+                            {% if leave_request.contact_during_leave %}
+                            <div class="mb-3">
+                                <p><strong>Contact During Leave:</strong><br>{{ leave_request.contact_during_leave }}</p>
+                            </div>
+                            {% endif %}
+
+                            {% if leave_request.covering_staff %}
+                            <div class="mb-3">
+                                <p><strong>Covering Staff:</strong><br>{{ leave_request.covering_staff.user.get_full_name }} ({{ leave_request.covering_staff.get_profession_display }})</p>
+                            </div>
+                            {% endif %}
+
+                            {% if leave_request.handover_notes %}
+                            <div class="mb-3">
+                                <p><strong>Handover Notes:</strong></p>
+                                <div class="alert alert-light">{{ leave_request.handover_notes }}</div>
+                            </div>
+                            {% endif %}
+
+                            {% if leave_request.attachment %}
+                            <div class="mb-3">
+                                <p><strong>Attachment:</strong><br>
+                                <a href="{{ leave_request.attachment.url }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-file-earmark-pdf"></i> View Document
+                                </a></p>
+                            </div>
+                            {% endif %}
+
+                            {% if leave_request.approved_by %}
+                            <hr>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <p><strong>Reviewed By:</strong><br>{{ leave_request.approved_by.user.get_full_name }}</p>
+                                </div>
+                                <div class="col-md-6">
+                                    <p><strong>Reviewed At:</strong><br>{{ leave_request.approved_at|date:"M d, Y H:i" }}</p>
+                                </div>
+                            </div>
+                            {% if leave_request.rejection_reason %}
+                            <div class="alert alert-danger">
+                                <strong><i class="bi bi-x-circle"></i> Rejection Reason:</strong><br>
+                                {{ leave_request.rejection_reason }}
+                            </div>
+                            {% endif %}
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Actions Sidebar -->
+                <div class="col-md-4">
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6 class="mb-0">Actions</h6>
+                        </div>
+                        <div class="card-body">
+                            {% if leave_request.status == 'draft' %}
+                            <form method="POST" action="{% url 'hospital:staff_leave_submit' leave_request.pk %}">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-success w-100 mb-2" onclick="return confirm('Submit this leave request for approval?')">
+                                    <i class="bi bi-send"></i> Submit for Approval
+                                </button>
+                            </form>
+                            <form method="POST" action="{% url 'hospital:staff_leave_cancel' leave_request.pk %}">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-outline-danger w-100">
+                                    <i class="bi bi-trash"></i> Delete Draft
+                                </button>
+                            </form>
+                            {% elif leave_request.status == 'pending' %}
+                            <div class="alert alert-warning">
+                                <i class="bi bi-clock"></i> Awaiting approval from your supervisor
+                            </div>
+                            <form method="POST" action="{% url 'hospital:staff_leave_cancel' leave_request.pk %}">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-outline-danger w-100" onclick="return confirm('Cancel this leave request?')">
+                                    <i class="bi bi-x-circle"></i> Cancel Request
+                                </button>
+                            </form>
+                            {% elif leave_request.status == 'approved' %}
+                            <div class="alert alert-success">
+                                <i class="bi bi-check-circle"></i> Your leave has been approved!
+                            </div>
+                            {% elif leave_request.status == 'rejected' %}
+                            <div class="alert alert-danger">
+                                <i class="bi bi-x-circle"></i> Request was rejected
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <!-- Timeline -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h6 class="mb-0">Request Timeline</h6>
+                        </div>
+                        <div class="card-body">
+                            <ul class="list-unstyled">
+                                <li class="mb-2">
+                                    <i class="bi bi-circle-fill text-primary"></i> <strong>Created:</strong><br>
+                                    <small class="ms-3">{{ leave_request.created|date:"M d, Y H:i" }}</small>
+                                </li>
+                                {% if leave_request.submitted_at %}
+                                <li class="mb-2">
+                                    <i class="bi bi-circle-fill text-warning"></i> <strong>Submitted:</strong><br>
+                                    <small class="ms-3">{{ leave_request.submitted_at|date:"M d, Y H:i" }}</small>
+                                </li>
+                                {% endif %}
+                                {% if leave_request.approved_at %}
+                                <li class="mb-2">
+                                    <i class="bi bi-circle-fill text-{% if leave_request.status == 'approved' %}success{% else %}danger{% endif %}"></i> 
+                                    <strong>{% if leave_request.status == 'approved' %}Approved{% else %}Rejected{% endif %}:</strong><br>
+                                    <small class="ms-3">{{ leave_request.approved_at|date:"M d, Y H:i" }}</small>
+                                </li>
+                                {% endif %}
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

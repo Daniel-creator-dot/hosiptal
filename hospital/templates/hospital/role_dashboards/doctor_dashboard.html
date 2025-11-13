@@ -1,0 +1,420 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Doctor Dashboard{% endblock %}
+
+{% block extra_css %}
+<style>
+    .dashboard-card {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        padding: 24px;
+        margin-bottom: 24px;
+        border-left: 4px solid #007bff;
+    }
+    
+    .stat-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    
+    .stat-number {
+        font-size: 2.5rem;
+        font-weight: bold;
+        margin-bottom: 8px;
+    }
+    
+    .stat-label {
+        font-size: 0.9rem;
+        opacity: 0.9;
+    }
+    
+    .appointment-item {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        border-left: 4px solid #28a745;
+    }
+    
+    .patient-card {
+        background: white;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        transition: all 0.3s ease;
+    }
+    
+    .patient-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transform: translateY(-2px);
+    }
+    
+    .priority-high { border-left-color: #dc3545; }
+    .priority-medium { border-left-color: #ffc107; }
+    .priority-low { border-left-color: #28a745; }
+    
+    .action-btn {
+        background: #007bff;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        text-decoration: none;
+        display: inline-block;
+        margin: 4px;
+        transition: all 0.3s ease;
+    }
+    
+    .action-btn:hover {
+        background: #0056b3;
+        color: white;
+        text-decoration: none;
+        transform: translateY(-1px);
+    }
+    
+    .btn-success { background: #28a745; }
+    .btn-warning { background: #ffc107; color: #212529; }
+    .btn-danger { background: #dc3545; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2 class="mb-1">
+                            <i class="bi bi-person-badge me-2"></i>
+                            Doctor Dashboard
+                        </h2>
+                        <p class="text-muted mb-0">
+                            Welcome back, Dr. {{ staff.user.get_full_name|default:staff.user.username }}
+                        </p>
+                    </div>
+                    <div class="text-end">
+                        <span class="badge bg-primary fs-6">{{ staff.get_profession_display }}</span>
+                        <br>
+                        <small class="text-muted">{{ staff.department.name }}</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-number">{{ stats.today_appointments }}</div>
+                <div class="stat-label">Today's Appointments</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                <div class="stat-number">{{ stats.pending_consultations }}</div>
+                <div class="stat-label">Pending Consultations</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+                <div class="stat-number">{{ stats.total_patients|default:0 }}</div>
+                <div class="stat-label">Active HMS Patients</div>
+                {% if stats.total_legacy_patients %}
+                <div class="small mt-2" style="opacity: 0.8;">
+                    + {{ stats.total_legacy_patients|intcomma }} Legacy
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);">
+                <div class="stat-number">{{ stats.pending_lab_results }}</div>
+                <div class="stat-label">Pending Lab Results</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Legacy Patient Migration Alert -->
+    {% if stats.unmigrated_legacy > 0 %}
+    <div class="alert alert-info mb-4">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <i class="bi bi-info-circle me-2"></i>
+                <strong>Legacy Patient System:</strong>
+                {{ stats.unmigrated_legacy|intcomma }} legacy patients pending migration.
+                <span class="badge bg-info ms-2">{{ stats.migration_progress }}% Complete</span>
+            </div>
+            <a href="{% url 'hospital:migration_dashboard' %}" class="btn btn-sm btn-primary">
+                <i class="bi bi-arrow-right me-1"></i>Manage Migration
+            </a>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="row">
+        <!-- Today's Appointments -->
+        <div class="col-md-6">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-calendar-check me-2"></i>
+                    Today's Appointments
+                </h5>
+                {% if today_appointments %}
+                    {% for appointment in today_appointments %}
+                    <div class="appointment-item">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">
+                                    <a href="{% url 'hospital:patient_detail' appointment.patient.pk %}" class="text-decoration-none">
+                                        {{ appointment.patient.full_name }}
+                                    </a>
+                                </h6>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-clock me-1"></i>
+                                    {{ appointment.started_at|time:"g:i A" }}
+                                </p>
+                                <small class="text-muted">
+                                    MRN: {{ appointment.patient.mrn }}
+                                </small>
+                            </div>
+                            <div>
+                                <a href="{% url 'hospital:consultation_view' appointment.pk %}" class="action-btn btn-success">
+                                    <i class="bi bi-stethoscope me-1"></i>Consult
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-calendar-x text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No appointments scheduled for today</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Pending Consultations -->
+        <div class="col-md-6">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-hourglass-split me-2"></i>
+                    Pending Consultations
+                </h5>
+                {% if pending_consultations %}
+                    {% for consultation in pending_consultations %}
+                    <div class="patient-card">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">
+                                    <a href="{% url 'hospital:patient_detail' consultation.patient.pk %}" class="text-decoration-none">
+                                        {{ consultation.patient.full_name }}
+                                    </a>
+                                </h6>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-clock me-1"></i>
+                                    {{ consultation.started_at|date:"M d, Y g:i A" }}
+                                </p>
+                                <small class="text-muted">
+                                    {{ consultation.get_encounter_type_display }}
+                                </small>
+                            </div>
+                            <div>
+                                <a href="{% url 'hospital:consultation_view' consultation.pk %}" class="action-btn">
+                                    <i class="bi bi-arrow-right me-1"></i>Review
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-check-circle text-success" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">All consultations are up to date</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Recent Patients -->
+        <div class="col-md-6">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-people me-2"></i>
+                    Recent Patients
+                </h5>
+                {% if recent_patients %}
+                    {% for patient in recent_patients %}
+                    <div class="patient-card">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-1">
+                                    <a href="{% url 'hospital:patient_detail' patient.pk %}" class="text-decoration-none">
+                                        {{ patient.full_name }}
+                                    </a>
+                                </h6>
+                                <p class="text-muted mb-0">
+                                    MRN: {{ patient.mrn }} | Age: {{ patient.age }} years
+                                </p>
+                            </div>
+                            <div>
+                                <a href="{% url 'hospital:patient_detail' patient.pk %}" class="action-btn">
+                                    <i class="bi bi-eye me-1"></i>View
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-person text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No recent patients</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Pending Lab Results -->
+        <div class="col-md-6">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-flask me-2"></i>
+                    Pending Lab Results
+                </h5>
+                {% if pending_lab_results %}
+                    {% for result in pending_lab_results %}
+                    <div class="patient-card">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">
+                                    <a href="{% url 'hospital:patient_detail' result.patient.pk %}" class="text-decoration-none">
+                                        {{ result.patient.full_name }}
+                                    </a>
+                                </h6>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-flask me-1"></i>
+                                    {{ result.test.name }}
+                                </p>
+                                <small class="text-muted">
+                                    Completed: {{ result.completed_at|date:"M d, Y g:i A" }}
+                                </small>
+                            </div>
+                            <div>
+                                <a href="#" class="action-btn btn-warning me-2">
+                                    <i class="bi bi-eye me-1"></i>Review
+                                </a>
+                                {% if result.status == 'completed' %}
+                                <a href="{% url 'hospital:send_lab_result_sms' result.pk %}" class="action-btn btn-info" title="Send SMS to Patient">
+                                    <i class="bi bi-send me-1"></i>SMS
+                                </a>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-check-circle text-success" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No pending lab results</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Legacy Patients Section (if any recent) -->
+    {% if recent_legacy_patients %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card" style="border-left-color: #ffc107; background: linear-gradient(90deg, rgba(255, 193, 7, 0.05) 0%, white 2%);">
+                <h5 class="mb-3">
+                    <i class="bi bi-archive me-2"></i>
+                    Legacy Patient System
+                    <span class="badge bg-warning text-dark ms-2">{{ stats.total_legacy_patients|intcomma }} Records</span>
+                </h5>
+                <p class="text-muted mb-3">Recent patients from the old hospital system (not yet migrated):</p>
+                
+                {% for legacy_patient in recent_legacy_patients %}
+                <div class="patient-card" style="border-left: 3px solid #ffc107;">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="mb-1">
+                                <i class="bi bi-person me-1"></i>
+                                {{ legacy_patient.full_name }}
+                            </h6>
+                            <p class="text-muted mb-0">
+                                PID: {{ legacy_patient.pid }}
+                                {% if legacy_patient.display_phone %}
+                                | 📞 {{ legacy_patient.display_phone }}
+                                {% endif %}
+                                {% if legacy_patient.city %}
+                                | 📍 {{ legacy_patient.city }}
+                                {% endif %}
+                            </p>
+                        </div>
+                        <div>
+                            <a href="{% url 'hospital:legacy_patient_detail' pid=legacy_patient.pid %}" class="action-btn" style="background: #ffc107; color: #212529;">
+                                <i class="bi bi-eye me-1"></i>View & Migrate
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+                
+                <div class="text-center mt-3">
+                    <a href="{% url 'hospital:legacy_patient_list' %}" class="btn btn-outline-warning">
+                        <i class="bi bi-list me-1"></i>View All Legacy Patients
+                    </a>
+                    <a href="{% url 'hospital:migration_dashboard' %}" class="btn btn-warning">
+                        <i class="bi bi-speedometer2 me-1"></i>Migration Dashboard
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Quick Actions -->
+    <div class="row">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-lightning me-2"></i>
+                    Quick Actions
+                </h5>
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="{% url 'hospital:patient_create' %}" class="action-btn">
+                        <i class="bi bi-person-plus me-1"></i>New Patient
+                    </a>
+                    <a href="{% url 'hospital:encounter_create' %}" class="action-btn">
+                        <i class="bi bi-plus-circle me-1"></i>New Encounter
+                    </a>
+                    <a href="{% url 'hospital:global_search' %}" class="action-btn">
+                        <i class="bi bi-search me-1"></i>Search
+                    </a>
+                    <a href="{% url 'hospital:reports_daily' %}" class="action-btn">
+                        <i class="bi bi-graph-up me-1"></i>Reports
+                    </a>
+                    {% if stats.total_legacy_patients %}
+                    <a href="{% url 'hospital:legacy_patient_list' %}" class="action-btn" style="background: #ffc107; color: #212529;">
+                        <i class="bi bi-archive me-1"></i>Legacy Patients
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

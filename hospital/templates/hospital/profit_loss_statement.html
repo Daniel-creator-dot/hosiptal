@@ -1,0 +1,235 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Profit & Loss Statement - Hospital Management System{% endblock %}
+
+{% block extra_css %}
+<style>
+    .report-header {
+        background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+        color: white;
+        padding: 30px;
+        border-radius: 15px;
+        margin-bottom: 30px;
+    }
+    
+    .statement-section {
+        background: white;
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .section-header {
+        background: #667eea;
+        color: white;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        font-weight: 600;
+    }
+    
+    .line-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .line-item:last-child {
+        border-bottom: none;
+    }
+    
+    .subtotal {
+        font-weight: 600;
+        background: #f8f9fa;
+        padding: 12px;
+        margin: 10px -20px;
+        padding-left: 20px;
+        padding-right: 20px;
+    }
+    
+    .total-row {
+        background: #667eea;
+        color: white;
+        padding: 15px;
+        border-radius: 8px;
+        margin-top: 20px;
+        font-size: 18px;
+        font-weight: 700;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    
+    <!-- Header -->
+    <div class="report-header">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h2 class="mb-2"><i class="bi bi-bar-chart-line"></i> Profit & Loss Statement</h2>
+                <p class="mb-1">For the period {{ date_from|date:"M d, Y" }} to {{ date_to|date:"M d, Y" }}</p>
+                <p class="mb-0"><small>Hospital Name | Generated: {{ today|date:"M d, Y h:i A" }}</small></p>
+            </div>
+            <div>
+                <button onclick="window.print()" class="btn btn-light">
+                    <i class="bi bi-printer"></i> Print
+                </button>
+                <a href="{% url 'hospital:accounting_dashboard' %}" class="btn btn-light">
+                    <i class="bi bi-arrow-left"></i> Back
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Revenue Section -->
+    <div class="statement-section">
+        <div class="section-header">
+            REVENUE
+        </div>
+        
+        {% for item in revenue_by_category %}
+        <div class="line-item">
+            <div>{{ item.category__name }}</div>
+            <div><strong>GHS {{ item.total|floatformat:2|intcomma }}</strong></div>
+        </div>
+        {% empty %}
+        <div class="line-item">
+            <div class="text-muted">No revenue recorded for this period</div>
+            <div><strong>$0.00</strong></div>
+        </div>
+        {% endfor %}
+        
+        <div class="subtotal">
+            <div class="d-flex justify-content-between">
+                <div>TOTAL REVENUE</div>
+                <div><strong class="text-success">GHS {{ total_revenue|floatformat:2|intcomma }}</strong></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Cost of Services -->
+    <div class="statement-section">
+        <div class="section-header">
+            COST OF SERVICES
+        </div>
+        
+        <div class="line-item">
+            <div>Direct Medical Supplies</div>
+            <div><strong>GHS {{ cost_of_services.supplies|floatformat:2|intcomma }}</strong></div>
+        </div>
+        <div class="line-item">
+            <div>Medical Staff Salaries</div>
+            <div><strong>GHS {{ cost_of_services.salaries|floatformat:2|intcomma }}</strong></div>
+        </div>
+        <div class="line-item">
+            <div>Laboratory Costs</div>
+            <div><strong>GHS {{ cost_of_services.lab|floatformat:2|intcomma }}</strong></div>
+        </div>
+        
+        <div class="subtotal">
+            <div class="d-flex justify-content-between">
+                <div>TOTAL COST OF SERVICES</div>
+                <div><strong class="text-danger">GHS {{ total_cost_of_services|floatformat:2|intcomma }}</strong></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Gross Profit -->
+    <div class="statement-section">
+        <div class="d-flex justify-content-between align-items-center" style="font-size: 20px; font-weight: 600;">
+            <div>GROSS PROFIT</div>
+            <div class="{% if gross_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                GHS {{ gross_profit|floatformat:2|intcomma }}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Operating Expenses -->
+    <div class="statement-section">
+        <div class="section-header">
+            OPERATING EXPENSES
+        </div>
+        
+        {% for item in expense_by_category %}
+        <div class="line-item">
+            <div>{{ item.category__name }}</div>
+            <div><strong>GHS {{ item.total|floatformat:2|intcomma }}</strong></div>
+        </div>
+        {% empty %}
+        <div class="line-item">
+            <div class="text-muted">No expenses recorded for this period</div>
+            <div><strong>$0.00</strong></div>
+        </div>
+        {% endfor %}
+        
+        <div class="subtotal">
+            <div class="d-flex justify-content-between">
+                <div>TOTAL OPERATING EXPENSES</div>
+                <div><strong class="text-danger">GHS {{ total_expenses|floatformat:2|intcomma }}</strong></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Net Income -->
+    <div class="statement-section">
+        <div class="total-row">
+            <div class="d-flex justify-content-between align-items-center">
+                <div><i class="bi bi-trophy"></i> NET INCOME (LOSS)</div>
+                <div style="font-size: 28px;">
+                    {% if net_income >= 0 %}
+                        <span class="text-white">GHS {{ net_income|floatformat:2|intcomma }}</span>
+                    {% else %}
+                        <span class="text-white">(GHS {{ net_income|floatformat:2|intcomma|slice:"1:" }})</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Summary Cards -->
+    <div class="row mt-4">
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h6 class="text-muted">Revenue</h6>
+                    <h4 class="text-success">GHS {{ total_revenue|floatformat:2|intcomma }}</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h6 class="text-muted">Expenses</h6>
+                    <h4 class="text-danger">GHS {{ total_expenses|floatformat:2|intcomma }}</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h6 class="text-muted">Gross Profit</h6>
+                    <h4 class="{% if gross_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                        GHS {{ gross_profit|floatformat:2|intcomma }}
+                    </h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h6 class="text-muted">Net Income</h6>
+                    <h4 class="{% if net_income >= 0 %}text-success{% else %}text-danger{% endif %}">
+                        GHS {{ net_income|floatformat:2|intcomma }}
+                    </h4>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+</div>
+{% endblock %}
+

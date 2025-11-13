@@ -1,0 +1,820 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Consultation - {{ patient.full_name }} - HMS{% endblock %}
+{% block page_title %}Consultation{% endblock %}
+{% block page_subtitle %}{{ patient.full_name }} ({{ patient.mrn }}){% endblock %}
+
+{% block extra_css %}
+<style>
+    .consultation-section {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+        border: 1px solid var(--border);
+    }
+    
+    .patient-info-card {
+        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+    
+    .drug-card, .test-card {
+        border: 2px solid var(--border);
+        border-radius: 12px;
+        padding: 12px;
+        margin-bottom: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .drug-card:hover, .test-card:hover {
+        border-color: var(--primary);
+        background: var(--light);
+    }
+    
+    .drug-card.selected, .test-card.selected {
+        border-color: var(--primary);
+        background: rgba(99, 102, 241, 0.1);
+    }
+    
+    .prescription-item, .order-item {
+        background: var(--light);
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        border-left: 4px solid var(--primary);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Patient Info Header -->
+<div class="patient-info-card">
+    <div class="row align-items-center">
+        <div class="col-md-8">
+            <h4 style="font-weight: 700; margin-bottom: 8px;">{{ patient.full_name }}</h4>
+            <div style="font-size: 14px; opacity: 0.9;">
+                <i class="bi bi-person-circle"></i> MRN: {{ patient.mrn }} | 
+                <i class="bi bi-calendar"></i> Age: {{ patient.age }} yrs | 
+                <i class="bi bi-telephone"></i> {{ patient.phone_number|default:"No phone" }}
+            </div>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{% url 'hospital:encounter_detail' encounter.pk %}" class="btn btn-light">
+                <i class="bi bi-arrow-left"></i> Back to Encounter
+            </a>
+        </div>
+    </div>
+    <div class="row mt-3">
+        <div class="col-md-6">
+            <strong>Chief Complaint:</strong> {{ encounter.chief_complaint|default:"Not specified" }}
+        </div>
+        <div class="col-md-6">
+            <strong>Encounter Type:</strong> {{ encounter.get_encounter_type_display }}
+        </div>
+    </div>
+    {% if latest_vitals %}
+    <div class="row mt-2 pt-2" style="border-top: 1px solid rgba(255,255,255,0.3);">
+        <div class="col-md-12">
+            <strong>Latest Vitals:</strong> 
+            BP: {{ latest_vitals.systolic_bp }}/{{ latest_vitals.diastolic_bp }} | 
+            Pulse: {{ latest_vitals.pulse|default:"-" }} | 
+            Temp: {{ latest_vitals.temperature|default:"-" }}°C | 
+            SpO2: {{ latest_vitals.spo2|default:"-" }}% | 
+            RR: {{ latest_vitals.respiratory_rate|default:"-" }}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<div class="row g-4">
+    <!-- Prescribe Medications -->
+    <div class="col-md-6">
+        <div class="consultation-section">
+            <h5 style="font-weight: 600; margin-bottom: 20px; border-bottom: 2px solid var(--border); padding-bottom: 10px;">
+                <i class="bi bi-capsule me-2"></i>Prescribe Medication
+            </h5>
+            
+            <form method="post" id="prescriptionForm">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="prescribe_drug">
+                
+                <div class="mb-3">
+                    <label class="form-label">Select Drug</label>
+                    <select name="drug_id" id="drugSelect" class="form-select form-control-modern" required>
+                        <option value="">-- Select Drug --</option>
+                        {% for drug in available_drugs %}
+                        <option value="{{ drug.pk }}" 
+                                data-strength="{{ drug.strength }}" 
+                                data-form="{{ drug.form }}">
+                            {{ drug.name }} {{ drug.strength|default:"" }} {{ drug.form|default:"" }}
+                        </option>
+                        {% empty %}
+                        <option value="" disabled>No drugs available. Please add drugs in the admin panel.</option>
+                        {% endfor %}
+                    </select>
+                    {% if not available_drugs %}
+                    <small class="text-warning">
+                        <i class="bi bi-exclamation-triangle"></i> No drugs available. 
+                        <a href="/admin/hospital/drug/add/" target="_blank">Add drugs here</a>
+                    </small>
+                    {% endif %}
+                </div>
+                
+                <div class="row mb-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Quantity</label>
+                        <input type="number" name="quantity" class="form-control form-control-modern" value="1" min="1" required>
+                    </div>
+                    <div class="col-md-8">
+                        <label class="form-label">Dose</label>
+                        <input type="text" name="dose" class="form-control form-control-modern" placeholder="e.g., 500mg" required>
+                    </div>
+                </div>
+                
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Route</label>
+                        <select name="route" class="form-select form-control-modern" required>
+                            <option value="oral">Oral</option>
+                            <option value="IV">IV</option>
+                            <option value="IM">IM</option>
+                            <option value="subcutaneous">Subcutaneous</option>
+                            <option value="topical">Topical</option>
+                            <option value="inhalation">Inhalation</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Frequency</label>
+                        <input type="text" name="frequency" class="form-control form-control-modern" placeholder="e.g., Twice daily" required>
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">Duration</label>
+                    <input type="text" name="duration" class="form-control form-control-modern" placeholder="e.g., 7 days" required>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">Instructions</label>
+                    <textarea name="instructions" class="form-control form-control-modern" rows="3" placeholder="Additional instructions for patient"></textarea>
+                </div>
+                
+                <button type="submit" class="btn btn-primary-modern w-100">
+                    <i class="bi bi-check-circle"></i> Prescribe Medication
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Order Lab Tests -->
+    <div class="col-md-6">
+        <div class="consultation-section">
+            <h5 style="font-weight: 600; margin-bottom: 20px; border-bottom: 2px solid var(--border); padding-bottom: 10px;">
+                <i class="bi bi-flask me-2"></i>Order Lab Tests
+            </h5>
+            
+            <form method="post" id="labOrderForm">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="order_lab_test">
+                
+                <div class="mb-3">
+                    <label class="form-label">Select Tests</label>
+                    <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px;">
+                        {% for test in available_lab_tests %}
+                        <div class="test-card" onclick="toggleTest('{{ test.pk }}')">
+                            <input type="checkbox" name="test_ids" value="{{ test.pk }}" id="test_{{ test.pk }}" class="form-check-input" style="margin-right: 8px;">
+                            <label for="test_{{ test.pk }}" style="cursor: pointer; margin: 0; flex: 1;">
+                                <strong>{{ test.name }}</strong><br>
+                                <small class="text-muted">{{ test.code }} | {{ test.specimen_type }}</small>
+                            </label>
+                        </div>
+                        {% empty %}
+                        <p class="text-muted text-center py-3">
+                            No lab tests available.<br>
+                            <small>
+                                <a href="/admin/hospital/labtest/add/" target="_blank">Add lab tests here</a>
+                            </small>
+                        </p>
+                        {% endfor %}
+                    </div>
+                </div>
+                
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Priority</label>
+                        <select name="priority" class="form-select form-control-modern">
+                            <option value="routine">Routine</option>
+                            <option value="urgent">Urgent</option>
+                            <option value="stat">STAT</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">Notes</label>
+                    <textarea name="notes" class="form-control form-control-modern" rows="2" placeholder="Clinical notes for lab"></textarea>
+                </div>
+                
+                <button type="submit" class="btn btn-info w-100" style="background: var(--info); color: white;">
+                    <i class="bi bi-flask"></i> Order Lab Tests
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Lab Results Entry -->
+<div class="row g-4 mt-2">
+    <div class="col-md-12">
+        <div class="consultation-section">
+            <h5 style="font-weight: 600; margin-bottom: 20px; border-bottom: 2px solid var(--border); padding-bottom: 10px;">
+                <i class="bi bi-clipboard-data me-2"></i>Enter Lab Results
+            </h5>
+            
+            <!-- Pending Lab Results -->
+            {% if existing_orders %}
+            <div class="mb-4">
+                <h6 style="font-weight: 600; margin-bottom: 12px;">Pending Lab Results to Fill:</h6>
+                <div class="row g-3">
+                    {% for order in existing_orders %}
+                        {% if order.order_type == 'lab' and order.status != 'completed' %}
+                        <div class="col-md-6">
+                            <div class="card border-warning">
+                                <div class="card-header bg-warning text-dark">
+                                    <strong>Order #{{ order.pk|slice:":8" }}</strong>
+                                    <span class="badge bg-dark ms-2">{{ order.get_priority_display }}</span>
+                                </div>
+                                <div class="card-body">
+                                    {% for result in order.lab_results.all %}
+                                        {% if result.status != 'completed' %}
+                                        <form method="post" class="mb-3" id="labResultForm_{{ result.pk }}">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="update_lab_result">
+                                            <input type="hidden" name="result_id" value="{{ result.pk }}">
+                                            
+                                            <div class="row mb-2">
+                                                <div class="col-md-6">
+                                                    <label class="form-label"><strong>{{ result.test.name }}</strong></label>
+                                                    <small class="text-muted d-block">{{ result.test.code }} | {{ result.test.specimen_type }}</small>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label">Status</label>
+                                                    <select name="status" class="form-select form-select-sm">
+                                                        <option value="pending" {% if result.status == 'pending' %}selected{% endif %}>Pending</option>
+                                                        <option value="in_progress" {% if result.status == 'in_progress' %}selected{% endif %}>In Progress</option>
+                                                        <option value="completed" {% if result.status == 'completed' %}selected{% endif %}>Completed</option>
+                                                        <option value="cancelled" {% if result.status == 'cancelled' %}selected{% endif %}>Cancelled</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="row mb-2">
+                                                <div class="col-md-3">
+                                                    <label class="form-label">Value</label>
+                                                    <input type="text" name="value" class="form-control form-control-sm" value="{{ result.value|default:'' }}" placeholder="e.g., 7.2">
+                                                </div>
+                                                <div class="col-md-3">
+                                                    <label class="form-label">Units</label>
+                                                    <input type="text" name="units" class="form-control form-control-sm" value="{{ result.units|default:'' }}" placeholder="e.g., mg/dL">
+                                                </div>
+                                                <div class="col-md-3">
+                                                    <label class="form-label">Range Low</label>
+                                                    <input type="text" name="range_low" class="form-control form-control-sm" value="{{ result.range_low|default:'' }}" placeholder="e.g., 3.5">
+                                                </div>
+                                                <div class="col-md-3">
+                                                    <label class="form-label">Range High</label>
+                                                    <input type="text" name="range_high" class="form-control form-control-sm" value="{{ result.range_high|default:'' }}" placeholder="e.g., 7.0">
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="row mb-2">
+                                                <div class="col-md-6">
+                                                    <div class="form-check">
+                                                        <input type="checkbox" name="is_abnormal" class="form-check-input" {% if result.is_abnormal %}checked{% endif %}>
+                                                        <label class="form-check-label">Abnormal Result</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label">Qualitative Result</label>
+                                                    <select name="qualitative_result" class="form-select form-select-sm">
+                                                        <option value="">-- Select --</option>
+                                                        <option value="reactive" {% if result.qualitative_result == 'reactive' %}selected{% endif %}>Reactive</option>
+                                                        <option value="non-reactive" {% if result.qualitative_result == 'non-reactive' %}selected{% endif %}>Non-reactive</option>
+                                                        <option value="positive" {% if result.qualitative_result == 'positive' %}selected{% endif %}>Positive</option>
+                                                        <option value="negative" {% if result.qualitative_result == 'negative' %}selected{% endif %}>Negative</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="mb-2">
+                                                <label class="form-label">Notes</label>
+                                                <textarea name="notes" class="form-control form-control-sm" rows="2" placeholder="Additional notes">{{ result.notes|default:'' }}</textarea>
+                                            </div>
+                                            
+                                            <button type="submit" class="btn btn-success btn-sm">
+                                                <i class="bi bi-check-circle"></i> Update Result
+                                            </button>
+                                        </form>
+                                        <hr class="my-2">
+                                        {% endif %}
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+            
+            <!-- Quick Lab Result Entry -->
+            <div class="mt-4">
+                <h6 style="font-weight: 600; margin-bottom: 12px;">Quick Lab Result Entry:</h6>
+                <form method="post" id="quickLabResultForm">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="create_lab_result">
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Test Name</label>
+                            <input type="text" name="test_name" class="form-control form-control-modern" placeholder="e.g., Blood Glucose" required>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Value</label>
+                            <input type="text" name="value" class="form-control form-control-modern" placeholder="7.2" required>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Units</label>
+                            <input type="text" name="units" class="form-control form-control-modern" placeholder="mg/dL">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Range</label>
+                            <input type="text" name="range" class="form-control form-control-modern" placeholder="3.5-7.0">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Status</label>
+                            <select name="status" class="form-select form-control-modern">
+                                <option value="completed">Completed</option>
+                                <option value="pending">Pending</option>
+                                <option value="in_progress">In Progress</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <div class="form-check">
+                                <input type="checkbox" name="is_abnormal" class="form-check-input">
+                                <label class="form-check-label">Abnormal Result</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Qualitative Result</label>
+                            <select name="qualitative_result" class="form-select form-control-modern">
+                                <option value="">-- Select --</option>
+                                <option value="reactive">Reactive</option>
+                                <option value="non-reactive">Non-reactive</option>
+                                <option value="positive">Positive</option>
+                                <option value="negative">Negative</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Notes</label>
+                        <textarea name="notes" class="form-control form-control-modern" rows="2" placeholder="Additional notes about the result"></textarea>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-info">
+                        <i class="bi bi-plus-circle"></i> Add Lab Result
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Order Imaging & Procedures -->
+<div class="row g-4 mt-2">
+    <div class="col-md-6">
+        <div class="consultation-section">
+            <h5 style="font-weight: 600; margin-bottom: 20px; border-bottom: 2px solid var(--border); padding-bottom: 10px;">
+                <i class="bi bi-x-ray me-2"></i>Order Imaging
+            </h5>
+            
+            <form method="post" id="imagingOrderForm">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="order_imaging">
+                
+                <div class="mb-3">
+                    <label class="form-label">Imaging Type</label>
+                    <select name="imaging_type" class="form-select form-control-modern" required>
+                        <option value="X-ray">X-ray</option>
+                        <option value="CT Scan">CT Scan</option>
+                        <option value="MRI">MRI</option>
+                        <option value="Ultrasound">Ultrasound</option>
+                        <option value="Mammography">Mammography</option>
+                        <option value="DEXA Scan">DEXA Scan</option>
+                        <option value="PET Scan">PET Scan</option>
+                        <option value="Nuclear Medicine">Nuclear Medicine</option>
+                    </select>
+                </div>
+                
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Priority</label>
+                        <select name="priority" class="form-select form-control-modern">
+                            <option value="routine">Routine</option>
+                            <option value="urgent">Urgent</option>
+                            <option value="stat">STAT</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">Clinical Notes</label>
+                    <textarea name="notes" class="form-control form-control-modern" rows="3" placeholder="Indication for imaging, body part, etc." required></textarea>
+                </div>
+                
+                <button type="submit" class="btn btn-warning w-100" style="background: var(--warning); color: white;">
+                    <i class="bi bi-x-ray"></i> Order Imaging
+                </button>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Order Procedures -->
+    <div class="col-md-6">
+        <div class="consultation-section">
+            <h5 style="font-weight: 600; margin-bottom: 20px; border-bottom: 2px solid var(--border); padding-bottom: 10px;">
+                <i class="bi bi-scissors me-2"></i>Order Procedure
+            </h5>
+            
+            <form method="post" id="procedureOrderForm">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="order_procedure">
+                
+                <div class="mb-3">
+                    <label class="form-label">Procedure Name</label>
+                    <input type="text" name="procedure_name" class="form-control form-control-modern" placeholder="e.g., Dressing Change, Wound Care, IV Cannulation" required>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">Procedure Type</label>
+                    <select name="procedure_type" class="form-select form-control-modern">
+                        <option value="minor">Minor Procedure</option>
+                        <option value="surgical">Surgical</option>
+                        <option value="diagnostic">Diagnostic</option>
+                        <option value="therapeutic">Therapeutic</option>
+                        <option value="nursing">Nursing Procedure</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+                
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Priority</label>
+                        <select name="priority" class="form-select form-control-modern">
+                            <option value="routine">Routine</option>
+                            <option value="urgent">Urgent</option>
+                            <option value="stat">STAT</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Scheduled Date/Time</label>
+                        <input type="datetime-local" name="scheduled_date" class="form-control form-control-modern">
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">Notes/Instructions</label>
+                    <textarea name="notes" class="form-control form-control-modern" rows="3" placeholder="Procedure details and instructions"></textarea>
+                </div>
+                
+                <button type="submit" class="btn btn-secondary w-100">
+                    <i class="bi bi-scissors"></i> Order Procedure
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Diagnosis & Clinical Notes -->
+<div class="row g-4 mt-2">
+    <!-- Add Diagnosis -->
+    <div class="col-md-6">
+        <div class="consultation-section">
+            <h5 style="font-weight: 600; margin-bottom: 20px; border-bottom: 2px solid var(--border); padding-bottom: 10px;">
+                <i class="bi bi-clipboard-check me-2"></i>Add Diagnosis
+            </h5>
+            
+            <form method="post" id="diagnosisForm">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="save_diagnosis">
+                
+                <div class="mb-3">
+                    <label class="form-label">ICD-10 Code (Optional)</label>
+                    <input type="text" name="icd10_code" class="form-control form-control-modern" placeholder="e.g., J11.1">
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">Problem/Diagnosis <span class="text-danger">*</span></label>
+                    <input type="text" name="problem" class="form-control form-control-modern" placeholder="e.g., Upper Respiratory Infection" required>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">Description</label>
+                    <textarea name="description" class="form-control form-control-modern" rows="3" placeholder="Additional details about the diagnosis"></textarea>
+                </div>
+                
+                <button type="submit" class="btn btn-success w-100">
+                    <i class="bi bi-plus-circle"></i> Add Diagnosis
+                </button>
+            </form>
+            
+            {% if problems %}
+            <hr class="my-3">
+            <h6 style="font-weight: 600; margin-bottom: 12px;">Active Diagnoses:</h6>
+            <div style="max-height: 200px; overflow-y: auto;">
+                {% for problem in problems %}
+                <div class="alert alert-info py-2 px-3 mb-2" style="font-size: 13px;">
+                    <strong>{{ problem.problem }}</strong>
+                    {% if problem.icd10_code %}<span class="badge bg-light text-dark ms-2">{{ problem.icd10_code }}</span>{% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Clinical Notes/SOAP -->
+    <div class="col-md-6">
+        <div class="consultation-section">
+            <h5 style="font-weight: 600; margin-bottom: 20px; border-bottom: 2px solid var(--border); padding-bottom: 10px;">
+                <i class="bi bi-file-text me-2"></i>Clinical Notes (SOAP)
+            </h5>
+            
+            <form method="post" id="noteForm">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="save_note">
+                <input type="hidden" name="note_type" value="consultation">
+                
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">S - Subjective</label>
+                        <textarea name="subjective" class="form-control form-control-modern" rows="2" placeholder="Patient's complaints, history"></textarea>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">O - Objective</label>
+                        <textarea name="objective" class="form-control form-control-modern" rows="2" placeholder="Physical exam findings, vitals"></textarea>
+                    </div>
+                </div>
+                
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">A - Assessment</label>
+                        <textarea name="assessment" class="form-control form-control-modern" rows="2" placeholder="Clinical impression, diagnosis"></textarea>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">P - Plan</label>
+                        <textarea name="plan" class="form-control form-control-modern" rows="2" placeholder="Treatment plan, follow-up"></textarea>
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">Additional Notes</label>
+                    <textarea name="notes" class="form-control form-control-modern" rows="3" placeholder="Any additional clinical notes"></textarea>
+                </div>
+                
+                <button type="submit" class="btn btn-info w-100" style="background: var(--info); color: white;">
+                    <i class="bi bi-save"></i> Save Clinical Note
+                </button>
+            </form>
+            
+            {% if clinical_notes %}
+            <hr class="my-3">
+            <h6 style="font-weight: 600; margin-bottom: 12px;">Recent Notes:</h6>
+            <div style="max-height: 200px; overflow-y: auto;">
+                {% for note in clinical_notes %}
+                <div class="alert alert-light py-2 px-3 mb-2" style="font-size: 12px; border-left: 3px solid var(--primary);">
+                    <strong>{{ note.get_note_type_display }}</strong> - {{ note.created|date:"d/m/Y H:i" }}<br>
+                    <small>{{ note.notes|truncatewords:15 }}</small>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Update Encounter Info -->
+<div class="row g-4 mt-2">
+    <div class="col-md-12">
+        <div class="consultation-section">
+            <h5 style="font-weight: 600; margin-bottom: 20px; border-bottom: 2px solid var(--border); padding-bottom: 10px;">
+                <i class="bi bi-pencil-square me-2"></i>Update Encounter Information
+            </h5>
+            
+            <form method="post" id="encounterUpdateForm">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_encounter">
+                
+                <div class="row mb-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Chief Complaint</label>
+                        <input type="text" name="chief_complaint" class="form-control form-control-modern" value="{{ encounter.chief_complaint|default:'' }}" placeholder="Main complaint">
+                    </div>
+                    <div class="col-md-8">
+                        <label class="form-label">Diagnosis</label>
+                        <input type="text" name="diagnosis" class="form-control form-control-modern" value="{{ encounter.diagnosis|default:'' }}" placeholder="Primary diagnosis">
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">Encounter Notes</label>
+                    <textarea name="encounter_notes" class="form-control form-control-modern" rows="2" placeholder="Additional encounter notes">{{ encounter.notes|default:'' }}</textarea>
+                </div>
+                
+                <button type="submit" class="btn btn-outline-primary">
+                    <i class="bi bi-save"></i> Update Encounter
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Current Orders & Prescriptions -->
+<div class="row g-4 mt-2">
+    <div class="col-md-12">
+        <div class="consultation-section">
+            <h5 style="font-weight: 600; margin-bottom: 20px; border-bottom: 2px solid var(--border); padding-bottom: 10px;">
+                <i class="bi bi-list-check me-2"></i>Current Orders & Prescriptions
+            </h5>
+            
+            <div style="max-height: 500px; overflow-y: auto;">
+                {% if existing_prescriptions %}
+                <h6 class="mt-3 mb-2" style="font-weight: 600;">Prescriptions:</h6>
+                {% for prescription in existing_prescriptions %}
+                <div class="prescription-item">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <strong>{{ prescription.drug.name }}</strong><br>
+                            <small class="text-muted">{{ prescription.dose }} | {{ prescription.route }} | {{ prescription.frequency }} | {{ prescription.duration }}</small><br>
+                            <small>Qty: {{ prescription.quantity }} | Prescribed: {{ prescription.created|date:"d/m/Y H:i" }}</small>
+                        </div>
+                        <span class="badge-modern badge-{% if prescription.order.status == 'pending' %}warning{% elif prescription.order.status == 'completed' %}success{% else %}info{% endif %}">
+                            {{ prescription.order.get_status_display }}
+                        </span>
+                    </div>
+                </div>
+                {% endfor %}
+                {% endif %}
+                
+                {% if existing_orders %}
+                <h6 class="mt-3 mb-2" style="font-weight: 600;">Lab, Imaging & Procedure Orders:</h6>
+                {% for order in existing_orders %}
+                <div class="order-item">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <strong>{{ order.get_order_type_display }}</strong>
+                            <span class="badge bg-{% if order.priority == 'stat' %}danger{% elif order.priority == 'urgent' %}warning{% else %}secondary{% endif %} ms-2">
+                                {{ order.get_priority_display }}
+                            </span>
+                            <br>
+                            <small class="text-muted">Requested: {{ order.requested_at|date:"d/m/Y H:i" }} by {{ order.requested_by.user.get_full_name|default:order.requested_by }}</small>
+                            {% if order.notes %}
+                            <br><small class="text-muted">{{ order.notes|truncatewords:15 }}</small>
+                            {% endif %}
+                        </div>
+                        <span class="badge-modern badge-{% if order.status == 'pending' %}warning{% elif order.status == 'completed' %}success{% elif order.status == 'in_progress' %}info{% else %}secondary{% endif %}">
+                            {{ order.get_status_display }}
+                        </span>
+                    </div>
+                </div>
+                {% endfor %}
+                {% endif %}
+                
+                {% if recent_lab_results %}
+                <h6 class="mt-3 mb-2" style="font-weight: 600;">Recent Lab Results:</h6>
+                {% for result in recent_lab_results %}
+                <div class="order-item" style="border-left-color: {% if result.is_abnormal %}var(--danger){% else %}var(--success){% endif %};">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <strong>{{ result.test.name }}</strong>
+                            {% if result.is_abnormal %}<span class="badge bg-danger ms-2">Abnormal</span>{% endif %}
+                            <br>
+                            <small class="text-muted">
+                                Value: {{ result.value }}{% if result.units %} {{ result.units }}{% endif %}
+                                {% if result.range_low and result.range_high %} (Ref: {{ result.range_low }}-{{ result.range_high }}){% endif %}
+                                | Verified: {{ result.verified_at|date:"d/m/Y H:i"|default:"Not verified" }}
+                            </small>
+                            {% if result.notes %}
+                            <br><small class="text-muted">{{ result.notes }}</small>
+                            {% endif %}
+                        </div>
+                        <span class="badge-modern badge-{% if result.status == 'completed' %}success{% elif result.status == 'in_progress' %}info{% else %}warning{% endif %}">
+                            {{ result.get_status_display }}
+                        </span>
+                    </div>
+                </div>
+                {% endfor %}
+                {% endif %}
+                
+                {% if not existing_prescriptions and not existing_orders and not recent_lab_results %}
+                <p class="text-muted text-center py-4">No orders, prescriptions, or lab results yet</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Referrals Section -->
+<div class="row g-4 mt-2">
+    <div class="col-md-12">
+        <div class="consultation-section">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin-bottom: 0; border-bottom: 2px solid var(--border); padding-bottom: 10px;">
+                    <i class="bi bi-arrow-right-circle me-2"></i>Referrals
+                </h5>
+                <a href="{% url 'hospital:create_referral' encounter_id=encounter.pk %}" class="btn btn-primary-modern">
+                    <i class="bi bi-plus-circle"></i> Create Referral
+                </a>
+            </div>
+            
+            {% if referrals %}
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Specialist</th>
+                            <th>Specialty</th>
+                            <th>Status</th>
+                            <th>Priority</th>
+                            <th>Date</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for referral in referrals %}
+                        <tr>
+                            <td>{{ referral.specialist.staff.user.get_full_name }}</td>
+                            <td>{{ referral.specialty.name }}</td>
+                            <td>
+                                <span class="badge bg-{% if referral.status == 'pending' %}warning{% elif referral.status == 'accepted' %}info{% elif referral.status == 'completed' %}success{% elif referral.status == 'declined' %}danger{% else %}secondary{% endif %}">
+                                    {{ referral.get_status_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge bg-{% if referral.priority == 'stat' %}danger{% elif referral.priority == 'urgent' %}warning{% else %}secondary{% endif %}">
+                                    {{ referral.get_priority_display }}
+                                </span>
+                            </td>
+                            <td>{{ referral.referred_date|date:"M d, Y H:i" }}</td>
+                            <td>
+                                <a href="{% url 'hospital:referral_detail' referral_id=referral.pk %}" class="btn btn-sm btn-outline-primary">
+                                    View
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted text-center py-3">No referrals created yet. <a href="{% url 'hospital:create_referral' encounter_id=encounter.pk %}">Create one now</a></p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleTest(testId) {
+    const checkbox = document.getElementById('test_' + testId);
+    const card = checkbox.closest('.test-card');
+    
+    if (checkbox.checked) {
+        checkbox.checked = false;
+        card.classList.remove('selected');
+    } else {
+        checkbox.checked = true;
+        card.classList.add('selected');
+    }
+}
+
+// Auto-fill dose based on drug selection
+document.getElementById('drugSelect').addEventListener('change', function() {
+    const option = this.options[this.selectedIndex];
+    if (option.value) {
+        const doseField = document.querySelector('input[name="dose"]');
+        doseField.placeholder = option.dataset.strength || 'Enter dose';
+    }
+});
+</script>
+{% endblock %}
+

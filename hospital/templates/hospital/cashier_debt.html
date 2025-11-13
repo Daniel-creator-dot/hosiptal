@@ -1,0 +1,279 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Customer Debt - HMS{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2>💰 Complete Customer Debt Tracker</h2>
+            <p class="text-muted">Track all outstanding balances: Invoices + Lab Tests + Pharmacy</p>
+        </div>
+        <a href="{% url 'hospital:cashier_dashboard' %}" class="btn btn-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Cashier
+        </a>
+    </div>
+    
+    <!-- Debt Summary Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card border-left-danger shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Total Debt</h6>
+                    <h2 class="text-danger">GHS {{ total_debt|floatformat:2|intcomma }}</h2>
+                    <small>{{ patient_count }} patients</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-left-warning shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Invoice Debt</h6>
+                    <h3>GHS {{ total_invoice_debt|floatformat:2|intcomma }}</h3>
+                    <small>Unpaid invoices</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-left-info shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Lab Test Debt</h6>
+                    <h3 class="text-info">GHS {{ total_lab_debt|floatformat:2|intcomma }}</h3>
+                    <small>Unpaid lab tests</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-left-success shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Pharmacy Debt</h6>
+                    <h3 class="text-success">GHS {{ total_pharmacy_debt|floatformat:2|intcomma }}</h3>
+                    <small>Unpaid medications</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Search & Filter -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card shadow">
+                <div class="card-body">
+                    <form method="GET" class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Search Patient</label>
+                            <input type="text" 
+                                   name="q" 
+                                   class="form-control" 
+                                   placeholder="Search by name, MRN, or phone..."
+                                   value="{{ query }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Minimum Debt</label>
+                            <div class="input-group">
+                                <span class="input-group-text">GHS </span>
+                                <input type="number" 
+                                       name="min_debt" 
+                                       class="form-control" 
+                                       step="0.01"
+                                       value="{{ min_debt|default:'0' }}">
+                            </div>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">&nbsp;</label>
+                            <button type="submit" class="btn btn-primary w-100">
+                                <i class="bi bi-search"></i> Search
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Patient Debt List -->
+    {% if page_obj %}
+        {% for item in page_obj %}
+        <div class="card shadow mb-3">
+            <div class="card-header bg-danger text-white">
+                <div class="row align-items-center">
+                    <div class="col-md-6">
+                        <h5 class="mb-0">
+                            <a href="{% url 'hospital:patient_detail' item.patient.pk %}" class="text-white text-decoration-none">
+                                {{ item.patient.full_name }}
+                            </a>
+                        </h5>
+                        <small>MRN: {{ item.patient.mrn }} | Phone: {{ item.patient.phone_number|default:"N/A" }}</small>
+                    </div>
+                    <div class="col-md-6 text-end">
+                        <h3 class="mb-0">GHS {{ item.total_debt|floatformat:2|intcomma }}</h3>
+                        <small>Total Outstanding</small>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <!-- Debt Breakdown -->
+                <div class="row mb-3">
+                    <div class="col-md-4">
+                        <div class="alert alert-warning mb-0">
+                            <strong>Invoices:</strong> GHS {{ item.invoice_debt|floatformat:2 }}<br>
+                            <small>{{ item.invoice_count }} unpaid invoice(s)</small>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="alert alert-info mb-0">
+                            <strong>Lab Tests:</strong> GHS {{ item.lab_debt|floatformat:2 }}<br>
+                            <small>{{ item.unpaid_labs_count }} unpaid test(s)</small>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="alert alert-success mb-0">
+                            <strong>Pharmacy:</strong> GHS {{ item.pharmacy_debt|floatformat:2 }}<br>
+                            <small>{{ item.unpaid_prescriptions_count }} unpaid prescription(s)</small>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Unpaid Items Details -->
+                <div class="row">
+                    <!-- Unpaid Invoices -->
+                    {% if item.invoices %}
+                    <div class="col-md-4">
+                        <h6>📋 Unpaid Invoices</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <tbody>
+                                    {% for invoice in item.invoices %}
+                                    <tr>
+                                        <td>{{ invoice.invoice_number }}</td>
+                                        <td class="text-end"><strong>GHS {{ invoice.balance }}</strong></td>
+                                        <td>
+                                            <a href="{% url 'hospital:process_payment_invoice' invoice.id %}" 
+                                               class="btn btn-xs btn-primary">
+                                                Pay
+                                            </a>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    <!-- Unpaid Lab Tests -->
+                    {% if item.unpaid_labs %}
+                    <div class="col-md-4">
+                        <h6>🧪 Unpaid Lab Tests</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <tbody>
+                                    {% for lab in item.unpaid_labs %}
+                                    <tr>
+                                        <td>{{ lab.test.name }}</td>
+                                        <td class="text-end"><strong>GHS {{ lab.test.price }}</strong></td>
+                                        <td>
+                                            <a href="{% url 'hospital:cashier_process_service_payment' 'lab' lab.id %}" 
+                                               class="btn btn-xs btn-info">
+                                                Pay
+                                            </a>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    <!-- Unpaid Prescriptions -->
+                    {% if item.unpaid_prescriptions %}
+                    <div class="col-md-4">
+                        <h6>💊 Unpaid Pharmacy</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <tbody>
+                                    {% for rx in item.unpaid_prescriptions %}
+                                    <tr>
+                                        <td>{{ rx.drug.name }} x{{ rx.quantity }}</td>
+                                        <td class="text-end"><strong>GHS {{ rx.total_price|floatformat:2 }}</strong></td>
+                                        <td>
+                                            <a href="{% url 'hospital:cashier_process_service_payment' 'pharmacy' rx.id %}" 
+                                               class="btn btn-xs btn-success">
+                                                Pay
+                                            </a>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                
+                <!-- View Patient Details -->
+                <div class="text-end mt-3">
+                    <a href="{% url 'hospital:cashier_patient_invoices' item.patient.id %}" class="btn btn-outline-primary btn-sm">
+                        <i class="bi bi-eye"></i> View All Patient Invoices
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="card shadow">
+            <div class="card-body text-center py-5">
+                <i class="bi bi-check-circle" style="font-size: 4em; color: #28a745;"></i>
+                <h4 class="mt-3">No Outstanding Debt</h4>
+                <p class="text-muted">All patients have paid their bills!</p>
+            </div>
+        </div>
+        {% endfor %}
+        
+        <!-- Pagination -->
+        {% if page_obj.has_other_pages %}
+        <nav>
+            <ul class="pagination justify-content-center">
+                {% if page_obj.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ page_obj.previous_page_number }}&q={{ query }}&min_debt={{ min_debt }}">Previous</a>
+                </li>
+                {% endif %}
+                
+                <li class="page-item disabled">
+                    <span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+                </li>
+                
+                {% if page_obj.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ page_obj.next_page_number }}&q={{ query }}&min_debt={{ min_debt }}">Next</a>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+    {% else %}
+        <div class="card shadow">
+            <div class="card-body text-center py-5">
+                <i class="bi bi-info-circle" style="font-size: 4em; color: #6c757d;"></i>
+                <h4 class="mt-3">No Debt Records</h4>
+                <p class="text-muted">No patients with outstanding balances found.</p>
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+

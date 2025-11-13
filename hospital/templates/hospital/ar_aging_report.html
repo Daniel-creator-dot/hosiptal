@@ -1,0 +1,200 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Accounts Receivable Aging - Hospital Management System{% endblock %}
+
+{% block extra_css %}
+<style>
+    .report-header {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+        padding: 30px;
+        border-radius: 15px;
+        margin-bottom: 30px;
+    }
+    
+    .aging-bucket {
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 15px;
+    }
+    
+    .bucket-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+    }
+    
+    .bucket-amount {
+        font-size: 24px;
+        font-weight: 700;
+    }
+    
+    .current { color: #28a745; }
+    .bucket-30 { color: #ffc107; }
+    .bucket-60 { color: #fd7e14; }
+    .bucket-90 { color: #dc3545; }
+    .bucket-over { color: #6c757d; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    
+    <div class="report-header">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h2 class="mb-2"><i class="bi bi-calendar-check"></i> Accounts Receivable Aging Report</h2>
+                <p class="mb-0">Outstanding invoices by age</p>
+            </div>
+            <div>
+                <button onclick="window.print()" class="btn btn-light">
+                    <i class="bi bi-printer"></i> Print
+                </button>
+                <a href="{% url 'hospital:accounting_dashboard' %}" class="btn btn-light">
+                    <i class="bi bi-arrow-left"></i> Back
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Aging Summary -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <h4 class="mb-3">Aging Summary</h4>
+        </div>
+        
+        <div class="col-md-2">
+            <div class="aging-bucket">
+                <div class="text-muted mb-1" style="font-size: 12px;">Current</div>
+                <div class="bucket-amount current">GHS {{ ar_aging.current|floatformat:2|intcomma }}</div>
+                <small class="text-muted">0-30 days</small>
+            </div>
+        </div>
+        
+        <div class="col-md-2">
+            <div class="aging-bucket">
+                <div class="text-muted mb-1" style="font-size: 12px;">31-60 Days</div>
+                <div class="bucket-amount bucket-30">GHS {{ ar_aging.0_30|floatformat:2|intcomma }}</div>
+            </div>
+        </div>
+        
+        <div class="col-md-2">
+            <div class="aging-bucket">
+                <div class="text-muted mb-1" style="font-size: 12px;">61-90 Days</div>
+                <div class="bucket-amount bucket-60">GHS {{ ar_aging.31_60|floatformat:2|intcomma }}</div>
+            </div>
+        </div>
+        
+        <div class="col-md-2">
+            <div class="aging-bucket">
+                <div class="text-muted mb-1" style="font-size: 12px;">91-120 Days</div>
+                <div class="bucket-amount bucket-90">GHS {{ ar_aging.61_90|floatformat:2|intcomma }}</div>
+            </div>
+        </div>
+        
+        <div class="col-md-2">
+            <div class="aging-bucket">
+                <div class="text-muted mb-1" style="font-size: 12px;">Over 120</div>
+                <div class="bucket-amount bucket-over">GHS {{ ar_aging.90_plus|floatformat:2|intcomma }}</div>
+            </div>
+        </div>
+        
+        <div class="col-md-2">
+            <div class="aging-bucket" style="background: #667eea; color: white;">
+                <div class="mb-1" style="font-size: 12px;">TOTAL AR</div>
+                <div class="bucket-amount" style="color: white;">GHS {{ total_ar|floatformat:2|intcomma }}</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Detailed AR List -->
+    <div class="card">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0"><i class="bi bi-list-ul"></i> Outstanding Invoices ({{ ar_list.count }} total)</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Invoice</th>
+                            <th>Patient</th>
+                            <th>Date</th>
+                            <th>Due Date</th>
+                            <th>Days</th>
+                            <th>Invoice Amount</th>
+                            <th>Paid</th>
+                            <th>Balance</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for ar in ar_list %}
+                        <tr>
+                            <td><strong>{{ ar.invoice.invoice_number }}</strong></td>
+                            <td>
+                                {% if ar.patient %}
+                                    {{ ar.patient.full_name }}
+                                {% else %}
+                                    <em class="text-muted">N/A</em>
+                                {% endif %}
+                            </td>
+                            <td>{{ ar.invoice.created|date:"M d, Y" }}</td>
+                            <td>{{ ar.due_date|date:"M d, Y" }}</td>
+                            <td>
+                                <span class="badge {% if ar.days_overdue <= 30 %}bg-success{% elif ar.days_overdue <= 60 %}bg-warning{% elif ar.days_overdue <= 90 %}bg-orange{% else %}bg-danger{% endif %}">
+                                    {{ ar.days_overdue }} days
+                                </span>
+                            </td>
+                            <td>GHS {{ ar.invoice_amount|floatformat:2|intcomma }}</td>
+                            <td>GHS {{ ar.amount_paid|floatformat:2|intcomma }}</td>
+                            <td><strong class="text-danger">GHS {{ ar.balance_due|floatformat:2|intcomma }}</strong></td>
+                            <td>
+                                {% if ar.is_overdue %}
+                                    <span class="badge bg-danger">Overdue</span>
+                                {% else %}
+                                    <span class="badge bg-success">Current</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="9" class="text-center py-5 text-muted">
+                                <i class="bi bi-check-circle" style="font-size: 48px; color: #28a745;"></i>
+                                <p class="mt-3">No outstanding receivables! All invoices are paid.</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    {% if ar_list %}
+                    <tfoot style="background: #f8f9fa; font-weight: 600;">
+                        <tr>
+                            <td colspan="7" class="text-end">TOTAL OUTSTANDING:</td>
+                            <td colspan="2">
+                                <strong class="text-danger" style="font-size: 18px;">
+                                    GHS {{ total_ar|floatformat:2|intcomma }}
+                                </strong>
+                            </td>
+                        </tr>
+                    </tfoot>
+                    {% endif %}
+                </table>
+            </div>
+        </div>
+    </div>
+    
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+

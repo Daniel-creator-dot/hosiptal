@@ -1,0 +1,156 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block extra_css %}
+<style>
+    @media print {
+        .no-print {
+            display: none !important;
+        }
+        body {
+            background: white;
+        }
+        .card {
+            border: none;
+            box-shadow: none;
+        }
+    }
+    .bill-header {
+        border-bottom: 3px solid #0d6efd;
+        padding-bottom: 20px;
+        margin-bottom: 30px;
+    }
+    .bill-item {
+        border-bottom: 1px solid #dee2e6;
+        padding: 10px 0;
+    }
+    .bill-total {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        margin-top: 20px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-10">
+            <div class="card shadow">
+                <div class="card-body p-5">
+                    <!-- Print Button -->
+                    <div class="text-end mb-4 no-print">
+                        <button onclick="window.print()" class="btn btn-primary">
+                            <i class="bi bi-printer"></i> Print Bill
+                        </button>
+                        <a href="{% url 'hospital:cashier_patient_bills' %}" class="btn btn-secondary">
+                            <i class="bi bi-arrow-left"></i> Back to Patient Bills
+                        </a>
+                    </div>
+                    
+                    <!-- Bill Header -->
+                    <div class="bill-header text-center">
+                        <h2 class="mb-2">PRIMECARE MEDICAL CENTER</h2>
+                        <p class="mb-1">Hospital Bill / Receipt</p>
+                        <p class="text-muted mb-0">
+                            Receipt #: <strong>{{ receipt.receipt_number }}</strong> | 
+                            Date: {{ receipt.receipt_date|date:"F d, Y" }} | 
+                            Time: {{ receipt.receipt_date|time:"H:i" }}
+                        </p>
+                    </div>
+                    
+                    <!-- Patient Information -->
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <h5>Patient Information:</h5>
+                            <p class="mb-1"><strong>Name:</strong> {{ patient.full_name }}</p>
+                            <p class="mb-1"><strong>MRN:</strong> {{ patient.mrn }}</p>
+                            <p class="mb-1"><strong>Phone:</strong> {{ patient.phone_number|default:"N/A" }}</p>
+                        </div>
+                        <div class="col-md-6 text-end">
+                            <h5>Payment Information:</h5>
+                            <p class="mb-1"><strong>Payment Method:</strong> {{ receipt.get_payment_method_display }}</p>
+                            {% if receipt.reference_number %}
+                            <p class="mb-1"><strong>Reference:</strong> {{ receipt.reference_number }}</p>
+                            {% endif %}
+                            <p class="mb-1"><strong>Received By:</strong> {{ receipt.received_by.get_full_name }}</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Services List -->
+                    <div class="mb-4">
+                        <h5>Services Rendered:</h5>
+                        {% if services %}
+                        <div class="table-responsive">
+                            <table class="table table-bordered">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Type</th>
+                                        <th>Service</th>
+                                        <th class="text-end">Amount (GHS)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for service in services %}
+                                    <tr>
+                                        <td>{{ forloop.counter }}</td>
+                                        <td>
+                                            {% if service.type == 'lab' %}
+                                                <span class="badge bg-info">Lab</span>
+                                            {% elif service.type == 'pharmacy' %}
+                                                <span class="badge bg-success">Pharmacy</span>
+                                            {% elif service.type == 'imaging' %}
+                                                <span class="badge bg-purple">Imaging</span>
+                                            {% elif service.type == 'consultation' %}
+                                                <span class="badge bg-primary">Consultation</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary">{{ service.type|title }}</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ service.name|default:"Service" }}</td>
+                                        <td class="text-end">{{ service.price|default:"0.00" }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <div class="alert alert-warning">
+                            <p class="mb-0">Service details not available. Total amount: GHS {{ receipt.amount_paid|floatformat:2 }}</p>
+                        </div>
+                        {% endif %}
+                    </div>
+                    
+                    <!-- Total -->
+                    <div class="bill-total">
+                        <div class="row">
+                            <div class="col-md-8">
+                                <h4 class="mb-0">Total Amount:</h4>
+                            </div>
+                            <div class="col-md-4 text-end">
+                                <h4 class="mb-0 text-success">GHS {{ receipt.amount_paid|floatformat:2 }}</h4>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Notes -->
+                    {% if receipt.notes %}
+                    <div class="mt-4">
+                        <p><strong>Notes:</strong> {{ receipt.notes }}</p>
+                    </div>
+                    {% endif %}
+                    
+                    <!-- Footer -->
+                    <div class="mt-5 pt-4 border-top text-center text-muted">
+                        <p class="mb-1">Thank you for your payment!</p>
+                        <p class="mb-0">This is a computer-generated receipt. No signature required.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

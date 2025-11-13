@@ -1,0 +1,334 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Payment Verification Dashboard{% endblock %}
+{% block page_title %}🛡️ Payment Verification Dashboard{% endblock %}
+{% block page_subtitle %}World-Class Receipt Verification & Fraud Detection System{% endblock %}
+
+{% block extra_css %}
+<style>
+    :root {
+        --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        --success-gradient: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        --warning-gradient: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        --info-gradient: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    }
+    
+    .stat-card {
+        background: white;
+        border-radius: 20px;
+        padding: 30px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        transition: all 0.3s;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .stat-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 5px;
+        background: var(--primary-gradient);
+    }
+    
+    .stat-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 15px 40px rgba(0,0,0,0.15);
+    }
+    
+    .stat-number {
+        font-size: 48px;
+        font-weight: 800;
+        background: var(--primary-gradient);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin: 10px 0;
+    }
+    
+    .stat-label {
+        font-size: 14px;
+        color: #666;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    
+    .action-card {
+        background: var(--primary-gradient);
+        border-radius: 20px;
+        padding: 40px;
+        color: white;
+        text-align: center;
+        transition: all 0.3s;
+        cursor: pointer;
+        height: 100%;
+    }
+    
+    .action-card:hover {
+        transform: scale(1.05);
+        box-shadow: 0 20px 40px rgba(102, 126, 234, 0.3);
+    }
+    
+    .action-card i {
+        font-size: 64px;
+        margin-bottom: 20px;
+        opacity: 0.9;
+    }
+    
+    .action-card h4 {
+        font-weight: 700;
+        margin-bottom: 10px;
+    }
+    
+    .action-card p {
+        opacity: 0.9;
+        font-size: 14px;
+    }
+    
+    .recent-list {
+        background: white;
+        border-radius: 20px;
+        padding: 30px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+    }
+    
+    .recent-item {
+        padding: 20px;
+        border-left: 4px solid #667eea;
+        background: #f8f9fa;
+        border-radius: 10px;
+        margin-bottom: 15px;
+        transition: all 0.3s;
+    }
+    
+    .recent-item:hover {
+        background: #e9ecef;
+        transform: translateX(5px);
+    }
+    
+    .receipt-badge {
+        background: var(--primary-gradient);
+        color: white;
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-size: 13px;
+        font-weight: 600;
+    }
+    
+    .verified-badge {
+        background: var(--success-gradient);
+        color: white;
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    
+    .pending-badge {
+        background: var(--warning-gradient);
+        color: white;
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Quick Actions -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <a href="{% url 'hospital:search_receipt' %}" class="text-decoration-none">
+                <div class="action-card" style="background: var(--primary-gradient);">
+                    <i class="bi bi-search"></i>
+                    <h4>Search Receipt</h4>
+                    <p>Find receipts by number, patient MRN, name, or QR code</p>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-4">
+            <a href="{% url 'hospital:scan_qr_code' %}" class="text-decoration-none">
+                <div class="action-card" style="background: var(--success-gradient);">
+                    <i class="bi bi-camera"></i>
+                    <h4>Scan QR Code</h4>
+                    <p>Use camera to scan and verify receipt QR codes instantly</p>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-4">
+            <a href="{% url 'hospital:verification_analytics' %}" class="text-decoration-none">
+                <div class="action-card" style="background: var(--info-gradient);">
+                    <i class="bi bi-graph-up"></i>
+                    <h4>Analytics</h4>
+                    <p>View payment trends, statistics, and verification reports</p>
+                </div>
+            </a>
+        </div>
+    </div>
+    
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">
+                    <i class="bi bi-receipt"></i> Today's Receipts
+                </div>
+                <div class="stat-number">{{ stats.today_receipts }}</div>
+                <div style="font-size: 13px; color: #11998e; font-weight: 600;">
+                    <i class="bi bi-arrow-up"></i> Active
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">
+                    <i class="bi bi-cash-coin"></i> Today's Amount
+                </div>
+                <div class="stat-number" style="font-size: 36px;">
+                    GHS {{ stats.today_amount|floatformat:2|intcomma }}
+                </div>
+                <div style="font-size: 13px; color: #11998e; font-weight: 600;">
+                    <i class="bi bi-arrow-up"></i> Revenue
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">
+                    <i class="bi bi-clock-history"></i> Pending Verification
+                </div>
+                <div class="stat-number" style="background: var(--warning-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                    {{ stats.pending_verification }}
+                </div>
+                <div style="font-size: 13px; color: #f5576c; font-weight: 600;">
+                    <i class="bi bi-exclamation-circle"></i> Needs Review
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">
+                    <i class="bi bi-check-circle"></i> Verified Today
+                </div>
+                <div class="stat-number" style="background: var(--success-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                    {{ stats.verified_today }}
+                </div>
+                <div style="font-size: 13px; color: #11998e; font-weight: 600;">
+                    <i class="bi bi-shield-check"></i> Completed
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- Recent Verifications -->
+        <div class="col-lg-6 mb-4">
+            <div class="recent-list">
+                <h5 style="font-weight: 700; margin-bottom: 25px; color: #333;">
+                    <i class="bi bi-check-circle-fill text-success"></i> Recent Verifications
+                </h5>
+                
+                {% if recent_verifications %}
+                {% for receipt in recent_verifications %}
+                <div class="recent-item">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <span class="receipt-badge">{{ receipt.receipt_number }}</span>
+                            <div style="margin-top: 10px; font-weight: 600; color: #333;">
+                                {{ receipt.patient.full_name }}
+                            </div>
+                            <div style="font-size: 13px; color: #666; margin-top: 5px;">
+                                <i class="bi bi-credit-card"></i> {{ receipt.patient.mrn }} &nbsp;|&nbsp;
+                                <i class="bi bi-cash"></i> GHS {{ receipt.amount_paid|floatformat:2 }}
+                            </div>
+                            <div style="font-size: 12px; color: #999; margin-top: 5px;">
+                                <i class="bi bi-clock"></i> {{ receipt.verified_at|timesince }} ago
+                            </div>
+                        </div>
+                        <div>
+                            <span class="verified-badge">
+                                <i class="bi bi-check-circle"></i> Verified
+                            </span>
+                            <div style="margin-top: 10px;">
+                                <a href="{% url 'hospital:receipt_detail' receipt.id %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-eye"></i> View
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+                {% else %}
+                <div class="text-center py-5">
+                    <i class="bi bi-inbox" style="font-size: 64px; color: #ddd;"></i>
+                    <p style="color: #999; margin-top: 20px;">No verifications yet today</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Pending Verifications -->
+        <div class="col-lg-6 mb-4">
+            <div class="recent-list">
+                <h5 style="font-weight: 700; margin-bottom: 25px; color: #333;">
+                    <i class="bi bi-clock-history text-warning"></i> Pending Verifications
+                </h5>
+                
+                {% if pending %}
+                {% for receipt in pending %}
+                <div class="recent-item" style="border-left-color: #f5576c;">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <span class="receipt-badge" style="background: var(--warning-gradient);">
+                                {{ receipt.receipt_number }}
+                            </span>
+                            <div style="margin-top: 10px; font-weight: 600; color: #333;">
+                                {{ receipt.patient.full_name }}
+                            </div>
+                            <div style="font-size: 13px; color: #666; margin-top: 5px;">
+                                <i class="bi bi-credit-card"></i> {{ receipt.patient.mrn }} &nbsp;|&nbsp;
+                                <i class="bi bi-cash"></i> GHS {{ receipt.amount_paid|floatformat:2 }}
+                            </div>
+                            <div style="font-size: 12px; color: #999; margin-top: 5px;">
+                                <i class="bi bi-calendar"></i> {{ receipt.created|date:"M d, Y H:i" }}
+                            </div>
+                        </div>
+                        <div>
+                            <span class="pending-badge">
+                                <i class="bi bi-clock"></i> Pending
+                            </span>
+                            <div style="margin-top: 10px;">
+                                <a href="{% url 'hospital:receipt_detail' receipt.id %}" class="btn btn-sm btn-primary">
+                                    <i class="bi bi-check-circle"></i> Verify
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+                {% else %}
+                <div class="text-center py-5">
+                    <i class="bi bi-check-circle" style="font-size: 64px; color: #11998e;"></i>
+                    <p style="color: #11998e; margin-top: 20px; font-weight: 600;">
+                        All receipts verified! ✓
+                    </p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+

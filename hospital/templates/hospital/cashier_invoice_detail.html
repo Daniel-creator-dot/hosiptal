@@ -1,0 +1,199 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+{% load hospital_extras %}
+
+{% block title %}Invoice {{ invoice.invoice_number }} - Cashier - HMS{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 style="font-weight: 700;">Invoice {{ invoice.invoice_number }}</h1>
+        <p class="text-muted mb-0">Cashier View</p>
+    </div>
+    <div>
+        <a href="{% url 'hospital:cashier_invoices' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Invoices
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="modern-card mb-4">
+            <h5 class="mb-3">Invoice Details</h5>
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <p><strong>Patient:</strong> <a href="{% url 'hospital:patient_detail' invoice.patient.pk %}">{{ invoice.patient.full_name }}</a></p>
+                    <p><strong>MRN:</strong> {{ invoice.patient.mrn }}</p>
+                    {% if invoice.encounter %}
+                    <p><strong>Encounter:</strong> {{ invoice.encounter.get_encounter_type_display }}</p>
+                    {% endif %}
+                </div>
+                <div class="col-md-6">
+                    <p><strong>Payer:</strong> {{ invoice.payer.name }}</p>
+                    <p><strong>Issued Date:</strong> {{ invoice.issued_at|date:"M d, Y" }}</p>
+                    <p><strong>Due Date:</strong> {{ invoice.due_at|date:"M d, Y" }}</p>
+                </div>
+            </div>
+            
+            <h6 class="text-muted mb-3"><i class="bi bi-list-check"></i> Services Provided - Detailed Breakdown</h6>
+            
+            <table class="table table-modern table-hover">
+                <thead>
+                    <tr>
+                        <th style="width: 5%">#</th>
+                        <th style="width: 15%">Service Code</th>
+                        <th style="width: 35%">Service Description</th>
+                        <th style="width: 10%" class="text-center">Qty</th>
+                        <th style="width: 15%" class="text-end">Unit Price</th>
+                        <th style="width: 10%" class="text-end">Disc.</th>
+                        <th style="width: 15%" class="text-end">Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for line in invoice_lines %}
+                    <tr>
+                        <td><span class="badge bg-light text-dark">{{ forloop.counter }}</span></td>
+                        <td>
+                            <strong style="color: var(--primary);">{{ line.service_code.code|default:"N/A" }}</strong>
+                            {% if line.service_code.category %}
+                            <br><small class="text-muted"><i class="bi bi-tag-fill"></i> {{ line.service_code.category }}</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div><strong>{{ line.description }}</strong></div>
+                            {% if line.service_code.description and line.service_code.description != line.description %}
+                            <small class="text-muted">{{ line.service_code.description|truncatewords:15 }}</small>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            <span class="badge bg-info">{{ line.quantity }}</span>
+                        </td>
+                        <td class="text-end">GHS {{ line.unit_price|floatformat:2 }}</td>
+                        <td class="text-end">
+                            {% if line.discount_amount > 0 %}
+                            <span class="text-success"><small>-GHS {{ line.discount_amount|floatformat:2 }}</small></span>
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end"><strong style="color: var(--primary);">GHS {{ line.line_total|floatformat:2 }}</strong></td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="text-center text-muted py-4">
+                            <i class="bi bi-inbox" style="font-size: 2.5rem; opacity: 0.3;"></i>
+                            <p class="mb-0 mt-2">No services have been added to this invoice</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                {% if invoice_lines %}
+                <tfoot style="background-color: #f8f9fa;">
+                    <tr>
+                        <td colspan="6" class="text-end"><strong>Subtotal:</strong></td>
+                        <td class="text-end"><strong>GHS {{ invoice.total_amount|floatformat:2|intcomma }}</strong></td>
+                    </tr>
+                    {% if invoice.total_amount != invoice.balance %}
+                    <tr>
+                        <td colspan="6" class="text-end" style="color: var(--success);"><strong>Payments Received:</strong></td>
+                        <td class="text-end" style="color: var(--success);"><strong>-GHS {{ invoice.total_amount|sub:invoice.balance|floatformat:2|intcomma }}</strong></td>
+                    </tr>
+                    {% endif %}
+                    <tr style="font-size: 1.15rem; border-top: 2px solid #dee2e6;">
+                        <td colspan="6" class="text-end"><strong>Outstanding Balance:</strong></td>
+                        <td class="text-end">
+                            <strong style="color: {% if invoice.balance > 0 %}var(--danger){% else %}var(--success){% endif %};">
+                                GHS {{ invoice.balance|floatformat:2|intcomma }}
+                            </strong>
+                        </td>
+                    </tr>
+                </tfoot>
+                {% endif %}
+            </table>
+            
+            {% if invoice_lines %}
+            <div class="alert alert-light border mt-3">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <i class="bi bi-clipboard-check text-primary"></i> 
+                        <strong>Service Summary:</strong> 
+                        <span class="badge bg-primary">{{ invoice_lines|length }}</span> service{{ invoice_lines|length|pluralize }} provided
+                        {% if invoice.encounter %}
+                        <br><small class="text-muted ms-4">
+                            <i class="bi bi-calendar-event"></i> {{ invoice.encounter.get_encounter_type_display }} 
+                            on {{ invoice.encounter.start_time|date:"F d, Y" }}
+                        </small>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-4 text-end">
+                        {% if invoice.balance > 0 %}
+                        <span class="badge bg-warning text-dark" style="font-size: 0.9rem;">
+                            <i class="bi bi-exclamation-triangle"></i> Payment Required
+                        </span>
+                        {% else %}
+                        <span class="badge bg-success" style="font-size: 0.9rem;">
+                            <i class="bi bi-check-circle"></i> Fully Paid
+                        </span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        
+        {% if transactions %}
+        <div class="modern-card">
+            <h5 class="mb-3">Payment History</h5>
+            <table class="table table-modern">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Amount</th>
+                        <th>Method</th>
+                        <th>Reference</th>
+                        <th>Processed By</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for transaction in transactions %}
+                    <tr>
+                        <td>{{ transaction.transaction_date|date:"M d, Y H:i" }}</td>
+                        <td>GHS {{ transaction.amount|floatformat:2|intcomma }}</td>
+                        <td>{{ transaction.get_payment_method_display }}</td>
+                        <td>{{ transaction.reference_number|default:"-" }}</td>
+                        <td>{{ transaction.processed_by.get_full_name|default:transaction.processed_by.username }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+    
+    <div class="col-md-4">
+        <div class="modern-card mb-3">
+            <h5 class="mb-3">Status</h5>
+            <span class="badge-modern badge-{% if invoice.status == 'paid' %}success{% elif invoice.status == 'overdue' %}danger{% elif invoice.status == 'issued' or invoice.status == 'partially_paid' %}warning{% else %}secondary{% endif %} badge-lg">
+                {{ invoice.get_status_display }}
+            </span>
+        </div>
+        
+        <div class="modern-card">
+            <h5 class="mb-3">Actions</h5>
+            <a href="{% url 'hospital:invoice_print' invoice.pk %}" class="btn btn-outline-primary w-100 mb-2" target="_blank">
+                <i class="bi bi-printer-fill"></i> Print Detailed Invoice
+            </a>
+            {% if invoice.balance > 0 and invoice.status != 'paid' %}
+            <a href="{% url 'hospital:process_payment_invoice' invoice.pk %}" class="btn btn-success-modern w-100 mb-2">
+                <i class="bi bi-credit-card"></i> Process Payment
+            </a>
+            {% endif %}
+            <a href="{% url 'hospital:cashier_patient_invoices' invoice.patient.pk %}" class="btn btn-outline-info w-100 mb-2">
+                <i class="bi bi-person"></i> View All Patient Invoices
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

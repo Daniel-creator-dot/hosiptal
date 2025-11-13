@@ -1,0 +1,268 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Revenue Report - Hospital Management System{% endblock %}
+
+{% block extra_css %}
+<style>
+    .report-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 30px;
+        border-radius: 15px;
+        margin-bottom: 30px;
+    }
+    
+    .report-filters {
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+    }
+    
+    .revenue-table {
+        background: white;
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .revenue-table table {
+        width: 100%;
+        margin: 0;
+    }
+    
+    .revenue-table thead {
+        background: #667eea;
+        color: white;
+    }
+    
+    .revenue-table th {
+        padding: 15px;
+        font-weight: 600;
+        text-align: left;
+    }
+    
+    .revenue-table td {
+        padding: 12px 15px;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .revenue-table tbody tr:hover {
+        background: #f8f9ff;
+    }
+    
+    .stat-card {
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        text-align: center;
+    }
+    
+    .stat-value {
+        font-size: 28px;
+        font-weight: 700;
+        color: #667eea;
+        margin: 10px 0;
+    }
+    
+    .stat-label {
+        color: #666;
+        font-size: 14px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    
+    <!-- Report Header -->
+    <div class="report-header">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h2 class="mb-2"><i class="bi bi-cash-stack"></i> Revenue Report</h2>
+                <p class="mb-0">Detailed revenue analysis and tracking</p>
+            </div>
+            <div>
+                <button onclick="window.print()" class="btn btn-light">
+                    <i class="bi bi-printer"></i> Print
+                </button>
+                <a href="{% url 'hospital:accounting_dashboard' %}" class="btn btn-light">
+                    <i class="bi bi-arrow-left"></i> Back to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">Total Revenue</div>
+                <div class="stat-value">GHS {{ total_revenue|floatformat:2|intcomma }}</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">Number of Entries</div>
+                <div class="stat-value">{{ revenue_entries.count }}</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">Average Revenue</div>
+                <div class="stat-value">GHS {{ average_revenue|floatformat:2|intcomma }}</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">Period</div>
+                <div class="stat-value" style="font-size: 18px;">{{ date_from|date:"M d" }} - {{ date_to|date:"M d, Y" }}</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Filters -->
+    <div class="report-filters">
+        <form method="get" class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label">From Date</label>
+                <input type="date" class="form-control" name="date_from" value="{{ date_from|date:'Y-m-d' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">To Date</label>
+                <input type="date" class="form-control" name="date_to" value="{{ date_to|date:'Y-m-d' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Category</label>
+                <select class="form-select" name="category">
+                    <option value="">All Categories</option>
+                    {% for cat in categories %}
+                    <option value="{{ cat.id }}" {% if request.GET.category == cat.id|stringformat:"s" %}selected{% endif %}>
+                        {{ cat.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">&nbsp;</label>
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-filter"></i> Apply Filters
+                </button>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Revenue Table -->
+    <div class="revenue-table">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Revenue #</th>
+                    <th>Category</th>
+                    <th>Description</th>
+                    <th>Patient</th>
+                    <th>Payment Method</th>
+                    <th class="text-end">Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for revenue in revenue_entries %}
+                <tr>
+                    <td>{{ revenue.revenue_date|date:"M d, Y" }}</td>
+                    <td><strong>{{ revenue.revenue_number }}</strong></td>
+                    <td>
+                        <span class="badge bg-info">{{ revenue.category.name }}</span>
+                    </td>
+                    <td>{{ revenue.description|truncatewords:10 }}</td>
+                    <td>
+                        {% if revenue.patient %}
+                            {{ revenue.patient.full_name }}
+                        {% else %}
+                            <em class="text-muted">N/A</em>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge bg-secondary">{{ revenue.payment_method|upper }}</span>
+                    </td>
+                    <td class="text-end">
+                        <strong class="text-success">GHS {{ revenue.amount|floatformat:2|intcomma }}</strong>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" class="text-center py-5 text-muted">
+                        <i class="bi bi-inbox" style="font-size: 48px;"></i>
+                        <p class="mt-3">No revenue entries found for the selected period.</p>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            {% if revenue_entries %}
+            <tfoot style="background: #f8f9fa; font-weight: 600;">
+                <tr>
+                    <td colspan="6" class="text-end">TOTAL:</td>
+                    <td class="text-end">
+                        <strong class="text-success" style="font-size: 18px;">
+                            GHS {{ total_revenue|floatformat:2|intcomma }}
+                        </strong>
+                    </td>
+                </tr>
+            </tfoot>
+            {% endif %}
+        </table>
+    </div>
+    
+    <!-- Revenue by Category -->
+    {% if revenue_by_category %}
+    <div class="mt-4">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="bi bi-pie-chart"></i> Revenue by Category</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Category</th>
+                                <th class="text-end">Amount</th>
+                                <th class="text-end">Percentage</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in revenue_by_category %}
+                            <tr>
+                                <td>{{ item.category__name }}</td>
+                                <td class="text-end">
+                                    <strong>GHS {{ item.total|floatformat:2|intcomma }}</strong>
+                                </td>
+                                <td class="text-end">
+                                    <span class="badge bg-info">
+                                        {{ item.percentage|floatformat:1 }}%
+                                    </span>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+

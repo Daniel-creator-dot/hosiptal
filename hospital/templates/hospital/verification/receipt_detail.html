@@ -1,0 +1,357 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Receipt {{ receipt.receipt_number }} - Details{% endblock %}
+{% block page_title %}📄 Receipt Details{% endblock %}
+{% block page_subtitle %}Complete payment information with service details{% endblock %}
+
+{% block extra_css %}
+<style>
+    .detail-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 30px;
+    }
+    
+    .info-card {
+        background: white;
+        border-radius: 20px;
+        padding: 30px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+        margin-bottom: 25px;
+    }
+    
+    .card-header-custom {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 20px 30px;
+        border-radius: 15px 15px 0 0;
+        margin: -30px -30px 25px -30px;
+    }
+    
+    .info-row {
+        display: flex;
+        padding: 15px 0;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .info-row:last-child {
+        border-bottom: none;
+    }
+    
+    .info-label {
+        font-weight: 600;
+        color: #666;
+        min-width: 180px;
+    }
+    
+    .info-value {
+        color: #333;
+        font-weight: 500;
+    }
+    
+    .service-item {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        padding: 20px;
+        border-radius: 15px;
+        margin-bottom: 15px;
+        border-left: 5px solid #667eea;
+        transition: all 0.3s;
+    }
+    
+    .service-item:hover {
+        transform: translateX(5px);
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+    }
+    
+    .verification-badge {
+        display: inline-block;
+        padding: 10px 20px;
+        border-radius: 25px;
+        font-weight: 700;
+        font-size: 14px;
+        margin: 5px;
+    }
+    
+    .badge-valid {
+        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        color: white;
+    }
+    
+    .badge-invalid {
+        background: linear-gradient(135deg, #f5576c 0%, #ff6b6b 100%);
+        color: white;
+    }
+    
+    .badge-warning {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+    }
+    
+    .qr-display {
+        text-align: center;
+        padding: 30px;
+        background: #f8f9fa;
+        border-radius: 15px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="detail-container">
+    <!-- Receipt Header -->
+    <div class="info-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+        <div class="text-center">
+            <i class="bi bi-receipt" style="font-size: 80px; opacity: 0.9;"></i>
+            <h2 style="font-weight: 800; margin: 20px 0;">{{ receipt.receipt_number }}</h2>
+            <h3 style="margin-bottom: 0;">GHS {{ receipt.amount_paid|floatformat:2|intcomma }}</h3>
+            
+            <div style="margin-top: 20px;">
+                {% if verification_data.is_valid %}
+                <span class="verification-badge badge-valid">
+                    <i class="bi bi-shield-check"></i> VERIFIED & VALID
+                </span>
+                {% else %}
+                <span class="verification-badge badge-invalid">
+                    <i class="bi bi-shield-x"></i> INVALID
+                </span>
+                {% endif %}
+                
+                {% if receipt.is_verified %}
+                <span class="verification-badge badge-valid">
+                    <i class="bi bi-check-circle"></i> VERIFIED
+                </span>
+                {% else %}
+                <span class="verification-badge badge-warning">
+                    <i class="bi bi-clock"></i> PENDING
+                </span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- Patient Information -->
+        <div class="col-md-6">
+            <div class="info-card">
+                <div class="card-header-custom">
+                    <h5 style="margin: 0; font-weight: 700;">
+                        <i class="bi bi-person-circle"></i> Patient Information
+                    </h5>
+                </div>
+                
+                <div class="info-row">
+                    <div class="info-label">Full Name:</div>
+                    <div class="info-value">{{ receipt.patient.full_name }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">MRN:</div>
+                    <div class="info-value">{{ receipt.patient.mrn }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Phone:</div>
+                    <div class="info-value">{{ receipt.patient.phone_number|default:"N/A" }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Date of Birth:</div>
+                    <div class="info-value">{{ receipt.patient.date_of_birth }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Age:</div>
+                    <div class="info-value">{{ receipt.patient.age }} years</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Payment Information -->
+        <div class="col-md-6">
+            <div class="info-card">
+                <div class="card-header-custom" style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);">
+                    <h5 style="margin: 0; font-weight: 700;">
+                        <i class="bi bi-cash-coin"></i> Payment Information
+                    </h5>
+                </div>
+                
+                <div class="info-row">
+                    <div class="info-label">Receipt Number:</div>
+                    <div class="info-value"><strong>{{ receipt.receipt_number }}</strong></div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Amount Paid:</div>
+                    <div class="info-value"><strong style="color: #11998e; font-size: 20px;">GHS {{ receipt.amount_paid|floatformat:2|intcomma }}</strong></div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Payment Method:</div>
+                    <div class="info-value">
+                        <span class="badge bg-primary">{{ receipt.get_payment_method_display }}</span>
+                    </div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Receipt Date:</div>
+                    <div class="info-value">{{ receipt.created|date:"M d, Y H:i A" }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Received By:</div>
+                    <div class="info-value">{{ receipt.received_by.get_full_name|default:"System" }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Services Rendered -->
+    <div class="info-card">
+        <h5 style="font-weight: 700; margin-bottom: 25px; color: #333;">
+            <i class="bi bi-list-check"></i> Services Rendered
+        </h5>
+        
+        {% if services_rendered %}
+        {% for service in services_rendered %}
+        <div class="service-item">
+            <div class="row align-items-center">
+                <div class="col-md-8">
+                    <div style="font-size: 16px; font-weight: 700; color: #333; margin-bottom: 5px;">
+                        {% if service.type == 'Consultation' %}
+                        <i class="bi bi-clipboard2-pulse text-primary"></i>
+                        {% elif service.type == 'Laboratory' %}
+                        <i class="bi bi-droplet text-info"></i>
+                        {% elif service.type == 'Imaging' %}
+                        <i class="bi bi-camera text-purple"></i>
+                        {% elif service.type == 'Pharmacy' %}
+                        <i class="bi bi-capsule text-warning"></i>
+                        {% elif service.type == 'Admission' %}
+                        <i class="bi bi-hospital text-danger"></i>
+                        {% endif %}
+                        {{ service.description }}
+                    </div>
+                    <div style="font-size: 13px; color: #666;">
+                        <i class="bi bi-person-badge"></i> Provider: {{ service.provider }}
+                    </div>
+                </div>
+                <div class="col-md-4 text-end">
+                    <div style="font-size: 12px; color: #999;">
+                        <i class="bi bi-calendar"></i> {{ service.date|date:"M d, Y H:i" }}
+                    </div>
+                    <span class="badge bg-secondary mt-2">{{ service.type }}</span>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="text-center py-4" style="background: #f8f9fa; border-radius: 15px;">
+            <i class="bi bi-inbox" style="font-size: 48px; color: #ddd;"></i>
+            <p style="color: #999; margin-top: 15px;">No detailed service information available</p>
+            <p style="font-size: 13px; color: #aaa;">Service Type: <strong>{{ receipt.service_type|upper }}</strong></p>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Security Verification -->
+    <div class="info-card">
+        <h5 style="font-weight: 700; margin-bottom: 25px; color: #333;">
+            <i class="bi bi-shield-lock"></i> Security Verification
+        </h5>
+        
+        <div class="row text-center">
+            <div class="col-md-3">
+                <div style="padding: 20px;">
+                    {% if verification_data.is_valid %}
+                    <i class="bi bi-check-circle-fill text-success" style="font-size: 48px;"></i>
+                    <div style="margin-top: 10px; font-weight: 600;">Integrity Valid</div>
+                    {% else %}
+                    <i class="bi bi-x-circle-fill text-danger" style="font-size: 48px;"></i>
+                    <div style="margin-top: 10px; font-weight: 600;">Integrity Failed</div>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div style="padding: 20px;">
+                    {% if verification_data.qr_verified %}
+                    <i class="bi bi-qr-code text-success" style="font-size: 48px;"></i>
+                    <div style="margin-top: 10px; font-weight: 600;">QR Verified</div>
+                    {% else %}
+                    <i class="bi bi-qr-code text-muted" style="font-size: 48px;"></i>
+                    <div style="margin-top: 10px; font-weight: 600;">No QR Code</div>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div style="padding: 20px;">
+                    {% if verification_data.tamper_check %}
+                    <i class="bi bi-shield-check text-success" style="font-size: 48px;"></i>
+                    <div style="margin-top: 10px; font-weight: 600;">Tamper-Free</div>
+                    {% else %}
+                    <i class="bi bi-shield-x text-danger" style="font-size: 48px;"></i>
+                    <div style="margin-top: 10px; font-weight: 600;">Tampered</div>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div style="padding: 20px;">
+                    <i class="bi bi-clock-history text-primary" style="font-size: 48px;"></i>
+                    <div style="margin-top: 10px; font-weight: 600;">{{ verification_data.age_days }} days old</div>
+                </div>
+            </div>
+        </div>
+        
+        {% if not receipt.is_verified %}
+        <div class="text-center mt-4">
+            <button class="btn btn-lg btn-success" onclick="verifyReceipt()" style="border-radius: 15px; padding: 15px 50px;">
+                <i class="bi bi-check-circle"></i> Mark as Verified
+            </button>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Actions -->
+    <div class="row">
+        <div class="col-md-4">
+            <a href="{% url 'hospital:search_receipt' %}" class="btn btn-outline-primary btn-lg w-100" style="border-radius: 15px;">
+                <i class="bi bi-search"></i> Search More
+            </a>
+        </div>
+        <div class="col-md-4">
+            <a href="{% url 'hospital:scan_qr_code' %}" class="btn btn-outline-success btn-lg w-100" style="border-radius: 15px;">
+                <i class="bi bi-camera"></i> Scan QR
+            </a>
+        </div>
+        <div class="col-md-4">
+            <a href="{% url 'hospital:verification_dashboard' %}" class="btn btn-outline-secondary btn-lg w-100" style="border-radius: 15px;">
+                <i class="bi bi-speedometer2"></i> Dashboard
+            </a>
+        </div>
+    </div>
+</div>
+
+<script>
+function verifyReceipt() {
+    if (!confirm('Mark this receipt as verified?')) return;
+    
+    fetch('{% url "hospital:verify_receipt" receipt.id %}', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}',
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('✓ Receipt verified successfully!');
+            location.reload();
+        } else {
+            alert('Error: ' + data.error);
+        }
+    })
+    .catch(error => {
+        alert('Verification failed: ' + error.message);
+    });
+}
+</script>
+{% endblock %}
+
+
+
+
+
+

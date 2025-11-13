@@ -1,0 +1,273 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load math_filters %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{% url 'hospital:pharmacy_dashboard' %}">Pharmacy</a></li>
+                    <li class="breadcrumb-item"><a href="{% url 'hospital:pharmacy_pending_dispensing' %}">Pending Dispensing</a></li>
+                    <li class="breadcrumb-item active">{{ drug.name }}</li>
+                </ol>
+            </nav>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-8">
+            <!-- Prescription Details -->
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-capsule"></i> Prescription Details</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6>Patient Information</h6>
+                            <p class="mb-1"><strong>Name:</strong> {{ patient.full_name }}</p>
+                            <p class="mb-1"><strong>MRN:</strong> {{ patient.mrn }}</p>
+                            <p class="mb-1"><strong>Phone:</strong> {{ patient.phone_number|default:"—" }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Medication Details</h6>
+                            <p class="mb-1"><strong>Drug:</strong> {{ drug.name }} {{ drug.strength }} {{ drug.form }}</p>
+                            <p class="mb-1"><strong>Quantity:</strong> {{ prescription.quantity }}</p>
+                            <p class="mb-1"><strong>Prescribed:</strong> {{ prescription.created|date:"M d, Y" }}</p>
+                            <p class="mb-1"><strong>Prescribed By:</strong> {{ prescription.prescribed_by.get_full_name }}</p>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info">
+                        <h6><i class="bi bi-prescription2"></i> Dosage Instructions</h6>
+                        <p class="mb-0"><strong>Dose:</strong> {{ prescription.dose }}</p>
+                        <p class="mb-0"><strong>Frequency:</strong> {{ prescription.frequency }}</p>
+                        <p class="mb-0"><strong>Duration:</strong> {{ prescription.duration }}</p>
+                        {% if prescription.instructions %}
+                            <p class="mb-0"><strong>Special Instructions:</strong> {{ prescription.instructions }}</p>
+                        {% endif %}
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <h6>Pricing</h6>
+                                    <p class="mb-1">Unit Price: <strong>GHS {{ unit_price }}</strong></p>
+                                    <p class="mb-1">Quantity: <strong>{{ prescription.quantity }}</strong></p>
+                                    <hr>
+                                    <p class="mb-0">Total: <strong class="text-primary h5">GHS {{ total_cost }}</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Payment Status -->
+            <div class="card shadow-sm mb-4">
+                <div class="card-header {% if payment_status.paid %}bg-success{% else %}bg-warning{% endif %} text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-credit-card"></i> Payment Status
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% if payment_status.paid %}
+                        <div class="alert alert-success">
+                            <h5><i class="bi bi-check-circle"></i> Payment Verified</h5>
+                            <p class="mb-1"><strong>Receipt:</strong> {{ payment_status.receipt.receipt_number }}</p>
+                            <p class="mb-1"><strong>Amount:</strong> GHS {{ payment_status.receipt.amount }}</p>
+                            <p class="mb-1"><strong>Method:</strong> {{ payment_status.receipt.get_payment_method_display }}</p>
+                            <p class="mb-0"><strong>Date:</strong> {{ payment_status.receipt.created|date:"M d, Y H:i" }}</p>
+                        </div>
+
+                        <!-- Dispensing Form -->
+                        <form method="post">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="dispense">
+                            
+                            <h6 class="mt-4 mb-3">Dispense Medication</h6>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">Quantity to Dispense</label>
+                                <input type="number" class="form-control" name="quantity" 
+                                       value="{{ prescription.quantity }}" min="1" max="{{ prescription.quantity }}" required>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">Instructions for Patient</label>
+                                <textarea class="form-control" name="instructions" rows="3" required>{{ prescription.dose }}, {{ prescription.frequency }}, {{ prescription.duration }}</textarea>
+                            </div>
+                            
+                            <div class="mb-3 form-check">
+                                <input type="checkbox" class="form-check-input" id="counselling" name="counselling_given">
+                                <label class="form-check-label" for="counselling">
+                                    Counselling provided to patient
+                                </label>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">Additional Notes</label>
+                                <textarea class="form-control" name="notes" rows="2" placeholder="Any special notes or observations"></textarea>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-success btn-lg">
+                                <i class="bi bi-capsule"></i> Dispense Medication
+                            </button>
+                        </form>
+                    {% else %}
+                        <div class="alert alert-danger">
+                            <h5><i class="bi bi-exclamation-triangle-fill"></i> 🔒 PAYMENT REQUIRED AT CASHIER</h5>
+                            <p class="mb-2"><strong>Status:</strong> {{ payment_status.message }}</p>
+                            <p class="mb-2"><strong>Amount Due:</strong> <span class="h4 text-danger">GHS {{ total_cost }}</span></p>
+                            <hr>
+                            <h6 class="mb-2">📋 Instructions:</h6>
+                            <ol class="mb-0">
+                                <li><strong>Send patient to CASHIER</strong> with this prescription</li>
+                                <li>Patient pays <strong>GHS {{ total_cost }}</strong> at cashier</li>
+                                <li>Cashier creates payment receipt (Type: "Pharmacy")</li>
+                                <li>Patient returns to pharmacy with receipt</li>
+                                <li>Pharmacist verifies payment and dispenses</li>
+                            </ol>
+                        </div>
+
+                        <!-- Cashier Payment Info Card -->
+                        <div class="card border-danger mt-4">
+                            <div class="card-header bg-danger text-white">
+                                <h6 class="mb-0"><i class="bi bi-cash-coin"></i> Cashier Payment Details</h6>
+                            </div>
+                            <div class="card-body">
+                                <p class="mb-2"><strong>Patient:</strong> {{ patient.full_name }} ({{ patient.mrn }})</p>
+                                <p class="mb-2"><strong>Medication:</strong> {{ drug.name }} {{ drug.strength }}</p>
+                                <p class="mb-2"><strong>Quantity:</strong> {{ prescription.quantity }} units</p>
+                                <p class="mb-2"><strong>Unit Price:</strong> GHS {{ unit_price }}</p>
+                                <hr>
+                                <p class="mb-2"><strong>Total Amount:</strong> <span class="h4 text-danger">GHS {{ total_cost }}</span></p>
+                                <p class="mb-0"><small class="text-muted">Tell cashier: Payment Type = "Pharmacy"</small></p>
+                            </div>
+                        </div>
+
+                        <!-- Verification Instructions -->
+                        <div class="alert alert-info mt-4">
+                            <h6><i class="bi bi-info-circle"></i> After Patient Pays at Cashier:</h6>
+                            <p class="mb-0">
+                                Refresh this page or check the "Paid - Ready to Dispense" section in the 
+                                <a href="{% url 'hospital:pharmacy_pending_dispensing' %}" class="alert-link">main pharmacy page</a>.
+                                The prescription will automatically move to "Ready to Dispense" after cashier creates the receipt.
+                            </p>
+                        </div>
+
+                        {% if recent_receipts %}
+                            <div class="mt-4">
+                                <h6>Recent Receipts for This Patient</h6>
+                                <div class="list-group">
+                                    {% for receipt in recent_receipts %}
+                                        <div class="list-group-item">
+                                            <div class="d-flex justify-content-between">
+                                                <div>
+                                                    <strong>{{ receipt.receipt_number }}</strong><br>
+                                                    <small>GHS {{ receipt.amount }} - {{ receipt.get_payment_method_display }}</small><br>
+                                                    <small class="text-muted">{{ receipt.created|date:"M d, Y H:i" }}</small>
+                                                </div>
+                                                <div>
+                                                    <span class="badge bg-info">{{ receipt.payment_type }}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                                <p class="text-muted mt-2">
+                                    <small><i class="bi bi-info-circle"></i> If patient already paid using one of these receipts, the payment will be automatically linked.</small>
+                                </p>
+                            </div>
+                        {% endif %}
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <!-- Action Summary -->
+            <div class="card shadow-sm mb-3">
+                <div class="card-body">
+                    <h6 class="mb-3">Workflow Steps</h6>
+                    
+                    <div class="mb-3">
+                        <div class="d-flex align-items-center mb-2">
+                            {% if prescription %}
+                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+                            {% else %}
+                                <i class="bi bi-circle me-2"></i>
+                            {% endif %}
+                            <span>1. Prescription Created</span>
+                        </div>
+                        
+                        <div class="d-flex align-items-center mb-2">
+                            {% if dispensing_record %}
+                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+                            {% else %}
+                                <i class="bi bi-circle me-2"></i>
+                            {% endif %}
+                            <span>2. Bill Generated</span>
+                        </div>
+                        
+                        <div class="d-flex align-items-center mb-2">
+                            {% if payment_status.paid %}
+                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+                            {% else %}
+                                <i class="bi bi-arrow-right-circle text-warning me-2"></i>
+                            {% endif %}
+                            <span><strong>3. Payment Received</strong></span>
+                        </div>
+                        
+                        <div class="d-flex align-items-center">
+                            {% if dispensing_record.is_dispensed %}
+                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+                            {% else %}
+                                <i class="bi bi-circle me-2"></i>
+                            {% endif %}
+                            <span>4. Medication Dispensed</span>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="d-grid gap-2">
+                        <a href="{% url 'hospital:pharmacy_pending_dispensing' %}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Back to List
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Help Card -->
+            <div class="card border-info shadow-sm">
+                <div class="card-body">
+                    <h6 class="text-info"><i class="bi bi-info-circle"></i> Quick Guide</h6>
+                    <small>
+                        <p class="mb-2"><strong>If Payment Not Made:</strong></p>
+                        <ul class="mb-0" style="font-size: 13px;">
+                            <li>Enter amount and payment method</li>
+                            <li>Click "Record Payment"</li>
+                            <li>Receipt will be generated automatically</li>
+                            <li>Medication can then be dispensed</li>
+                        </ul>
+                        
+                        <p class="mb-2 mt-3"><strong>If Already Paid:</strong></p>
+                        <ul class="mb-0" style="font-size: 13px;">
+                            <li>Recent receipts shown below</li>
+                            <li>System will auto-link payment</li>
+                            <li>Proceed directly to dispense</li>
+                        </ul>
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

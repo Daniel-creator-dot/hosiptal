@@ -1,0 +1,822 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Laboratory Dashboard - HMS{% endblock %}
+{% block page_title %}🔬 Laboratory Control Center{% endblock %}
+{% block page_subtitle %}Real-time lab operations monitoring and management{% endblock %}
+
+{% block extra_css %}
+<style>
+    :root {
+        --lab-primary: #2196F3;
+        --lab-success: #4CAF50;
+        --lab-warning: #FF9800;
+        --lab-danger: #f44336;
+        --lab-info: #00BCD4;
+        --lab-purple: #9C27B0;
+    }
+
+    .lab-stat-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        transition: all 0.3s ease;
+        border-left: 4px solid transparent;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .lab-stat-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 100px;
+        height: 100px;
+        background: linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0));
+        border-radius: 50%;
+        transform: translate(30px, -30px);
+    }
+
+    .lab-stat-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    }
+
+    .lab-stat-card.primary { border-left-color: var(--lab-primary); background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); color: white; }
+    .lab-stat-card.success { border-left-color: var(--lab-success); background: linear-gradient(135deg, #4CAF50 0%, #388E3C 100%); color: white; }
+    .lab-stat-card.warning { border-left-color: var(--lab-warning); background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%); color: white; }
+    .lab-stat-card.danger { border-left-color: var(--lab-danger); background: linear-gradient(135deg, #f44336 0%, #D32F2F 100%); color: white; }
+    .lab-stat-card.info { border-left-color: var(--lab-info); background: linear-gradient(135deg, #00BCD4 0%, #0097A7 100%); color: white; }
+    .lab-stat-card.purple { border-left-color: var(--lab-purple); background: linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%); color: white; }
+
+    .stat-icon {
+        font-size: 48px;
+        opacity: 0.9;
+        margin-bottom: 12px;
+    }
+
+    .stat-value {
+        font-size: 42px;
+        font-weight: 700;
+        line-height: 1;
+        margin-bottom: 8px;
+    }
+
+    .stat-label {
+        font-size: 14px;
+        opacity: 0.9;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .stat-trend {
+        font-size: 12px;
+        margin-top: 8px;
+        opacity: 0.8;
+    }
+
+    .quick-action-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        transition: all 0.3s;
+        cursor: pointer;
+        border: 2px solid #e0e0e0;
+    }
+
+    .quick-action-card:hover {
+        border-color: var(--lab-primary);
+        transform: scale(1.05);
+        box-shadow: 0 6px 20px rgba(33, 150, 243, 0.2);
+    }
+
+    .quick-action-icon {
+        font-size: 36px;
+        color: var(--lab-primary);
+        margin-bottom: 12px;
+    }
+
+    .activity-feed {
+        background: white;
+        border-radius: 12px;
+        padding: 24px;
+        max-height: 600px;
+        overflow-y: auto;
+    }
+
+    .activity-item {
+        padding: 16px;
+        border-left: 3px solid #e0e0e0;
+        margin-bottom: 16px;
+        background: #f8f9fa;
+        border-radius: 0 8px 8px 0;
+        transition: all 0.2s;
+    }
+
+    .activity-item:hover {
+        border-left-color: var(--lab-primary);
+        background: #e3f2fd;
+        transform: translateX(4px);
+    }
+
+    .activity-time {
+        font-size: 11px;
+        color: #666;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .priority-badge {
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .priority-stat { background: #FF5722; color: white; }
+    .priority-urgent { background: #FF9800; color: white; }
+    .priority-routine { background: #2196F3; color: white; }
+
+    .test-panel {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+
+    .test-panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 2px solid #e0e0e0;
+    }
+
+    .test-panel-title {
+        font-size: 18px;
+        font-weight: 700;
+        color: #333;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .test-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0 8px;
+    }
+
+    .test-table th {
+        font-weight: 600;
+        color: #666;
+        font-size: 12px;
+        text-transform: uppercase;
+        padding: 12px;
+        background: #f5f5f5;
+    }
+
+    .test-table td {
+        padding: 16px 12px;
+        background: white;
+        border-top: 1px solid #f0f0f0;
+        border-bottom: 1px solid #f0f0f0;
+    }
+
+    .test-table tr {
+        transition: all 0.2s;
+    }
+
+    .test-table tbody tr:hover {
+        background: #f8f9fa;
+        transform: scale(1.01);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .patient-name {
+        font-weight: 600;
+        color: #333;
+        text-decoration: none;
+    }
+
+    .patient-name:hover {
+        color: var(--lab-primary);
+    }
+
+    .action-btn-group {
+        display: flex;
+        gap: 6px;
+    }
+
+    .action-btn {
+        padding: 6px 14px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        border: none;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .action-btn.primary {
+        background: var(--lab-primary);
+        color: white;
+    }
+
+    .action-btn.success {
+        background: var(--lab-success);
+        color: white;
+    }
+
+    .action-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        background: white;
+        border-radius: 12px;
+        margin: 20px 0;
+    }
+
+    .empty-state-icon {
+        font-size: 80px;
+        color: #ccc;
+        margin-bottom: 20px;
+    }
+
+    .empty-state-title {
+        font-size: 24px;
+        font-weight: 700;
+        color: #666;
+        margin-bottom: 12px;
+    }
+
+    .empty-state-text {
+        font-size: 16px;
+        color: #999;
+        margin-bottom: 24px;
+    }
+
+    .chart-container {
+        background: white;
+        border-radius: 12px;
+        padding: 24px;
+        height: 350px;
+        position: relative;
+    }
+
+    .refresh-indicator {
+        position: fixed;
+        top: 80px;
+        right: 20px;
+        background: white;
+        padding: 12px 20px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        display: none;
+        align-items: center;
+        gap: 10px;
+        z-index: 1000;
+    }
+
+    .refresh-indicator.show {
+        display: flex;
+    }
+
+    .pulse-animation {
+        animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+
+    .tab-nav {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 20px;
+        border-bottom: 2px solid #e0e0e0;
+        padding-bottom: 0;
+    }
+
+    .tab-btn {
+        padding: 12px 24px;
+        background: transparent;
+        border: none;
+        border-bottom: 3px solid transparent;
+        font-weight: 600;
+        color: #666;
+        cursor: pointer;
+        transition: all 0.3s;
+        position: relative;
+        bottom: -2px;
+    }
+
+    .tab-btn.active {
+        color: var(--lab-primary);
+        border-bottom-color: var(--lab-primary);
+    }
+
+    .tab-btn:hover:not(.active) {
+        color: #333;
+        background: #f5f5f5;
+    }
+
+    .status-indicator {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+        margin-right: 6px;
+    }
+
+    .status-pending { background: #FF9800; }
+    .status-progress { background: #2196F3; }
+    .status-completed { background: #4CAF50; }
+    .status-abnormal { background: #f44336; }
+
+    @media (max-width: 768px) {
+        .stat-value { font-size: 28px; }
+        .test-table { font-size: 12px; }
+        .action-btn-group { flex-direction: column; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Real-time refresh indicator -->
+<div class="refresh-indicator" id="refreshIndicator">
+    <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+    <span>Refreshing data...</span>
+</div>
+
+<!-- Top Statistics Row -->
+<div class="row g-4 mb-4">
+    <div class="col-lg-2 col-md-4 col-sm-6">
+        <div class="lab-stat-card warning">
+            <div class="stat-icon"><i class="bi bi-clock-history"></i></div>
+            <div class="stat-value">{{ pending_tests|default:0 }}</div>
+            <div class="stat-label">Pending Tests</div>
+            <div class="stat-trend"><i class="bi bi-arrow-up"></i> Needs Attention</div>
+        </div>
+    </div>
+    <div class="col-lg-2 col-md-4 col-sm-6">
+        <div class="lab-stat-card info">
+            <div class="stat-icon"><i class="bi bi-hourglass-split"></i></div>
+            <div class="stat-value">{{ in_progress_results|length|default:0 }}</div>
+            <div class="stat-label">In Progress</div>
+            <div class="stat-trend"><i class="bi bi-activity"></i> Active</div>
+        </div>
+    </div>
+    <div class="col-lg-2 col-md-4 col-sm-6">
+        <div class="lab-stat-card success">
+            <div class="stat-icon"><i class="bi bi-check-circle"></i></div>
+            <div class="stat-value">{{ today_results|length|default:0 }}</div>
+            <div class="stat-label">Completed Today</div>
+            <div class="stat-trend"><i class="bi bi-graph-up"></i> {{ avg_tat_hours|default:0 }}h TAT</div>
+        </div>
+    </div>
+    <div class="col-lg-2 col-md-4 col-sm-6">
+        <div class="lab-stat-card danger">
+            <div class="stat-icon"><i class="bi bi-exclamation-triangle"></i></div>
+            <div class="stat-value">{{ abnormal_results|default:0 }}</div>
+            <div class="stat-label">Abnormal</div>
+            <div class="stat-trend"><i class="bi bi-flag"></i> Review</div>
+        </div>
+    </div>
+    <div class="col-lg-2 col-md-4 col-sm-6">
+        <div class="lab-stat-card primary">
+            <div class="stat-icon"><i class="bi bi-flask"></i></div>
+            <div class="stat-value">{{ total_tests|default:0 }}</div>
+            <div class="stat-label">Test Catalog</div>
+            <div class="stat-trend"><i class="bi bi-collection"></i> Available</div>
+        </div>
+    </div>
+    <div class="col-lg-2 col-md-4 col-sm-6">
+        <div class="lab-stat-card purple">
+            <div class="stat-icon"><i class="bi bi-clipboard-data"></i></div>
+            <div class="stat-value">{{ total_results|default:0 }}</div>
+            <div class="stat-label">Total Results</div>
+            <div class="stat-trend"><i class="bi bi-database"></i> Archive</div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="row g-3 mb-4">
+    <div class="col">
+        <div class="d-flex gap-3 flex-wrap">
+            <a href="{% url 'hospital:lab_results_list' %}" class="quick-action-card flex-fill" style="text-decoration: none; color: inherit;">
+                <div class="quick-action-icon"><i class="bi bi-list-check"></i></div>
+                <div class="fw-bold">All Results</div>
+            </a>
+            <a href="#pending" class="quick-action-card flex-fill" style="text-decoration: none; color: inherit;" onclick="document.getElementById('pendingTab').click(); return false;">
+                <div class="quick-action-icon"><i class="bi bi-clipboard-pulse"></i></div>
+                <div class="fw-bold">Pending Orders</div>
+            </a>
+            <a href="#inprogress" class="quick-action-card flex-fill" style="text-decoration: none; color: inherit;" onclick="document.getElementById('inprogressTab').click(); return false;">
+                <div class="quick-action-icon"><i class="bi bi-play-circle"></i></div>
+                <div class="fw-bold">In Progress</div>
+            </a>
+            <a href="/admin/hospital/labtest/" class="quick-action-card flex-fill" style="text-decoration: none; color: inherit;">
+                <div class="quick-action-icon"><i class="bi bi-gear"></i></div>
+                <div class="fw-bold">Settings</div>
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Main Content Tabs -->
+<div class="tab-nav">
+    <button class="tab-btn active" id="pendingTab" onclick="switchTab('pending')">
+        <i class="bi bi-clock-history me-2"></i>Pending ({{ pending_results|length|default:0 }})
+    </button>
+    <button class="tab-btn" id="inprogressTab" onclick="switchTab('inprogress')">
+        <i class="bi bi-hourglass-split me-2"></i>In Progress ({{ in_progress_results|length|default:0 }})
+    </button>
+    <button class="tab-btn" id="completedTab" onclick="switchTab('completed')">
+        <i class="bi bi-check-circle me-2"></i>Completed Today ({{ today_results|length|default:0 }})
+    </button>
+    <button class="tab-btn" id="ordersTab" onclick="switchTab('orders')">
+        <i class="bi bi-file-earmark-medical me-2"></i>Pending Orders ({{ pending_orders|length|default:0 }})
+    </button>
+</div>
+
+<!-- Tab Content: Pending Results -->
+<div id="pendingContent" class="tab-content">
+    <div class="test-panel">
+        <div class="test-panel-header">
+            <div class="test-panel-title">
+                <i class="bi bi-clipboard-pulse text-warning"></i>
+                <span>Pending Lab Results</span>
+                <span class="badge bg-warning text-dark">{{ pending_results|length|default:0 }}</span>
+            </div>
+            <button class="btn btn-sm btn-outline-primary" onclick="location.reload()">
+                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+            </button>
+        </div>
+
+        {% if pending_results %}
+        <div class="table-responsive">
+            <table class="test-table">
+                <thead>
+                    <tr>
+                        <th>Patient</th>
+                        <th>Test</th>
+                        <th>Priority</th>
+                        <th>Ordered</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for result in pending_results %}
+                    <tr>
+                        <td>
+                            <a href="{% url 'hospital:patient_detail' result.order.encounter.patient.pk %}" class="patient-name">
+                                {{ result.order.encounter.patient.full_name }}
+                            </a>
+                            <div class="text-muted small">MRN: {{ result.order.encounter.patient.mrn }}</div>
+                        </td>
+                        <td>
+                            <strong>{{ result.test.name }}</strong>
+                            <div class="text-muted small">{{ result.test.code }}</div>
+                        </td>
+                        <td>
+                            <span class="priority-badge priority-{{ result.order.priority }}">
+                                {{ result.order.get_priority_display }}
+                            </span>
+                        </td>
+                        <td>
+                            <div>{{ result.created|date:"M d, Y" }}</div>
+                            <div class="text-muted small">{{ result.created|timesince }} ago</div>
+                        </td>
+                        <td>
+                            <span class="status-indicator status-pending"></span>
+                            Pending
+                        </td>
+                        <td>
+                            <div class="action-btn-group">
+                                <a href="{% url 'hospital:tabular_lab_report' result.pk %}" class="action-btn success">
+                                    <i class="bi bi-table"></i> Enter Results
+                                </a>
+                                <a href="{% url 'hospital:edit_lab_result' result.pk %}" class="action-btn primary">
+                                    <i class="bi bi-pencil"></i> Edit
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-state-icon"><i class="bi bi-clipboard-check"></i></div>
+            <div class="empty-state-title">No Pending Tests</div>
+            <div class="empty-state-text">All clear! No pending lab results at the moment.</div>
+            <a href="{% url 'hospital:lab_results_list' %}" class="btn btn-primary">
+                <i class="bi bi-list me-2"></i>View All Results
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Tab Content: In Progress Results -->
+<div id="inprogressContent" class="tab-content" style="display: none;">
+    <div class="test-panel">
+        <div class="test-panel-header">
+            <div class="test-panel-title">
+                <i class="bi bi-hourglass-split text-info"></i>
+                <span>Tests In Progress</span>
+                <span class="badge bg-info">{{ in_progress_results|length|default:0 }}</span>
+            </div>
+        </div>
+
+        {% if in_progress_results %}
+        <div class="table-responsive">
+            <table class="test-table">
+                <thead>
+                    <tr>
+                        <th>Patient</th>
+                        <th>Test</th>
+                        <th>Started</th>
+                        <th>Technician</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for result in in_progress_results %}
+                    <tr>
+                        <td>
+                            <a href="{% url 'hospital:patient_detail' result.order.encounter.patient.pk %}" class="patient-name">
+                                {{ result.order.encounter.patient.full_name }}
+                            </a>
+                        </td>
+                        <td><strong>{{ result.test.name }}</strong></td>
+                        <td>{{ result.created|timesince }} ago</td>
+                        <td>{{ result.verified_by.user.get_full_name|default:"Not assigned" }}</td>
+                        <td>
+                            <span class="status-indicator status-progress"></span>
+                            In Progress
+                        </td>
+                        <td>
+                            <div class="action-btn-group">
+                                <a href="{% url 'hospital:tabular_lab_report' result.pk %}" class="action-btn success">
+                                    <i class="bi bi-table"></i> Continue Entry
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-state-icon"><i class="bi bi-hourglass-split"></i></div>
+            <div class="empty-state-title">No Tests In Progress</div>
+            <div class="empty-state-text">No tests are currently being processed.</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Tab Content: Completed Today -->
+<div id="completedContent" class="tab-content" style="display: none;">
+    <div class="test-panel">
+        <div class="test-panel-header">
+            <div class="test-panel-title">
+                <i class="bi bi-check-circle text-success"></i>
+                <span>Completed Today</span>
+                <span class="badge bg-success">{{ today_results|length|default:0 }}</span>
+            </div>
+        </div>
+
+        {% if today_results %}
+        <div class="table-responsive">
+            <table class="test-table">
+                <thead>
+                    <tr>
+                        <th>Patient</th>
+                        <th>Test</th>
+                        <th>Result</th>
+                        <th>Verified By</th>
+                        <th>Time</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for result in today_results %}
+                    <tr>
+                        <td>
+                            <a href="{% url 'hospital:patient_detail' result.order.encounter.patient.pk %}" class="patient-name">
+                                {{ result.order.encounter.patient.full_name }}
+                            </a>
+                        </td>
+                        <td><strong>{{ result.test.name }}</strong></td>
+                        <td>
+                            {% if result.value %}
+                                {{ result.value }} {{ result.units|default:"" }}
+                            {% else %}
+                                {{ result.qualitative_result|default:"--" }}
+                            {% endif %}
+                        </td>
+                        <td>{{ result.verified_by.user.get_full_name|default:"--" }}</td>
+                        <td>{{ result.verified_at|date:"h:i A" }}</td>
+                        <td>
+                            {% if result.is_abnormal %}
+                                <span class="status-indicator status-abnormal"></span>
+                                <span class="text-danger fw-bold">Abnormal</span>
+                            {% else %}
+                                <span class="status-indicator status-completed"></span>
+                                Normal
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-state-icon"><i class="bi bi-calendar-check"></i></div>
+            <div class="empty-state-title">No Results Today</div>
+            <div class="empty-state-text">No tests have been completed today yet.</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Tab Content: Pending Orders -->
+<div id="ordersContent" class="tab-content" style="display: none;">
+    <div class="test-panel">
+        <div class="test-panel-header">
+            <div class="test-panel-title">
+                <i class="bi bi-file-earmark-medical text-primary"></i>
+                <span>Pending Lab Orders</span>
+                <span class="badge bg-primary">{{ pending_orders|length|default:0 }}</span>
+            </div>
+        </div>
+
+        {% if pending_orders %}
+        <div class="table-responsive">
+            <table class="test-table">
+                <thead>
+                    <tr>
+                        <th>Patient</th>
+                        <th>Requested By</th>
+                        <th>Priority</th>
+                        <th>Time</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for order in pending_orders %}
+                    <tr>
+                        <td>
+                            <a href="{% url 'hospital:patient_detail' order.encounter.patient.pk %}" class="patient-name">
+                                {{ order.encounter.patient.full_name }}
+                            </a>
+                        </td>
+                        <td>{{ order.requested_by.user.get_full_name|default:order.requested_by.user.username }}</td>
+                        <td>
+                            <span class="priority-badge priority-{{ order.priority }}">
+                                {{ order.get_priority_display }}
+                            </span>
+                        </td>
+                        <td>{{ order.requested_at|timesince }} ago</td>
+                        <td>
+                            <div class="action-btn-group">
+                                <button class="action-btn success" onclick="startOrder('{{ order.pk }}')">
+                                    <i class="bi bi-play-circle"></i> Start
+                                </button>
+                                <a href="{% url 'hospital:encounter_detail' order.encounter.pk %}" class="action-btn primary">
+                                    <i class="bi bi-eye"></i> View
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-state-icon"><i class="bi bi-inbox"></i></div>
+            <div class="empty-state-title">No Pending Orders</div>
+            <div class="empty-state-text">All lab orders have been processed.</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Floating Action Button -->
+<div style="position: fixed; bottom: 30px; right: 30px; z-index: 1000;">
+    <button class="btn btn-primary btn-lg rounded-circle" style="width: 60px; height: 60px; box-shadow: 0 4px 20px rgba(33, 150, 243, 0.4);" data-bs-toggle="tooltip" title="Quick Actions">
+        <i class="bi bi-plus-lg" style="font-size: 24px;"></i>
+    </button>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Tab switching
+function switchTab(tabName) {
+    // Hide all content
+    document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+    
+    // Remove active class from all buttons
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    
+    // Show selected content
+    document.getElementById(tabName + 'Content').style.display = 'block';
+    
+    // Add active class to selected button
+    document.getElementById(tabName + 'Tab').classList.add('active');
+}
+
+// Start order
+function startOrder(orderId) {
+    if (confirm('Start processing this lab order?')) {
+        fetch(`/hms/api/order/${orderId}/update-status/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}',
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: 'action=start'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showRefreshIndicator();
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                alert('Error: ' + (data.error || 'Failed to start order'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error starting order');
+        });
+    }
+}
+
+// Show refresh indicator
+function showRefreshIndicator() {
+    const indicator = document.getElementById('refreshIndicator');
+    indicator.classList.add('show');
+    setTimeout(() => indicator.classList.remove('show'), 2000);
+}
+
+// Auto-refresh every 60 seconds
+let autoRefreshInterval = setInterval(() => {
+    showRefreshIndicator();
+    setTimeout(() => location.reload(), 1000);
+}, 60000);
+
+// Pause auto-refresh on user interaction
+document.addEventListener('mousemove', () => {
+    clearInterval(autoRefreshInterval);
+    autoRefreshInterval = setInterval(() => {
+        showRefreshIndicator();
+        setTimeout(() => location.reload(), 1000);
+    }, 60000);
+});
+
+// Initialize tooltips
+document.addEventListener('DOMContentLoaded', function() {
+    const tooltips = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+    tooltips.forEach(el => new bootstrap.Tooltip(el));
+});
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+

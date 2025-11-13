@@ -1,0 +1,291 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Pharmacist Dashboard{% endblock %}
+
+{% block extra_css %}
+<style>
+    .dashboard-card {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        padding: 24px;
+        margin-bottom: 24px;
+        border-left: 4px solid #6f42c1;
+    }
+    
+    .stat-card {
+        background: linear-gradient(135deg, #6f42c1 0%, #e83e8c 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    
+    .stat-number {
+        font-size: 2.5rem;
+        font-weight: bold;
+        margin-bottom: 8px;
+    }
+    
+    .stat-label {
+        font-size: 0.9rem;
+        opacity: 0.9;
+    }
+    
+    .prescription-card {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        border-left: 4px solid #6f42c1;
+    }
+    
+    .prescription-pending { border-left-color: #ffc107; }
+    .prescription-dispensed { border-left-color: #28a745; }
+    
+    .status-badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: 500;
+    }
+    
+    .status-pending { background: #fff3cd; color: #856404; }
+    .status-dispensed { background: #d4edda; color: #155724; }
+    
+    .action-btn {
+        background: #6f42c1;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        text-decoration: none;
+        display: inline-block;
+        margin: 4px;
+        transition: all 0.3s ease;
+    }
+    
+    .action-btn:hover {
+        background: #5a32a3;
+        color: white;
+        text-decoration: none;
+        transform: translateY(-1px);
+    }
+    
+    .btn-success { background: #28a745; }
+    .btn-warning { background: #ffc107; color: #212529; }
+    .btn-primary { background: #007bff; }
+    .btn-danger { background: #dc3545; }
+    .btn-info { background: #17a2b8; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2 class="mb-1">
+                            <i class="bi bi-capsule me-2"></i>
+                            Pharmacist Dashboard
+                        </h2>
+                        <p class="text-muted mb-0">
+                            Welcome back, {{ staff.user.get_full_name|default:staff.user.username }}
+                        </p>
+                    </div>
+                    <div class="text-end">
+                        <span class="badge bg-purple fs-6">{{ staff.get_profession_display }}</span>
+                        <br>
+                        <small class="text-muted">{{ staff.department.name }}</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-number">{{ stats.pending_prescriptions }}</div>
+                <div class="stat-label">Pending Prescriptions</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);">
+                <div class="stat-number">{{ stats.dispensed_today }}</div>
+                <div class="stat-label">Dispensed Today</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #17a2b8 0%, #6f42c1 100%);">
+                <div class="stat-number">{{ stats.total_prescriptions_today }}</div>
+                <div class="stat-label">Total Today</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #fd7e14 0%, #ffc107 100%);">
+                <div class="stat-number">0</div>
+                <div class="stat-label">Low Stock Items</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Pending Prescriptions -->
+        <div class="col-md-8">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-hourglass-split me-2"></i>
+                    Pending Prescriptions
+                </h5>
+                {% if pending_prescriptions %}
+                    {% for prescription in pending_prescriptions %}
+                    <div class="prescription-card prescription-pending">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">
+                                    <a href="{% url 'hospital:patient_detail' prescription.patient.pk %}" class="text-decoration-none">
+                                        {{ prescription.patient.full_name }}
+                                    </a>
+                                </h6>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-capsule me-1"></i>
+                                    {{ prescription.drug.name }}
+                                </p>
+                                <small class="text-muted">
+                                    Dosage: {{ prescription.dose }} | Quantity: {{ prescription.quantity }}
+                                </small>
+                                <br>
+                                <small class="text-muted">
+                                    Prescribed: {{ prescription.created|date:"M d, Y g:i A" }}
+                                </small>
+                            </div>
+                            <div>
+                                <span class="status-badge status-pending">Pending</span>
+                                <br>
+                                <a href="#" class="action-btn btn-warning mt-2">
+                                    <i class="bi bi-check-circle me-1"></i>Dispense
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-check-circle text-success" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No pending prescriptions</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Low Stock Medications -->
+        <div class="col-md-4">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    Low Stock Alert
+                </h5>
+                {% if low_stock_medications %}
+                    {% for medication in low_stock_medications %}
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span>{{ medication.name }}</span>
+                        <span class="badge bg-warning">{{ medication.stock }}</span>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-check-circle text-success" style="font-size: 2rem;"></i>
+                        <p class="text-muted mt-2">All medications in stock</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Dispensed Today -->
+        <div class="col-12">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-check-circle me-2"></i>
+                    Dispensed Today
+                </h5>
+                {% if dispensed_today %}
+                    <div class="row">
+                        {% for prescription in dispensed_today %}
+                        <div class="col-md-4 mb-3">
+                            <div class="prescription-card prescription-dispensed">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <h6 class="mb-1">
+                                            <a href="{% url 'hospital:patient_detail' prescription.patient.pk %}" class="text-decoration-none">
+                                                {{ prescription.patient.full_name }}
+                                            </a>
+                                        </h6>
+                                        <p class="text-muted mb-1">
+                                            <i class="bi bi-capsule me-1"></i>
+                                            {{ prescription.drug.name }}
+                                        </p>
+                                        <small class="text-muted">
+                                            Dispensed: {{ prescription.dispensed_at|date:"g:i A" }}
+                                        </small>
+                                    </div>
+                                    <div>
+                                        <span class="status-badge status-dispensed">Dispensed</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-clipboard-check text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No prescriptions dispensed today</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="row">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-lightning me-2"></i>
+                    Quick Actions
+                </h5>
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="#" class="action-btn">
+                        <i class="bi bi-plus-circle me-1"></i>New Prescription
+                    </a>
+                    <a href="#" class="action-btn btn-warning">
+                        <i class="bi bi-capsule me-1"></i>Dispense
+                    </a>
+                    <a href="#" class="action-btn btn-success">
+                        <i class="bi bi-clipboard-check me-1"></i>Inventory
+                    </a>
+                    <a href="#" class="action-btn btn-primary">
+                        <i class="bi bi-printer me-1"></i>Print Label
+                    </a>
+                    <a href="#" class="action-btn btn-info">
+                        <i class="bi bi-search me-1"></i>Search Drug
+                    </a>
+                    <a href="{% url 'hospital:global_search' %}" class="action-btn">
+                        <i class="bi bi-search me-1"></i>Global Search
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

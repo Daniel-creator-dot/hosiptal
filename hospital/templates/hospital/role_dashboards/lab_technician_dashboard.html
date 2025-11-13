@@ -1,0 +1,336 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Lab Technician Dashboard{% endblock %}
+
+{% block extra_css %}
+<style>
+    .dashboard-card {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        padding: 24px;
+        margin-bottom: 24px;
+        border-left: 4px solid #17a2b8;
+    }
+    
+    .stat-card {
+        background: linear-gradient(135deg, #17a2b8 0%, #20c997 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    
+    .stat-number {
+        font-size: 2.5rem;
+        font-weight: bold;
+        margin-bottom: 8px;
+    }
+    
+    .stat-label {
+        font-size: 0.9rem;
+        opacity: 0.9;
+    }
+    
+    .test-card {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        border-left: 4px solid #17a2b8;
+    }
+    
+    .test-pending { border-left-color: #ffc107; }
+    .test-in-progress { border-left-color: #17a2b8; }
+    .test-completed { border-left-color: #28a745; }
+    
+    .status-badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: 500;
+    }
+    
+    .status-pending { background: #fff3cd; color: #856404; }
+    .status-in-progress { background: #d1ecf1; color: #0c5460; }
+    .status-completed { background: #d4edda; color: #155724; }
+    
+    .action-btn {
+        background: #17a2b8;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        text-decoration: none;
+        display: inline-block;
+        margin: 4px;
+        transition: all 0.3s ease;
+    }
+    
+    .action-btn:hover {
+        background: #138496;
+        color: white;
+        text-decoration: none;
+        transform: translateY(-1px);
+    }
+    
+    .btn-success { background: #28a745; }
+    .btn-warning { background: #ffc107; color: #212529; }
+    .btn-primary { background: #007bff; }
+    .btn-danger { background: #dc3545; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2 class="mb-1">
+                            <i class="bi bi-flask me-2"></i>
+                            Lab Technician Dashboard
+                        </h2>
+                        <p class="text-muted mb-0">
+                            Welcome back, {{ staff.user.get_full_name|default:staff.user.username }}
+                        </p>
+                    </div>
+                    <div class="text-end">
+                        <span class="badge bg-info fs-6">{{ staff.get_profession_display }}</span>
+                        <br>
+                        <small class="text-muted">{{ staff.department.name }}</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-number">{{ stats.pending_orders }}</div>
+                <div class="stat-label">Pending Orders</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%);">
+                <div class="stat-number">{{ stats.in_progress_tests }}</div>
+                <div class="stat-label">In Progress</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);">
+                <div class="stat-number">{{ stats.completed_today }}</div>
+                <div class="stat-label">Completed Today</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #6f42c1 0%, #e83e8c 100%);">
+                <div class="stat-number">{{ stats.total_tests_today }}</div>
+                <div class="stat-label">Total Tests Today</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Pending Lab Orders -->
+        <div class="col-md-6">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-hourglass-split me-2"></i>
+                    Pending Lab Orders
+                </h5>
+                {% if pending_orders %}
+                    {% for order in pending_orders %}
+                    <div class="test-card test-pending">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">
+                                    <a href="{% url 'hospital:patient_detail' order.patient.pk %}" class="text-decoration-none">
+                                        {{ order.patient.full_name }}
+                                    </a>
+                                </h6>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-flask me-1"></i>
+                                    {{ order.description }}
+                                </p>
+                                <small class="text-muted">
+                                    Ordered: {{ order.created|date:"M d, Y g:i A" }}
+                                </small>
+                            </div>
+                            <div>
+                                <span class="status-badge status-pending">Pending</span>
+                                <br>
+                                <a href="#" class="action-btn btn-warning mt-2">
+                                    <i class="bi bi-play-circle me-1"></i>Start
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-check-circle text-success" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No pending lab orders</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- In Progress Tests -->
+        <div class="col-md-6">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-gear me-2"></i>
+                    In Progress Tests
+                </h5>
+                {% if in_progress_tests %}
+                    {% for test in in_progress_tests %}
+                    <div class="test-card test-in-progress">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">
+                                    <a href="{% url 'hospital:patient_detail' test.patient.pk %}" class="text-decoration-none">
+                                        {{ test.patient.full_name }}
+                                    </a>
+                                </h6>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-flask me-1"></i>
+                                    {{ test.description }}
+                                </p>
+                                <small class="text-muted">
+                                    Started: {{ test.updated|date:"M d, Y g:i A" }}
+                                </small>
+                            </div>
+                            <div>
+                                <span class="status-badge status-in-progress">In Progress</span>
+                                <br>
+                                <a href="#" class="action-btn btn-primary mt-2">
+                                    <i class="bi bi-pencil me-1"></i>Update
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-gear text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No tests in progress</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Completed Results -->
+        <div class="col-md-8">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-check-circle me-2"></i>
+                    Recent Completed Results
+                </h5>
+                {% if completed_results %}
+                    {% for result in completed_results %}
+                    <div class="test-card test-completed">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">
+                                    <a href="{% url 'hospital:patient_detail' result.patient.pk %}" class="text-decoration-none">
+                                        {{ result.patient.full_name }}
+                                    </a>
+                                </h6>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-flask me-1"></i>
+                                    {{ result.test.name }}
+                                </p>
+                                <small class="text-muted">
+                                    Completed: {{ result.completed_at|date:"M d, Y g:i A" }}
+                                </small>
+                            </div>
+                            <div>
+                                <span class="status-badge status-completed">Completed</span>
+                                <br>
+                                <div class="mt-2">
+                                    <a href="#" class="action-btn btn-success me-2">
+                                        <i class="bi bi-eye me-1"></i>View
+                                    </a>
+                                    <a href="{% url 'hospital:send_lab_result_sms' result.pk %}" class="action-btn btn-info" title="Send SMS to Patient">
+                                        <i class="bi bi-send me-1"></i>SMS
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-clipboard-check text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No completed results</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Equipment Status -->
+        <div class="col-md-4">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-tools me-2"></i>
+                    Equipment Status
+                </h5>
+                {% if equipment_status %}
+                    {% for equipment in equipment_status %}
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span>{{ equipment.name }}</span>
+                        <span class="status-badge status-{{ equipment.status }}">
+                            {{ equipment.status|title }}
+                        </span>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-tools text-muted" style="font-size: 2rem;"></i>
+                        <p class="text-muted mt-2">No equipment data</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="row">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-lightning me-2"></i>
+                    Quick Actions
+                </h5>
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="#" class="action-btn">
+                        <i class="bi bi-plus-circle me-1"></i>New Test
+                    </a>
+                    <a href="#" class="action-btn btn-warning">
+                        <i class="bi bi-flask me-1"></i>Process Sample
+                    </a>
+                    <a href="#" class="action-btn btn-success">
+                        <i class="bi bi-clipboard-check me-1"></i>Enter Results
+                    </a>
+                    <a href="#" class="action-btn btn-primary">
+                        <i class="bi bi-printer me-1"></i>Print Report
+                    </a>
+                    <a href="{% url 'hospital:global_search' %}" class="action-btn">
+                        <i class="bi bi-search me-1"></i>Search
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,234 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Payment Verification Dashboard{% endblock %}
+
+{% block extra_css %}
+<style>
+    .verification-card {
+        border-left: 4px solid;
+        transition: all 0.3s ease;
+    }
+    .verification-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        transform: translateY(-2px);
+    }
+    .verification-card.pending { border-color: #ffc107; }
+    .verification-card.verified { border-color: #28a745; }
+    .verification-card.rejected { border-color: #dc3545; }
+    
+    .stats-card-revenue {
+        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        color: white;
+    }
+    .stats-card-pending {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+    }
+    .stats-card-verified {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h2><i class="bi bi-shield-check"></i> Payment Verification Dashboard</h2>
+            <p class="text-muted">Verify payments before releasing lab results or dispensing medications</p>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{% url 'hospital:search_receipt' %}" class="btn btn-primary btn-sm me-2">
+                <i class="bi bi-search"></i> Search Receipt
+            </a>
+            <a href="{% url 'hospital:scan_qr_code' %}" class="btn btn-success btn-sm">
+                <i class="bi bi-camera"></i> Scan QR
+            </a>
+        </div>
+    </div>
+    
+    <!-- Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card stats-card-pending">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6>Pending Lab Results</h6>
+                            <h2>{{ stats.pending_lab_results }}</h2>
+                        </div>
+                        <i class="bi bi-flask fs-1"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stats-card-pending">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6>Pending Prescriptions</h6>
+                            <h2>{{ stats.pending_prescriptions }}</h2>
+                        </div>
+                        <i class="bi bi-capsule fs-1"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stats-card-verified">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6>Verified Today</h6>
+                            <h2>{{ stats.verified_today }}</h2>
+                        </div>
+                        <i class="bi bi-check-circle fs-1"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stats-card-revenue">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6>Revenue Today</h6>
+                            <h2>GHS {{ stats.total_revenue_today|floatformat:2 }}</h2>
+                        </div>
+                        <i class="bi bi-currency-dollar fs-1"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quick Access Tools -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <a href="{% url 'hospital:search_receipt' %}" class="text-decoration-none">
+                <div class="card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 15px;">
+                    <div class="card-body text-center py-4">
+                        <i class="bi bi-search" style="font-size: 48px;"></i>
+                        <h5 class="mt-3 mb-2">Search Receipt</h5>
+                        <p class="mb-0" style="font-size: 13px; opacity: 0.9;">Find by receipt #, MRN, or patient name</p>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-4">
+            <a href="{% url 'hospital:scan_qr_code' %}" class="text-decoration-none">
+                <div class="card" style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; border-radius: 15px;">
+                    <div class="card-body text-center py-4">
+                        <i class="bi bi-camera" style="font-size: 48px;"></i>
+                        <h5 class="mt-3 mb-2">Scan QR Code</h5>
+                        <p class="mb-0" style="font-size: 13px; opacity: 0.9;">Use camera to verify receipts instantly</p>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-4">
+            <a href="{% url 'hospital:verification_analytics' %}" class="text-decoration-none">
+                <div class="card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; border-radius: 15px;">
+                    <div class="card-body text-center py-4">
+                        <i class="bi bi-graph-up" style="font-size: 48px;"></i>
+                        <h5 class="mt-3 mb-2">Analytics</h5>
+                        <p class="mb-0" style="font-size: 13px; opacity: 0.9;">View trends and payment statistics</p>
+                    </div>
+                </div>
+            </a>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- Pending Lab Results -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-flask"></i> Pending Lab Results (Awaiting Payment)</h5>
+                </div>
+                <div class="card-body" style="max-height: 500px; overflow-y: auto;">
+                    {% if pending_labs %}
+                        {% for lab in pending_labs %}
+                        <div class="verification-card pending card mb-3">
+                            <div class="card-body">
+                                <h6>{{ lab.test.name }}</h6>
+                                <p class="mb-1">
+                                    <strong>Patient:</strong> 
+                                    <a href="{% url 'hospital:patient_detail' lab.order.encounter.patient.pk %}">
+                                        {{ lab.order.encounter.patient.full_name }}
+                                    </a>
+                                </p>
+                                <p class="mb-1"><strong>MRN:</strong> {{ lab.order.encounter.patient.mrn }}</p>
+                                <p class="mb-1"><strong>Test Price:</strong> GHS {{ lab.test.price|default:"N/A" }}</p>
+                                <p class="mb-1"><small class="text-muted">Completed: {{ lab.completed_at|naturaltime }}</small></p>
+                                <a href="{% url 'hospital:verify_payment_for_lab_result' lab.pk %}" class="btn btn-warning btn-sm mt-2">
+                                    <i class="bi bi-credit-card"></i> Verify Payment & Release
+                                </a>
+                            </div>
+                        </div>
+                        {% endfor %}
+                        <a href="{% url 'hospital:lab_result_release_workflow' %}" class="btn btn-outline-primary">
+                            View All Lab Results →
+                        </a>
+                    {% else %}
+                        <div class="alert alert-success">
+                            <i class="bi bi-check-circle"></i> No pending lab results awaiting payment
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Pending Prescriptions -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0"><i class="bi bi-capsule"></i> Pending Prescriptions (Awaiting Payment)</h5>
+                </div>
+                <div class="card-body" style="max-height: 500px; overflow-y: auto;">
+                    {% if pending_pharmacy %}
+                        {% for rx in pending_pharmacy %}
+                        <div class="verification-card pending card mb-3">
+                            <div class="card-body">
+                                <h6>{{ rx.drug.name }}</h6>
+                                <p class="mb-1">
+                                    <strong>Patient:</strong>
+                                    <a href="{% url 'hospital:patient_detail' rx.order.encounter.patient.pk %}">
+                                        {{ rx.order.encounter.patient.full_name }}
+                                    </a>
+                                </p>
+                                <p class="mb-1"><strong>MRN:</strong> {{ rx.order.encounter.patient.mrn }}</p>
+                                <p class="mb-1"><strong>Dosage:</strong> {{ rx.dosage }}</p>
+                                <p class="mb-1"><small class="text-muted">Prescribed: {{ rx.created|naturaltime }}</small></p>
+                                <a href="{% url 'hospital:verify_payment_for_pharmacy' rx.pk %}" class="btn btn-info btn-sm mt-2">
+                                    <i class="bi bi-credit-card"></i> Verify Payment & Dispense
+                                </a>
+                            </div>
+                        </div>
+                        {% endfor %}
+                        <a href="{% url 'hospital:pharmacy_dispensing_workflow' %}" class="btn btn-outline-primary">
+                            View All Prescriptions →
+                        </a>
+                    {% else %}
+                        <div class="alert alert-success">
+                            <i class="bi bi-check-circle"></i> No pending prescriptions awaiting payment
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+

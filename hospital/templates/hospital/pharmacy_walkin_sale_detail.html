@@ -1,0 +1,180 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{% url 'hospital:pharmacy_walkin_sales_list' %}">Walk-in Sales</a></li>
+                    <li class="breadcrumb-item active">{{ sale.sale_number }}</li>
+                </ol>
+            </nav>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-receipt"></i> Sale Details - {{ sale.sale_number }}</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <h6>Customer Information</h6>
+                            <p class="mb-1"><strong>Name:</strong> {{ sale.customer_name }}</p>
+                            <p class="mb-1"><strong>Phone:</strong> {{ sale.customer_phone|default:"—" }}</p>
+                            <p class="mb-1"><strong>Type:</strong> {{ sale.get_customer_type_display }}</p>
+                            {% if sale.patient %}
+                                <p class="mb-1"><strong>MRN:</strong> {{ sale.patient.mrn }}</p>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Sale Information</h6>
+                            <p class="mb-1"><strong>Date:</strong> {{ sale.sale_date|date:"d M Y H:i" }}</p>
+                            <p class="mb-1"><strong>Served By:</strong> {{ sale.served_by.get_full_name|default:"—" }}</p>
+                            <p class="mb-1">
+                                <strong>Payment Status:</strong> 
+                                {% if sale.payment_status == 'paid' %}
+                                    <span class="badge bg-success">Paid</span>
+                                {% elif sale.payment_status == 'partial' %}
+                                    <span class="badge bg-warning">Partial</span>
+                                {% else %}
+                                    <span class="badge bg-danger">Pending</span>
+                                {% endif %}
+                            </p>
+                            <p class="mb-1">
+                                <strong>Dispensed:</strong> 
+                                {% if sale.is_dispensed %}
+                                    <span class="badge bg-success">Yes</span>
+                                {% else %}
+                                    <span class="badge bg-warning">No</span>
+                                {% endif %}
+                            </p>
+                        </div>
+                    </div>
+
+                    <h6 class="mb-3">Items</h6>
+                    <div class="table-responsive">
+                        <table class="table table-bordered">
+                            <thead>
+                                <tr>
+                                    <th>Medication</th>
+                                    <th>Quantity</th>
+                                    <th>Unit Price</th>
+                                    <th>Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in items %}
+                                <tr>
+                                    <td>
+                                        <strong>{{ item.drug.name }}</strong><br>
+                                        <small class="text-muted">{{ item.drug.strength }} {{ item.drug.form }}</small>
+                                        {% if item.dosage_instructions %}
+                                            <br><small class="text-info"><i class="bi bi-info-circle"></i> {{ item.dosage_instructions }}</small>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ item.quantity }}</td>
+                                    <td>GHS {{ item.unit_price }}</td>
+                                    <td><strong>GHS {{ item.line_total }}</strong></td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td colspan="3" class="text-end"><strong>Subtotal:</strong></td>
+                                    <td><strong>GHS {{ sale.subtotal }}</strong></td>
+                                </tr>
+                                {% if sale.discount_amount > 0 %}
+                                <tr>
+                                    <td colspan="3" class="text-end">Discount:</td>
+                                    <td class="text-success">- GHS {{ sale.discount_amount }}</td>
+                                </tr>
+                                {% endif %}
+                                <tr class="table-primary">
+                                    <td colspan="3" class="text-end"><strong>TOTAL:</strong></td>
+                                    <td><strong class="text-primary">GHS {{ sale.total_amount }}</strong></td>
+                                </tr>
+                                <tr>
+                                    <td colspan="3" class="text-end">Amount Paid:</td>
+                                    <td class="text-success"><strong>GHS {{ sale.amount_paid }}</strong></td>
+                                </tr>
+                                {% if sale.amount_due > 0 %}
+                                <tr>
+                                    <td colspan="3" class="text-end"><strong>Amount Due:</strong></td>
+                                    <td class="text-danger"><strong>GHS {{ sale.amount_due }}</strong></td>
+                                </tr>
+                                {% endif %}
+                            </tfoot>
+                        </table>
+                    </div>
+
+                    {% if sale.counselling_notes %}
+                        <div class="alert alert-info mt-3">
+                            <h6><i class="bi bi-chat-dots"></i> Counselling Notes</h6>
+                            <p class="mb-0">{{ sale.counselling_notes }}</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card shadow-sm mb-3">
+                <div class="card-body">
+                    <h6 class="mb-3">Actions</h6>
+                    
+                    {% if sale.payment_status != 'paid' %}
+                        <a href="{% url 'hospital:pharmacy_walkin_record_payment' sale.id %}" 
+                           class="btn btn-success w-100 mb-2">
+                            <i class="bi bi-cash"></i> Record Payment
+                        </a>
+                    {% endif %}
+                    
+                    {% if sale.payment_status == 'paid' and not sale.is_dispensed %}
+                        <a href="{% url 'hospital:pharmacy_walkin_dispense' sale.id %}" 
+                           class="btn btn-primary w-100 mb-2">
+                            <i class="bi bi-capsule"></i> Dispense Medication
+                        </a>
+                    {% endif %}
+                    
+                    <a href="{% url 'hospital:pharmacy_walkin_sales_list' %}" 
+                       class="btn btn-outline-secondary w-100">
+                        <i class="bi bi-arrow-left"></i> Back to List
+                    </a>
+                </div>
+            </div>
+
+            {% if receipts %}
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h6 class="mb-3">Payment Receipts</h6>
+                        {% for receipt in receipts %}
+                            <div class="mb-2 p-2 border rounded">
+                                <strong>{{ receipt.receipt_number }}</strong><br>
+                                <small>GHS {{ receipt.amount }} - {{ receipt.payment_method }}</small><br>
+                                <small class="text-muted">{{ receipt.created|date:"d M Y H:i" }}</small>
+                            </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+

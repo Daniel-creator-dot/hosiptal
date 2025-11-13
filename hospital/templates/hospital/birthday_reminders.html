@@ -1,0 +1,802 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Birthday Dashboard - HMS{% endblock %}
+{% block page_title %}🎂 Birthday Dashboard{% endblock %}
+{% block page_subtitle %}View and send birthday wishes to staff and patients{% endblock %}
+
+{% block extra_css %}
+<style>
+    .birthday-today-section {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+        color: white;
+        box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);
+    }
+    
+    .birthday-today-section h5 {
+        color: white;
+        font-weight: 700;
+        margin-bottom: 20px;
+    }
+    
+    .birthday-card {
+        background: white;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        transition: transform 0.2s, box-shadow 0.2s;
+    }
+    
+    .birthday-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    
+    .birthday-info {
+        flex: 1;
+    }
+    
+    .birthday-name {
+        font-weight: 600;
+        font-size: 16px;
+        color: var(--dark);
+        margin-bottom: 4px;
+    }
+    
+    .birthday-meta {
+        font-size: 13px;
+        color: var(--gray);
+    }
+    
+    .birthday-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+    
+    .checkbox-bulk {
+        margin-right: 12px;
+    }
+    
+    .upcoming-section {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+        border: 1px solid var(--border);
+    }
+    
+    .upcoming-section h6 {
+        font-weight: 600;
+        margin-bottom: 16px;
+        color: var(--dark);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .birthday-item {
+        padding: 12px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .birthday-item:last-child {
+        border-bottom: none;
+    }
+    
+    .birthday-item:hover {
+        background: var(--light);
+    }
+    
+    .day-badge {
+        display: inline-block;
+        padding: 4px 8px;
+        background: var(--primary);
+        color: white;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        margin-left: 8px;
+    }
+    
+    .day-badge.today {
+        background: #f59e0b;
+        animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+    
+    .empty-state {
+        text-align: center;
+        padding: 40px 20px;
+        color: var(--gray);
+    }
+    
+    .empty-state i {
+        font-size: 48px;
+        margin-bottom: 16px;
+        opacity: 0.5;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="modern-card text-center">
+            <h3 class="mb-0" style="color: #667eea;">{{ today_staff_birthdays|length|add:today_patient_birthdays|length }}</h3>
+            <p class="text-muted mb-0">Today's Birthdays</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center">
+            <h3 class="mb-0" style="color: #10b981;">{{ upcoming_staff_birthdays|length }}</h3>
+            <p class="text-muted mb-0">Upcoming Staff</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center">
+            <h3 class="mb-0" style="color: #3b82f6;">{{ upcoming_patient_birthdays|length }}</h3>
+            <p class="text-muted mb-0">Upcoming Patients</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center">
+            <h3 class="mb-0" style="color: #f59e0b;">{{ recent_sms|length }}</h3>
+            <p class="text-muted mb-0">Recent SMS Sent</p>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="modern-card mb-4">
+    <form method="get" class="row g-3 align-items-end">
+        <div class="col-md-3">
+            <label for="days" class="form-label">Days Ahead</label>
+            <input type="number" name="days" id="days" value="{{ days_ahead }}" min="1" max="365" class="form-control form-control-modern">
+        </div>
+        <div class="col-md-3">
+            <label for="type" class="form-label">Filter By</label>
+            <select name="type" id="type" class="form-select form-control-modern">
+                <option value="all" {% if reminder_type == 'all' %}selected{% endif %}>All (Staff & Patients)</option>
+                <option value="staff" {% if reminder_type == 'staff' %}selected{% endif %}>Staff Only</option>
+                <option value="patient" {% if reminder_type == 'patient' %}selected{% endif %}>Patients Only</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <button type="submit" class="btn btn-primary-modern">Apply Filter</button>
+        </div>
+        <div class="col-md-3 text-end">
+            <button type="button" class="btn btn-success btn-modern" id="sendBulkSmsBtn" style="display: none;">
+                <i class="bi bi-send"></i> Send Bulk SMS (<span id="selectedCount">0</span>)
+            </button>
+            <a href="{% url 'hospital:bulk_sms_dashboard' %}" class="btn btn-outline-primary btn-modern ms-2">
+                <i class="bi bi-send"></i> Bulk SMS Dashboard
+            </a>
+        </div>
+    </form>
+</div>
+
+<!-- Today's Birthdays - Highlighted -->
+<div class="birthday-today-section">
+    {% if today_staff_birthdays or today_patient_birthdays %}
+    <h5>
+        <i class="bi bi-balloon"></i> 🎉 Today's Birthdays - {{ today|date:"F d, Y" }}
+    </h5>
+    
+    <div class="row">
+        <div class="col-md-6">
+            {% if today_staff_birthdays %}
+            <h6 style="color: white; font-weight: 600; margin-bottom: 12px; font-size: 14px;">STAFF</h6>
+            {% for staff in today_staff_birthdays %}
+            <div class="birthday-card">
+                <div class="birthday-info">
+                    <div class="birthday-name">{{ staff.user.get_full_name|default:staff.user.username }}</div>
+                    <div class="birthday-meta">
+                        <i class="bi bi-building"></i> {{ staff.department.name|default:"No Department" }} | 
+                        <i class="bi bi-telephone"></i> {{ staff.phone_number|default:"No Phone" }} | 
+                        Age: {{ staff.age|default:"-" }}
+                    </div>
+                </div>
+                <div class="birthday-actions">
+                    <input type="checkbox" class="form-check-input checkbox-bulk" 
+                           data-type="staff" data-id="{{ staff.id }}" data-name="{{ staff.user.get_full_name|default:staff.user.username }}"
+                           data-phone="{{ staff.phone_number }}">
+                    {% if staff.phone_number %}
+                    <button class="btn btn-sm btn-light send-sms-btn" 
+                            data-type="staff" 
+                            data-id="{{ staff.id }}" 
+                            data-name="{{ staff.user.get_full_name|default:staff.user.username }}"
+                            data-phone="{{ staff.phone_number }}">
+                        <i class="bi bi-send"></i> Send SMS
+                    </button>
+                    {% else %}
+                    <span class="badge bg-warning">No Phone</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+            {% endif %}
+        </div>
+        
+        <div class="col-md-6">
+            {% if today_patient_birthdays %}
+            <h6 style="color: white; font-weight: 600; margin-bottom: 12px; font-size: 14px;">PATIENTS</h6>
+            {% for patient in today_patient_birthdays %}
+            <div class="birthday-card">
+                <div class="birthday-info">
+                    <div class="birthday-name">{{ patient.full_name }}</div>
+                    <div class="birthday-meta">
+                        <i class="bi bi-card-text"></i> MRN: {{ patient.mrn|default:"-" }} | 
+                        <i class="bi bi-telephone"></i> {{ patient.phone_number|default:"No Phone" }} | 
+                        Age: {{ patient.age|default:"-" }}
+                    </div>
+                </div>
+                <div class="birthday-actions">
+                    <input type="checkbox" class="form-check-input checkbox-bulk" 
+                           data-type="patient" data-id="{{ patient.id }}" data-name="{{ patient.full_name }}"
+                           data-phone="{{ patient.phone_number }}">
+                    {% if patient.phone_number %}
+                    <button class="btn btn-sm btn-light send-sms-btn" 
+                            data-type="patient" 
+                            data-id="{{ patient.id }}" 
+                            data-name="{{ patient.full_name }}"
+                            data-phone="{{ patient.phone_number }}">
+                        <i class="bi bi-send"></i> Send SMS
+                    </button>
+                    {% else %}
+                    <span class="badge bg-warning">No Phone</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+            {% endif %}
+        </div>
+    </div>
+    {% else %}
+    <div class="text-center py-4">
+        <i class="bi bi-calendar-check" style="font-size: 48px; opacity: 0.5;"></i>
+        <p class="mt-3 mb-0" style="font-size: 16px;">No birthdays today</p>
+        <p class="text-muted" style="font-size: 14px;">Check upcoming birthdays below</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Upcoming Birthdays -->
+<div class="row">
+    <!-- Upcoming Staff Birthdays -->
+    <div class="col-md-6">
+        <div class="upcoming-section">
+            <h6>
+                <span><i class="bi bi-people"></i> Upcoming Staff Birthdays</span>
+                <span class="badge bg-primary">{{ upcoming_staff_birthdays|length }}</span>
+            </h6>
+            
+            {% if upcoming_staff_birthdays %}
+            <div class="table-responsive">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th width="30"><input type="checkbox" id="selectAllStaff"></th>
+                            <th>Name</th>
+                            <th>Department</th>
+                            <th>Birthday</th>
+                            <th>Days</th>
+                            <th>Phone</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for staff in upcoming_staff_birthdays %}
+                        <tr>
+                            <td>
+                                {% if staff.phone_number %}
+                                <input type="checkbox" class="form-check-input checkbox-bulk checkbox-staff" 
+                                       data-type="staff" data-id="{{ staff.id }}" data-name="{{ staff.user.get_full_name|default:staff.user.username }}"
+                                       data-phone="{{ staff.phone_number }}">
+                                {% endif %}
+                            </td>
+                            <td><strong>{{ staff.user.get_full_name|default:staff.user.username }}</strong></td>
+                            <td>{{ staff.department.name|default:"-" }}</td>
+                            <td>{{ staff.date_of_birth|date:"M d" }}</td>
+                            <td>
+                                {% if staff.days_until_birthday == 0 %}
+                                    <span class="day-badge today">TODAY</span>
+                                {% elif staff.days_until_birthday == 1 %}
+                                    <span class="day-badge">Tomorrow</span>
+                                {% else %}
+                                    <span class="day-badge">In {{ staff.days_until_birthday }} days</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ staff.phone_number|default:"-" }}</td>
+                            <td>
+                                {% if staff.phone_number %}
+                                <button class="btn btn-sm btn-outline-primary send-sms-btn" 
+                                        data-type="staff" 
+                                        data-id="{{ staff.id }}" 
+                                        data-name="{{ staff.user.get_full_name|default:staff.user.username }}"
+                                        data-phone="{{ staff.phone_number }}"
+                                        title="Send SMS">
+                                    <i class="bi bi-send"></i>
+                                </button>
+                                {% else %}
+                                <span class="badge bg-secondary">No Phone</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <i class="bi bi-calendar-x"></i>
+                <p class="mb-2">No staff birthdays in the next {{ days_ahead }} days</p>
+                <small class="text-muted">Try increasing the "Days Ahead" filter or check if staff have birthday dates entered.</small>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Upcoming Patient Birthdays -->
+    <div class="col-md-6">
+        <div class="upcoming-section">
+            <h6>
+                <span><i class="bi bi-person"></i> Upcoming Patient Birthdays</span>
+                <span class="badge bg-primary">{{ upcoming_patient_birthdays|length }}</span>
+            </h6>
+            
+            {% if upcoming_patient_birthdays %}
+            <div class="table-responsive">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th width="30"><input type="checkbox" id="selectAllPatients"></th>
+                            <th>Name</th>
+                            <th>MRN</th>
+                            <th>Birthday</th>
+                            <th>Days</th>
+                            <th>Phone</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for patient in upcoming_patient_birthdays %}
+                        <tr>
+                            <td>
+                                {% if patient.phone_number %}
+                                <input type="checkbox" class="form-check-input checkbox-bulk checkbox-patient" 
+                                       data-type="patient" data-id="{{ patient.id }}" data-name="{{ patient.full_name }}"
+                                       data-phone="{{ patient.phone_number }}">
+                                {% endif %}
+                            </td>
+                            <td><strong>{{ patient.full_name }}</strong></td>
+                            <td>{{ patient.mrn|default:"-" }}</td>
+                            <td>{{ patient.date_of_birth|date:"M d" }}</td>
+                            <td>
+                                {% if patient.days_until_birthday == 0 %}
+                                    <span class="day-badge today">TODAY</span>
+                                {% elif patient.days_until_birthday == 1 %}
+                                    <span class="day-badge">Tomorrow</span>
+                                {% else %}
+                                    <span class="day-badge">In {{ patient.days_until_birthday }} days</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ patient.phone_number|default:"-" }}</td>
+                            <td>
+                                {% if patient.phone_number %}
+                                <button class="btn btn-sm btn-outline-primary send-sms-btn" 
+                                        data-type="patient" 
+                                        data-id="{{ patient.id }}" 
+                                        data-name="{{ patient.full_name }}"
+                                        data-phone="{{ patient.phone_number }}"
+                                        title="Send SMS">
+                                    <i class="bi bi-send"></i>
+                                </button>
+                                {% else %}
+                                <span class="badge bg-secondary">No Phone</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <i class="bi bi-calendar-x"></i>
+                <p class="mb-2">No patient birthdays in the next {{ days_ahead }} days</p>
+                <small class="text-muted">Try increasing the "Days Ahead" filter or check if patients have birthday dates entered.</small>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Recent SMS Notifications -->
+<div class="modern-card">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 style="font-weight: 600; margin: 0;">
+            <i class="bi bi-chat-dots"></i> Recent Birthday SMS Sent
+        </h6>
+        <a href="{% url 'hospital:sms_notifications' %}?type=birthday" class="btn btn-sm btn-outline-primary">View All Birthday SMS</a>
+    </div>
+    
+    {% if recent_sms %}
+    <div class="table-responsive">
+        <table class="table modern-table">
+            <thead>
+                <tr>
+                    <th>Recipient</th>
+                    <th>Phone</th>
+                    <th>Status</th>
+                    <th>Sent At</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for sms in recent_sms %}
+                <tr>
+                    <td>{{ sms.recipient_name|default:"-" }}</td>
+                    <td>{{ sms.recipient_number }}</td>
+                    <td>
+                        {% if sms.status == 'sent' %}
+                        <span class="badge-modern badge-info">Sent</span>
+                        {% elif sms.status == 'delivered' %}
+                        <span class="badge-modern badge-success">Delivered</span>
+                        {% elif sms.status == 'failed' %}
+                        <span class="badge-modern badge-danger">Failed</span>
+                        {% else %}
+                        <span class="badge-modern badge-warning">Pending</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ sms.sent_at|date:"M d, Y H:i"|default:"-" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <i class="bi bi-chat-left"></i>
+        <p>No birthday SMS sent yet</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- SMS Modal -->
+<div class="modal fade" id="smsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Send Birthday SMS</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="smsForm">
+                    <input type="hidden" id="smsRecipientType" name="recipient_type">
+                    <input type="hidden" id="smsRecipientId" name="recipient_id">
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Recipient</label>
+                        <input type="text" class="form-control" id="smsRecipientName" readonly>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Phone Number</label>
+                        <input type="text" class="form-control" id="smsPhoneNumber" readonly>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Message</label>
+                        <textarea class="form-control" id="smsMessage" name="message" rows="5" required></textarea>
+                        <small class="text-muted">You can personalize the message below</small>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="useDefaultMessage">Use Default Message</button>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="sendSmsBtn">
+                    <i class="bi bi-send"></i> Send SMS
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Bulk SMS Modal -->
+<div class="modal fade" id="bulkSmsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Send Bulk Birthday SMS</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="bulkSmsForm">
+                    <div class="mb-3">
+                        <label class="form-label">Recipients (<span id="bulkRecipientCount">0</span> selected)</label>
+                        <div id="bulkRecipientsList" class="border rounded p-2" style="max-height: 200px; overflow-y: auto; background: #f8f9fa;">
+                            <small class="text-muted">No recipients selected</small>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Message</label>
+                        <textarea class="form-control" id="bulkSmsMessage" name="message" rows="5" required></textarea>
+                        <small class="text-muted">This message will be sent to all selected recipients. Use {name} as placeholder for recipient name.</small>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="useDefaultBulkMessage">Use Default Message</button>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="sendBulkSmsModalBtn">
+                    <i class="bi bi-send"></i> Send to All Selected
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Function to get CSRF token from cookies
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+const csrftoken = getCookie('csrftoken') || '{{ csrf_token }}';
+
+document.addEventListener('DOMContentLoaded', function() {
+    const smsModal = new bootstrap.Modal(document.getElementById('smsModal'));
+    const bulkSmsModal = new bootstrap.Modal(document.getElementById('bulkSmsModal'));
+    let selectedRecipients = [];
+    
+    // Default birthday messages
+    const defaultStaffMessage = `Happy Birthday! 🎂
+
+We hope your special day brings you lots of joy and happiness. Wishing you a wonderful year ahead filled with success and fulfillment.
+
+Best regards,
+PrimeCare Hospital Team`;
+    
+    const defaultPatientMessage = `Happy Birthday! 🎂
+
+We hope your special day is filled with joy and good health. Thank you for trusting us with your healthcare needs.
+
+Wishing you a wonderful year ahead!
+
+Best regards,
+PrimeCare Hospital`;
+    
+    // Checkbox change handlers
+    function updateSelectedCount() {
+        selectedRecipients = [];
+        document.querySelectorAll('.checkbox-bulk:checked').forEach(cb => {
+            selectedRecipients.push({
+                type: cb.dataset.type,
+                id: cb.dataset.id,
+                name: cb.dataset.name,
+                phone: cb.dataset.phone
+            });
+        });
+        
+        const count = selectedRecipients.length;
+        const countSpan = document.getElementById('selectedCount');
+        const bulkBtn = document.getElementById('sendBulkSmsBtn');
+        
+        if (countSpan) countSpan.textContent = count;
+        if (bulkBtn) {
+            if (count > 0) {
+                bulkBtn.style.display = 'inline-block';
+                bulkBtn.disabled = false;
+            } else {
+                bulkBtn.style.display = 'none';
+            }
+        }
+    }
+    
+    document.querySelectorAll('.checkbox-bulk').forEach(cb => {
+        cb.addEventListener('change', updateSelectedCount);
+    });
+    
+    // Select all handlers
+    document.getElementById('selectAllStaff')?.addEventListener('change', function() {
+        document.querySelectorAll('.checkbox-staff').forEach(cb => {
+            if (cb.dataset.phone) cb.checked = this.checked;
+        });
+        updateSelectedCount();
+    });
+    
+    document.getElementById('selectAllPatients')?.addEventListener('change', function() {
+        document.querySelectorAll('.checkbox-patient').forEach(cb => {
+            if (cb.dataset.phone) cb.checked = this.checked;
+        });
+        updateSelectedCount();
+    });
+    
+    // Send SMS button handlers
+    document.querySelectorAll('.send-sms-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const type = this.dataset.type;
+            const id = this.dataset.id;
+            const name = this.dataset.name;
+            const phone = this.dataset.phone;
+            
+            document.getElementById('smsRecipientType').value = type;
+            document.getElementById('smsRecipientId').value = id;
+            document.getElementById('smsRecipientName').value = name;
+            document.getElementById('smsPhoneNumber').value = phone;
+            document.getElementById('smsMessage').value = type === 'staff' ? defaultStaffMessage.replace('{name}', name) : defaultPatientMessage.replace('{name}', name);
+            
+            smsModal.show();
+        });
+    });
+    
+    // Use default message
+    document.getElementById('useDefaultMessage')?.addEventListener('click', function() {
+        const type = document.getElementById('smsRecipientType').value;
+        const name = document.getElementById('smsRecipientName').value;
+        document.getElementById('smsMessage').value = type === 'staff' ? defaultStaffMessage.replace('{name}', name) : defaultPatientMessage.replace('{name}', name);
+    });
+    
+    // Send SMS
+    document.getElementById('sendSmsBtn')?.addEventListener('click', function() {
+        const formData = new FormData();
+        formData.append('recipient_type', document.getElementById('smsRecipientType').value);
+        formData.append('recipient_id', document.getElementById('smsRecipientId').value);
+        formData.append('phone_number', document.getElementById('smsPhoneNumber').value);
+        formData.append('message', document.getElementById('smsMessage').value);
+        formData.append('message_type', 'birthday');
+        formData.append('recipient_name', document.getElementById('smsRecipientName').value);
+        
+        this.disabled = true;
+        this.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Sending...';
+        
+        fetch('{% url "hospital:send_birthday_sms_api" %}', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': csrftoken
+            },
+            credentials: 'same-origin'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('SMS sent successfully!');
+                smsModal.hide();
+                location.reload();
+            } else {
+                alert('Error: ' + (data.message || 'Failed to send SMS'));
+                this.disabled = false;
+                this.innerHTML = '<i class="bi bi-send"></i> Send SMS';
+            }
+        })
+        .catch(error => {
+            alert('Error: ' + error.message);
+            this.disabled = false;
+            this.innerHTML = '<i class="bi bi-send"></i> Send SMS';
+        });
+    });
+    
+    // Bulk SMS
+    const bulkSmsBtn = document.getElementById('sendBulkSmsBtn');
+    if (bulkSmsBtn) {
+        bulkSmsBtn.addEventListener('click', function() {
+            if (selectedRecipients.length === 0) {
+                alert('Please select at least one recipient');
+                return;
+            }
+            
+            document.getElementById('bulkRecipientCount').textContent = selectedRecipients.length;
+            const recipientsList = document.getElementById('bulkRecipientsList');
+            recipientsList.innerHTML = selectedRecipients.map(r => 
+                `<div class="mb-1"><strong>GHS {r.name}</strong> (GHS {r.phone})</div>`
+            ).join('');
+            
+            // Default message (use first recipient's type)
+            const defaultMsg = selectedRecipients[0].type === 'staff' ? defaultStaffMessage : defaultPatientMessage;
+            document.getElementById('bulkSmsMessage').value = defaultMsg.replace('{name}', 'Dear');
+            
+            bulkSmsModal.show();
+        });
+    }
+    
+    document.getElementById('useDefaultBulkMessage')?.addEventListener('click', function() {
+        const defaultMsg = selectedRecipients[0]?.type === 'staff' ? defaultStaffMessage : defaultPatientMessage;
+        document.getElementById('bulkSmsMessage').value = defaultMsg.replace('{name}', 'Dear');
+    });
+    
+    document.getElementById('sendBulkSmsModalBtn')?.addEventListener('click', function() {
+        const message = document.getElementById('bulkSmsMessage').value;
+        if (!message.trim()) {
+            alert('Please enter a message');
+            return;
+        }
+        
+        this.disabled = true;
+        this.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Sending...';
+        
+        const promises = selectedRecipients.map(recipient => {
+            const formData = new FormData();
+            formData.append('recipient_type', recipient.type);
+            formData.append('recipient_id', recipient.id);
+            formData.append('phone_number', recipient.phone);
+            formData.append('message', message.replace('{name}', recipient.name).replace('Dear', `Dear GHS {recipient.name.split(' ')[0]}`));
+            formData.append('message_type', 'birthday');
+            formData.append('recipient_name', recipient.name);
+            
+            return fetch('{% url "hospital:send_birthday_sms_api" %}', {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-CSRFToken': csrftoken
+                },
+                credentials: 'same-origin'
+            }).then(r => r.json());
+        });
+        
+        Promise.all(promises)
+        .then(results => {
+            const success = results.filter(r => r && r.success).length;
+            const failed = results.length - success;
+            const btn = document.getElementById('sendBulkSmsModalBtn');
+            
+            if (success > 0) {
+                alert(`Bulk SMS completed: GHS {success} sent successfullyGHS {failed > 0 ? ', ' + failed + ' failed' : ''}`);
+                bulkSmsModal.hide();
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                alert('Failed to send all SMS. Please check the error messages and try again.');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-send"></i> Send to All Selected';
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Bulk SMS Error:', error);
+            alert('Error sending bulk SMS: ' + error.message);
+            const btn = document.getElementById('sendBulkSmsModalBtn');
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-send"></i> Send to All Selected';
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,181 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}MAR - Medication Administration Record{% endblock %}
+{% block page_title %}Medication Administration Record{% endblock %}
+{% block page_subtitle %}Drug administration tracking{% endblock %}
+
+{% block extra_css %}
+<style>
+    .mar-table {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        border: 1px solid var(--border);
+        overflow-x: auto;
+    }
+    
+    .mar-row {
+        border-bottom: 1px solid var(--border);
+        padding: 12px 0;
+    }
+    
+    .mar-row:last-child {
+        border-bottom: none;
+    }
+    
+    .mar-row.scheduled {
+        background: #fef3c7;
+    }
+    
+    .mar-row.given {
+        background: #d1fae5;
+    }
+    
+    .mar-row.missed {
+        background: #fee2e2;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Filters -->
+<div class="modern-card mb-4">
+    <form method="get" class="row g-3">
+        <div class="col-md-4">
+            <label class="form-label">Date</label>
+            <input type="date" name="date" value="{{ filter_date|date:'Y-m-d' }}" class="form-control form-control-modern">
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Patient (optional)</label>
+            <input type="text" name="patient" placeholder="Patient name or MRN" class="form-control form-control-modern">
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">&nbsp;</label>
+            <button type="submit" class="btn btn-primary-modern btn-modern w-100">
+                <i class="bi bi-search"></i> Search
+            </button>
+        </div>
+    </form>
+</div>
+
+<!-- Scheduled Medications -->
+<div class="modern-card mb-4">
+    <h5 style="font-weight: 600; margin-bottom: 20px; color: var(--dark);">
+        <span class="badge-modern badge-warning">{{ scheduled.count }}</span> Scheduled
+    </h5>
+    
+    {% if scheduled %}
+    <div class="mar-table">
+        <div class="row fw-bold mb-3" style="border-bottom: 2px solid var(--border); padding-bottom: 10px;">
+            <div class="col-md-2">Time</div>
+            <div class="col-md-3">Patient</div>
+            <div class="col-md-2">Medication</div>
+            <div class="col-md-2">Dose</div>
+            <div class="col-md-3">Action</div>
+        </div>
+        
+        {% for mar in scheduled %}
+        <div class="mar-row scheduled">
+            <div class="row align-items-center">
+                <div class="col-md-2">
+                    <strong>{{ mar.scheduled_time|date:"H:i" }}</strong>
+                </div>
+                <div class="col-md-3">
+                    <a href="{% url 'hospital:patient_detail' mar.patient.pk %}" style="text-decoration: none; color: inherit;">
+                        {{ mar.patient.full_name }}
+                    </a>
+                    <br><small class="text-muted">{{ mar.patient.mrn }}</small>
+                </div>
+                <div class="col-md-2">
+                    {{ mar.prescription.drug.name }}
+                </div>
+                <div class="col-md-2">
+                    {{ mar.prescription.dosage }}
+                </div>
+                <div class="col-md-3">
+                    <button class="btn btn-sm btn-success" onclick="administerMed('{{ mar.id }}')">
+                        <i class="bi bi-check-circle"></i> Administer
+                    </button>
+                    <button class="btn btn-sm btn-outline-warning" onclick="skipMed('{{ mar.id }}')">
+                        <i class="bi bi-x-circle"></i> Skip
+                    </button>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-muted text-center py-4">No scheduled medications</p>
+    {% endif %}
+</div>
+
+<!-- Given Medications -->
+{% if given %}
+<div class="modern-card mb-4">
+    <h5 style="font-weight: 600; margin-bottom: 20px; color: var(--dark);">
+        <span class="badge-modern badge-success">{{ given.count }}</span> Administered
+    </h5>
+    
+    <div class="mar-table">
+        <div class="row fw-bold mb-3" style="border-bottom: 2px solid var(--border); padding-bottom: 10px;">
+            <div class="col-md-2">Time</div>
+            <div class="col-md-3">Patient</div>
+            <div class="col-md-2">Medication</div>
+            <div class="col-md-2">Dose</div>
+            <div class="col-md-3">Administered By</div>
+        </div>
+        
+        {% for mar in given %}
+        <div class="mar-row given">
+            <div class="row align-items-center">
+                <div class="col-md-2">
+                    {{ mar.administered_time|date:"H:i" }}
+                </div>
+                <div class="col-md-3">
+                    {{ mar.patient.full_name }}
+                </div>
+                <div class="col-md-2">
+                    {{ mar.prescription.drug.name }}
+                </div>
+                <div class="col-md-2">
+                    {{ mar.dose_given }}
+                </div>
+                <div class="col-md-3">
+                    {{ mar.administered_by.user.get_full_name|default:"-" }}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<script>
+function administerMed(marId) {
+    // This would make an API call to mark medication as administered
+    fetch(`/api/hospital/mar/${marId}/administer/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}',
+            'Content-Type': 'application/json',
+        },
+    })
+    .then(response => response.json())
+    .then(data => {
+        location.reload();
+    })
+    .catch(error => {
+        alert('Error administering medication');
+    });
+}
+
+function skipMed(marId) {
+    if (confirm('Mark this medication as skipped?')) {
+        // API call to skip
+        location.reload();
+    }
+}
+</script>
+{% endblock %}
+

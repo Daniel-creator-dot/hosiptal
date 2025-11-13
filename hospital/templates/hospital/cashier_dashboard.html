@@ -1,0 +1,344 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Cashier Dashboard - HMS{% endblock %}
+{% block page_title %}Cashier Dashboard{% endblock %}
+{% block page_subtitle %}Payment Processing & Bill Management{% endblock %}
+
+{% block extra_css %}
+<style>
+    .session-card {
+        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+    
+    .stat-mini {
+        background: white;
+        border-radius: 12px;
+        padding: 16px;
+        text-align: center;
+        border: 1px solid var(--border);
+    }
+    
+    .payment-card {
+        background: white;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        border-left: 4px solid;
+        transition: all 0.2s;
+    }
+    
+    .payment-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transform: translateY(-2px);
+    }
+    
+    .payment-card.insurance {
+        border-left-color: var(--info);
+    }
+    
+    .payment-card.cash {
+        border-left-color: var(--warning);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Session Status -->
+<div class="session-card">
+    <div class="row align-items-center">
+        <div class="col-md-8">
+            <h5 style="margin: 0 0 8px 0; font-weight: 700;">Cashier Session: {{ session.session_number }}</h5>
+            <div style="font-size: 14px; opacity: 0.9;">
+                <i class="bi bi-clock"></i> Opened: {{ session.opened_at|date:"M d, Y H:i" }} |
+                Status: <span class="badge" style="background: rgba(255,255,255,0.3);">{{ session.get_status_display }}</span>
+            </div>
+        </div>
+        <div class="col-md-4 text-end">
+            {% if session.status == 'open' %}
+            <a href="{% url 'hospital:close_session' session.pk %}" class="btn btn-light">
+                <i class="bi bi-x-circle"></i> Close Session
+            </a>
+            {% else %}
+            <span class="badge bg-light text-dark">Session Closed</span>
+            {% endif %}
+        </div>
+    </div>
+    
+    <div class="row mt-4">
+        <div class="col-md-3">
+            <div style="font-size: 12px; opacity: 0.9;">Opening Cash</div>
+            <div style="font-size: 24px; font-weight: 700;">GHS {{ session.opening_cash|floatformat:2|intcomma }}</div>
+        </div>
+        <div class="col-md-3">
+            <div style="font-size: 12px; opacity: 0.9;">Total Payments</div>
+            <div style="font-size: 24px; font-weight: 700;">GHS {{ session.total_payments|floatformat:2|intcomma }}</div>
+        </div>
+        <div class="col-md-3">
+            <div style="font-size: 12px; opacity: 0.9;">Expected Cash</div>
+            <div style="font-size: 24px; font-weight: 700;">GHS {{ session.expected_cash|floatformat:2|intcomma }}</div>
+        </div>
+        <div class="col-md-3">
+            <div style="font-size: 12px; opacity: 0.9;">Transactions</div>
+            <div style="font-size: 24px; font-weight: 700;">{{ session.total_transactions }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- Today's Summary -->
+<div class="row g-4 mb-4">
+    <div class="col-md-4">
+        <div class="stat-mini">
+            <div style="font-size: 32px; font-weight: 800; color: var(--success);">
+                GHS {{ today_total|floatformat:0|intcomma }}
+            </div>
+            <div style="font-size: 12px; color: var(--gray);">Today's Revenue</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="stat-mini">
+            <div style="font-size: 32px; font-weight: 800; color: var(--primary);">
+                {{ today_count }}
+            </div>
+            <div style="font-size: 12px; color: var(--gray);">Transactions Today</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-mini">
+            <div style="font-size: 32px; font-weight: 800; color: var(--warning);">
+                {{ pending_payments.count }}
+            </div>
+            <div style="font-size: 12px; color: var(--gray);">Pending Payments</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-mini">
+            <div style="font-size: 32px; font-weight: 800; color: var(--danger);">
+                GHS {{ outstanding_debt|floatformat:0|intcomma }}
+            </div>
+            <div style="font-size: 12px; color: var(--gray);">Outstanding Debt</div>
+            <div style="font-size: 11px; color: var(--gray); margin-top: 4px;">{{ patients_with_debt_count }} patients</div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <a href="{% url 'hospital:cashier_invoices' %}" class="btn btn-primary-modern w-100" style="height: 80px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+            <i class="bi bi-receipt-cutoff" style="font-size: 28px; margin-bottom: 8px;"></i>
+            <span>View Invoices</span>
+        </a>
+    </div>
+    <div class="col-md-3">
+        <a href="{% url 'hospital:customer_debt' %}" class="btn btn-warning w-100" style="height: 80px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white;">
+            <i class="bi bi-exclamation-triangle" style="font-size: 28px; margin-bottom: 8px;"></i>
+            <span>Customer Debt</span>
+        </a>
+    </div>
+    <div class="col-md-3">
+        <a href="{% url 'hospital:cashier_bills' %}" class="btn btn-info w-100" style="height: 80px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white;">
+            <i class="bi bi-file-earmark-text" style="font-size: 28px; margin-bottom: 8px;"></i>
+            <span>View Bills</span>
+        </a>
+    </div>
+    <div class="col-md-3">
+        <a href="{% url 'hospital:cashier_invoices' %}?status=issued,partially_paid,overdue" class="btn btn-danger w-100" style="height: 80px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white;">
+            <i class="bi bi-clock-history" style="font-size: 28px; margin-bottom: 8px;"></i>
+            <span>Outstanding</span>
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Pending Lab Tests (NEW) -->
+    <div class="col-md-6 mb-4">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin: 0;">🧪 Pending Lab Tests ({{ total_pending_labs|default:"0" }})</h5>
+                {% if total_pending_labs > 20 %}
+                <a href="{% url 'hospital:cashier_all_pending_bills' %}?service_type=lab" class="btn btn-sm btn-outline-primary">
+                    View All {{ total_pending_labs }} →
+                </a>
+                {% endif %}
+            </div>
+            
+            {% if pending_labs %}
+                {% for lab in pending_labs %}
+                <div class="payment-card" style="border-left-color: #ffc107;">
+                    <div class="row align-items-center">
+                        <div class="col-md-7">
+                            <h6 style="margin: 0 0 4px 0; font-weight: 600;">{{ lab.test.name }}</h6>
+                            <div style="font-size: 12px; color: var(--gray);">
+                                Patient: {{ lab.order.encounter.patient.full_name }} ({{ lab.order.encounter.patient.mrn }})
+                            </div>
+                        </div>
+                        <div class="col-md-3 text-end">
+                            <div style="font-size: 18px; font-weight: 700; color: var(--primary);">
+                                GHS {{ lab.test.price|floatformat:2 }}
+                            </div>
+                        </div>
+                        <div class="col-md-2 text-end">
+                            <a href="{% url 'hospital:cashier_process_service_payment' 'lab' lab.id %}" class="btn btn-sm btn-primary-modern">
+                                Pay
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-muted text-center py-3">No pending lab tests</p>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Pending Pharmacy (NEW) -->
+    <div class="col-md-6 mb-4">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin: 0;">💊 Pending Pharmacy ({{ total_pending_pharmacy|default:"0" }})</h5>
+                {% if total_pending_pharmacy > 20 %}
+                <a href="{% url 'hospital:cashier_all_pending_bills' %}?service_type=pharmacy" class="btn btn-sm btn-outline-success">
+                    View All {{ total_pending_pharmacy }} →
+                </a>
+                {% endif %}
+            </div>
+            
+            {% if pending_pharmacy %}
+                {% for rx in pending_pharmacy %}
+                <div class="payment-card" style="border-left-color: #28a745;">
+                    <div class="row align-items-center">
+                        <div class="col-md-7">
+                            <h6 style="margin: 0 0 4px 0; font-weight: 600;">{{ rx.drug.name }} x {{ rx.quantity }}</h6>
+                            <div style="font-size: 12px; color: var(--gray);">
+                                Patient: {{ rx.order.encounter.patient.full_name }} ({{ rx.order.encounter.patient.mrn }})
+                            </div>
+                        </div>
+                        <div class="col-md-3 text-end">
+                            <div style="font-size: 18px; font-weight: 700; color: var(--success);">
+                                GHS {{ rx.total_price|floatformat:2 }}
+                            </div>
+                        </div>
+                        <div class="col-md-2 text-end">
+                            <a href="{% url 'hospital:cashier_process_service_payment' 'pharmacy' rx.id %}" class="btn btn-sm btn-success">
+                                Pay
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-muted text-center py-3">No pending prescriptions</p>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Pending Payments (Existing) -->
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin: 0;">Pending Payment Requests</h5>
+                <div>
+                    <a href="{% url 'hospital:cashier_bills' %}" class="btn btn-sm btn-outline-primary me-2">View All Bills</a>
+                    <a href="{% url 'hospital:cashier_invoices' %}" class="btn btn-sm btn-outline-info">View Invoices</a>
+                </div>
+            </div>
+            
+            {% if pending_payments %}
+                {% for payment_request in pending_payments %}
+                <div class="payment-card {% if payment_request.invoice.payer %}insurance{% else %}cash{% endif %}">
+                    <div class="row align-items-center">
+                        <div class="col-md-7">
+                            <h6 style="margin: 0 0 4px 0; font-weight: 600;">
+                                <a href="{% url 'hospital:patient_detail' payment_request.patient.pk %}" style="text-decoration: none; color: inherit;">
+                                    {{ payment_request.patient.full_name }}
+                                </a>
+                            </h6>
+                            <div style="font-size: 12px; color: var(--gray);">
+                                Invoice: {{ payment_request.invoice.invoice_number }} |
+                                {% if payment_request.invoice.payer %}
+                                <i class="bi bi-shield-check"></i> {{ payment_request.invoice.payer.name }}
+                                {% else %}
+                                <i class="bi bi-cash"></i> Self Pay
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-md-3 text-end">
+                            <div style="font-size: 18px; font-weight: 700; color: var(--primary);">
+                                GHS {{ payment_request.requested_amount|floatformat:2|intcomma }}
+                            </div>
+                        </div>
+                        <div class="col-md-2 text-end">
+                            <a href="{% url 'hospital:process_payment_request' payment_request.pk %}" class="btn btn-sm btn-primary-modern">
+                                Process
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+            <p class="text-muted text-center py-4">No pending payments</p>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Unpaid Bills -->
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin: 0;">Unpaid Bills</h5>
+            </div>
+            
+            {% if unpaid_bills %}
+                {% for bill in unpaid_bills %}
+                <div class="payment-card {% if bill.bill_type == 'insurance' %}insurance{% else %}cash{% endif %}">
+                    <div class="row align-items-center">
+                        <div class="col-md-7">
+                            <h6 style="margin: 0 0 4px 0; font-weight: 600;">
+                                <a href="{% url 'hospital:patient_detail' bill.patient.pk %}" style="text-decoration: none; color: inherit;">
+                                    {{ bill.patient.full_name }}
+                                </a>
+                            </h6>
+                            <div style="font-size: 12px; color: var(--gray);">
+                                Bill: {{ bill.bill_number }} |
+                                {% if bill.bill_type == 'insurance' %}
+                                <span class="badge-modern badge-info">Insurance</span>
+                                {% else %}
+                                <span class="badge-modern badge-warning">Cash</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-md-3 text-end">
+                            <div style="font-size: 16px; font-weight: 700; color: var(--danger);">
+                                GHS {{ bill.patient_portion|floatformat:2|intcomma }}
+                            </div>
+                            {% if bill.insurance_covered > 0 %}
+                            <div style="font-size: 11px; color: var(--gray);">
+                                Ins: GHS {{ bill.insurance_covered|floatformat:2 }}
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-2 text-end">
+                            {% if bill.patient_portion > 0 %}
+                            <a href="{% url 'hospital:process_payment_bill' bill.pk %}" class="btn btn-sm btn-primary-modern">
+                                Pay
+                            </a>
+                            {% else %}
+                            <span class="badge-modern badge-success">Paid</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+            <p class="text-muted text-center py-4">No unpaid bills</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+

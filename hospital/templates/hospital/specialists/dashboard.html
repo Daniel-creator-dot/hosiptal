@@ -1,0 +1,132 @@
+{% extends 'hospital/base.html' %}
+{% load humanize static hospital_extras %}
+
+{% block title %}Specialists - HMS{% endblock %}
+
+{% block page_title %}Specialists{% endblock %}
+{% block page_subtitle %}Medical specialists and specialty consultations{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <!-- Specialty Cards -->
+    {% for specialty in specialties %}
+    <div class="col-lg-3 col-md-6">
+        <div class="modern-card" style="cursor: pointer; transition: all 0.3s ease;" onclick="window.location.href='#'">
+            <div style="text-align: center; padding: 20px;">
+                <div style="font-size: 48px; margin-bottom: 16px;">
+                    {% if specialty.icon %}
+                    <i class="{{ specialty.icon }}"></i>
+                    {% elif specialty.name|lower == 'dentistry' or specialty.name|lower == 'dental' %}
+                    <i class="bi bi-tooth"></i>
+                    {% elif specialty.name|lower == 'cardiology' %}
+                    <i class="bi bi-heart-pulse"></i>
+                    {% elif specialty.name|lower == 'ophthalmology' %}
+                    <i class="bi bi-eye"></i>
+                    {% else %}
+                    <i class="bi bi-stethoscope"></i>
+                    {% endif %}
+                </div>
+                <h5 style="font-weight: 600; color: var(--dark); margin-bottom: 8px;">{{ specialty.name }}</h5>
+                {% if specialty.description %}
+                <p style="font-size: 13px; color: var(--gray); margin: 0;">{{ specialty.description|truncatewords:10 }}</p>
+                {% endif %}
+                <div style="margin-top: 16px;">
+                    <span class="badge-modern badge-info">
+                        {% with specialists=specialists_by_specialty|get_item:specialty.name %}
+                        {{ specialists|length|default:0 }} specialist{{ specialists|length|default:0|pluralize }}
+                        {% endwith %}
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% empty %}
+    <div class="col-12">
+        <div class="modern-card text-center py-5">
+            <i class="bi bi-stethoscope" style="font-size: 64px; color: var(--gray); opacity: 0.3;"></i>
+            <h5 style="margin-top: 24px; color: var(--gray);">No Specialties Found</h5>
+            <p style="color: var(--gray);">Specialties will be displayed here once configured in the admin panel.</p>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Quick Access -->
+<div class="row g-4 mt-4">
+    <div class="col-12">
+        <div class="modern-card">
+            <h6 style="font-weight: 600; margin-bottom: 20px; color: var(--dark);">
+                <i class="bi bi-lightning"></i> Quick Access
+            </h6>
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <a href="{% url 'hospital:specialist_patient_select' %}?specialty=dental" class="btn btn-primary-modern btn-modern w-100">
+                        <i class="bi bi-tooth"></i> Dental Consultation
+                    </a>
+                </div>
+                <div class="col-md-4">
+                    <a href="{% url 'hospital:specialist_patient_select' %}?specialty=cardiology" class="btn btn-outline-primary btn-modern w-100">
+                        <i class="bi bi-heart-pulse"></i> Cardiology Consultation
+                    </a>
+                </div>
+                <div class="col-md-4">
+                    <a href="{% url 'hospital:specialist_patient_select' %}?specialty=ophthalmology" class="btn btn-outline-primary btn-modern w-100">
+                        <i class="bi bi-eye"></i> Ophthalmology Consultation
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Specialists List -->
+{% if specialists_by_specialty %}
+<div class="row g-4 mt-4">
+    <div class="col-12">
+        <div class="modern-card">
+            <h6 style="font-weight: 600; margin-bottom: 20px; color: var(--dark);">
+                <i class="bi bi-people"></i> All Specialists
+            </h6>
+            <div class="modern-table">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Specialist</th>
+                            <th>Specialty</th>
+                            <th>Qualification</th>
+                            <th>Experience</th>
+                            <th>Consultation Fee</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for specialty_name, specialists in specialists_by_specialty.items %}
+                        {% for specialist in specialists %}
+                        <tr>
+                            <td>
+                                <strong>{{ specialist.staff.user.get_full_name }}</strong><br>
+                                <small class="text-muted">{{ specialist.staff.employee_id|default:"N/A" }}</small>
+                            </td>
+                            <td>{{ specialist.specialty.name }}</td>
+                            <td>{{ specialist.qualification|default:"—" }}</td>
+                            <td>{{ specialist.experience_years }} years</td>
+                            <td>GHS {{ specialist.consultation_fee|floatformat:2 }}</td>
+                            <td>
+                                {% if specialist.is_active %}
+                                <span class="badge-modern badge-success">Active</span>
+                                {% else %}
+                                <span class="badge-modern badge-secondary">Inactive</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+

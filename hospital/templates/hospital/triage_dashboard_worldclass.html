@@ -1,0 +1,2239 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Triage Dashboard - HMS{% endblock %}
+{% block page_title %}🚨 Emergency Triage Center{% endblock %}
+{% block page_subtitle %}Real-time patient triage and flow management{% endblock %}
+
+{% block extra_css %}
+<style>
+    :root {
+        --triage-critical: #DC2626;
+        --triage-emergency: #F59E0B;
+        --triage-urgent: #EAB308;
+        --triage-standard: #3B82F6;
+        --triage-non-urgent: #10B981;
+    }
+
+    /* Header Stats */
+    .triage-stats-bar {
+        background: linear-gradient(135deg, #1E293B 0%, #334155 100%);
+        border-radius: 20px;
+        padding: 30px;
+        margin-bottom: 30px;
+        color: white;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    }
+
+    .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 20px;
+    }
+
+    .stat-box-triage {
+        text-align: center;
+        padding: 20px;
+        border-radius: 12px;
+        background: rgba(255,255,255,0.1);
+        backdrop-filter: blur(10px);
+        border: 2px solid rgba(255,255,255,0.2);
+    }
+
+    .stat-number {
+        font-size: 48px;
+        font-weight: 800;
+        line-height: 1;
+        margin-bottom: 8px;
+    }
+
+    .stat-label {
+        font-size: 13px;
+        opacity: 0.9;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        font-weight: 600;
+    }
+
+    /* Triage Level Sections */
+    .triage-level-section {
+        margin-bottom: 30px;
+    }
+
+    .level-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px 30px;
+        border-radius: 16px 16px 0 0;
+        color: white;
+        font-weight: 700;
+        font-size: 18px;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .level-header::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 200px;
+        height: 200px;
+        background: radial-gradient(circle, rgba(255,255,255,0.1), transparent);
+        transform: translate(50px, -50px);
+    }
+
+    .level-header.critical { background: linear-gradient(135deg, #DC2626 0%, #991B1B 100%); }
+    .level-header.emergency { background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%); }
+    .level-header.urgent { background: linear-gradient(135deg, #EAB308 0%, #CA8A04 100%); }
+    .level-header.standard { background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%); }
+    .level-header.non-urgent { background: linear-gradient(135deg, #10B981 0%, #059669 100%); }
+
+    .level-counter {
+        background: rgba(255,255,255,0.3);
+        padding: 8px 20px;
+        border-radius: 20px;
+        font-size: 16px;
+        font-weight: 700;
+    }
+
+    /* Patient Cards */
+    .patient-triage-card {
+        background: white;
+        border-radius: 0 0 16px 16px;
+        padding: 0;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+        overflow: hidden;
+        margin-bottom: 24px;
+    }
+
+    .patient-card-row {
+        padding: 20px 30px;
+        border-bottom: 1px solid #F3F4F6;
+        transition: all 0.3s;
+        cursor: pointer;
+    }
+
+    .patient-card-row:last-child {
+        border-bottom: none;
+    }
+
+    .patient-card-row:hover {
+        background: #F9FAFB;
+        transform: translateX(4px);
+    }
+
+    .priority-indicator {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        font-weight: 800;
+        color: white;
+        flex-shrink: 0;
+    }
+
+    .priority-critical { background: linear-gradient(135deg, #DC2626, #991B1B); }
+    .priority-emergency { background: linear-gradient(135deg, #F59E0B, #D97706); }
+    .priority-urgent { background: linear-gradient(135deg, #EAB308, #CA8A04); }
+    .priority-standard { background: linear-gradient(135deg, #3B82F6, #2563EB); }
+    .priority-non-urgent { background: linear-gradient(135deg, #10B981, #059669); }
+
+    .patient-info {
+        flex: 1;
+        padding: 0 20px;
+    }
+
+    .patient-name-large {
+        font-size: 20px;
+        font-weight: 700;
+        color: #1F2937;
+        margin-bottom: 6px;
+    }
+
+    .patient-meta-row {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+        font-size: 13px;
+        color: #6B7280;
+        margin-bottom: 8px;
+    }
+
+    .chief-complaint-display {
+        background: #F9FAFB;
+        padding: 12px;
+        border-radius: 8px;
+        margin-top: 8px;
+        font-size: 14px;
+        color: #374151;
+    }
+
+    .vitals-display {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+    }
+
+    .vital-chip {
+        background: #EEF2FF;
+        color: #4F46E5;
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .vital-chip.alert {
+        background: #FEE2E2;
+        color: #DC2626;
+    }
+
+    .wait-time-display {
+        text-align: center;
+        padding: 12px;
+    }
+
+    .wait-time-value {
+        font-size: 28px;
+        font-weight: 700;
+        color: #1F2937;
+    }
+
+    .wait-time-label {
+        font-size: 11px;
+        color: #6B7280;
+        text-transform: uppercase;
+        margin-top: 4px;
+    }
+
+    .action-buttons {
+        display: flex;
+        gap: 8px;
+        flex-direction: column;
+    }
+
+    .action-btn-triage {
+        padding: 10px 20px;
+        border-radius: 8px;
+        border: none;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        font-size: 13px;
+    }
+
+    .btn-start {
+        background: linear-gradient(135deg, #10B981, #059669);
+        color: white;
+    }
+
+    .btn-move {
+        background: linear-gradient(135deg, #3B82F6, #2563EB);
+        color: white;
+    }
+
+    .btn-view {
+        background: #F3F4F6;
+        color: #374151;
+    }
+
+    .action-btn-triage:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+
+    /* Flow Status */
+    .flow-tracker {
+        background: white;
+        border-radius: 12px;
+        padding: 16px;
+        margin-top: 12px;
+        border: 2px solid #E5E7EB;
+    }
+
+    .flow-stages {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .flow-stage {
+        flex: 1;
+        padding: 8px;
+        background: #F3F4F6;
+        border-radius: 6px;
+        text-align: center;
+        font-size: 11px;
+        font-weight: 600;
+        color: #6B7280;
+        position: relative;
+    }
+
+    .flow-stage.completed {
+        background: #D1FAE5;
+        color: #065F46;
+    }
+
+    .flow-stage.current {
+        background: #DBEAFE;
+        color: #1E40AF;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+    }
+
+    .flow-stage::after {
+        content: '→';
+        position: absolute;
+        right: -12px;
+        color: #D1D5DB;
+        font-size: 16px;
+    }
+
+    .flow-stage:last-child::after {
+        display: none;
+    }
+
+    /* Filter Pills */
+    .filter-bar {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        margin-bottom: 30px;
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        align-items: center;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+
+    .filter-pill {
+        padding: 10px 20px;
+        border-radius: 25px;
+        background: #F3F4F6;
+        border: 2px solid transparent;
+        color: #374151;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+        text-decoration: none;
+        font-size: 13px;
+    }
+
+    .filter-pill:hover {
+        background: #E5E7EB;
+        color: #1F2937;
+    }
+
+    .filter-pill.active {
+        background: #4F46E5;
+        color: white;
+        border-color: #4F46E5;
+    }
+
+    /* Empty State */
+    .empty-triage-state {
+        text-align: center;
+        padding: 80px 20px;
+        background: white;
+        border-radius: 16px;
+    }
+
+    .empty-icon {
+        font-size: 80px;
+        color: #E5E7EB;
+        margin-bottom: 20px;
+    }
+
+    /* Real-time Indicator */
+    .live-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(255,255,255,0.2);
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-size: 13px;
+    }
+
+    .live-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #10B981;
+        animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(1.1); }
+    }
+
+    /* Quick Triage Modal */
+    .quick-triage-btn {
+        position: fixed;
+        bottom: 30px;
+        right: 30px;
+        width: 70px;
+        height: 70px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #DC2626, #991B1B);
+        color: white;
+        border: none;
+        font-size: 32px;
+        cursor: pointer;
+        box-shadow: 0 8px 24px rgba(220, 38, 38, 0.4);
+        transition: all 0.3s;
+        z-index: 1000;
+    }
+
+    .quick-triage-btn:hover {
+        transform: scale(1.1) rotate(90deg);
+        box-shadow: 0 12px 32px rgba(220, 38, 38, 0.5);
+    }
+
+    /* Pain Scale Visual */
+    .pain-scale-visual {
+        display: inline-flex;
+        gap: 4px;
+    }
+
+    .pain-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #E5E7EB;
+    }
+
+    .pain-dot.filled {
+        background: #EF4444;
+    }
+
+    /* Responsive Design */
+    @media (max-width: 768px) {
+        .patient-card-row {
+            flex-direction: column;
+            padding: 15px;
+        }
+        
+        .stat-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+        
+        .quick-triage-btn {
+            width: 60px;
+            height: 60px;
+            font-size: 28px;
+            bottom: 20px;
+            right: 20px;
+        }
+        
+        .triage-stats-bar {
+            padding: 20px;
+        }
+    }
+    
+    /* Performance: Reduce animations on low-end devices */
+    @media (prefers-reduced-motion: reduce) {
+        * {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+        }
+    }
+    
+    /* Print styles */
+    @media print {
+        .quick-triage-btn,
+        .action-buttons,
+        .filter-bar {
+            display: none !important;
+        }
+        
+        .triage-stats-bar {
+            break-inside: avoid;
+        }
+    }
+
+    /* ==================== AMBULANCE SYSTEM STYLES ==================== */
+    
+    /* Ambulance Control Center */
+    .ambulance-control-center {
+        background: linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%);
+        border-radius: 24px;
+        padding: 30px;
+        margin-bottom: 30px;
+        color: white;
+        box-shadow: 0 20px 50px rgba(124, 58, 237, 0.3);
+        position: relative;
+        overflow: hidden;
+    }
+
+    .ambulance-control-center::before {
+        content: '';
+        position: absolute;
+        top: -50%;
+        right: -10%;
+        width: 400px;
+        height: 400px;
+        background: radial-gradient(circle, rgba(255,255,255,0.1), transparent);
+        border-radius: 50%;
+    }
+
+    .ambulance-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 25px;
+        position: relative;
+        z-index: 1;
+    }
+
+    .ambulance-title {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+
+    .ambulance-icon-pulse {
+        width: 60px;
+        height: 60px;
+        background: rgba(255,255,255,0.2);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+        animation: ambulance-pulse 2s infinite;
+    }
+
+    @keyframes ambulance-pulse {
+        0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255,255,255,0.7); }
+        50% { transform: scale(1.05); box-shadow: 0 0 0 15px rgba(255,255,255,0); }
+    }
+
+    .dispatch-btn {
+        background: #FCD34D;
+        color: #78350F;
+        padding: 14px 28px;
+        border-radius: 12px;
+        border: none;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.3s;
+        box-shadow: 0 4px 15px rgba(252, 211, 77, 0.4);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .dispatch-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(252, 211, 77, 0.6);
+    }
+
+    /* Ambulance Fleet Grid */
+    .ambulance-fleet-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: 20px;
+        position: relative;
+        z-index: 1;
+    }
+
+    .ambulance-unit-card {
+        background: rgba(255,255,255,0.95);
+        border-radius: 16px;
+        padding: 20px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+        transition: all 0.3s;
+        border: 3px solid transparent;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .ambulance-unit-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 12px 32px rgba(0,0,0,0.15);
+    }
+
+    .ambulance-unit-card.available {
+        border-color: #10B981;
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.05), rgba(255,255,255,0.95));
+    }
+
+    .ambulance-unit-card.en-route {
+        border-color: #F59E0B;
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.05), rgba(255,255,255,0.95));
+        animation: en-route-glow 2s infinite;
+    }
+
+    .ambulance-unit-card.on-scene {
+        border-color: #DC2626;
+        background: linear-gradient(135deg, rgba(220, 38, 38, 0.05), rgba(255,255,255,0.95));
+    }
+
+    .ambulance-unit-card.returning {
+        border-color: #3B82F6;
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.05), rgba(255,255,255,0.95));
+    }
+
+    @keyframes en-route-glow {
+        0%, 100% { box-shadow: 0 8px 24px rgba(245, 158, 11, 0.3); }
+        50% { box-shadow: 0 8px 24px rgba(245, 158, 11, 0.6); }
+    }
+
+    .ambulance-unit-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+    }
+
+    .unit-id {
+        font-size: 24px;
+        font-weight: 800;
+        color: #1F2937;
+    }
+
+    .status-badge {
+        padding: 6px 16px;
+        border-radius: 20px;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .status-badge.available {
+        background: #D1FAE5;
+        color: #065F46;
+    }
+
+    .status-badge.en-route {
+        background: #FEF3C7;
+        color: #92400E;
+        animation: status-blink 1.5s infinite;
+    }
+
+    .status-badge.on-scene {
+        background: #FEE2E2;
+        color: #991B1B;
+    }
+
+    .status-badge.returning {
+        background: #DBEAFE;
+        color: #1E40AF;
+    }
+
+    @keyframes status-blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+
+    .crew-info {
+        background: #F9FAFB;
+        padding: 12px;
+        border-radius: 10px;
+        margin-bottom: 12px;
+    }
+
+    .crew-member {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: #374151;
+        margin-bottom: 6px;
+    }
+
+    .crew-member:last-child {
+        margin-bottom: 0;
+    }
+
+    .location-display {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+        padding: 10px;
+        background: #EEF2FF;
+        border-radius: 8px;
+        color: #4F46E5;
+        font-size: 13px;
+        font-weight: 600;
+    }
+
+    .eta-display {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 15px;
+        background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%);
+        border-radius: 10px;
+        margin-bottom: 12px;
+    }
+
+    .eta-time {
+        font-size: 28px;
+        font-weight: 800;
+        color: #92400E;
+    }
+
+    .eta-label {
+        font-size: 11px;
+        color: #78350F;
+        text-transform: uppercase;
+        font-weight: 700;
+    }
+
+    .patient-preview {
+        background: #FFF7ED;
+        padding: 12px;
+        border-radius: 10px;
+        border-left: 4px solid #F97316;
+        margin-bottom: 12px;
+    }
+
+    .patient-preview-name {
+        font-weight: 700;
+        color: #9A3412;
+        margin-bottom: 4px;
+    }
+
+    .patient-preview-complaint {
+        font-size: 12px;
+        color: #7C2D12;
+    }
+
+    .vitals-preview {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+    }
+
+    .vital-mini {
+        background: white;
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        color: #EA580C;
+    }
+
+    .ambulance-actions {
+        display: flex;
+        gap: 8px;
+    }
+
+    .action-btn-ambulance {
+        flex: 1;
+        padding: 10px;
+        border-radius: 8px;
+        border: none;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+        font-size: 13px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+    }
+
+    .btn-track {
+        background: #4F46E5;
+        color: white;
+    }
+
+    .btn-contact {
+        background: #10B981;
+        color: white;
+    }
+
+    .btn-dispatch {
+        background: #F59E0B;
+        color: white;
+    }
+
+    .action-btn-ambulance:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    }
+
+    /* Incoming Patients Section */
+    .incoming-patients-section {
+        background: linear-gradient(135deg, #DC2626 0%, #991B1B 100%);
+        border-radius: 20px;
+        padding: 25px;
+        margin-bottom: 30px;
+        color: white;
+        box-shadow: 0 10px 40px rgba(220, 38, 38, 0.3);
+        animation: urgent-pulse 3s infinite;
+    }
+
+    @keyframes urgent-pulse {
+        0%, 100% { box-shadow: 0 10px 40px rgba(220, 38, 38, 0.3); }
+        50% { box-shadow: 0 10px 40px rgba(220, 38, 38, 0.5); }
+    }
+
+    .incoming-patient-card {
+        background: rgba(255,255,255,0.95);
+        border-radius: 16px;
+        padding: 20px;
+        margin-bottom: 15px;
+        color: #1F2937;
+    }
+
+    .incoming-patient-card:last-child {
+        margin-bottom: 0;
+    }
+
+    .arrival-countdown {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        padding: 15px;
+        background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%);
+        border-radius: 12px;
+        margin-bottom: 15px;
+    }
+
+    .countdown-number {
+        font-size: 36px;
+        font-weight: 800;
+        color: #DC2626;
+        line-height: 1;
+    }
+
+    .countdown-text {
+        font-size: 12px;
+        color: #78350F;
+        font-weight: 600;
+    }
+
+    .pre-arrival-info {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+        margin-bottom: 15px;
+    }
+
+    .info-block {
+        background: #F9FAFB;
+        padding: 12px;
+        border-radius: 8px;
+    }
+
+    .info-label {
+        font-size: 10px;
+        color: #6B7280;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+        font-weight: 600;
+    }
+
+    .info-value {
+        font-size: 14px;
+        color: #1F2937;
+        font-weight: 700;
+    }
+
+    .preparation-checklist {
+        background: #ECFDF5;
+        padding: 15px;
+        border-radius: 10px;
+        border-left: 4px solid #10B981;
+    }
+
+    .checklist-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+        font-size: 13px;
+        color: #065F46;
+    }
+
+    .checklist-item:last-child {
+        margin-bottom: 0;
+    }
+
+    .check-icon {
+        width: 20px;
+        height: 20px;
+        background: #10B981;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 12px;
+    }
+
+    /* Live Map Placeholder */
+    .ambulance-map-container {
+        background: linear-gradient(135deg, #1E293B 0%, #334155 100%);
+        border-radius: 20px;
+        padding: 30px;
+        margin-bottom: 30px;
+        position: relative;
+        overflow: hidden;
+        min-height: 400px;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .map-placeholder {
+        flex: 1;
+        background: #0F172A;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .map-grid {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        background-image: 
+            linear-gradient(rgba(59, 130, 246, 0.1) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(59, 130, 246, 0.1) 1px, transparent 1px);
+        background-size: 50px 50px;
+        animation: map-scroll 20s linear infinite;
+    }
+
+    @keyframes map-scroll {
+        0% { transform: translate(0, 0); }
+        100% { transform: translate(50px, 50px); }
+    }
+
+    .ambulance-marker {
+        position: absolute;
+        width: 40px;
+        height: 40px;
+        background: #F59E0B;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 20px;
+        box-shadow: 0 4px 15px rgba(245, 158, 11, 0.6);
+        animation: marker-bounce 2s infinite;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+
+    .ambulance-marker:hover {
+        transform: scale(1.2);
+    }
+
+    @keyframes marker-bounce {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-10px); }
+    }
+
+    /* Communication Center */
+    .communication-panel {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+    }
+
+    .radio-message {
+        background: #F9FAFB;
+        padding: 12px;
+        border-radius: 10px;
+        margin-bottom: 10px;
+        border-left: 4px solid #3B82F6;
+    }
+
+    .message-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 6px;
+    }
+
+    .message-sender {
+        font-weight: 700;
+        color: #1F2937;
+        font-size: 13px;
+    }
+
+    .message-time {
+        font-size: 11px;
+        color: #6B7280;
+    }
+
+    .message-text {
+        font-size: 13px;
+        color: #374151;
+    }
+
+    /* Stats Pills */
+    .ambulance-stats-pills {
+        display: flex;
+        gap: 15px;
+        flex-wrap: wrap;
+        margin-bottom: 20px;
+    }
+
+    .stat-pill {
+        background: rgba(255,255,255,0.2);
+        padding: 12px 20px;
+        border-radius: 12px;
+        backdrop-filter: blur(10px);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .stat-pill-value {
+        font-size: 24px;
+        font-weight: 800;
+    }
+
+    .stat-pill-label {
+        font-size: 12px;
+        opacity: 0.9;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .ambulance-fleet-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .pre-arrival-info {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Top Stats Bar -->
+<div class="triage-stats-bar">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h3 style="font-weight: 700; margin-bottom: 8px;">Emergency Department Status</h3>
+            <div class="live-indicator">
+                <span class="live-dot"></span>
+                <span>Live · Updated {{ now|date:"H:i" }}</span>
+            </div>
+        </div>
+        <a href="{% url 'hospital:triage_create' %}" class="btn btn-light btn-lg">
+            <i class="bi bi-plus-circle me-2"></i>New Triage
+        </a>
+    </div>
+    
+    <div class="stat-grid">
+        <div class="stat-box-triage">
+            <div class="stat-number" style="color: #DC2626;">{{ critical_count|default:0 }}</div>
+            <div class="stat-label">Critical (Level 1)</div>
+        </div>
+        <div class="stat-box-triage">
+            <div class="stat-number" style="color: #F59E0B;">{{ emergency_count|default:0 }}</div>
+            <div class="stat-label">Emergency (Level 2)</div>
+        </div>
+        <div class="stat-box-triage">
+            <div class="stat-number" style="color: #EAB308;">{{ urgent_count|default:0 }}</div>
+            <div class="stat-label">Urgent (Level 3)</div>
+        </div>
+        <div class="stat-box-triage">
+            <div class="stat-number" style="color: #3B82F6;">{{ standard_count|default:0 }}</div>
+            <div class="stat-label">Standard (Level 4)</div>
+        </div>
+        <div class="stat-box-triage">
+            <div class="stat-number" style="color: #10B981;">{{ non_urgent_count|default:0 }}</div>
+            <div class="stat-label">Non-Urgent (Level 5)</div>
+        </div>
+        <div class="stat-box-triage">
+            <div class="stat-number">{{ avg_wait_time|default:0 }}</div>
+            <div class="stat-label">Avg Wait (min)</div>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== AMBULANCE SYSTEM SECTION ===================== -->
+
+<!-- Incoming Patients Alert -->
+{% if incoming_ambulances %}
+<div class="incoming-patients-section">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3 style="font-weight: 800; margin: 0; display: flex; align-items: center; gap: 12px;">
+            <i class="bi bi-broadcast-pin" style="font-size: 32px;"></i>
+            INCOMING AMBULANCES
+        </h3>
+        <div style="background: rgba(255,255,255,0.2); padding: 10px 20px; border-radius: 12px; font-weight: 700;">
+            <i class="bi bi-clock-history me-2"></i>{{ incoming_ambulances|length }} EN ROUTE
+        </div>
+    </div>
+
+    <!-- Loop through real incoming ambulances -->
+    {% for dispatch in incoming_ambulances %}
+    <div class="incoming-patient-card">
+        <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+                <div style="font-size: 20px; font-weight: 800; color: {% if dispatch.priority == 'code_3' %}#DC2626{% elif dispatch.priority == 'code_2' %}#F59E0B{% else %}#3B82F6{% endif %}; margin-bottom: 4px;">
+                    🚑 {{ dispatch.ambulance_unit.unit_number|upper }} INBOUND
+                </div>
+                <div style="color: #6B7280; font-size: 13px;">
+                    Dispatch: {{ dispatch.call_received_at|date:"H:i" }} · Incident: {{ dispatch.get_call_type_display }}
+                </div>
+            </div>
+        </div>
+
+        <div class="arrival-countdown">
+            <div>
+                <div class="countdown-number">{{ dispatch.eta_minutes|default:5 }}</div>
+            </div>
+            <div class="flex-grow-1">
+                <div class="countdown-text">MINUTES TO ARRIVAL</div>
+                <div style="color: {% if dispatch.priority == 'code_3' %}#DC2626{% else %}#F59E0B{% endif %}; font-weight: 700; margin-top: 4px;">
+                    <i class="bi bi-geo-alt-fill me-1"></i>{{ dispatch.miles_traveled|floatformat:1|default:"--" }} miles away
+                </div>
+            </div>
+            <div>
+                <i class="bi bi-arrow-right-circle" style="font-size: 36px; color: {% if dispatch.priority == 'code_3' %}#DC2626{% else %}#F59E0B{% endif %};"></i>
+            </div>
+        </div>
+
+        <div class="pre-arrival-info">
+            <div class="info-block">
+                <div class="info-label">Patient</div>
+                <div class="info-value">
+                    {% if dispatch.patient %}
+                        {{ dispatch.patient.get_gender_display }}, {{ dispatch.patient.age }}y
+                    {% else %}
+                        Unknown Patient
+                    {% endif %}
+                </div>
+            </div>
+            <div class="info-block">
+                <div class="info-label">Priority</div>
+                <div class="info-value" style="color: {% if dispatch.priority == 'code_3' %}#DC2626{% elif dispatch.priority == 'code_2' %}#F59E0B{% else %}#3B82F6{% endif %};">
+                    {{ dispatch.get_priority_display }}
+                </div>
+            </div>
+            <div class="info-block">
+                <div class="info-label">Incident</div>
+                <div class="info-value">{{ dispatch.get_call_type_display }}</div>
+            </div>
+            <div class="info-block">
+                <div class="info-label">Location</div>
+                <div class="info-value">{{ dispatch.pickup_address|truncatewords:3 }}</div>
+            </div>
+        </div>
+
+        {% if dispatch.pre_hospital_report %}
+        <div style="background: #FEE2E2; padding: 12px; border-radius: 10px; margin-bottom: 12px; border-left: 4px solid #DC2626;">
+            <div style="font-weight: 700; color: #991B1B; margin-bottom: 6px;">
+                <i class="bi bi-clipboard-pulse me-2"></i>Pre-Hospital Report
+            </div>
+            <div style="font-size: 13px; color: #7F1D1D;">
+                {{ dispatch.pre_hospital_report|truncatewords:50 }}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if dispatch.vital_signs_on_scene %}
+        <div style="background: #FEF3C7; padding: 12px; border-radius: 10px; margin-bottom: 12px; border-left: 4px solid #F59E0B;">
+            <div style="font-weight: 700; color: #92400E; margin-bottom: 6px;">
+                <i class="bi bi-activity me-2"></i>Vital Signs on Scene
+            </div>
+            <div style="font-size: 13px; color: #78350F;">
+                {{ dispatch.vital_signs_on_scene }}
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="preparation-checklist">
+            <div style="font-weight: 700; margin-bottom: 10px; color: #065F46;">
+                <i class="bi bi-list-check me-2"></i>Preparation Status
+            </div>
+            <div class="checklist-item">
+                <div class="check-icon"><i class="bi bi-check"></i></div>
+                <span>{% if dispatch.priority == 'code_3' %}Trauma bay{% else %}Emergency room{% endif %} cleared and ready</span>
+            </div>
+            <div class="checklist-item">
+                <div class="check-icon"><i class="bi bi-check"></i></div>
+                <span>Medical team notified</span>
+            </div>
+            <div class="checklist-item">
+                <div class="check-icon"><i class="bi bi-check"></i></div>
+                <span>{% if dispatch.call_type == 'cardiac' %}Cardiac team on standby{% else %}Specialty team alerted{% endif %}</span>
+            </div>
+            {% if dispatch.patient %}
+            <div class="checklist-item">
+                <div class="check-icon"><i class="bi bi-check"></i></div>
+                <span>Patient record: {{ dispatch.patient.mrn }} ready</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Ambulance Control Center -->
+<div class="ambulance-control-center">
+    <div class="ambulance-header">
+        <div class="ambulance-title">
+            <div class="ambulance-icon-pulse">
+                <i class="bi bi-truck"></i>
+            </div>
+            <div>
+                <h3 style="font-weight: 800; margin: 0;">Ambulance Fleet Command</h3>
+                <div style="font-size: 14px; opacity: 0.9;">Real-time fleet management system</div>
+            </div>
+        </div>
+        <a href="{% url 'hospital:ambulance_dispatch_create' %}" class="dispatch-btn" style="text-decoration: none;">
+            <i class="bi bi-send-fill"></i>
+            DISPATCH UNIT
+        </a>
+    </div>
+
+    <div class="ambulance-stats-pills">
+        <div class="stat-pill">
+            <div>
+                <div class="stat-pill-value">{{ fleet_stats.total_units|default:0 }}</div>
+                <div class="stat-pill-label">Total Units</div>
+            </div>
+        </div>
+        <div class="stat-pill">
+            <div>
+                <div class="stat-pill-value" style="color: #10B981;">{{ fleet_stats.available|default:0 }}</div>
+                <div class="stat-pill-label">Available</div>
+            </div>
+        </div>
+        <div class="stat-pill">
+            <div>
+                <div class="stat-pill-value" style="color: #F59E0B;">{{ fleet_stats.en_route|default:0 }}</div>
+                <div class="stat-pill-label">En Route</div>
+            </div>
+        </div>
+        <div class="stat-pill">
+            <div>
+                <div class="stat-pill-value" style="color: #DC2626;">{{ fleet_stats.on_scene|default:0 }}</div>
+                <div class="stat-pill-label">On Scene</div>
+            </div>
+        </div>
+        <div class="stat-pill">
+            <div>
+                <div class="stat-pill-value">{{ avg_response_time|default:"0.0" }}</div>
+                <div class="stat-pill-label">Avg Response (min)</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="ambulance-fleet-grid">
+        <!-- Loop through real ambulance units -->
+        {% for unit in ambulance_units %}
+        <div class="ambulance-unit-card {{ unit.status }}">
+            <div class="ambulance-unit-header">
+                <div class="unit-id">🚑 {{ unit.unit_number|upper }}</div>
+                <span class="status-badge {{ unit.status }}">{{ unit.get_status_display }}</span>
+            </div>
+
+            {% if unit.primary_paramedic or unit.primary_emt %}
+            <div class="crew-info">
+                {% if unit.primary_paramedic %}
+                <div class="crew-member">
+                    <i class="bi bi-person-badge-fill" style="color: {% if unit.status == 'available' %}#10B981{% elif unit.status == 'en_route' or unit.status == 'transporting' %}#F59E0B{% else %}#DC2626{% endif %};"></i>
+                    <span><strong>Paramedic:</strong> {{ unit.primary_paramedic.user.get_full_name|default:"Assigned" }}</span>
+                </div>
+                {% endif %}
+                {% if unit.primary_emt %}
+                <div class="crew-member">
+                    <i class="bi bi-person-fill" style="color: #6B7280;"></i>
+                    <span><strong>EMT:</strong> {{ unit.primary_emt.user.get_full_name|default:"Assigned" }}</span>
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <div class="location-display">
+                {% if unit.status == 'available' %}
+                    <i class="bi bi-building"></i>
+                    <span>{{ unit.home_station|default:"Station" }}</span>
+                {% elif unit.status == 'en_route' or unit.status == 'transporting' %}
+                    <i class="bi bi-arrow-right-circle"></i>
+                    <span>{{ unit.current_location|default:"En Route" }}</span>
+                {% elif unit.status == 'on_scene' %}
+                    <i class="bi bi-pin-map-fill"></i>
+                    <span>{{ unit.current_location|default:"On Scene" }}</span>
+                {% else %}
+                    <i class="bi bi-geo-alt-fill"></i>
+                    <span>{{ unit.current_location|default:"Location Unknown" }}</span>
+                {% endif %}
+            </div>
+
+            {% if unit.status == 'available' %}
+            <div style="background: #D1FAE5; padding: 15px; border-radius: 10px; margin-bottom: 12px; text-align: center;">
+                <div style="font-size: 24px; color: #065F46; font-weight: 800;">✓ READY</div>
+                <div style="font-size: 11px; color: #065F46; font-weight: 600;">All systems operational</div>
+            </div>
+            {% else %}
+            <div style="background: {% if unit.status == 'on_scene' %}#FEE2E2{% else %}#FEF3C7{% endif %}; padding: 15px; border-radius: 10px; margin-bottom: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="font-size: 20px; color: {% if unit.status == 'on_scene' %}#991B1B{% else %}#92400E{% endif %}; font-weight: 700;">
+                            {{ unit.get_status_display|upper }}
+                        </div>
+                        <div style="font-size: 11px; color: #6B7280; margin-top: 4px;">
+                            {% if unit.vehicle_make %}{{ unit.vehicle_make }} {{ unit.vehicle_model }}{% else %}Unit Active{% endif %}
+                        </div>
+                    </div>
+                    <div style="font-size: 32px; color: {% if unit.status == 'on_scene' %}#DC2626{% else %}#F59E0B{% endif %};">
+                        <i class="bi bi-activity"></i>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="ambulance-actions">
+                {% if unit.status == 'available' %}
+                <button class="action-btn-ambulance btn-dispatch" onclick="dispatchSpecific('{{ unit.unit_number }}')">
+                    <i class="bi bi-send-fill"></i>Dispatch
+                </button>
+                {% else %}
+                <button class="action-btn-ambulance btn-track" onclick="trackAmbulance('{{ unit.unit_number }}')">
+                    <i class="bi bi-radar"></i>Track
+                </button>
+                {% endif %}
+                <button class="action-btn-ambulance btn-contact" onclick="contactCrew('{{ unit.unit_number }}')">
+                    <i class="bi bi-phone-fill"></i>Radio
+                </button>
+            </div>
+        </div>
+        {% empty %}
+        <!-- No units configured yet - Show setup message -->
+        <div class="col-12">
+            <div style="background: white; border-radius: 16px; padding: 40px; text-align: center;">
+                <i class="bi bi-truck" style="font-size: 64px; color: #E5E7EB; margin-bottom: 20px;"></i>
+                <h4 style="color: #6B7280;">No Ambulance Units Configured</h4>
+                <p style="color: #9CA3AF;">Add ambulance units in the admin panel to start tracking your fleet.</p>
+                <a href="/admin/hospital/ambulanceunit/add/" class="btn btn-primary mt-3">
+                    <i class="bi bi-plus-circle me-2"></i>Add First Ambulance Unit
+                </a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Live Tracking Map -->
+<div class="ambulance-map-container">
+    <div class="d-flex justify-content-between align-items-center mb-3" style="color: white;">
+        <h4 style="font-weight: 700; margin: 0;">
+            <i class="bi bi-map me-2"></i>Live Fleet Tracking
+        </h4>
+        <div style="background: rgba(255,255,255,0.2); padding: 8px 16px; border-radius: 8px; font-size: 13px;">
+            <i class="bi bi-broadcast me-1"></i>GPS Active · {{ ambulance_units|length }} Units Tracked
+        </div>
+    </div>
+    
+    <div class="map-placeholder">
+        <div class="map-grid"></div>
+        
+        <!-- Dynamic ambulance markers from real GPS data -->
+        {% for unit in ambulance_units %}
+        {% if unit.gps_latitude and unit.gps_longitude %}
+        <div class="ambulance-marker" 
+             style="top: {{ unit.gps_latitude|add:90|floatformat:0 }}%; left: {{ unit.gps_longitude|add:180|floatformat:0 }}%; 
+                    background: {% if unit.status == 'available' %}#10B981{% elif unit.status == 'on_scene' %}#DC2626{% else %}#F59E0B{% endif %};" 
+             title="{{ unit.unit_number }} - {{ unit.get_status_display }}" 
+             data-unit="{{ unit.unit_number }}">
+            <i class="bi bi-truck"></i>
+        </div>
+        {% else %}
+        <!-- Fallback position if no GPS data -->
+        <div class="ambulance-marker" 
+             style="top: {% widthratio forloop.counter0 1 15 %}%; left: {% widthratio forloop.counter0 1 20 %}%; 
+                    background: {% if unit.status == 'available' %}#10B981{% elif unit.status == 'on_scene' %}#DC2626{% else %}#F59E0B{% endif %};" 
+             title="{{ unit.unit_number }} - {{ unit.get_status_display }}" 
+             data-unit="{{ unit.unit_number }}">
+            <i class="bi bi-truck"></i>
+        </div>
+        {% endif %}
+        {% endfor %}
+        
+        <!-- Hospital marker (center) -->
+        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+                    width: 60px; height: 60px; background: #4F46E5; border-radius: 50%; 
+                    display: flex; align-items: center; justify-content: center; color: white; 
+                    font-size: 28px; box-shadow: 0 0 0 10px rgba(79, 70, 229, 0.2);">
+            <i class="bi bi-hospital"></i>
+        </div>
+    </div>
+</div>
+
+<!-- Communication Center -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="communication-panel">
+            <h5 style="font-weight: 700; margin-bottom: 20px;">
+                <i class="bi bi-broadcast me-2" style="color: #4F46E5;"></i>
+                Recent Dispatch Activity
+            </h5>
+            
+            {% if recent_dispatches %}
+                {% for dispatch in recent_dispatches|slice:":5" %}
+                <div class="radio-message">
+                    <div class="message-header">
+                        <span class="message-sender">{{ dispatch.ambulance_unit.unit_number|upper }}{% if dispatch.ambulance_unit.primary_paramedic %} ({{ dispatch.ambulance_unit.primary_paramedic.user.last_name }}){% endif %}</span>
+                        <span class="message-time">{{ dispatch.call_received_at|timesince }} ago</span>
+                    </div>
+                    <div class="message-text">
+                        "{{ dispatch.get_call_type_display }} - {{ dispatch.pickup_address|truncatewords:5 }}
+                        {% if dispatch.patient_transported %}Transport completed{% elif dispatch.patient %}Patient: {{ dispatch.patient.full_name }}{% else %}Responding{% endif %}"
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div style="text-align: center; padding: 40px; color: #9CA3AF;">
+                    <i class="bi bi-broadcast" style="font-size: 48px; margin-bottom: 15px; display: block; opacity: 0.3;"></i>
+                    <p>No recent dispatch activity</p>
+                    <small>Dispatch records will appear here</small>
+                </div>
+            {% endif %}
+            
+            <div class="mt-3">
+                <button class="btn btn-primary w-100" onclick="openRadio()">
+                    <i class="bi bi-mic-fill me-2"></i>Open Radio Channel
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="communication-panel">
+            <h5 style="font-weight: 700; margin-bottom: 20px;">
+                <i class="bi bi-graph-up-arrow me-2" style="color: #10B981;"></i>
+                Performance Metrics
+            </h5>
+            
+            <div style="background: #F9FAFB; padding: 15px; border-radius: 10px; margin-bottom: 12px;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div style="font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase;">Avg Response Time</div>
+                        <div style="font-size: 28px; font-weight: 800; color: #10B981;">3.2 min</div>
+                    </div>
+                    <div style="font-size: 48px; color: #10B981; opacity: 0.3;">
+                        <i class="bi bi-stopwatch"></i>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="background: #F9FAFB; padding: 15px; border-radius: 10px; margin-bottom: 12px;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div style="font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase;">Calls Today</div>
+                        <div style="font-size: 28px; font-weight: 800; color: #3B82F6;">{{ recent_dispatches|length|default:0 }}</div>
+                    </div>
+                    <div style="font-size: 48px; color: #3B82F6; opacity: 0.3;">
+                        <i class="bi bi-telephone"></i>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="background: #F9FAFB; padding: 15px; border-radius: 10px; margin-bottom: 12px;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div style="font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase;">Active Dispatches</div>
+                        <div style="font-size: 28px; font-weight: 800; color: #DC2626;">{{ incoming_ambulances|length|default:0 }}</div>
+                    </div>
+                    <div style="font-size: 48px; color: #DC2626; opacity: 0.3;">
+                        <i class="bi bi-heart-pulse"></i>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="background: #F9FAFB; padding: 15px; border-radius: 10px;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div style="font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase;">Fleet Utilization</div>
+                        <div style="font-size: 28px; font-weight: 800; color: #F59E0B;">
+                            {% if fleet_stats.total_units > 0 %}
+                                {% widthratio fleet_stats.en_route fleet_stats.total_units 100 %}%
+                            {% else %}
+                                0%
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div style="font-size: 48px; color: #F59E0B; opacity: 0.3;">
+                        <i class="bi bi-speedometer2"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== AMBULANCE SERVICE CHARGES ===================== -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 700; margin: 0; color: #1f2937;">
+                    <i class="bi bi-credit-card me-2" style="color: #f59e0b;"></i>Ambulance Service Charges
+                </h5>
+                <button class="btn btn-primary btn-sm" onclick="showAddChargeModal()">
+                    <i class="bi bi-plus-circle me-2"></i>Add New Charge
+                </button>
+            </div>
+            
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead style="background: #f9fafb;">
+                        <tr>
+                            <th style="font-weight: 600; color: #374151;">Service Type</th>
+                            <th style="font-weight: 600; color: #374151;">Base Charge</th>
+                            <th style="font-weight: 600; color: #374151;">Per Mile</th>
+                            <th style="font-weight: 600; color: #374151;">Emergency Surcharge</th>
+                            <th style="font-weight: 600; color: #374151;">Equipment Fees</th>
+                            <th style="font-weight: 600; color: #374151;">Status</th>
+                            <th style="font-weight: 600; color: #374151;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Loop through real ambulance service types from database -->
+                        {% for service in ambulance_service_types %}
+                        <tr>
+                            <td>
+                                <div style="font-weight: 600; color: #1f2937;">{{ service.service_name }}</div>
+                                <small style="color: #6b7280;">{{ service.description|truncatewords:6 }}</small>
+                            </td>
+                            <td>
+                                <div style="font-weight: 700; color: #059669; font-size: 16px;">GHS {{ service.base_charge|floatformat:2 }}</div>
+                            </td>
+                            <td>
+                                <span style="background: #eff6ff; color: #1e40af; padding: 4px 12px; border-radius: 6px; font-weight: 600; font-size: 13px;">
+                                    GHS {{ service.per_mile_charge|floatformat:2 }}
+                                </span>
+                            </td>
+                            <td>
+                                <span style="background: {% if service.emergency_surcharge > 200 %}#fee2e2{% else %}#fef3c7{% endif %}; 
+                                             color: {% if service.emergency_surcharge > 200 %}#991b1b{% else %}#92400e{% endif %}; 
+                                             padding: 4px 12px; border-radius: 6px; font-weight: 600; font-size: 13px;">
+                                    {% if service.emergency_surcharge > 0 %}GHS {{ service.emergency_surcharge|floatformat:2 }}{% else %}N/A{% endif %}
+                                </span>
+                            </td>
+                            <td>
+                                <span style="color: #6b7280; font-size: 13px;">{{ service.equipment_description|default:"Standard Equipment"|truncatewords:4 }}</span>
+                            </td>
+                            <td>
+                                {% if service.is_active %}
+                                <span style="background: #d1fae5; color: #065f46; padding: 4px 12px; border-radius: 12px; font-weight: 600; font-size: 12px;">
+                                    <i class="bi bi-check-circle me-1"></i>Active
+                                </span>
+                                {% else %}
+                                <span style="background: #fee2e2; color: #991b1b; padding: 4px 12px; border-radius: 12px; font-weight: 600; font-size: 12px;">
+                                    <i class="bi bi-x-circle me-1"></i>Inactive
+                                </span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="/admin/hospital/ambulanceservicetype/{{ service.id}}/change/" class="btn btn-sm btn-outline-primary" target="_blank">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="7" style="text-align: center; padding: 40px;">
+                                <i class="bi bi-inbox" style="font-size: 48px; color: #E5E7EB; display: block; margin-bottom: 15px;"></i>
+                                <p style="color: #6B7280; margin: 0;">No service charges configured yet</p>
+                                <a href="/admin/hospital/ambulanceservicetype/add/" class="btn btn-primary btn-sm mt-3" target="_blank">
+                                    <i class="bi bi-plus-circle me-2"></i>Add Service Type
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Additional Charges Section -->
+            <div class="row g-3 mt-3">
+                <div class="col-md-3">
+                    <div style="background: #f9fafb; padding: 16px; border-radius: 12px; border-left: 4px solid #3b82f6;">
+                        <div style="font-size: 12px; color: #6b7280; font-weight: 600; text-transform: uppercase; margin-bottom: 6px;">Oxygen Therapy</div>
+                        <div style="font-size: 20px; font-weight: 700; color: #1f2937;">GHS 50/hr</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div style="background: #f9fafb; padding: 16px; border-radius: 12px; border-left: 4px solid #10b981;">
+                        <div style="font-size: 12px; color: #6b7280; font-weight: 600; text-transform: uppercase; margin-bottom: 6px;">IV Fluids Admin</div>
+                        <div style="font-size: 20px; font-weight: 700; color: #1f2937;">GHS 75</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div style="background: #f9fafb; padding: 16px; border-radius: 12px; border-left: 4px solid #f59e0b;">
+                        <div style="font-size: 12px; color: #6b7280; font-weight: 600; text-transform: uppercase; margin-bottom: 6px;">Medical Supplies</div>
+                        <div style="font-size: 20px; font-weight: 700; color: #1f2937;">Variable</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div style="background: #f9fafb; padding: 16px; border-radius: 12px; border-left: 4px solid #8b5cf6;">
+                        <div style="font-size: 12px; color: #6b7280; font-weight: 600; text-transform: uppercase; margin-bottom: 6px;">Wait Time Fee</div>
+                        <div style="font-size: 20px; font-weight: 700; color: #1f2937;">GHS 100/hr</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Billing Notes -->
+            <div style="background: #eff6ff; padding: 16px; border-radius: 12px; margin-top: 20px; border-left: 4px solid #3b82f6;">
+                <div style="font-weight: 600; color: #1e40af; margin-bottom: 8px;">
+                    <i class="bi bi-info-circle me-2"></i>Billing Information
+                </div>
+                <ul style="margin: 0; padding-left: 20px; color: #1e40af; font-size: 13px;">
+                    <li>All charges are subject to insurance coverage verification</li>
+                    <li>Mileage calculated from hospital to pickup location and destination</li>
+                    <li>Emergency surcharges apply for Code 3 responses only</li>
+                    <li>Equipment fees billed based on actual usage and documentation</li>
+                    <li>Payment required before discharge unless covered by insurance</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add New Charge Modal -->
+<div class="modal fade" id="addChargeModal" tabindex="-1" aria-labelledby="addChargeModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content" style="border-radius: 16px; border: none; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
+            <div class="modal-header" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; border-radius: 16px 16px 0 0; padding: 24px;">
+                <h5 class="modal-title" id="addChargeModalLabel" style="font-weight: 700; font-size: 20px;">
+                    <i class="bi bi-plus-circle me-2"></i>Add New Ambulance Service Charge
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" style="padding: 32px;">
+                <form id="addChargeForm">
+                    <div class="row g-3">
+                        <!-- Service Type -->
+                        <div class="col-md-6">
+                            <label class="form-label" style="font-weight: 600; color: #374151;">Service Type *</label>
+                            <input type="text" class="form-control" id="serviceType" placeholder="e.g., Mobile ICU" required style="border-radius: 8px; padding: 12px;">
+                        </div>
+                        
+                        <!-- Service Description -->
+                        <div class="col-md-6">
+                            <label class="form-label" style="font-weight: 600; color: #374151;">Description *</label>
+                            <input type="text" class="form-control" id="serviceDescription" placeholder="e.g., Intensive Care Unit on Wheels" required style="border-radius: 8px; padding: 12px;">
+                        </div>
+                        
+                        <!-- Base Charge -->
+                        <div class="col-md-6">
+                            <label class="form-label" style="font-weight: 600; color: #374151;">Base Charge (GHS) *</label>
+                            <div class="input-group">
+                                <span class="input-group-text" style="background: #f9fafb; border-right: none;">GHS</span>
+                                <input type="number" class="form-control" id="baseCharge" placeholder="0.00" step="0.01" required style="border-radius: 0 8px 8px 0; padding: 12px; border-left: none;">
+                            </div>
+                        </div>
+                        
+                        <!-- Per Mile Charge -->
+                        <div class="col-md-6">
+                            <label class="form-label" style="font-weight: 600; color: #374151;">Per Mile Charge (GHS) *</label>
+                            <div class="input-group">
+                                <span class="input-group-text" style="background: #f9fafb; border-right: none;">GHS</span>
+                                <input type="number" class="form-control" id="perMileCharge" placeholder="0.00" step="0.01" required style="border-radius: 0 8px 8px 0; padding: 12px; border-left: none;">
+                            </div>
+                        </div>
+                        
+                        <!-- Emergency Surcharge -->
+                        <div class="col-md-6">
+                            <label class="form-label" style="font-weight: 600; color: #374151;">Emergency Surcharge (GHS)</label>
+                            <div class="input-group">
+                                <span class="input-group-text" style="background: #f9fafb; border-right: none;">GHS</span>
+                                <input type="number" class="form-control" id="emergencySurcharge" placeholder="0.00" step="0.01" style="border-radius: 0 8px 8px 0; padding: 12px; border-left: none;">
+                            </div>
+                        </div>
+                        
+                        <!-- Equipment Fees -->
+                        <div class="col-md-6">
+                            <label class="form-label" style="font-weight: 600; color: #374151;">Equipment Fees Description</label>
+                            <input type="text" class="form-control" id="equipmentFees" placeholder="e.g., Advanced monitoring equipment" style="border-radius: 8px; padding: 12px;">
+                        </div>
+                        
+                        <!-- Status -->
+                        <div class="col-12">
+                            <label class="form-label" style="font-weight: 600; color: #374151;">Status</label>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="chargeStatus" checked style="width: 48px; height: 24px; cursor: pointer;">
+                                <label class="form-check-label" for="chargeStatus" style="margin-left: 12px; cursor: pointer;">
+                                    Active (Service available for billing)
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <!-- Notes Section -->
+                        <div class="col-12">
+                            <div style="background: #fef3c7; padding: 16px; border-radius: 8px; border-left: 4px solid #f59e0b;">
+                                <div style="font-weight: 600; color: #92400e; margin-bottom: 6px;">
+                                    <i class="bi bi-lightbulb me-2"></i>Pricing Guidelines
+                                </div>
+                                <ul style="margin: 0; padding-left: 20px; color: #78350f; font-size: 13px;">
+                                    <li>Base charge covers first 5 miles and basic crew costs</li>
+                                    <li>Per-mile charge applies to total distance traveled</li>
+                                    <li>Emergency surcharge for Code 3 (lights and sirens) responses</li>
+                                    <li>Equipment fees should reflect actual costs</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer" style="background: #f9fafb; border-radius: 0 0 16px 16px; padding: 20px 32px;">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" style="padding: 10px 24px; border-radius: 8px;">
+                    <i class="bi bi-x-circle me-2"></i>Cancel
+                </button>
+                <button type="button" class="btn btn-primary" onclick="saveNewCharge()" style="padding: 10px 24px; border-radius: 8px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); border: none;">
+                    <i class="bi bi-save me-2"></i>Save Charge
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== END AMBULANCE SYSTEM ===================== -->
+
+<!-- Filter Bar -->
+<div class="filter-bar">
+    <strong style="color: #6B7280;">Filter:</strong>
+    <a href="?" class="filter-pill {% if not level_filter %}active{% endif %}">
+        <i class="bi bi-grid me-1"></i>All Patients
+    </a>
+    <a href="?level=esi_1" class="filter-pill {% if level_filter == 'esi_1' %}active{% endif %}">
+        <i class="bi bi-heart-pulse me-1"></i>Critical
+    </a>
+    <a href="?level=esi_2" class="filter-pill {% if level_filter == 'esi_2' %}active{% endif %}">
+        <i class="bi bi-exclamation-triangle me-1"></i>Emergency
+    </a>
+    <a href="?level=esi_3" class="filter-pill {% if level_filter == 'esi_3' %}active{% endif %}">
+        <i class="bi bi-clock me-1"></i>Urgent
+    </a>
+    <a href="?status=in_progress" class="filter-pill {% if status_filter == 'in_progress' %}active{% endif %}">
+        <i class="bi bi-arrow-right-circle me-1"></i>In Treatment
+    </a>
+    <a href="{% url 'hospital:triage_reports' %}" class="filter-pill" style="margin-left: auto; background: #4F46E5; color: white;">
+        <i class="bi bi-graph-up me-1"></i>Reports
+    </a>
+</div>
+
+<!-- Critical Patients (ESI Level 1 - Immediate) -->
+{% if critical_patients %}
+<div class="triage-level-section">
+    <div class="level-header critical">
+        <div class="d-flex align-items-center gap-3">
+            <i class="bi bi-heart-pulse-fill" style="font-size: 28px;"></i>
+            <span>CRITICAL - Resuscitation Required</span>
+        </div>
+        <span class="level-counter">{{ critical_patients|length }} Patients</span>
+    </div>
+    <div class="patient-triage-card">
+        {% for record in critical_patients %}
+        <div class="patient-card-row">
+            <div class="d-flex gap-3 align-items-center">
+                <div class="priority-indicator priority-critical">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                </div>
+                
+                <div class="patient-info">
+                    <div class="patient-name-large">{{ record.encounter.patient.full_name }}</div>
+                    <div class="patient-meta-row">
+                        <span><i class="bi bi-credit-card me-1"></i>{{ record.encounter.patient.mrn }}</span>
+                        <span><i class="bi bi-calendar me-1"></i>{{ record.encounter.patient.age }}y · {{ record.encounter.patient.get_gender_display }}</span>
+                        <span><i class="bi bi-telephone me-1"></i>{{ record.encounter.patient.phone_number|default:"No phone" }}</span>
+                    </div>
+                    
+                    <div class="chief-complaint-display">
+                        <strong>Chief Complaint:</strong> {{ record.chief_complaint }}
+                    </div>
+                    
+                    <div class="vitals-display">
+                        {% if record.vital_signs.bp %}
+                        <span class="vital-chip {% if record.vital_signs.bp_systolic > 180 or record.vital_signs.bp_systolic < 90 %}alert{% endif %}">
+                            <i class="bi bi-heart me-1"></i>BP: {{ record.vital_signs.bp }}
+                        </span>
+                        {% endif %}
+                        {% if record.vital_signs.pulse %}
+                        <span class="vital-chip">
+                            <i class="bi bi-activity me-1"></i>HR: {{ record.vital_signs.pulse }}
+                        </span>
+                        {% endif %}
+                        {% if record.vital_signs.spo2 %}
+                        <span class="vital-chip {% if record.vital_signs.spo2 < 90 %}alert{% endif %}">
+                            <i class="bi bi-lungs me-1"></i>SpO2: {{ record.vital_signs.spo2 }}%
+                        </span>
+                        {% endif %}
+                        {% if record.pain_scale %}
+                        <span class="vital-chip">
+                            <i class="bi bi-lightning me-1"></i>Pain: {{ record.pain_scale }}/10
+                        </span>
+                        {% endif %}
+                    </div>
+                    
+                    <!-- Patient Flow Tracker -->
+                    <div class="flow-tracker">
+                        <div class="flow-stages">
+                            <div class="flow-stage completed">✓ Triage</div>
+                            <div class="flow-stage current">Consultation</div>
+                            <div class="flow-stage">Lab</div>
+                            <div class="flow-stage">Pharmacy</div>
+                            <div class="flow-stage">Discharge</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="wait-time-display">
+                    <div class="wait-time-value" style="color: #DC2626;">{{ record.wait_time_minutes|default:0 }}</div>
+                    <div class="wait-time-label">Minutes Waiting</div>
+                    <div class="text-muted small mt-2">{{ record.triage_time|naturaltime }}</div>
+                </div>
+                
+                <div class="action-buttons">
+                    <a href="{% url 'hospital:consultation_view' encounter_id=record.encounter.pk %}" class="action-btn-triage btn-start">
+                        <i class="bi bi-play-circle"></i>Start
+                    </a>
+                    <button class="action-btn-triage btn-move" onclick="movePatient('{{ record.pk }}', '{{ record.encounter.pk }}')">
+                        <i class="bi bi-arrow-right-circle"></i>Move
+                    </button>
+                    <a href="{% url 'hospital:encounter_detail' record.encounter.pk %}" class="action-btn-triage btn-view">
+                        <i class="bi bi-eye"></i>View
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Emergency Patients (ESI Level 2) -->
+{% if emergency_patients %}
+<div class="triage-level-section">
+    <div class="level-header emergency">
+        <div class="d-flex align-items-center gap-3">
+            <i class="bi bi-exclamation-circle-fill" style="font-size: 28px;"></i>
+            <span>EMERGENCY - High Risk</span>
+        </div>
+        <span class="level-counter">{{ emergency_patients|length }} Patients</span>
+    </div>
+    <div class="patient-triage-card">
+        {% for record in emergency_patients %}
+        <div class="patient-card-row">
+            <div class="d-flex gap-3 align-items-center">
+                <div class="priority-indicator priority-emergency">2</div>
+                
+                <div class="patient-info">
+                    <div class="patient-name-large">{{ record.encounter.patient.full_name }}</div>
+                    <div class="patient-meta-row">
+                        <span><i class="bi bi-credit-card me-1"></i>{{ record.encounter.patient.mrn }}</span>
+                        <span><i class="bi bi-calendar me-1"></i>{{ record.encounter.patient.age }}y · {{ record.encounter.patient.get_gender_display }}</span>
+                    </div>
+                    
+                    <div class="chief-complaint-display">
+                        <strong>Chief Complaint:</strong> {{ record.chief_complaint }}
+                    </div>
+                    
+                    <div class="vitals-display">
+                        {% if record.vital_signs.bp %}
+                        <span class="vital-chip">BP: {{ record.vital_signs.bp }}</span>
+                        {% endif %}
+                        {% if record.pain_scale %}
+                        <span class="vital-chip">Pain: {{ record.pain_scale }}/10</span>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="flow-tracker">
+                        <div class="flow-stages">
+                            <div class="flow-stage completed">✓ Triage</div>
+                            <div class="flow-stage current">Consultation</div>
+                            <div class="flow-stage">Lab</div>
+                            <div class="flow-stage">Treatment</div>
+                            <div class="flow-stage">Discharge</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="wait-time-display">
+                    <div class="wait-time-value" style="color: #F59E0B;">{{ record.wait_time_minutes|default:0 }}</div>
+                    <div class="wait-time-label">Minutes Waiting</div>
+                </div>
+                
+                <div class="action-buttons">
+                    <a href="{% url 'hospital:consultation_view' encounter_id=record.encounter.pk %}" class="action-btn-triage btn-start">
+                        <i class="bi bi-play-circle"></i>Start
+                    </a>
+                    <button class="action-btn-triage btn-move" onclick="movePatient('{{ record.pk }}', '{{ record.encounter.pk }}')">
+                        <i class="bi bi-arrow-right-circle"></i>Move
+                    </button>
+                    <a href="{% url 'hospital:encounter_detail' record.encounter.pk %}" class="action-btn-triage btn-view">
+                        <i class="bi bi-eye"></i>View
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Urgent Patients (ESI Level 3) -->
+{% if urgent_patients %}
+<div class="triage-level-section">
+    <div class="level-header urgent">
+        <div class="d-flex align-items-center gap-3">
+            <i class="bi bi-clock-fill" style="font-size: 28px;"></i>
+            <span>URGENT - Moderate Risk</span>
+        </div>
+        <span class="level-counter">{{ urgent_patients|length }} Patients</span>
+    </div>
+    <div class="patient-triage-card">
+        {% for record in urgent_patients %}
+        <div class="patient-card-row">
+            <div class="d-flex gap-3 align-items-center">
+                <div class="priority-indicator priority-urgent">3</div>
+                
+                <div class="patient-info">
+                    <div class="patient-name-large">{{ record.encounter.patient.full_name }}</div>
+                    <div class="patient-meta-row">
+                        <span>{{ record.encounter.patient.mrn }}</span>
+                        <span>{{ record.encounter.patient.age }}y</span>
+                    </div>
+                    
+                    <div class="chief-complaint-display">{{ record.chief_complaint|truncatewords:20 }}</div>
+                    
+                    <div class="flow-tracker">
+                        <div class="flow-stages">
+                            <div class="flow-stage completed">✓ Triage</div>
+                            <div class="flow-stage current">Waiting</div>
+                            <div class="flow-stage">Treatment</div>
+                            <div class="flow-stage">Discharge</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="wait-time-display">
+                    <div class="wait-time-value">{{ record.wait_time_minutes|default:0 }}</div>
+                    <div class="wait-time-label">Min</div>
+                </div>
+                
+                <div class="action-buttons">
+                    <a href="{% url 'hospital:consultation_view' encounter_id=record.encounter.pk %}" class="action-btn-triage btn-start">
+                        <i class="bi bi-play-circle"></i>Start
+                    </a>
+                    <button class="action-btn-triage btn-move" onclick="movePatient('{{ record.pk }}', '{{ record.encounter.pk }}')">
+                        <i class="bi bi-arrow-right"></i>Move
+                    </button>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Standard & Non-Urgent (Collapsible) -->
+{% if standard_patients or non_urgent_patients %}
+<div class="modern-card">
+    <div class="accordion" id="lowerPriorityAccordion">
+        <!-- Standard Priority -->
+        {% if standard_patients %}
+        <div class="accordion-item">
+            <h2 class="accordion-header">
+                <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#standardCollapse">
+                    <i class="bi bi-info-circle me-2" style="color: #3B82F6;"></i>
+                    <strong>Standard Priority</strong>
+                    <span class="badge bg-primary ms-2">{{ standard_patients|length }}</span>
+                </button>
+            </h2>
+            <div id="standardCollapse" class="accordion-collapse collapse show">
+                <div class="accordion-body">
+                    {% for record in standard_patients %}
+                    <div class="d-flex gap-3 align-items-center p-3 mb-2" style="background: #F9FAFB; border-radius: 8px;">
+                        <div class="priority-indicator priority-standard">4</div>
+                        <div class="flex-grow-1">
+                            <strong>{{ record.encounter.patient.full_name }}</strong>
+                            <div class="small text-muted">{{ record.chief_complaint|truncatewords:15 }}</div>
+                        </div>
+                        <div class="text-center">
+                            <div class="fw-bold">{{ record.wait_time_minutes|default:0 }}</div>
+                            <div class="small text-muted">min</div>
+                        </div>
+                        <a href="{% url 'hospital:consultation_view' encounter_id=record.encounter.pk %}" class="btn btn-sm btn-primary">Start</a>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Non-Urgent -->
+        {% if non_urgent_patients %}
+        <div class="accordion-item">
+            <h2 class="accordion-header">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#nonUrgentCollapse">
+                    <i class="bi bi-check-circle me-2" style="color: #10B981;"></i>
+                    <strong>Non-Urgent</strong>
+                    <span class="badge bg-success ms-2">{{ non_urgent_patients|length }}</span>
+                </button>
+            </h2>
+            <div id="nonUrgentCollapse" class="accordion-collapse collapse">
+                <div class="accordion-body">
+                    {% for record in non_urgent_patients %}
+                    <div class="d-flex gap-3 align-items-center p-3 mb-2" style="background: #F9FAFB; border-radius: 8px;">
+                        <div class="priority-indicator priority-non-urgent">5</div>
+                        <div class="flex-grow-1">
+                            <strong>{{ record.encounter.patient.full_name }}</strong>
+                            <div class="small text-muted">{{ record.chief_complaint|truncatewords:15 }}</div>
+                        </div>
+                        <a href="{% url 'hospital:consultation_view' encounter_id=record.encounter.pk %}" class="btn btn-sm btn-success">Start</a>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Empty State -->
+{% if not triage_records %}
+<div class="empty-triage-state">
+    <div class="empty-icon"><i class="bi bi-inbox"></i></div>
+    <h4>No Active Triage Patients</h4>
+    <p class="text-muted">Emergency department is clear</p>
+    <a href="{% url 'hospital:triage_create' %}" class="btn btn-primary-modern btn-lg mt-3">
+        <i class="bi bi-plus-circle me-2"></i>Start New Triage
+    </a>
+</div>
+{% endif %}
+
+<!-- Quick Triage Button -->
+<button class="quick-triage-btn" onclick="window.location='{% url 'hospital:triage_create' %}'" title="Quick Triage">
+    <i class="bi bi-plus"></i>
+</button>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Move patient to next department
+function movePatient(triageId, encounterId) {
+    if (confirm('Move patient to consultation?')) {
+        window.location.href = '/hospital/encounter/' + encounterId + '/consultation/';
+    }
+}
+
+// Auto-refresh every 60 seconds (production setting)
+let refreshInterval;
+function startAutoRefresh() {
+    refreshInterval = setInterval(() => {
+        if (!document.hidden) {
+            location.reload();
+        }
+    }, 60000);
+}
+
+// Stop auto-refresh when user is interacting
+document.addEventListener('click', () => {
+    clearInterval(refreshInterval);
+    setTimeout(startAutoRefresh, 120000); // Resume after 2 minutes of inactivity
+});
+
+startAutoRefresh();
+
+// ==================== AMBULANCE SYSTEM JAVASCRIPT ====================
+
+// Dispatch specific ambulance
+function dispatchSpecific(unitId) {
+    window.location.href = '{% url "hospital:ambulance_dispatch_create" %}?unit=' + unitId;
+}
+
+// Track ambulance on map
+function trackAmbulance(unitId) {
+    const marker = document.querySelector(`[data-unit="${unitId}"]`);
+    if (marker) {
+        marker.style.transform = 'scale(1.5)';
+        marker.style.boxShadow = '0 0 30px rgba(245, 158, 11, 1)';
+        marker.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => {
+            marker.style.transform = '';
+            marker.style.boxShadow = '';
+        }, 2000);
+    }
+}
+
+// Contact crew via radio
+function contactCrew(unitId) {
+    showNotification('Radio Channel Opening', `Contacting ${unitId} crew...`, 'info');
+}
+
+// Open radio communication panel
+function openRadio() {
+    showNotification('Radio System', 'All channels active and operational', 'info');
+}
+
+// Show notification helper
+function showNotification(title, message, type = 'info') {
+    const colors = {
+        success: 'linear-gradient(135deg, #10b981, #059669)',
+        error: 'linear-gradient(135deg, #dc2626, #991b1b)',
+        warning: 'linear-gradient(135deg, #f59e0b, #d97706)',
+        info: 'linear-gradient(135deg, #3b82f6, #2563eb)'
+    };
+    
+    const notif = document.createElement('div');
+    notif.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: ${colors[type]};
+        color: white;
+        padding: 16px 24px;
+        border-radius: 12px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        z-index: 10000;
+        animation: slideIn 0.5s ease-out;
+        max-width: 350px;
+    `;
+    notif.innerHTML = `
+        <div style="font-weight: 700; margin-bottom: 4px;">${title}</div>
+        <div style="font-size: 14px; opacity: 0.95;">${message}</div>
+    `;
+    document.body.appendChild(notif);
+    
+    setTimeout(() => {
+        notif.style.animation = 'slideOut 0.5s ease-in';
+        setTimeout(() => notif.remove(), 500);
+    }, 4000);
+}
+
+// Play arrival alert
+function playArrivalAlert() {
+    if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('🚑 Ambulance Arriving', {
+            body: 'Ambulance arriving. Prepare receiving area.',
+            icon: '/static/hospital/img/ambulance-icon.png',
+            requireInteraction: true
+        });
+    }
+    
+    showNotification('AMBULANCE ARRIVING', 'Prepare trauma bay immediately', 'error');
+}
+
+// Request notification permission on page load
+if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+}
+
+// Add CSS animations dynamically
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes slideIn {
+        from {
+            transform: translateX(400px);
+            opacity: 0;
+        }
+        to {
+            transform: translateX(0);
+            opacity: 1;
+        }
+    }
+    
+    @keyframes slideOut {
+        from {
+            transform: translateX(0);
+            opacity: 1;
+        }
+        to {
+            transform: translateX(400px);
+            opacity: 0;
+        }
+    }
+`;
+document.head.appendChild(style);
+
+
+// Add keyboard shortcuts for quick actions
+document.addEventListener('keydown', (e) => {
+    // Ctrl+R = Open Radio
+    if (e.ctrlKey && e.key === 'r') {
+        e.preventDefault();
+        openRadio();
+    }
+});
+
+// ==================== AMBULANCE BILLING FUNCTIONS ====================
+
+// Show Add Charge Modal
+function showAddChargeModal() {
+    showNotification('Admin Action Required', 'Please use the admin panel to add service charges', 'info');
+    setTimeout(() => {
+        window.open('/admin/hospital/ambulanceservicetype/add/', '_blank');
+    }, 1000);
+}
+
+// Initialize page
+(function() {
+    'use strict';
+    
+    // Performance optimization: Lazy load images
+    if ('IntersectionObserver' in window) {
+        const imageObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const img = entry.target;
+                    if (img.dataset.src) {
+                        img.src = img.dataset.src;
+                        imageObserver.unobserve(img);
+                    }
+                }
+            });
+        });
+        
+        document.querySelectorAll('img[data-src]').forEach(img => imageObserver.observe(img));
+    }
+    
+    // Prevent memory leaks
+    window.addEventListener('beforeunload', () => {
+        if (refreshInterval) clearInterval(refreshInterval);
+    });
+})();
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+

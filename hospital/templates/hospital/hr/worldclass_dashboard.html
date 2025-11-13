@@ -1,0 +1,355 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block extra_css %}
+<style>
+    .hr-header {
+        background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 40px;
+        margin-bottom: 32px;
+        box-shadow: 0 8px 32px rgba(139, 92, 246, 0.2);
+    }
+    
+    .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin-bottom: 32px;
+    }
+    
+    .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 24px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+        transition: all 0.3s ease;
+    }
+    
+    .stat-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    }
+    
+    .stat-value {
+        font-size: 32px;
+        font-weight: 700;
+        margin-bottom: 8px;
+    }
+    
+    .expiry-alert {
+        background: #fef3c7;
+        border-left: 4px solid #f59e0b;
+        padding: 16px;
+        border-radius: 8px;
+        margin-bottom: 12px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="hr-header">
+        <h1 class="mb-2"><i class="bi bi-people-fill me-3"></i>HR Management Dashboard</h1>
+        <p class="mb-0" style="opacity: 0.9;">World-class human resource management with calendars and analytics</p>
+    </div>
+    
+    <!-- Statistics -->
+    <div class="stat-grid">
+        <div class="stat-card">
+            <div class="stat-value" style="color: #8b5cf6;">{{ total_staff }}</div>
+            <div style="font-size: 14px; color: #6b7280;">Total Staff</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: #10b981;">{{ present_today }}</div>
+            <div style="font-size: 14px; color: #6b7280;">Present Today</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: #f59e0b;">{{ on_leave_today }}</div>
+            <div style="font-size: 14px; color: #6b7280;">On Leave</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: #ef4444;">{{ absent_today }}</div>
+            <div style="font-size: 14px; color: #6b7280;">Absent</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: #3b82f6;">{{ pending_leaves }}</div>
+            <div style="font-size: 14px; color: #6b7280;">Pending Leaves</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: #f59e0b;">{{ contracts_expiring }}</div>
+            <div style="font-size: 14px; color: #6b7280;">Contracts Expiring (90d)</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: #06b6d4;">{{ upcoming_trainings }}</div>
+            <div style="font-size: 14px; color: #6b7280;">Upcoming Trainings</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: #ec4899;">{{ reviews_due }}</div>
+            <div style="font-size: 14px; color: #6b7280;">Reviews Due</div>
+        </div>
+    </div>
+    
+    <!-- Quick Actions -->
+    <div style="background: white; border-radius: 16px; padding: 28px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); margin-bottom: 32px;">
+        <h5 class="mb-4"><i class="bi bi-lightning me-2"></i>Quick Actions</h5>
+        
+        <!-- Row 1: Core HR -->
+        <div class="row g-3 mb-3">
+            <div class="col-md-2"><a href="{% url 'hospital:activity_calendar' %}" class="btn btn-primary w-100"><i class="bi bi-calendar-event me-2"></i>Activities</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:leave_calendar' %}" class="btn btn-success w-100"><i class="bi bi-calendar3 me-2"></i>Leave</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:shift_calendar' %}" class="btn btn-info w-100"><i class="bi bi-calendar-week me-2"></i>Shifts</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:attendance_calendar' %}" class="btn btn-warning w-100"><i class="bi bi-calendar-check me-2"></i>Attendance</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:payroll_list' %}" class="btn btn-secondary w-100"><i class="bi bi-cash me-2"></i>Payroll</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:contracts_dashboard' %}" class="btn btn-dark w-100"><i class="bi bi-file-text me-2"></i>Contracts</a></div>
+        </div>
+        
+        <!-- Row 2: Analytics & Tracking -->
+        <div class="row g-3 mb-3">
+            <div class="col-md-3"><a href="{% url 'hospital:staff_skills_matrix' %}" class="btn btn-outline-primary w-100"><i class="bi bi-grid-3x3-gap me-2"></i>Skills Matrix</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:overtime_tracking' %}" class="btn btn-outline-danger w-100"><i class="bi bi-clock-history me-2"></i>Overtime</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:staff_availability_dashboard' %}" class="btn btn-outline-success w-100"><i class="bi bi-people-fill me-2"></i>Availability</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:hr_reports_dashboard' %}" class="btn btn-outline-info w-100"><i class="bi bi-graph-up me-2"></i>Reports</a></div>
+        </div>
+        
+        <!-- Row 3: Employee Engagement -->
+        <div class="row g-3">
+            <div class="col-md-3"><a href="{% url 'hospital:recognition_board' %}" class="btn btn-outline-warning w-100"><i class="bi bi-award me-2"></i>Recognition</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:wellness_dashboard' %}" class="btn btn-outline-success w-100"><i class="bi bi-heart-pulse me-2"></i>Wellness</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:recruitment_pipeline' %}" class="btn btn-outline-secondary w-100"><i class="bi bi-person-plus me-2"></i>Recruitment</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:survey_dashboard' %}" class="btn btn-outline-info w-100"><i class="bi bi-clipboard-data me-2"></i>Surveys</a></div>
+        </div>
+    </div>
+    
+    <!-- Expiring Contracts Alert -->
+    {% if expiring_staff_contracts %}
+    <div style="background: white; border-radius: 16px; padding: 32px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); margin-bottom: 32px;">
+        <h4 class="mb-4"><i class="bi bi-exclamation-triangle me-2" style="color: #f59e0b;"></i>Staff Contracts Expiring (Next 90 Days)</h4>
+        {% for emp_contract in expiring_staff_contracts %}
+        <div class="expiry-alert">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <strong>{{ emp_contract.staff.user.get_full_name }}</strong>
+                    <div style="font-size: 13px; color: #6b7280; margin-top: 4px;">
+                        {{ emp_contract.contract.contract_name }} | Expires: {{ emp_contract.contract.end_date|date:"M d, Y" }}
+                    </div>
+                </div>
+                <span class="badge {% if emp_contract.days_until_expiry <= 30 %}bg-danger{% else %}bg-warning{% endif %}" style="font-size: 14px;">
+                    {{ emp_contract.days_until_expiry }} days left
+                </span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    
+    <!-- Row 2: New HR Features -->
+    <div class="row g-4 mb-4">
+        <!-- Birthdays This Month -->
+        <div class="col-md-4">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); height: 100%;">
+                <h5 class="mb-3"><i class="bi bi-cake2 me-2 text-success"></i>Birthdays This Month</h5>
+                {% if birthdays_this_month %}
+                    {% for staff in birthdays_this_month %}
+                    <div style="padding: 12px; border-bottom: 1px solid #f0f0f0; display: flex; align-items: center;">
+                        <div style="background: linear-gradient(135deg, #10b981, #059669); color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 12px; font-weight: 600;">
+                            {{ staff.date_of_birth.day }}
+                        </div>
+                        <div>
+                            <div style="font-weight: 600; font-size: 14px;">{{ staff.user.get_full_name }}</div>
+                            <div style="font-size: 12px; color: #6b7280;">{{ staff.date_of_birth|date:"M d" }} • {{ staff.get_profession_display }}</div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-muted text-center py-3"><i class="bi bi-calendar-x me-2"></i>No birthdays this month</p>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Work Anniversaries -->
+        <div class="col-md-4">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); height: 100%;">
+                <h5 class="mb-3"><i class="bi bi-award me-2 text-warning"></i>Work Anniversaries</h5>
+                {% if work_anniversaries %}
+                    {% for staff in work_anniversaries %}
+                    <div style="padding: 12px; border-bottom: 1px solid #f0f0f0; display: flex; align-items: center;">
+                        <div style="background: linear-gradient(135deg, #f59e0b, #d97706); color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 12px; font-weight: 600; font-size: 13px;">
+                            {{ staff.years_of_service }}Y
+                        </div>
+                        <div>
+                            <div style="font-weight: 600; font-size: 14px;">{{ staff.user.get_full_name }}</div>
+                            <div style="font-size: 12px; color: #6b7280;">{{ staff.date_of_joining|date:"M d" }} • {{ staff.years_of_service }} year{{ staff.years_of_service|pluralize }}</div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-muted text-center py-3"><i class="bi bi-calendar-x me-2"></i>No anniversaries this month</p>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Staff on Probation -->
+        <div class="col-md-4">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); height: 100%;">
+                <h5 class="mb-3"><i class="bi bi-hourglass-split me-2 text-info"></i>Probation Tracking</h5>
+                {% if staff_on_probation %}
+                    {% for staff in staff_on_probation %}
+                    <div style="padding: 12px; border-bottom: 1px solid #f0f0f0;">
+                        <div style="font-weight: 600; font-size: 14px; margin-bottom: 4px;">{{ staff.user.get_full_name }}</div>
+                        <div style="font-size: 12px; color: #6b7280; margin-bottom: 6px;">{{ staff.probation_days_remaining }} days remaining</div>
+                        <div class="progress" style="height: 6px;">
+                            <div class="progress-bar" role="progressbar" style="width: {{ staff.probation_progress }}%; background: linear-gradient(90deg, #06b6d4, #0891b2);" aria-valuenow="{{ staff.probation_progress }}" aria-valuemin="0" aria-valuemax="100"></div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-muted text-center py-3"><i class="bi bi-check-circle me-2"></i>No staff on probation</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Row 3: Pending Actions & Alerts -->
+    <div class="row g-4 mb-4">
+        <!-- Pending Leave Approvals -->
+        <div class="col-md-6">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-3"><i class="bi bi-clipboard-check me-2 text-primary"></i>Pending Leave Approvals <span class="badge bg-primary ms-2">{{ pending_leaves }}</span></h5>
+                {% if pending_leave_requests %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Staff</th>
+                                    <th>Type</th>
+                                    <th>Period</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for leave in pending_leave_requests %}
+                                <tr>
+                                    <td style="font-weight: 600;">{{ leave.staff.user.get_full_name }}</td>
+                                    <td><span class="badge bg-info">{{ leave.get_leave_type_display }}</span></td>
+                                    <td style="font-size: 13px;">{{ leave.start_date|date:"M d" }} - {{ leave.end_date|date:"M d" }}</td>
+                                    <td>
+                                        <a href="{% url 'hospital:leave_request_approve' leave.pk %}" class="btn btn-sm btn-success"><i class="bi bi-check-circle"></i></a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-muted text-center py-3"><i class="bi bi-check-all me-2"></i>All leave requests processed</p>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Document Expiry Alerts -->
+        <div class="col-md-6">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-3"><i class="bi bi-file-earmark-x me-2 text-danger"></i>Expiring Documents (60 days)</h5>
+                {% if expiring_documents %}
+                    {% for doc in expiring_documents %}
+                    <div class="expiry-alert mb-2" style="{% if doc.is_urgent %}background: #fee2e2; border-left-color: #dc2626;{% endif %}">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>{{ doc.staff.user.get_full_name }}</strong>
+                                <div style="font-size: 13px; color: #6b7280;">{{ doc.title }} • {{ doc.get_document_type_display }}</div>
+                            </div>
+                            <span class="badge {% if doc.is_urgent %}bg-danger{% else %}bg-warning{% endif %}">
+                                {{ doc.expiry_date|date:"M d, Y" }}
+                            </span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-muted text-center py-3"><i class="bi bi-shield-check me-2"></i>All documents up to date</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Row 4: Missing Data Alerts -->
+    {% if missing_emergency_contacts %}
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div style="background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 8px; padding: 20px;">
+                <h5 class="mb-3"><i class="bi bi-exclamation-triangle me-2"></i>Action Required: Missing Emergency Contacts</h5>
+                <div class="row">
+                    {% for staff in missing_emergency_contacts %}
+                    <div class="col-md-4 mb-2">
+                        <div style="background: white; padding: 12px; border-radius: 8px;">
+                            <div style="font-weight: 600;">{{ staff.user.get_full_name }}</div>
+                            <div style="font-size: 12px; color: #6b7280;">{{ staff.get_profession_display }}</div>
+                            <a href="{% url 'hospital:staff_detail' staff.pk %}" class="btn btn-sm btn-warning mt-2"><i class="bi bi-pencil me-1"></i>Update</a>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Row 5: Upcoming Trainings -->
+    {% if upcoming_training_list %}
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-3"><i class="bi bi-mortarboard me-2 text-info"></i>Upcoming Trainings (Next 30 Days)</h5>
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Staff</th>
+                                <th>Training</th>
+                                <th>Start Date</th>
+                                <th>Duration</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for training in upcoming_training_list %}
+                            <tr>
+                                <td style="font-weight: 600;">{{ training.staff.user.get_full_name }}</td>
+                                <td>{{ training.training_title }}</td>
+                                <td>{{ training.start_date|date:"M d, Y" }}</td>
+                                <td>{{ training.duration_hours }} hours</td>
+                                <td><span class="badge bg-info">{{ training.get_status_display }}</span></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Recent Leave Requests -->
+    <div style="background: white; border-radius: 16px; padding: 32px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+        <h4 class="mb-4"><i class="bi bi-clock-history me-2"></i>Recent Leave Requests</h4>
+        {% for leave in recent_leaves %}
+        <div style="padding: 16px; border-bottom: 1px solid #e5e7eb;">
+            <div class="d-flex justify-content-between">
+                <div>
+                    <strong>{{ leave.staff.user.get_full_name }}</strong>
+                    <div style="font-size: 13px; color: #6b7280;">
+                        {{ leave.get_leave_type_display }} | {{ leave.start_date }} to {{ leave.end_date }}
+                    </div>
+                </div>
+                <span class="badge {% if leave.status == 'approved' %}bg-success{% elif leave.status == 'pending' %}bg-warning{% elif leave.status == 'rejected' %}bg-danger{% else %}bg-secondary{% endif %}">{{ leave.get_status_display }}</span>
+            </div>
+        </div>
+        {% empty %}
+        <p class="text-muted">No recent leave requests</p>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+

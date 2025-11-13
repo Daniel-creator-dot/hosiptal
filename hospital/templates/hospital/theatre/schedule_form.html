@@ -1,0 +1,231 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block extra_css %}
+<style>
+    .form-header {
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 40px;
+        margin-bottom: 32px;
+        box-shadow: 0 8px 32px rgba(239, 68, 68, 0.2);
+    }
+    
+    .form-card {
+        background: white;
+        border-radius: 16px;
+        padding: 32px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        margin-bottom: 24px;
+    }
+    
+    .section-title {
+        font-size: 18px;
+        font-weight: 700;
+        color: #1f2937;
+        margin-bottom: 20px;
+        padding-bottom: 12px;
+        border-bottom: 2px solid #e5e7eb;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container" style="max-width: 900px; margin: 40px auto;">
+    <div class="form-header">
+        <h1 class="mb-2"><i class="bi bi-plus-circle me-3"></i>Schedule Surgery</h1>
+        <p class="mb-0" style="opacity: 0.9;">Book operating theatre and assign surgical team</p>
+    </div>
+    
+    <form method="post">
+        {% csrf_token %}
+        
+        <!-- Patient Selection -->
+        <div class="form-card">
+            <div class="section-title">
+                <i class="bi bi-person me-2"></i>Patient Information
+            </div>
+            
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label fw-bold">Patient *</label>
+                    <select name="patient" class="form-select" required id="patient-select">
+                        <option value="">Select patient...</option>
+                        {% for patient in patients %}
+                        <option value="{{ patient.id }}">{{ patient.full_name }} ({{ patient.mrn }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label fw-bold">Related Encounter</label>
+                    <select name="encounter" class="form-select" id="encounter-select">
+                        <option value="">Select encounter (optional)...</option>
+                    </select>
+                    <small class="text-muted">Will load after selecting patient</small>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Procedure Details -->
+        <div class="form-card">
+            <div class="section-title">
+                <i class="bi bi-scissors me-2"></i>Procedure Details
+            </div>
+            
+            <div class="mb-3">
+                <label class="form-label fw-bold">Procedure Name *</label>
+                <input type="text" name="procedure" class="form-control" required placeholder="e.g., Appendectomy, Cesarean Section, Hernia Repair">
+            </div>
+            
+            <div class="mb-3">
+                <label class="form-label fw-bold">Theatre/Operating Room *</label>
+                <select name="theatre_name" class="form-select" required>
+                    <option value="">Select theatre...</option>
+                    <option value="Theatre 1">Theatre 1</option>
+                    <option value="Theatre 2">Theatre 2</option>
+                    <option value="Theatre 3">Theatre 3</option>
+                    <option value="Main Theatre">Main Theatre</option>
+                    <option value="Emergency Theatre">Emergency Theatre</option>
+                    <option value="Minor Procedures Room">Minor Procedures Room</option>
+                    <option value="Labour Ward Theatre">Labour Ward Theatre</option>
+                </select>
+            </div>
+        </div>
+        
+        <!-- Scheduling -->
+        <div class="form-card">
+            <div class="section-title">
+                <i class="bi bi-clock me-2"></i>Schedule Time
+            </div>
+            
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label fw-bold">Scheduled Start *</label>
+                    <input type="datetime-local" name="scheduled_start" class="form-control" required>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label fw-bold">Scheduled End *</label>
+                    <input type="datetime-local" name="scheduled_end" class="form-control" required>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Surgical Team -->
+        <div class="form-card">
+            <div class="section-title">
+                <i class="bi bi-people me-2"></i>Surgical Team
+            </div>
+            
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <label class="form-label fw-bold">Surgeon *</label>
+                    <select name="surgeon" class="form-select" required>
+                        <option value="">Select surgeon...</option>
+                        {% for surgeon in surgeons %}
+                        <option value="{{ surgeon.id }}">{{ surgeon.user.get_full_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label fw-bold">Anaesthetist</label>
+                    <select name="anaesthetist" class="form-select">
+                        <option value="">Select anaesthetist (optional)...</option>
+                        {% for surgeon in surgeons %}
+                        <option value="{{ surgeon.id }}">{{ surgeon.user.get_full_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label fw-bold">Scrub Nurse</label>
+                    <select name="scrub_nurse" class="form-select">
+                        <option value="">Select nurse (optional)...</option>
+                        {% for surgeon in surgeons %}
+                        <option value="{{ surgeon.id }}">{{ surgeon.user.get_full_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Notes -->
+        <div class="form-card">
+            <div class="section-title">
+                <i class="bi bi-sticky me-2"></i>Additional Notes
+            </div>
+            
+            <div class="mb-3">
+                <textarea name="notes" class="form-control" rows="4" placeholder="Any special instructions, requirements, or notes..."></textarea>
+            </div>
+        </div>
+        
+        <!-- Submit -->
+        <div class="form-card">
+            <div class="d-flex justify-content-between">
+                <a href="{% url 'hospital:theatre_dashboard' %}" class="btn btn-outline-secondary btn-lg">
+                    <i class="bi bi-arrow-left me-2"></i>Cancel
+                </a>
+                <button type="submit" class="btn btn-danger btn-lg" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); border: none;">
+                    <i class="bi bi-check-circle me-2"></i>Schedule Surgery
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+
+<script>
+// Load encounters when patient is selected
+document.getElementById('patient-select')?.addEventListener('change', function() {
+    const patientId = this.value;
+    const encounterSelect = document.getElementById('encounter-select');
+    
+    if (!patientId) {
+        encounterSelect.innerHTML = '<option value="">Select encounter (optional)...</option>';
+        return;
+    }
+    
+    fetch(`/hms/api/patient/${patientId}/encounters/`)
+        .then(response => response.json())
+        .then(data => {
+            encounterSelect.innerHTML = '<option value="">Select encounter (optional)...</option>';
+            data.encounters.forEach(enc => {
+                const option = document.createElement('option');
+                option.value = enc.id;
+                option.textContent = `${enc.encounter_type} - ${new Date(enc.started_at).toLocaleDateString()} (${enc.status})`;
+                encounterSelect.appendChild(option);
+            });
+        })
+        .catch(error => console.error('Error loading encounters:', error));
+});
+
+// Set default start time to tomorrow 8 AM
+const tomorrow = new Date();
+tomorrow.setDate(tomorrow.getDate() + 1);
+tomorrow.setHours(8, 0, 0, 0);
+const startInput = document.querySelector('[name="scheduled_start"]');
+if (startInput && !startInput.value) {
+    startInput.value = tomorrow.toISOString().slice(0, 16);
+}
+
+// Set default end time to 2 hours after start
+const endInput = document.querySelector('[name="scheduled_end"]');
+startInput?.addEventListener('change', function() {
+    if (!endInput.value) {
+        const start = new Date(this.value);
+        start.setHours(start.getHours() + 2);
+        endInput.value = start.toISOString().slice(0, 16);
+    }
+});
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+

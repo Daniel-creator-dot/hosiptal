@@ -1,0 +1,110 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Monthly Claim - {{ monthly_claim.claim_number }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-file-earmark-bar-graph me-2"></i>Monthly Claim: {{ monthly_claim.claim_number }}</h2>
+        <a href="{% url 'hospital:monthly_claims_list' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left me-2"></i>Back to List
+        </a>
+    </div>
+    
+    <!-- Claim Summary -->
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Claim Summary</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <p><strong>Payer:</strong> {{ monthly_claim.payer.name }}</p>
+                            <p><strong>Period:</strong> {{ monthly_claim.month_display }} {{ monthly_claim.claim_year }}</p>
+                            <p><strong>Status:</strong> <span class="badge bg-{{ monthly_claim.status }}">{{ monthly_claim.get_status_display }}</span></p>
+                        </div>
+                        <div class="col-md-6">
+                            <p><strong>Total Items:</strong> {{ monthly_claim.total_items }}</p>
+                            <p><strong>Billed:</strong> GH₵ {{ monthly_claim.total_billed_amount|floatformat:2|intcomma }}</p>
+                            <p><strong>Paid:</strong> GH₵ {{ monthly_claim.total_paid_amount|floatformat:2|intcomma }}</p>
+                            <p><strong>Outstanding:</strong> GH₵ {{ monthly_claim.outstanding_amount|floatformat:2|intcomma }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Actions</h5>
+                </div>
+                <div class="card-body">
+                    {% if monthly_claim.status == 'draft' or monthly_claim.status == 'ready_for_submission' %}
+                    <form method="post" action="{% url 'hospital:submit_monthly_claim' monthly_claim.pk %}">
+                        {% csrf_token %}
+                        <div class="mb-3">
+                            <label class="form-label">Submission Reference</label>
+                            <input type="text" name="submission_reference" class="form-control" placeholder="Optional">
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="bi bi-send me-2"></i>Submit to Insurance
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Claim Items -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0">Claim Items ({{ claim_items.count }})</h5>
+        </div>
+        <div class="card-body">
+            {% if claim_items %}
+            <div class="table-responsive">
+                <table class="table table-sm table-hover">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Patient</th>
+                            <th>Service</th>
+                            <th>Billed</th>
+                            <th>Paid</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in claim_items %}
+                        <tr>
+                            <td>{{ item.service_date }}</td>
+                            <td>{{ item.patient.full_name }}<br><small class="text-muted">{{ item.patient.mrn }}</small></td>
+                            <td>{{ item.service_description|truncatewords:6 }}</td>
+                            <td>GH₵ {{ item.billed_amount|floatformat:2 }}</td>
+                            <td>GH₵ {{ item.paid_amount|floatformat:2 }}</td>
+                            <td><span class="badge bg-{{ item.claim_status }}">{{ item.get_claim_status_display }}</span></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted text-center py-4">No claim items in this monthly claim</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+

@@ -1,0 +1,178 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Insurance Claim Items{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-file-earmark-medical me-2"></i>Insurance Claim Items</h2>
+        <a href="{% url 'hospital:insurance_claims_dashboard' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left me-2"></i>Back to Dashboard
+        </a>
+    </div>
+    
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <input type="text" name="q" class="form-control" placeholder="Search..." value="{{ query }}">
+                </div>
+                <div class="col-md-2">
+                    <select name="status" class="form-select">
+                        <option value="">All Statuses</option>
+                        <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
+                        <option value="submitted" {% if status_filter == 'submitted' %}selected{% endif %}>Submitted</option>
+                        <option value="approved" {% if status_filter == 'approved' %}selected{% endif %}>Approved</option>
+                        <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid</option>
+                        <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rejected</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <select name="payer" class="form-select">
+                        <option value="">All Payers</option>
+                        {% for payer in payers %}
+                        <option value="{{ payer.id }}" {% if payer_filter == payer.id|stringformat:"s" %}selected{% endif %}>
+                            {{ payer.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <input type="date" name="date_from" class="form-control" value="{{ date_from }}" placeholder="From Date">
+                </div>
+                <div class="col-md-2">
+                    <input type="date" name="date_to" class="form-control" value="{{ date_to }}" placeholder="To Date">
+                </div>
+                <div class="col-md-1">
+                    <button type="submit" class="btn btn-primary w-100"><i class="bi bi-search"></i></button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Statistics -->
+    {% if stats %}
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h5 class="text-muted">Total Items</h5>
+                    <h3>{{ stats.total_items|intcomma }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h5 class="text-muted">Total Billed</h5>
+                    <h3>GH₵ {{ stats.total_billed|floatformat:2|intcomma }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h5 class="text-muted">Total Paid</h5>
+                    <h3>GH₵ {{ stats.total_paid|floatformat:2|intcomma }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h5 class="text-muted">Outstanding</h5>
+                    <h3>GH₵ {{ stats.total_outstanding|floatformat:2|intcomma }}</h3>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Claims Table -->
+    <div class="card">
+        <div class="card-body">
+            {% if claim_items %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Patient</th>
+                            <th>Service</th>
+                            <th>Payer</th>
+                            <th>Billed</th>
+                            <th>Paid</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for claim in claim_items %}
+                        <tr>
+                            <td>{{ claim.service_date }}</td>
+                            <td>
+                                <strong>{{ claim.patient.full_name }}</strong><br>
+                                <small class="text-muted">{{ claim.patient.mrn }}</small>
+                            </td>
+                            <td>{{ claim.service_description|truncatewords:5 }}</td>
+                            <td>{{ claim.payer.name }}</td>
+                            <td>GH₵ {{ claim.billed_amount|floatformat:2 }}</td>
+                            <td>GH₵ {{ claim.paid_amount|floatformat:2 }}</td>
+                            <td>
+                                <span class="badge bg-{{ claim.claim_status }}">
+                                    {{ claim.get_claim_status_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:insurance_claim_item_detail' claim.pk %}" class="btn btn-sm btn-outline-primary">
+                                    View
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination -->
+            {% if claim_items.has_other_pages %}
+            <nav>
+                <ul class="pagination justify-content-center">
+                    {% if claim_items.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ claim_items.previous_page_number }}{% if query %}&q={{ query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}">Previous</a>
+                    </li>
+                    {% endif %}
+                    
+                    <li class="page-item disabled">
+                        <span class="page-link">Page {{ claim_items.number }} of {{ claim_items.paginator.num_pages }}</span>
+                    </li>
+                    
+                    {% if claim_items.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ claim_items.next_page_number }}{% if query %}&q={{ query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox" style="font-size: 48px; color: #ccc;"></i>
+                <p class="text-muted mt-3">No claim items found</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+

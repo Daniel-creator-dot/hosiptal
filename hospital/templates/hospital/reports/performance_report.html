@@ -1,0 +1,138 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Performance Report - HMS{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1><i class="bi bi-star"></i> Performance Report</h1>
+            <p class="text-muted mb-0">Performance reviews and ratings</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:hr_reports_dashboard' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Reports
+            </a>
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body text-center">
+                    <h3 class="text-primary mb-0">{{ total_reviews }}</h3>
+                    <small class="text-muted">Total Reviews</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body text-center">
+                    <h3 class="text-success mb-0">{{ avg_score }}</h3>
+                    <small class="text-muted">Average Rating</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Year</label>
+                    <select name="year" class="form-select">
+                        {% for year in years %}
+                        <option value="{{ year }}" {% if year_filter == year|stringformat:"s" %}selected{% endif %}>
+                            {{ year }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Department</label>
+                    <select name="department" class="form-select">
+                        <option value="">All Departments</option>
+                        {% for dept in departments %}
+                        <option value="{{ dept.pk }}" {% if department_filter == dept.pk|stringformat:"s" %}selected{% endif %}>
+                            {{ dept.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6 d-flex align-items-end gap-2">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-filter"></i> Filter
+                    </button>
+                    <a href="?{{ request.GET.urlencode }}&export=csv" class="btn btn-success">
+                        <i class="bi bi-download"></i> Export
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Performance Reviews -->
+    <div class="card">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">
+                <i class="bi bi-list-ul"></i> Performance Reviews
+                <span class="badge bg-light text-dark ms-2">{{ reviews.count }}</span>
+            </h5>
+        </div>
+        <div class="card-body">
+            {% if reviews %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Staff Name</th>
+                            <th>Department</th>
+                            <th>Review Date</th>
+                            <th>Period</th>
+                            <th>Overall Rating</th>
+                            <th>Reviewer</th>
+                            <th>Recommendation</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for review in reviews %}
+                        <tr>
+                            <td>
+                                <strong>{{ review.staff.user.get_full_name }}</strong>
+                            </td>
+                            <td>{{ review.staff.department.name|default:"-" }}</td>
+                            <td>{{ review.review_date|date:"M d, Y" }}</td>
+                            <td><span class="badge bg-info">{{ review.get_review_period_display }}</span></td>
+                            <td>
+                                <strong class="{% if review.overall_rating >= 4 %}text-success{% elif review.overall_rating >= 3 %}text-primary{% else %}text-warning{% endif %}">
+                                    {{ review.overall_rating }}/5
+                                </strong>
+                            </td>
+                            <td>
+                                {% if review.reviewed_by %}
+                                    {{ review.reviewed_by.user.get_full_name }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>{{ review.recommendation|default:"-"|truncatewords:5 }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-graph-up" style="font-size: 3rem; opacity: 0.5;"></i>
+                <p class="text-muted mt-3">No performance reviews found</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+

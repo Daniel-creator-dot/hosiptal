@@ -1,0 +1,421 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Telemedicine Command Center - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    .telemed-header {
+        background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+        color: white;
+        border-radius: 20px;
+        padding: 48px;
+        margin-bottom: 32px;
+        box-shadow: 0 20px 60px rgba(6, 182, 212, 0.4);
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .telemed-header::before {
+        content: '';
+        position: absolute;
+        top: -50%;
+        right: -10%;
+        width: 400px;
+        height: 400px;
+        background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+        border-radius: 50%;
+    }
+    
+    .live-indicator {
+        display: inline-flex;
+        align-items: center;
+        background: rgba(239, 68, 68, 0.9);
+        color: white;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-size: 14px;
+        font-weight: 600;
+        animation: pulse-glow 2s infinite;
+    }
+    
+    @keyframes pulse-glow {
+        0%, 100% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.5); }
+        50% { box-shadow: 0 0 40px rgba(239, 68, 68, 0.8); }
+    }
+    
+    .live-dot {
+        width: 8px;
+        height: 8px;
+        background: white;
+        border-radius: 50%;
+        margin-right: 8px;
+        animation: blink 1.5s infinite;
+    }
+    
+    @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.3; }
+    }
+    
+    .metric-card {
+        background: white;
+        border-radius: 16px;
+        padding: 28px;
+        box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+        transition: all 0.3s;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .metric-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 4px;
+        background: linear-gradient(90deg, #06b6d4, #0891b2);
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-8px);
+        box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+    }
+    
+    .metric-value {
+        font-size: 52px;
+        font-weight: 900;
+        line-height: 1;
+        margin-bottom: 12px;
+    }
+    
+    .queue-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 12px;
+        border-left: 5px solid #06b6d4;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+        transition: all 0.2s;
+    }
+    
+    .queue-card:hover {
+        transform: translateX(8px);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+        border-left-width: 7px;
+    }
+    
+    .queue-number {
+        background: linear-gradient(135deg, #06b6d4, #0891b2);
+        color: white;
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        font-weight: 800;
+        box-shadow: 0 4px 15px rgba(6, 182, 212, 0.4);
+    }
+    
+    .emergency-alert {
+        background: linear-gradient(135deg, #ef4444, #dc2626);
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 24px;
+        animation: emergency-pulse 1.5s infinite;
+    }
+    
+    @keyframes emergency-pulse {
+        0%, 100% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.5); }
+        50% { box-shadow: 0 0 40px rgba(239, 68, 68, 0.8), 0 0 60px rgba(239, 68, 68, 0.6); }
+    }
+    
+    .ai-badge {
+        background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+        color: white;
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- World-Class Header -->
+    <div class="telemed-header">
+        <div class="d-flex justify-content-between align-items-start">
+            <div style="position: relative; z-index: 1;">
+                <h1 class="mb-3" style="font-size: 42px; font-weight: 800;">
+                    <i class="bi bi-camera-video me-3"></i>Telemedicine Command Center
+                </h1>
+                <p class="mb-3" style="font-size: 18px; opacity: 0.95;">
+                    Next-Generation Telehealth Platform with AI-Powered Intelligence
+                </p>
+                <div class="d-flex gap-3">
+                    <span class="live-indicator">
+                        <span class="live-dot"></span>
+                        {{ active_consultations }} LIVE NOW
+                    </span>
+                    <span class="ai-badge">
+                        <i class="bi bi-cpu"></i>
+                        AI ENABLED
+                    </span>
+                </div>
+            </div>
+            <div class="text-end" style="position: relative; z-index: 1;">
+                <div style="font-size: 28px; font-weight: 700;">{{ today|date:"H:i" }}</div>
+                <div style="font-size: 16px; opacity: 0.9;">{{ today|date:"l, F d" }}</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Emergency Alerts -->
+    {% if active_emergencies > 0 %}
+    <div class="emergency-alert">
+        <div class="d-flex align-items-center">
+            <i class="bi bi-exclamation-triangle-fill" style="font-size: 36px; margin-right: 20px;"></i>
+            <div>
+                <h4 class="mb-1">🚨 ACTIVE EMERGENCY ESCALATIONS</h4>
+                <p class="mb-0">{{ active_emergencies }} consultation{{ active_emergencies|pluralize }} require immediate attention</p>
+            </div>
+            <a href="#" class="btn btn-light ms-auto">View Details</a>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Real-Time Metrics -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-3">
+            <div class="metric-card">
+                <div class="metric-value" style="color: #06b6d4;">{{ active_consultations }}</div>
+                <div style="font-size: 14px; color: #6b7280; font-weight: 600; letter-spacing: 0.5px;">ACTIVE CONSULTATIONS</div>
+                <div style="margin-top: 12px; font-size: 12px; color: #10b981;">
+                    <i class="bi bi-arrow-up me-1"></i>Live now
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="metric-card">
+                <div class="metric-value" style="color: #f59e0b;">{{ waiting_patients }}</div>
+                <div style="font-size: 14px; color: #6b7280; font-weight: 600; letter-spacing: 0.5px;">PATIENTS WAITING</div>
+                <div style="margin-top: 12px; font-size: 12px; color: #6b7280;">
+                    <i class="bi bi-clock me-1"></i>In virtual queue
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="metric-card">
+                <div class="metric-value" style="color: #10b981;">{{ today_consultations }}</div>
+                <div style="font-size: 14px; color: #6b7280; font-weight: 600; letter-spacing: 0.5px;">TODAY'S CONSULTATIONS</div>
+                <div style="margin-top: 12px; font-size: 12px; color: #6b7280;">
+                    <i class="bi bi-calendar3 me-1"></i>{{ today|date:"M d, Y" }}
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="metric-card">
+                <div class="metric-value" style="color: #8b5cf6;">{{ ai_symptom_checks_today }}</div>
+                <div style="font-size: 14px; color: #6b7280; font-weight: 600; letter-spacing: 0.5px;">AI SYMPTOM CHECKS</div>
+                <div style="margin-top: 12px; font-size: 12px; color: #8b5cf6;">
+                    <i class="bi bi-cpu me-1"></i>AI-powered triage
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quick Actions -->
+    <div style="background: white; border-radius: 16px; padding: 28px; margin-bottom: 32px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+        <h5 class="mb-4"><i class="bi bi-lightning-charge me-2"></i>Command Center Actions</h5>
+        <div class="row g-3">
+            <div class="col-md-2"><a href="{% url 'hospital:virtual_waiting_room' %}" class="btn btn-primary w-100"><i class="bi bi-people me-2"></i>Waiting Room</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:start_consultation' %}" class="btn btn-success w-100"><i class="bi bi-camera-video me-2"></i>Start Consult</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:ai_symptom_checker' %}" class="btn btn-info w-100"><i class="bi bi-cpu me-2"></i>AI Checker</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:consultation_analytics' %}" class="btn btn-warning w-100"><i class="bi bi-graph-up me-2"></i>Analytics</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:telemedicine_schedule' %}" class="btn btn-secondary w-100"><i class="bi bi-calendar-event me-2"></i>Schedule</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:telemedicine_settings' %}" class="btn btn-outline-primary w-100"><i class="bi bi-gear me-2"></i>Settings</a></div>
+        </div>
+    </div>
+    
+    <div class="row g-4">
+        <!-- Virtual Waiting Room Queue -->
+        <div class="col-lg-6">
+            <div style="background: white; border-radius: 16px; padding: 28px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); min-height: 500px;">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h5><i class="bi bi-people me-2"></i>Virtual Waiting Room <span class="badge bg-primary ms-2">{{ waiting_queue.count }}</span></h5>
+                    <a href="{% url 'hospital:virtual_waiting_room' %}" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-arrows-fullscreen me-1"></i>Full View
+                    </a>
+                </div>
+                
+                {% if waiting_queue %}
+                    {% for entry in waiting_queue %}
+                    <div class="queue-card">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="queue-number">#{{ entry.queue_number }}</div>
+                            <div style="flex: 1;">
+                                <div style="font-weight: 700; font-size: 16px;">{{ entry.patient.full_name }}</div>
+                                <div style="font-size: 13px; color: #6b7280; margin-top: 4px;">
+                                    <i class="bi bi-clock me-1"></i>Waiting {{ entry.check_in_time|timesince }}
+                                    <i class="bi bi-person ms-3 me-1"></i>Dr. {{ entry.consultation.doctor.user.get_full_name }}
+                                </div>
+                                <div style="margin-top: 8px;">
+                                    {% if entry.device_ready and entry.camera_ready and entry.microphone_ready %}
+                                        <span class="badge bg-success">✓ Device Ready</span>
+                                    {% else %}
+                                        <span class="badge bg-warning">⚠ Checking Device...</span>
+                                    {% endif %}
+                                    <span class="badge" style="background: {% if entry.connection_quality == 'excellent' %}#10b981{% elif entry.connection_quality == 'good' %}#3b82f6{% elif entry.connection_quality == 'fair' %}#f59e0b{% else %}#ef4444{% endif %};">
+                                        {{ entry.connection_quality|title }}
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="text-end">
+                                <div style="font-size: 24px; font-weight: 700; color: #06b6d4;">~{{ entry.estimated_wait_minutes }}</div>
+                                <div style="font-size: 12px; color: #6b7280;">minutes</div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="bi bi-check-circle" style="font-size: 64px; color: #10b981;"></i>
+                        <p class="text-muted mt-3">No patients waiting</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- AI Symptom Checks & Upcoming -->
+        <div class="col-lg-6">
+            <!-- Recent AI Symptom Checks -->
+            <div style="background: white; border-radius: 16px; padding: 28px; margin-bottom: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-4">
+                    <i class="bi bi-cpu-fill me-2" style="color: #8b5cf6;"></i>
+                    AI Symptom Checks Today
+                    <span class="ai-badge ms-2">{{ ai_symptom_checks_today }}</span>
+                </h5>
+                
+                {% if recent_symptom_checks %}
+                    {% for check in recent_symptom_checks %}
+                    <div style="padding: 16px; border-bottom: 1px solid #f0f0f0; background: linear-gradient(to right, #faf5ff, white); border-radius: 8px; margin-bottom: 12px;">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <div style="font-weight: 600;">{{ check.patient.full_name }}</div>
+                                <div style="font-size: 13px; color: #6b7280; margin-top: 4px;">
+                                    {{ check.symptoms_described|truncatewords:10 }}
+                                </div>
+                                <div style="margin-top: 8px;">
+                                    <span class="badge bg-{% if check.ai_severity_level == 'critical' %}danger{% elif check.ai_severity_level == 'severe' %}warning{% elif check.ai_severity_level == 'moderate' %}info{% else %}success{% endif %}">
+                                        {{ check.get_ai_severity_level_display }}
+                                    </span>
+                                    <span class="badge bg-secondary">{{ check.ai_confidence|floatformat:0 }}% confident</span>
+                                </div>
+                            </div>
+                            <div class="text-end">
+                                <div style="font-size: 28px; font-weight: 800; color: {% if check.priority_score >= 80 %}#ef4444{% elif check.priority_score >= 60 %}#f59e0b{% else %}#10b981{% endif %};">
+                                    {{ check.priority_score }}
+                                </div>
+                                <div style="font-size: 11px; color: #6b7280;">Priority</div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-center text-muted py-3">No AI symptom checks today</p>
+                {% endif %}
+            </div>
+            
+            <!-- Upcoming Consultations -->
+            <div style="background: white; border-radius: 16px; padding: 28px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-4"><i class="bi bi-clock-history me-2"></i>Upcoming (Next 2 Hours)</h5>
+                
+                {% if upcoming %}
+                    {% for consult in upcoming %}
+                    <div style="padding: 16px; border-left: 4px solid #06b6d4; background: #f0fdfa; border-radius: 8px; margin-bottom: 12px;">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <div style="font-weight: 600;">{{ consult.patient.full_name }}</div>
+                                <div style="font-size: 13px; color: #6b7280;">
+                                    <i class="bi bi-person me-1"></i>Dr. {{ consult.doctor.user.get_full_name }}
+                                </div>
+                            </div>
+                            <div class="text-end">
+                                <div style="font-weight: 700; color: #06b6d4;">{{ consult.scheduled_at|date:"g:i A" }}</div>
+                                <div style="font-size: 12px; color: #6b7280;">{{ consult.scheduled_at|timeuntil }}</div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-center text-muted py-3">No upcoming consultations</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Performance Dashboard -->
+    {% if today_metrics %}
+    <div class="row g-4 mt-4">
+        <div class="col-12">
+            <div style="background: white; border-radius: 16px; padding: 32px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-4"><i class="bi bi-bar-chart me-2"></i>Today's Performance Metrics</h5>
+                
+                <div class="row g-4">
+                    <div class="col-md-3">
+                        <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #eff6ff, white); border-radius: 12px;">
+                            <div style="font-size: 36px; font-weight: 700; color: #3b82f6;">{{ today_metrics.average_wait_time_minutes|floatformat:0 }}m</div>
+                            <div style="font-size: 13px; color: #6b7280;">Avg Wait Time</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #f0fdf4, white); border-radius: 12px;">
+                            <div style="font-size: 36px; font-weight: 700; color: #10b981;">{{ today_metrics.average_patient_satisfaction|floatformat:1 }}⭐</div>
+                            <div style="font-size: 13px; color: #6b7280;">Patient Satisfaction</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #fef3c7, white); border-radius: 12px;">
+                            <div style="font-size: 36px; font-weight: 700; color: #f59e0b;">{{ today_metrics.average_consultation_duration_minutes|floatformat:0 }}m</div>
+                            <div style="font-size: 13px; color: #6b7280;">Avg Duration</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #f5f3ff, white); border-radius: 12px;">
+                            <div style="font-size: 36px; font-weight: 700; color: #8b5cf6;">{{ today_metrics.ai_suggestion_acceptance_rate|floatformat:0 }}%</div>
+                            <div style="font-size: 13px; color: #6b7280;">AI Acceptance Rate</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+// Auto-refresh every 30 seconds for real-time updates
+setInterval(function() {
+    location.reload();
+}, 30000);
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+

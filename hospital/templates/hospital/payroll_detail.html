@@ -1,0 +1,174 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Payroll Detail - HMS{% endblock %}
+{% block page_title %}Payroll {{ payroll.payroll_number }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8">
+        <div class="modern-card mb-4">
+            <h6 style="font-weight: 600; margin-bottom: 20px;">Payroll Details</h6>
+            
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <strong>Staff:</strong><br>
+                    {{ payroll.staff.user.get_full_name|default:payroll.staff.user.username }}
+                </div>
+                <div class="col-md-6">
+                    <strong>Period:</strong><br>
+                    {{ payroll.period.period_name }}<br>
+                    <small class="text-muted">{{ payroll.period.start_date|date:"M d" }} - {{ payroll.period.end_date|date:"M d, Y" }}</small>
+                </div>
+            </div>
+            
+            <!-- Earnings -->
+            <div style="background: #d1fae5; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+                <h6 style="font-weight: 600; margin-bottom: 12px;">Earnings</h6>
+                <div class="row mb-2">
+                    <div class="col-md-6">Basic Salary:</div>
+                    <div class="col-md-6 text-end"><strong>GHS {{ payroll.basic_salary|floatformat:2|intcomma }}</strong></div>
+                </div>
+                
+                {% if payroll.allowance_items.exists %}
+                <div class="mb-2">
+                    <div class="row mb-1">
+                        <div class="col-md-12"><strong>Allowances:</strong></div>
+                    </div>
+                    {% for allowance_item in payroll.allowance_items.all %}
+                    <div class="row mb-1" style="padding-left: 20px;">
+                        <div class="col-md-6">
+                            {{ allowance_item.allowance_type.name }}
+                            {% if allowance_item.description %}<br><small class="text-muted">{{ allowance_item.description }}</small>{% endif %}
+                        </div>
+                        <div class="col-md-6 text-end">
+                            GHS {{ allowance_item.amount|floatformat:2|intcomma }}
+                            {% if allowance_item.is_taxable %}<span class="badge bg-info ms-1">Taxable</span>{% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="row mb-2">
+                    <div class="col-md-6">Allowances:</div>
+                    <div class="col-md-6 text-end"><strong>GHS {{ payroll.allowances|floatformat:2|intcomma }}</strong></div>
+                </div>
+                {% endif %}
+                
+                {% if payroll.overtime > 0 %}
+                <div class="row mb-2">
+                    <div class="col-md-6">Overtime:</div>
+                    <div class="col-md-6 text-end"><strong>GHS {{ payroll.overtime|floatformat:2|intcomma }}</strong></div>
+                </div>
+                {% endif %}
+                
+                {% if payroll.bonuses > 0 %}
+                <div class="row mb-2">
+                    <div class="col-md-6">Bonuses:</div>
+                    <div class="col-md-6 text-end"><strong>GHS {{ payroll.bonuses|floatformat:2|intcomma }}</strong></div>
+                </div>
+                {% endif %}
+                
+                <hr>
+                <div class="row">
+                    <div class="col-md-6"><strong>Total Earnings:</strong></div>
+                    <div class="col-md-6 text-end"><strong style="font-size: 18px;">GHS {{ payroll.total_earnings|floatformat:2|intcomma }}</strong></div>
+                </div>
+            </div>
+            
+            <!-- Deductions -->
+            <div style="background: #fee2e2; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+                <h6 style="font-weight: 600; margin-bottom: 12px;">Deductions</h6>
+                
+                {% if payroll.deduction_items.exists %}
+                {% for deduction_item in payroll.deduction_items.all %}
+                <div class="row mb-2">
+                    <div class="col-md-6">
+                        {{ deduction_item.deduction_type.name }}
+                        {% if deduction_item.description %}<br><small class="text-muted">{{ deduction_item.description }}</small>{% endif %}
+                    </div>
+                    <div class="col-md-6 text-end">
+                        <strong>GHS {{ deduction_item.amount|floatformat:2|intcomma }}</strong>
+                    </div>
+                </div>
+                {% endfor %}
+                
+                {% comment %} Show legacy fields if no items exist {% endcomment %}
+                {% else %}
+                {% if payroll.tax > 0 %}
+                <div class="row mb-2">
+                    <div class="col-md-6">Tax:</div>
+                    <div class="col-md-6 text-end"><strong>GHS {{ payroll.tax|floatformat:2|intcomma }}</strong></div>
+                </div>
+                {% endif %}
+                {% if payroll.social_security > 0 %}
+                <div class="row mb-2">
+                    <div class="col-md-6">Social Security:</div>
+                    <div class="col-md-6 text-end"><strong>GHS {{ payroll.social_security|floatformat:2|intcomma }}</strong></div>
+                </div>
+                {% endif %}
+                {% if payroll.pension > 0 %}
+                <div class="row mb-2">
+                    <div class="col-md-6">Pension:</div>
+                    <div class="col-md-6 text-end"><strong>GHS {{ payroll.pension|floatformat:2|intcomma }}</strong></div>
+                </div>
+                {% endif %}
+                {% if payroll.loan_repayment > 0 %}
+                <div class="row mb-2">
+                    <div class="col-md-6">Loan Repayment:</div>
+                    <div class="col-md-6 text-end"><strong>GHS {{ payroll.loan_repayment|floatformat:2|intcomma }}</strong></div>
+                </div>
+                {% endif %}
+                {% if payroll.other_deductions > 0 %}
+                <div class="row mb-2">
+                    <div class="col-md-6">Other Deductions:</div>
+                    <div class="col-md-6 text-end"><strong>GHS {{ payroll.other_deductions|floatformat:2|intcomma }}</strong></div>
+                </div>
+                {% endif %}
+                {% endif %}
+                
+                <hr>
+                <div class="row">
+                    <div class="col-md-6"><strong>Total Deductions:</strong></div>
+                    <div class="col-md-6 text-end"><strong style="font-size: 18px;">GHS {{ payroll.total_deductions|floatformat:2|intcomma }}</strong></div>
+                </div>
+            </div>
+            
+            <!-- Net Pay -->
+            <div style="background: linear-gradient(135deg, var(--primary), var(--secondary)); color: white; padding: 20px; border-radius: 8px;">
+                <div class="row">
+                    <div class="col-md-6"><strong style="font-size: 18px;">Net Pay:</strong></div>
+                    <div class="col-md-6 text-end"><strong style="font-size: 32px;">GHS {{ payroll.net_pay|floatformat:2|intcomma }}</strong></div>
+                </div>
+            </div>
+            
+            {% if payroll.notes %}
+            <div class="mt-3">
+                <strong>Notes:</strong><br>
+                {{ payroll.notes }}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="modern-card">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Payment Information</h6>
+            <p><strong>Payment Method:</strong> {{ payroll.get_payment_method_display }}</p>
+            <p><strong>Status:</strong> 
+                {% if payroll.payment_status == 'paid' %}
+                <span class="badge-modern badge-success">Paid</span>
+                {% elif payroll.payment_status == 'processed' %}
+                <span class="badge-modern badge-info">Processed</span>
+                {% else %}
+                <span class="badge-modern badge-warning">Pending</span>
+                {% endif %}
+            </p>
+            {% if payroll.paid_at %}
+            <p><strong>Paid At:</strong> {{ payroll.paid_at|date:"M d, Y H:i" }}</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+

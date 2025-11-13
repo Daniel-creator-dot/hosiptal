@@ -1,0 +1,256 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Drug Formulary - HMS{% endblock %}
+{% block page_title %}Drug Formulary{% endblock %}
+{% block page_subtitle %}Manage hospital drug catalog and pricing{% endblock %}
+
+{% block extra_css %}
+<style>
+    .drug-card {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        border: 1px solid var(--border);
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        margin-bottom: 16px;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .drug-card::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 4px;
+        height: 100%;
+        background: linear-gradient(180deg, var(--primary) 0%, var(--secondary) 100%);
+        transform: scaleY(0);
+        transition: transform 0.3s ease;
+    }
+    
+    .drug-card:hover {
+        transform: translateX(4px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+        border-color: var(--primary);
+    }
+    
+    .drug-card:hover::before {
+        transform: scaleY(1);
+    }
+    
+    .drug-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        color: white;
+        flex-shrink: 0;
+    }
+    
+    .drug-info h5 {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--dark);
+        margin: 0 0 4px 0;
+    }
+    
+    .drug-meta {
+        font-size: 13px;
+        color: var(--gray);
+    }
+    
+    .badge-controlled {
+        background: #ff6b6b;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+    
+    .badge-active {
+        background: #51cf66;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+    
+    .badge-inactive {
+        background: #868e96;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+    
+    .price-tag {
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--primary);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Search and Filter -->
+<div class="modern-card mb-4">
+    <form method="get" class="mb-0">
+        <div class="row g-3">
+            <div class="col-md-4">
+                <input type="text" name="q" value="{{ search_query }}" class="form-control form-control-modern" placeholder="Search drug name, generic name, ATC code..." autofocus>
+            </div>
+            <div class="col-md-2">
+                <select name="form" class="form-select form-control-modern">
+                    <option value="">All Forms</option>
+                    {% for form in forms %}
+                    <option value="{{ form }}" {% if form_filter == form %}selected{% endif %}>{{ form }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <select name="status" class="form-select form-control-modern">
+                    <option value="">All Status</option>
+                    <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Active</option>
+                    <option value="inactive" {% if status_filter == 'inactive' %}selected{% endif %}>Inactive</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <select name="controlled" class="form-select form-control-modern">
+                    <option value="">All Types</option>
+                    <option value="yes" {% if controlled_filter == 'yes' %}selected{% endif %}>Controlled</option>
+                    <option value="no" {% if controlled_filter == 'no' %}selected{% endif %}>Regular</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary-modern w-100">
+                    <i class="bi bi-search"></i> Search
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+
+<!-- Stats -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon bg-gradient-primary">
+                <i class="bi bi-capsule"></i>
+            </div>
+            <div>
+                <div class="stat-value">{{ total_drugs }}</div>
+                <div class="stat-label">Total Drugs</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Actions -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h5 class="mb-0">Drug List</h5>
+    <a href="{% url 'hospital:drug_create' %}" class="btn btn-primary-modern">
+        <i class="bi bi-plus-circle"></i> Add New Drug
+    </a>
+</div>
+
+<!-- Drugs List -->
+{% if drugs %}
+    {% for drug in drugs %}
+    <div class="drug-card">
+        <div class="row align-items-center">
+            <div class="col-auto">
+                <div class="drug-icon">
+                    <i class="bi bi-capsule-pill"></i>
+                </div>
+            </div>
+            <div class="col">
+                <div class="drug-info">
+                    <h5>
+                        <a href="{% url 'hospital:drug_detail' drug.pk %}">{{ drug.name }}</a>
+                    </h5>
+                    <div class="drug-meta">
+                        {% if drug.generic_name %}Generic: {{ drug.generic_name }} | {% endif %}
+                        Strength: {{ drug.strength }} | Form: {{ drug.form }}
+                        {% if drug.atc_code %} | ATC: {{ drug.atc_code }}{% endif %}
+                    </div>
+                </div>
+            </div>
+            <div class="col-auto text-end">
+                <div class="mb-2">
+                    {% if drug.is_active %}
+                    <span class="badge-active">Active</span>
+                    {% else %}
+                    <span class="badge-inactive">Inactive</span>
+                    {% endif %}
+                    {% if drug.is_controlled %}
+                    <span class="badge-controlled">Controlled</span>
+                    {% endif %}
+                </div>
+                <div class="price-tag">GHS {{ drug.unit_price }}</div>
+            </div>
+            <div class="col-auto">
+                <a href="{% url 'hospital:drug_detail' drug.pk %}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-eye"></i> View
+                </a>
+                <a href="{% url 'hospital:drug_edit' drug.pk %}" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-pencil"></i> Edit
+                </a>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+    
+    <!-- Pagination -->
+    {% if drugs.has_other_pages %}
+    <nav aria-label="Page navigation" class="mt-4">
+        <ul class="pagination justify-content-center">
+            {% if drugs.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ drugs.previous_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}{% if form_filter %}&form={{ form_filter }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}">Previous</a>
+                </li>
+            {% endif %}
+            
+            <li class="page-item active">
+                <span class="page-link">Page {{ drugs.number }} of {{ drugs.paginator.num_pages }}</span>
+            </li>
+            
+            {% if drugs.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ drugs.next_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}{% if form_filter %}&form={{ form_filter }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}">Next</a>
+                </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+{% else %}
+    <div class="modern-card text-center py-5">
+        <i class="bi bi-capsule" style="font-size: 64px; color: var(--gray);"></i>
+        <h5 class="mt-3">No drugs found</h5>
+        <p class="text-muted">{% if search_query %}Try different search terms{% else %}Start by adding your first drug{% endif %}</p>
+        <a href="{% url 'hospital:drug_create' %}" class="btn btn-primary-modern mt-3">
+            <i class="bi bi-plus-circle"></i> Add First Drug
+        </a>
+    </div>
+{% endif %}
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+

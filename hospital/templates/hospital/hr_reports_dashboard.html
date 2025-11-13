@@ -1,0 +1,539 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}HR Reports - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    .analytics-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        transition: transform 0.2s, box-shadow 0.2s;
+        height: 100%;
+    }
+    
+    .analytics-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+    }
+    
+    .stat-card-large {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 16px;
+        padding: 28px;
+        color: white;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .stat-card-large::before {
+        content: '';
+        position: absolute;
+        top: -50%;
+        right: -50%;
+        width: 200%;
+        height: 200%;
+        background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+    }
+    
+    .stat-number {
+        font-size: 3rem;
+        font-weight: 800;
+        line-height: 1;
+        margin-bottom: 8px;
+    }
+    
+    .stat-label {
+        font-size: 1rem;
+        opacity: 0.9;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    
+    .chart-container {
+        position: relative;
+        height: 300px;
+        margin-top: 20px;
+    }
+    
+    .chart-container-large {
+        position: relative;
+        height: 400px;
+        margin-top: 20px;
+    }
+    
+    .report-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        transition: all 0.3s ease;
+        border: 2px solid transparent;
+        cursor: pointer;
+        height: 100%;
+    }
+    
+    .report-card:hover {
+        transform: translateY(-5px);
+        border-color: var(--primary);
+        box-shadow: 0 8px 24px rgba(102, 126, 234, 0.15);
+    }
+    
+    .icon-large {
+        font-size: 3rem;
+        opacity: 0.9;
+    }
+    
+    .progress-ring {
+        transform: rotate(-90deg);
+    }
+    
+    .progress-ring-circle {
+        transition: stroke-dashoffset 0.35s;
+        transform-origin: 50% 50%;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1><i class="bi bi-file-earmark-bar-graph"></i> HR Reports & Analytics</h1>
+            <p class="text-muted mb-0">Comprehensive HR reports and workforce analytics</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:hr_dashboard' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to HR Dashboard
+            </a>
+        </div>
+    </div>
+
+    <!-- Enhanced Summary Cards with Gradients -->
+    <div class="row mb-4">
+        <div class="col-md-3 mb-3">
+            <div class="stat-card-large" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                <div class="position-relative">
+                    <div class="stat-number">{{ total_staff }}</div>
+                    <div class="stat-label">Total Staff</div>
+                    <i class="bi bi-people-fill icon-large position-absolute" style="bottom: -10px; right: -10px; opacity: 0.2;"></i>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="stat-card-large" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                <div class="position-relative">
+                    <div class="stat-number">{{ pending_leaves }}</div>
+                    <div class="stat-label">Pending Leaves</div>
+                    <i class="bi bi-calendar-check icon-large position-absolute" style="bottom: -10px; right: -10px; opacity: 0.2;"></i>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="stat-card-large" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+                <div class="position-relative">
+                    <div class="stat-number">{{ staff_on_leave_today }}</div>
+                    <div class="stat-label">On Leave Today</div>
+                    <i class="bi bi-person-dash icon-large position-absolute" style="bottom: -10px; right: -10px; opacity: 0.2;"></i>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="stat-card-large" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);">
+                <div class="position-relative">
+                    <div class="stat-number">{{ contracts_expiring_soon }}</div>
+                    <div class="stat-label">Expiring Soon</div>
+                    <small style="opacity: 0.9; font-size: 0.85rem;">Next 90 days</small>
+                    <i class="bi bi-file-earmark-text icon-large position-absolute" style="bottom: -10px; right: -10px; opacity: 0.2;"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Analytics Charts Row -->
+    <div class="row mb-4">
+        <div class="col-md-6 mb-4">
+            <div class="analytics-card">
+                <h5 class="mb-3"><i class="bi bi-pie-chart-fill text-primary"></i> Staff by Department</h5>
+                <div class="chart-container">
+                    <canvas id="departmentChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6 mb-4">
+            <div class="analytics-card">
+                <h5 class="mb-3"><i class="bi bi-bar-chart-fill text-success"></i> Staff by Profession</h5>
+                <div class="chart-container">
+                    <canvas id="professionChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leave Analytics -->
+    <div class="row mb-4">
+        <div class="col-md-8 mb-4">
+            <div class="analytics-card">
+                <h5 class="mb-3"><i class="bi bi-calendar-range text-warning"></i> Leave Status Overview</h5>
+                <div class="chart-container">
+                    <canvas id="leaveChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4 mb-4">
+            <div class="analytics-card">
+                <h5 class="mb-3"><i class="bi bi-clock-history text-info"></i> Quick Stats</h5>
+                <div class="mt-4">
+                    <div class="d-flex justify-content-between align-items-center mb-3 pb-3 border-bottom">
+                        <span><i class="bi bi-calendar-check text-success"></i> Approved This Month</span>
+                        <strong class="text-success">{{ approved_leaves_this_month }}</strong>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-3 pb-3 border-bottom">
+                        <span><i class="bi bi-book text-secondary"></i> Trainings This Year</span>
+                        <strong class="text-secondary">{{ trainings_this_year }}</strong>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-3 pb-3 border-bottom">
+                        <span><i class="bi bi-star text-warning"></i> Reviews This Year</span>
+                        <strong class="text-warning">{{ reviews_this_year }}</strong>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span><i class="bi bi-cash-stack text-primary"></i> Latest Payroll</span>
+                        <strong class="text-primary">GHS {{ total_payroll|floatformat:0|intcomma }}</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Report Categories with Enhanced Design -->
+    <h4 class="mb-3"><i class="bi bi-folder-fill text-primary"></i> Available Reports</h4>
+    <div class="row mb-4">
+        <!-- Staff Reports -->
+        <div class="col-md-4 mb-4">
+            <a href="{% url 'hospital:staff_list_report' %}" class="text-decoration-none">
+                <div class="report-card">
+                    <div class="text-center mb-3">
+                        <i class="bi bi-people-fill text-primary" style="font-size: 3.5rem;"></i>
+                    </div>
+                    <h5 class="text-center mb-2">Staff List Report</h5>
+                    <p class="text-muted text-center mb-3">Complete staff directory with all details</p>
+                    <div class="row text-center">
+                        <div class="col-6 border-end">
+                            <h4 class="mb-0 text-primary">{{ staff_by_department|length }}</h4>
+                            <small class="text-muted">Depts</small>
+                        </div>
+                        <div class="col-6">
+                            <h4 class="mb-0 text-success">{{ total_staff }}</h4>
+                            <small class="text-muted">Staff</small>
+                        </div>
+                    </div>
+                    <div class="text-center mt-3">
+                        <span class="badge bg-primary">View Report <i class="bi bi-arrow-right"></i></span>
+                    </div>
+                </div>
+            </a>
+        </div>
+
+        <!-- Leave Reports -->
+        <div class="col-md-4 mb-4">
+            <a href="{% url 'hospital:leave_report' %}" class="text-decoration-none">
+                <div class="report-card">
+                    <div class="text-center mb-3">
+                        <i class="bi bi-calendar-check-fill text-success" style="font-size: 3.5rem;"></i>
+                    </div>
+                    <h5 class="text-center mb-2">Leave Report</h5>
+                    <p class="text-muted text-center mb-3">All leave requests with status and approvals</p>
+                    <div class="row text-center">
+                        <div class="col-6 border-end">
+                            <h4 class="mb-0 text-warning">{{ pending_leaves }}</h4>
+                            <small class="text-muted">Pending</small>
+                        </div>
+                        <div class="col-6">
+                            <h4 class="mb-0 text-success">{{ approved_leaves_this_month }}</h4>
+                            <small class="text-muted">Approved</small>
+                        </div>
+                    </div>
+                    <div class="text-center mt-3">
+                        <span class="badge bg-success">View Report <i class="bi bi-arrow-right"></i></span>
+                    </div>
+                </div>
+            </a>
+        </div>
+
+        <!-- Attendance Reports -->
+        <div class="col-md-4 mb-4">
+            <a href="{% url 'hospital:attendance_report' %}" class="text-decoration-none">
+                <div class="report-card">
+                    <div class="text-center mb-3">
+                        <i class="bi bi-clock-history text-info" style="font-size: 3.5rem;"></i>
+                    </div>
+                    <h5 class="text-center mb-2">Attendance Report</h5>
+                    <p class="text-muted text-center mb-3">Daily attendance records and timekeeping</p>
+                    <div class="text-center">
+                        <span class="badge bg-info">View Report <i class="bi bi-arrow-right"></i></span>
+                    </div>
+                </div>
+            </a>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <!-- Payroll Reports -->
+        <div class="col-md-4 mb-4">
+            <a href="{% url 'hospital:payroll_report' %}" class="text-decoration-none">
+                <div class="report-card">
+                    <div class="text-center mb-3">
+                        <i class="bi bi-cash-stack text-warning" style="font-size: 3.5rem;"></i>
+                    </div>
+                    <h5 class="text-center mb-2">Payroll Report</h5>
+                    <p class="text-muted text-center mb-3">Salary payments and deductions summary</p>
+                    <div class="text-center mb-3">
+                        <h4 class="mb-0 text-success">GHS {{ total_payroll|floatformat:0|intcomma }}</h4>
+                        <small class="text-muted">Latest Period Total</small>
+                    </div>
+                    <div class="text-center">
+                        <span class="badge bg-warning text-dark">View Report <i class="bi bi-arrow-right"></i></span>
+                    </div>
+                </div>
+            </a>
+        </div>
+
+        <!-- Training Reports -->
+        <div class="col-md-4 mb-4">
+            <a href="{% url 'hospital:training_report' %}" class="text-decoration-none">
+                <div class="report-card">
+                    <div class="text-center mb-3">
+                        <i class="bi bi-book-fill text-secondary" style="font-size: 3.5rem;"></i>
+                    </div>
+                    <h5 class="text-center mb-2">Training Report</h5>
+                    <p class="text-muted text-center mb-3">Staff training and development records</p>
+                    <div class="text-center mb-3">
+                        <h4 class="mb-0 text-primary">{{ trainings_this_year }}</h4>
+                        <small class="text-muted">Trainings This Year</small>
+                    </div>
+                    <div class="text-center">
+                        <span class="badge bg-secondary">View Report <i class="bi bi-arrow-right"></i></span>
+                    </div>
+                </div>
+            </a>
+        </div>
+
+        <!-- Performance Reports -->
+        <div class="col-md-4 mb-4">
+            <a href="{% url 'hospital:performance_report' %}" class="text-decoration-none">
+                <div class="report-card">
+                    <div class="text-center mb-3">
+                        <i class="bi bi-star-fill text-danger" style="font-size: 3.5rem;"></i>
+                    </div>
+                    <h5 class="text-center mb-2">Performance Report</h5>
+                    <p class="text-muted text-center mb-3">Performance reviews and ratings</p>
+                    <div class="text-center mb-3">
+                        <h4 class="mb-0 text-info">{{ reviews_this_year }}</h4>
+                        <small class="text-muted">Reviews This Year</small>
+                    </div>
+                    <div class="text-center">
+                        <span class="badge bg-danger">View Report <i class="bi bi-arrow-right"></i></span>
+                    </div>
+                </div>
+            </a>
+        </div>
+    </div>
+
+
+    <!-- Export Options -->
+    {% if excel_available %}
+    <div class="alert alert-info border-0 shadow-sm">
+        <i class="bi bi-info-circle"></i> <strong>Export Options:</strong> All reports support CSV and Excel export formats for easy data analysis.
+    </div>
+    {% else %}
+    <div class="alert alert-warning border-0 shadow-sm">
+        <i class="bi bi-exclamation-triangle"></i> <strong>Note:</strong> Excel export requires openpyxl package. Run <code>pip install openpyxl</code> for Excel export support.
+    </div>
+    {% endif %}
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<!-- Chart.js Library -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<script>
+// Chart.js default configuration
+Chart.defaults.font.family = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+Chart.defaults.plugins.legend.position = 'bottom';
+Chart.defaults.plugins.legend.labels.padding = 15;
+Chart.defaults.plugins.legend.labels.usePointStyle = true;
+
+// Department Chart (Doughnut)
+const departmentCtx = document.getElementById('departmentChart');
+if (departmentCtx) {
+    const departmentData = {
+        labels: [
+            {% for dept in staff_by_department|slice:":8" %}
+                '{{ dept.department__name|default:"Unassigned"|escapejs }}'{% if not forloop.last %},{% endif %}
+            {% endfor %}
+        ],
+        datasets: [{
+            data: [
+                {% for dept in staff_by_department|slice:":8" %}
+                    {{ dept.count }}{% if not forloop.last %},{% endif %}
+                {% endfor %}
+            ],
+            backgroundColor: [
+                '#667eea',
+                '#764ba2',
+                '#f093fb',
+                '#4facfe',
+                '#43e97b',
+                '#fa709a',
+                '#fee140',
+                '#30cfd0'
+            ],
+            borderWidth: 2,
+            borderColor: '#fff'
+        }]
+    };
+
+    new Chart(departmentCtx, {
+        type: 'doughnut',
+        data: departmentData,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'right'
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            const percentage = ((context.parsed / total) * 100).toFixed(1);
+                            return context.label + ': ' + context.parsed + ' (' + percentage + '%)';
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Profession Chart (Bar)
+const professionCtx = document.getElementById('professionChart');
+if (professionCtx) {
+    const professionData = {
+        labels: [
+            {% for prof in staff_by_profession|slice:":8" %}
+                '{{ prof.profession|title|escapejs }}'{% if not forloop.last %},{% endif %}
+            {% endfor %}
+        ],
+        datasets: [{
+            label: 'Number of Staff',
+            data: [
+                {% for prof in staff_by_profession|slice:":8" %}
+                    {{ prof.count }}{% if not forloop.last %},{% endif %}
+                {% endfor %}
+            ],
+            backgroundColor: 'rgba(102, 126, 234, 0.8)',
+            borderColor: 'rgba(102, 126, 234, 1)',
+            borderWidth: 2,
+            borderRadius: 8,
+            borderSkipped: false,
+        }]
+    };
+
+    new Chart(professionCtx, {
+        type: 'bar',
+        data: professionData,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1
+                    },
+                    grid: {
+                        color: 'rgba(0, 0, 0, 0.05)'
+                    }
+                },
+                x: {
+                    grid: {
+                        display: false
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Leave Status Chart (Horizontal Bar)
+const leaveCtx = document.getElementById('leaveChart');
+if (leaveCtx) {
+    const leaveData = {
+        labels: ['Pending Requests', 'Approved This Month', 'Staff on Leave Today'],
+        datasets: [{
+            label: 'Count',
+            data: [
+                {{ pending_leaves }},
+                {{ approved_leaves_this_month }},
+                {{ staff_on_leave_today }}
+            ],
+            backgroundColor: [
+                'rgba(255, 193, 7, 0.8)',
+                'rgba(40, 167, 69, 0.8)',
+                'rgba(23, 162, 184, 0.8)'
+            ],
+            borderColor: [
+                'rgba(255, 193, 7, 1)',
+                'rgba(40, 167, 69, 1)',
+                'rgba(23, 162, 184, 1)'
+            ],
+            borderWidth: 2,
+            borderRadius: 8
+        }]
+    };
+
+    new Chart(leaveCtx, {
+        type: 'bar',
+        data: leaveData,
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1
+                    },
+                    grid: {
+                        color: 'rgba(0, 0, 0, 0.05)'
+                    }
+                },
+                y: {
+                    grid: {
+                        display: false
+                    }
+                }
+            }
+        }
+    });
+}
+</script>
+{% endblock %}
+

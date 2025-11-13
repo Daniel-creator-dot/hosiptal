@@ -1,0 +1,336 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Accounting Dashboard - HMS{% endblock %}
+{% block page_title %}Accounting Dashboard{% endblock %}
+{% block page_subtitle %}Financial management and reporting{% endblock %}
+
+{% block extra_css %}
+<style>
+    .accounting-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        border: 1px solid var(--border);
+        margin-bottom: 24px;
+        transition: all 0.3s;
+    }
+    
+    .accounting-card:hover {
+        box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+    }
+    
+    .stat-box {
+        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+    
+    .stat-box.revenue {
+        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+    }
+    
+    .stat-box.expense {
+        background: linear-gradient(135deg, #dc3545 0%, #fd7e14 100%);
+    }
+    
+    .stat-box.receivable {
+        background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%);
+    }
+    
+    .stat-box.payable {
+        background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+    }
+    
+    .stat-box h3 {
+        font-size: 28px;
+        font-weight: 700;
+        margin: 0 0 8px 0;
+    }
+    
+    .stat-box p {
+        margin: 0;
+        opacity: 0.9;
+        font-size: 14px;
+    }
+    
+    .quick-link {
+        display: block;
+        padding: 12px 16px;
+        background: #f8f9fa;
+        border-radius: 8px;
+        text-decoration: none;
+        color: var(--dark);
+        margin-bottom: 8px;
+        transition: all 0.3s;
+    }
+    
+    .quick-link:hover {
+        background: var(--primary);
+        color: white;
+        transform: translateX(4px);
+    }
+    
+    .quick-link i {
+        margin-right: 8px;
+    }
+    
+    .category-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #eee;
+    }
+    
+    .category-item:last-child {
+        border-bottom: none;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Current Period Info -->
+{% if not tables_exist %}
+<div class="alert alert-warning">
+    <h5><i class="bi bi-exclamation-triangle"></i> Advanced Accounting Models Not Yet Migrated</h5>
+    <p>The accounting dashboard is in preview mode. To activate all features:</p>
+    <ol>
+        <li>Uncomment <code>from .admin_accounting_advanced import *</code> in hospital/admin.py</li>
+        <li>Run: <code>python manage.py makemigrations && python manage.py migrate</code></li>
+        <li>Run: <code>python setup_accounting_system.py</code></li>
+        <li>Refresh this page</li>
+    </ol>
+    <p class="mb-0"><strong>See:</strong> SETUP_ACCOUNTING_SYSTEM_INSTRUCTIONS.txt for details</p>
+</div>
+{% endif %}
+
+{% if fiscal_year or accounting_period %}
+<div class="alert alert-info">
+    <strong><i class="bi bi-calendar3"></i> Current Period:</strong>
+    {% if fiscal_year %}Fiscal Year: {{ fiscal_year.name }}{% endif %}
+    {% if accounting_period %} | Accounting Period: {{ accounting_period.name }}{% endif %}
+</div>
+{% endif %}
+
+<!-- Financial Overview -->
+<div class="row">
+    <div class="col-md-3">
+        <div class="stat-box revenue">
+            <p><i class="bi bi-graph-up"></i> Total Revenue (MTD)</p>
+            <h3>GHS {{ total_revenue|floatformat:2|intcomma }}</h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-box expense">
+            <p><i class="bi bi-graph-down"></i> Total Expenses (MTD)</p>
+            <h3>GHS {{ total_expenses|floatformat:2|intcomma }}</h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-box {% if net_income >= 0 %}revenue{% else %}expense{% endif %}">
+            <p><i class="bi bi-cash-coin"></i> Net Income (MTD)</p>
+            <h3>GHS {{ net_income|floatformat:2|intcomma }}</h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-box">
+            <p><i class="bi bi-journal-check"></i> Posted Entries (MTD)</p>
+            <h3>{{ posted_entries_month }}</h3>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-3">
+        <div class="stat-box receivable">
+            <p><i class="bi bi-receipt"></i> Accounts Receivable</p>
+            <h3>GHS {{ total_receivable|floatformat:2|intcomma }}</h3>
+            {% if overdue_receivable > 0 %}
+            <small style="color: #fff3cd;"><i class="bi bi-exclamation-triangle"></i> Overdue: GHS {{ overdue_receivable|floatformat:2|intcomma }}</small>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-box payable">
+            <p><i class="bi bi-file-earmark-text"></i> Accounts Payable</p>
+            <h3>GHS {{ total_payable|floatformat:2|intcomma }}</h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-box" style="background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);">
+            <p><i class="bi bi-file-earmark-check"></i> Pending Vouchers</p>
+            <h3>{{ pending_vouchers }}</h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-box" style="background: linear-gradient(135deg, #6610f2 0%, #6f42c1 100%);">
+            <p><i class="bi bi-journal-text"></i> Draft Journal Entries</p>
+            <h3>{{ draft_entries }}</h3>
+        </div>
+    </div>
+</div>
+
+<!-- Main Content -->
+<div class="row">
+    <!-- Revenue Breakdown -->
+    <div class="col-md-6">
+        <div class="accounting-card">
+            <h5 class="mb-3"><i class="bi bi-graph-up-arrow"></i> Revenue by Category (MTD)</h5>
+            {% if revenue_by_category %}
+                {% for item in revenue_by_category %}
+                <div class="category-item">
+                    <span>{{ item.category__name }}</span>
+                    <strong>GHS {{ item.total|floatformat:2|intcomma }}</strong>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-muted">No revenue recorded this month</p>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Expense Breakdown -->
+    <div class="col-md-6">
+        <div class="accounting-card">
+            <h5 class="mb-3"><i class="bi bi-graph-down-arrow"></i> Expenses by Category (MTD)</h5>
+            {% if expenses_by_category %}
+                {% for item in expenses_by_category %}
+                <div class="category-item">
+                    <span>{{ item.category__name }}</span>
+                    <strong>GHS {{ item.total|floatformat:2|intcomma }}</strong>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-muted">No expenses recorded this month</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- AR Aging -->
+    <div class="col-md-6">
+        <div class="accounting-card">
+            <h5 class="mb-3"><i class="bi bi-hourglass-split"></i> Accounts Receivable Aging</h5>
+            <div class="category-item">
+                <span>Current</span>
+                <strong>GHS {{ ar_aging.current|floatformat:2|intcomma }}</strong>
+            </div>
+            <div class="category-item">
+                <span>0-30 Days</span>
+                <strong>GHS {{ ar_aging.0_30|floatformat:2|intcomma }}</strong>
+            </div>
+            <div class="category-item">
+                <span>31-60 Days</span>
+                <strong style="color: #ffc107;">GHS {{ ar_aging.31_60|floatformat:2|intcomma }}</strong>
+            </div>
+            <div class="category-item">
+                <span>61-90 Days</span>
+                <strong style="color: #fd7e14;">GHS {{ ar_aging.61_90|floatformat:2|intcomma }}</strong>
+            </div>
+            <div class="category-item">
+                <span>90+ Days</span>
+                <strong style="color: #dc3545;">GHS {{ ar_aging.90_plus|floatformat:2|intcomma }}</strong>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quick Links -->
+    <div class="col-md-6">
+        <div class="accounting-card">
+            <h5 class="mb-3"><i class="bi bi-lightning-charge"></i> Quick Actions</h5>
+            
+            <a href="{% url 'hospital:profit_loss_statement' %}" class="quick-link">
+                <i class="bi bi-file-earmark-bar-graph"></i> Profit & Loss Statement
+            </a>
+            
+            <a href="{% url 'hospital:balance_sheet' %}" class="quick-link">
+                <i class="bi bi-file-earmark-spreadsheet"></i> Balance Sheet
+            </a>
+            
+            <a href="{% url 'hospital:trial_balance' %}" class="quick-link">
+                <i class="bi bi-calculator"></i> Trial Balance
+            </a>
+            
+            <a href="{% url 'hospital:cash_flow_statement' %}" class="quick-link">
+                <i class="bi bi-cash-stack"></i> Cash Flow Statement
+            </a>
+            
+            <a href="{% url 'hospital:general_ledger_report' %}" class="quick-link">
+                <i class="bi bi-journal-text"></i> General Ledger
+            </a>
+            
+            <a href="{% url 'hospital:ar_aging_report' %}" class="quick-link">
+                <i class="bi bi-receipt"></i> AR Aging Report
+            </a>
+            
+            <a href="{% url 'hospital:revenue_streams_dashboard' %}" class="quick-link" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                <i class="bi bi-bar-chart-line-fill"></i> Revenue Streams (Lab, Pharmacy, etc.) ⭐
+            </a>
+            
+            <a href="{% url 'hospital:accounts_approval_list' %}" class="quick-link" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white;">
+                <i class="bi bi-clipboard-check-fill"></i> Procurement Approvals 🔔
+            </a>
+            
+            <a href="{% url 'hospital:revenue_report' %}" class="quick-link">
+                <i class="bi bi-graph-up"></i> Revenue Report
+            </a>
+            
+            <a href="{% url 'hospital:expense_report' %}" class="quick-link">
+                <i class="bi bi-graph-down"></i> Expense Report
+            </a>
+            
+            <a href="{% url 'hospital:payment_voucher_list' %}" class="quick-link">
+                <i class="bi bi-file-earmark-check"></i> Payment Vouchers
+            </a>
+            
+            <a href="{% url 'hospital:receipt_voucher_list' %}" class="quick-link">
+                <i class="bi bi-receipt-cutoff"></i> Receipt Vouchers
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Activity -->
+<div class="row">
+    <div class="col-md-12">
+        <div class="accounting-card">
+            <h5 class="mb-3"><i class="bi bi-activity"></i> Pending Actions</h5>
+            
+            <div class="row">
+                <div class="col-md-3">
+                    <div class="alert alert-danger">
+                        <strong>{{ pending_procurement_count|default:0 }}</strong> procurement requests awaiting approval
+                        <a href="{% url 'hospital:accounts_approval_list' %}" class="btn btn-sm btn-danger mt-2 w-100">Review Now</a>
+                    </div>
+                </div>
+                
+                <div class="col-md-3">
+                    <div class="alert alert-warning">
+                        <strong>{{ pending_vouchers }}</strong> payment vouchers awaiting approval
+                        <a href="{% url 'hospital:payment_voucher_list' %}?status=pending_approval" class="btn btn-sm btn-warning mt-2 w-100">Review Now</a>
+                    </div>
+                </div>
+                
+                <div class="col-md-3">
+                    <div class="alert alert-info">
+                        <strong>{{ approved_vouchers }}</strong> vouchers approved, ready to pay
+                        <a href="{% url 'hospital:payment_voucher_list' %}?status=approved" class="btn btn-sm btn-info mt-2 w-100">Process Payments</a>
+                    </div>
+                </div>
+                
+                <div class="col-md-3">
+                    <div class="alert alert-secondary">
+                        <strong>{{ draft_entries }}</strong> draft journal entries
+                        <a href="/admin/hospital/journalentry/?status__exact=draft" class="btn btn-sm btn-secondary mt-2 w-100">Post Entries</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

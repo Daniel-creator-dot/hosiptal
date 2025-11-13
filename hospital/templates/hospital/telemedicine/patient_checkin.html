@@ -1,0 +1,214 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Patient Self Check-In - Telemedicine{% endblock %}
+{% block page_title %}Patient Self Check-In{% endblock %}
+{% block page_subtitle %}Complete your check-in before your telemedicine consultation{% endblock %}
+
+{% block extra_css %}
+<style>
+    .checkin-container {
+        max-width: 800px;
+        margin: 0 auto;
+    }
+    
+    .checkin-card {
+        background: white;
+        border-radius: 20px;
+        padding: 40px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+    }
+    
+    .step-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 20px;
+        border-radius: 15px;
+        margin-bottom: 30px;
+        text-align: center;
+    }
+    
+    .symptom-tag {
+        background: #f3f4f6;
+        border: 2px solid #e5e7eb;
+        border-radius: 25px;
+        padding: 10px 20px;
+        margin: 5px;
+        display: inline-block;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+    
+    .symptom-tag:hover {
+        background: #dbeafe;
+        border-color: #3b82f6;
+    }
+    
+    .symptom-tag.selected {
+        background: #3b82f6;
+        border-color: #3b82f6;
+        color: white;
+    }
+    
+    .vital-input {
+        border-radius: 10px;
+        border: 2px solid #e5e7eb;
+        padding: 12px;
+        transition: all 0.3s;
+    }
+    
+    .vital-input:focus {
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="checkin-container">
+    <div class="checkin-card">
+        <div class="step-header">
+            <h2><i class="bi bi-person-check-fill me-2"></i>Self Check-In</h2>
+            <p class="mb-0">Complete your pre-consultation assessment</p>
+        </div>
+        
+        <form method="post" id="checkinForm">
+            {% csrf_token %}
+            
+            <!-- Patient Information -->
+            <div class="mb-4">
+                <h5 class="mb-3"><i class="bi bi-person me-2"></i>Patient Information</h5>
+                <div class="alert alert-info">
+                    <strong>{{ patient.full_name }}</strong><br>
+                    MRN: {{ patient.mrn }}<br>
+                    DOB: {{ patient.date_of_birth }}<br>
+                    Phone: {{ patient.phone_number }}
+                </div>
+            </div>
+            
+            <!-- Reason for Visit -->
+            <div class="mb-4">
+                <label class="form-label fw-bold">
+                    <i class="bi bi-chat-left-text me-2"></i>Reason for Visit *
+                </label>
+                <textarea 
+                    class="form-control vital-input" 
+                    name="reason" 
+                    rows="3" 
+                    required
+                    placeholder="Please describe your main concern or reason for this consultation..."
+                ></textarea>
+            </div>
+            
+            <!-- Symptoms -->
+            <div class="mb-4">
+                <label class="form-label fw-bold">
+                    <i class="bi bi-clipboard-pulse me-2"></i>Select Your Symptoms
+                </label>
+                <div id="symptomTags">
+                    <span class="symptom-tag" data-symptom="Fever">🌡️ Fever</span>
+                    <span class="symptom-tag" data-symptom="Cough">😷 Cough</span>
+                    <span class="symptom-tag" data-symptom="Headache">🤕 Headache</span>
+                    <span class="symptom-tag" data-symptom="Sore Throat">🗣️ Sore Throat</span>
+                    <span class="symptom-tag" data-symptom="Fatigue">😴 Fatigue</span>
+                    <span class="symptom-tag" data-symptom="Nausea">🤢 Nausea</span>
+                    <span class="symptom-tag" data-symptom="Shortness of Breath">💨 Shortness of Breath</span>
+                    <span class="symptom-tag" data-symptom="Body Aches">💪 Body Aches</span>
+                </div>
+                <input type="hidden" name="symptoms" id="selectedSymptoms">
+            </div>
+            
+            <!-- Duration -->
+            <div class="mb-4">
+                <label class="form-label fw-bold">
+                    <i class="bi bi-clock me-2"></i>How long have you had these symptoms?
+                </label>
+                <select class="form-select vital-input" name="duration" required>
+                    <option value="">Select duration...</option>
+                    <option value="Less than 24 hours">Less than 24 hours</option>
+                    <option value="1-3 days">1-3 days</option>
+                    <option value="4-7 days">4-7 days</option>
+                    <option value="1-2 weeks">1-2 weeks</option>
+                    <option value="More than 2 weeks">More than 2 weeks</option>
+                </select>
+            </div>
+            
+            <!-- Self-Reported Vitals (Optional) -->
+            <div class="mb-4">
+                <h5 class="mb-3"><i class="bi bi-heart-pulse me-2"></i>Vital Signs (Optional)</h5>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Temperature (°C)</label>
+                        <input type="number" step="0.1" class="form-control vital-input" name="temperature" placeholder="e.g., 37.5">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Heart Rate (bpm)</label>
+                        <input type="number" class="form-control vital-input" name="heart_rate" placeholder="e.g., 80">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Blood Pressure</label>
+                        <input type="text" class="form-control vital-input" name="blood_pressure" placeholder="e.g., 120/80">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Oxygen Saturation (%)</label>
+                        <input type="number" class="form-control vital-input" name="oxygen_saturation" placeholder="e.g., 98">
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Consent & Agreements -->
+            <div class="mb-4">
+                <h5 class="mb-3"><i class="bi bi-shield-check me-2"></i>Consent & Privacy</h5>
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" name="consent" id="consentCheck" required>
+                    <label class="form-check-label" for="consentCheck">
+                        I consent to telemedicine consultation and understand the limitations of virtual healthcare *
+                    </label>
+                </div>
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" name="privacy" id="privacyCheck" required>
+                    <label class="form-check-label" for="privacyCheck">
+                        I have read and agree to the privacy policy and terms of service *
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Submit Button -->
+            <div class="text-center">
+                <button type="submit" class="btn btn-primary btn-lg px-5" style="border-radius: 25px; background: linear-gradient(135deg, #667eea, #764ba2); border: none;">
+                    <i class="bi bi-check-circle me-2"></i>Complete Check-In
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Symptom tag selection
+document.querySelectorAll('.symptom-tag').forEach(tag => {
+    tag.addEventListener('click', function() {
+        this.classList.toggle('selected');
+        updateSelectedSymptoms();
+    });
+});
+
+function updateSelectedSymptoms() {
+    const selected = Array.from(document.querySelectorAll('.symptom-tag.selected'))
+        .map(tag => tag.dataset.symptom);
+    document.getElementById('selectedSymptoms').value = JSON.stringify(selected);
+}
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+

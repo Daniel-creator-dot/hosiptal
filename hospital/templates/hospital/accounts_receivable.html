@@ -1,0 +1,92 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Accounts Receivable - HMS{% endblock %}
+{% block page_title %}Accounts Receivable Aging{% endblock %}
+
+{% block content %}
+<div class="row mb-3">
+    <div class="col-md-6">
+        <div class="btn-group" role="group">
+            <a href="{% url 'hospital:accounts_receivable' %}" 
+               class="btn btn-sm {% if not aging_filter %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                All
+            </a>
+            <a href="{% url 'hospital:accounts_receivable' %}?aging=current" 
+               class="btn btn-sm {% if aging_filter == 'current' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                Current
+            </a>
+            <a href="{% url 'hospital:accounts_receivable' %}?aging=31-60" 
+               class="btn btn-sm {% if aging_filter == '31-60' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                31-60 Days
+            </a>
+            <a href="{% url 'hospital:accounts_receivable' %}?aging=61-90" 
+               class="btn btn-sm {% if aging_filter == '61-90' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                61-90 Days
+            </a>
+            <a href="{% url 'hospital:accounts_receivable' %}?aging=90+" 
+               class="btn btn-sm {% if aging_filter == '90+' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                90+ Days
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="modern-card">
+    <div class="table-responsive">
+        <table class="table modern-table">
+            <thead>
+                <tr>
+                    <th>Invoice</th>
+                    <th>Patient</th>
+                    <th>Due Date</th>
+                    <th>Outstanding</th>
+                    <th>Days Overdue</th>
+                    <th>Aging Bucket</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ar in ar_entries %}
+                <tr>
+                    <td>
+                        <a href="{% url 'hospital:invoice_detail' ar.invoice.pk %}">
+                            {{ ar.invoice.invoice_number }}
+                        </a>
+                    </td>
+                    <td>
+                        <a href="{% url 'hospital:patient_detail' ar.patient.pk %}">
+                            {{ ar.patient.full_name }}
+                        </a>
+                    </td>
+                    <td>{{ ar.due_date|date:"M d, Y" }}</td>
+                    <td><strong style="color: var(--danger);">GHS {{ ar.outstanding_amount|floatformat:2|intcomma }}</strong></td>
+                    <td>
+                        {% if ar.days_overdue > 0 %}
+                        <span class="badge-modern badge-danger">{{ ar.days_overdue }} days</span>
+                        {% else %}
+                        <span class="badge-modern badge-success">Current</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if ar.aging_bucket == 'current' %}
+                        <span class="badge-modern badge-success">{{ ar.get_aging_bucket_display }}</span>
+                        {% elif ar.aging_bucket == '31-60' %}
+                        <span class="badge-modern badge-warning">{{ ar.get_aging_bucket_display }}</span>
+                        {% elif ar.aging_bucket == '61-90' %}
+                        <span class="badge-modern badge-warning">{{ ar.get_aging_bucket_display }}</span>
+                        {% else %}
+                        <span class="badge-modern badge-danger">{{ ar.get_aging_bucket_display }}</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted py-4">No accounts receivable found</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+

@@ -1,0 +1,547 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}My Dashboard - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    .world-class-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 20px;
+        padding: 40px;
+        margin-bottom: 32px;
+        box-shadow: 0 10px 40px rgba(102, 126, 234, 0.3);
+    }
+    
+    .urgent-banner {
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+        box-shadow: 0 8px 32px rgba(239, 68, 68, 0.3);
+        animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.02); }
+    }
+    
+    .message-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 16px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        border-left: 6px solid #f59e0b;
+        transition: all 0.3s;
+    }
+    
+    .message-card:hover {
+        transform: translateX(4px);
+        box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+    }
+    
+    .message-card.urgent {
+        border-left-color: #ef4444;
+        background: linear-gradient(to right, #fff5f5, white);
+    }
+    
+    .message-card.high {
+        border-left-color: #f59e0b;
+        background: linear-gradient(to right, #fffbeb, white);
+    }
+    
+    .stat-box {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        text-align: center;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+        transition: all 0.3s;
+    }
+    
+    .stat-box:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    }
+    
+    .stat-value {
+        font-size: 42px;
+        font-weight: 800;
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    
+    .notification-badge {
+        background: #ef4444;
+        color: white;
+        border-radius: 50%;
+        padding: 4px 10px;
+        font-size: 12px;
+        font-weight: 700;
+        position: relative;
+        top: -2px;
+    }
+    
+    .action-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 12px;
+        border-left: 4px solid #3b82f6;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+    
+    .event-card {
+        background: white;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        border-left: 4px solid #10b981;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        transition: all 0.2s;
+    }
+    
+    .event-card:hover {
+        transform: translateX(4px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    
+    .event-card.mandatory {
+        border-left-color: #ef4444;
+        background: #fef2f2;
+    }
+    
+    .leave-progress {
+        height: 12px;
+        background: #e5e7eb;
+        border-radius: 6px;
+        overflow: hidden;
+        margin-top: 8px;
+    }
+    
+    .leave-fill {
+        height: 100%;
+        transition: width 0.3s;
+    }
+    
+    .leave-fill.high { background: linear-gradient(90deg, #10b981, #059669); }
+    .leave-fill.medium { background: linear-gradient(90deg, #f59e0b, #d97706); }
+    .leave-fill.low { background: linear-gradient(90deg, #ef4444, #dc2626); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- World-Class Header -->
+    <div class="world-class-header">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1 class="mb-2"><i class="bi bi-person-circle me-3"></i>Welcome Back, {{ staff.user.first_name }}!</h1>
+                <p class="mb-0" style="opacity: 0.95; font-size: 16px;">
+                    <i class="bi bi-briefcase me-2"></i>{{ staff.get_profession_display }}
+                    <i class="bi bi-building ms-3 me-2"></i>{{ staff.department.name }}
+                    {% if days_employed %}
+                        <i class="bi bi-calendar-check ms-3 me-2"></i>{{ days_employed }} days with us
+                    {% endif %}
+                </p>
+            </div>
+            <div class="text-end">
+                <div style="font-size: 18px; font-weight: 600;">{{ today|date:"l" }}</div>
+                <div style="font-size: 14px; opacity: 0.9;">{{ today|date:"F d, Y" }}</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- URGENT BANNER - Shows only if there are urgent messages -->
+    {% if unread_count.messages > 0 or unread_count.mandatory > 0 %}
+    <div class="urgent-banner">
+        <div class="d-flex align-items-center">
+            <div style="font-size: 48px; margin-right: 24px;">
+                <i class="bi bi-exclamation-triangle-fill"></i>
+            </div>
+            <div>
+                <h3 class="mb-2">⚠️ IMPORTANT NOTIFICATIONS</h3>
+                <p class="mb-0">
+                    {% if unread_count.messages > 0 %}
+                        <strong>{{ unread_count.messages }}</strong> urgent message{{ unread_count.messages|pluralize }}
+                    {% endif %}
+                    {% if unread_count.messages > 0 and unread_count.mandatory > 0 %} • {% endif %}
+                    {% if unread_count.mandatory > 0 %}
+                        <strong>{{ unread_count.mandatory }}</strong> mandatory event{{ unread_count.mandatory|pluralize }}
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- IMPORTANT MESSAGES SECTION -->
+    {% if important_messages %}
+    <div style="margin-bottom: 32px;">
+        <h4 class="mb-4">
+            <i class="bi bi-megaphone me-2"></i>Important Messages 
+            <span class="notification-badge">{{ important_messages.count }}</span>
+        </h4>
+        
+        {% for message in important_messages %}
+        <div class="message-card {{ message.priority }}">
+            <div class="d-flex justify-content-between align-items-start">
+                <div style="flex: 1;">
+                    <div class="d-flex align-items-center mb-2">
+                        {% if message.priority == 'urgent' %}
+                            <i class="bi bi-exclamation-circle-fill text-danger me-2" style="font-size: 24px;"></i>
+                        {% elif message.priority == 'high' %}
+                            <i class="bi bi-exclamation-triangle-fill text-warning me-2" style="font-size: 24px;"></i>
+                        {% else %}
+                            <i class="bi bi-info-circle-fill text-info me-2" style="font-size: 24px;"></i>
+                        {% endif %}
+                        <div>
+                            <h5 class="mb-0">{{ message.title }}</h5>
+                            <small class="text-muted">
+                                <i class="bi bi-calendar3 me-1"></i>{{ message.start_date|date:"M d, Y" }}
+                                {% if message.organizer %}
+                                    <i class="bi bi-person ms-2 me-1"></i>{{ message.organizer.user.get_full_name }}
+                                {% endif %}
+                            </small>
+                        </div>
+                    </div>
+                    <p class="mb-2" style="white-space: pre-wrap; margin-left: 36px;">{{ message.description }}</p>
+                    {% if message.location %}
+                        <div style="margin-left: 36px;">
+                            <small><i class="bi bi-geo-alt me-1"></i><strong>Location:</strong> {{ message.location }}</small>
+                        </div>
+                    {% endif %}
+                </div>
+                <div class="ms-3">
+                    <span class="badge bg-{% if message.priority == 'urgent' %}danger{% elif message.priority == 'high' %}warning{% else %}info{% endif %}" style="font-size: 13px;">
+                        {{ message.get_priority_display|upper }}
+                    </span>
+                    <div class="mt-2">
+                        <span class="badge bg-secondary">{{ message.get_activity_type_display }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    
+    <!-- MANDATORY EVENTS SECTION -->
+    {% if mandatory_events %}
+    <div style="background: linear-gradient(to right, #fef2f2, white); border: 2px solid #ef4444; border-radius: 16px; padding: 24px; margin-bottom: 32px;">
+        <h4 class="mb-3">
+            <i class="bi bi-calendar-x me-2" style="color: #ef4444;"></i>
+            <span style="color: #ef4444;">MANDATORY EVENTS - ATTENDANCE REQUIRED</span>
+            <span class="notification-badge">{{ mandatory_events.count }}</span>
+        </h4>
+        
+        {% for event in mandatory_events %}
+        <div class="event-card mandatory">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h6 class="mb-1"><i class="bi bi-exclamation-circle-fill text-danger me-2"></i>{{ event.title }}</h6>
+                    <div style="font-size: 13px; color: #6b7280;">
+                        <i class="bi bi-calendar3 me-1"></i>{{ event.start_date|date:"l, F d, Y" }}
+                        {% if event.start_time %}
+                            <i class="bi bi-clock ms-2 me-1"></i>{{ event.start_time|time:"g:i A" }}
+                        {% endif %}
+                        {% if event.location %}
+                            <i class="bi bi-geo-alt ms-2 me-1"></i>{{ event.location }}
+                        {% endif %}
+                    </div>
+                </div>
+                <span class="badge bg-danger" style="font-size: 14px;">
+                    <i class="bi bi-exclamation-triangle me-1"></i>MANDATORY
+                </span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    
+    <!-- Quick Stats Row -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-3">
+            <div class="stat-box">
+                {% if leave_balance %}
+                    <div class="stat-value">{{ leave_balance.annual_leave|floatformat:0 }}</div>
+                    <div style="color: #6b7280; font-size: 14px;">Annual Leave Days</div>
+                    <div class="leave-progress" style="margin-top: 12px;">
+                        <div class="leave-fill {% if annual_percentage >= 50 %}high{% elif annual_percentage >= 20 %}medium{% else %}low{% endif %}" style="width: {{ annual_percentage }}%;"></div>
+                    </div>
+                {% else %}
+                    <div class="stat-value">--</div>
+                    <div style="color: #6b7280; font-size: 14px;">No Leave Balance</div>
+                {% endif %}
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-box">
+                <div class="stat-value">{{ leave_counter.days_until_next_leave|default:0 }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Days to Next Leave</div>
+                {% if leave_counter.next_leave_date %}
+                    <div style="margin-top: 12px; font-size: 13px; color: #10b981;">
+                        <i class="bi bi-calendar-check me-1"></i>{{ leave_counter.next_leave_date|date:"M d, Y" }}
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-box">
+                <div class="stat-value">{{ upcoming_shifts.count }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Upcoming Shifts</div>
+                <div style="margin-top: 12px; font-size: 13px; color: #3b82f6;">
+                    <i class="bi bi-calendar-week me-1"></i>Next 7 Days
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-box">
+                <div class="stat-value">{{ pending_leaves.count }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Pending Leave Requests</div>
+                {% if pending_leaves.count > 0 %}
+                    <div style="margin-top: 12px;">
+                        <span class="badge bg-warning" style="font-size: 13px;">Awaiting Approval</span>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="row g-4">
+        <!-- Left Column: Messages & Events -->
+        <div class="col-lg-8">
+            <!-- Upcoming Hospital Activities (Next 7 Days) -->
+            {% if upcoming_hospital_activities %}
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); margin-bottom: 24px;">
+                <h5 class="mb-4">
+                    <i class="bi bi-calendar-event me-2"></i>Upcoming Events (Next 7 Days)
+                    <a href="{% url 'hospital:activity_calendar' %}" class="btn btn-sm btn-outline-primary float-end">
+                        <i class="bi bi-calendar3 me-1"></i>View Full Calendar
+                    </a>
+                </h5>
+                
+                {% for activity in upcoming_hospital_activities %}
+                <div class="event-card {% if activity.is_mandatory %}mandatory{% endif %}">
+                    <div class="row align-items-center">
+                        <div class="col-md-8">
+                            <div class="d-flex align-items-start">
+                                <div style="background: linear-gradient(135deg, #667eea, #764ba2); color: white; width: 50px; height: 50px; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; margin-right: 16px; flex-shrink: 0;">
+                                    <div style="font-size: 18px; font-weight: 700;">{{ activity.start_date.day }}</div>
+                                    <div style="font-size: 10px; opacity: 0.9;">{{ activity.start_date|date:"M" }}</div>
+                                </div>
+                                <div>
+                                    <h6 class="mb-1">{{ activity.title }}</h6>
+                                    <div style="font-size: 13px; color: #6b7280;">
+                                        {% if activity.start_time %}
+                                            <i class="bi bi-clock me-1"></i>{{ activity.start_time|time:"g:i A" }}
+                                        {% endif %}
+                                        {% if activity.location %}
+                                            <i class="bi bi-geo-alt ms-2 me-1"></i>{{ activity.location }}
+                                        {% endif %}
+                                    </div>
+                                    {% if activity.description %}
+                                    <div style="font-size: 12px; color: #9ca3af; margin-top: 4px;">
+                                        {{ activity.description|truncatewords:20 }}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <span class="badge bg-{% if activity.is_mandatory %}danger{% elif activity.priority == 'high' %}warning{% else %}info{% endif %}" style="font-size: 12px;">
+                                {% if activity.is_mandatory %}
+                                    <i class="bi bi-exclamation-triangle me-1"></i>MANDATORY
+                                {% else %}
+                                    {{ activity.get_activity_type_display }}
+                                {% endif %}
+                            </span>
+                            <div style="margin-top: 8px; font-size: 12px; color: #6b7280;">
+                                {% if activity.start_date == today %}
+                                    Today
+                                {% else %}
+                                    {{ activity.start_date|timeuntil }}
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            
+            <!-- Leave Balance Details -->
+            {% if leave_balance %}
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); margin-bottom: 24px;">
+                <h5 class="mb-4"><i class="bi bi-calendar-check me-2"></i>My Leave Balance</h5>
+                
+                <div class="row g-4">
+                    <div class="col-md-4">
+                        <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #10b981, #059669); border-radius: 12px; color: white;">
+                            <div style="font-size: 36px; font-weight: 700;">{{ leave_balance.annual_leave|floatformat:0 }}</div>
+                            <div style="opacity: 0.9;">Annual Leave</div>
+                            <div class="leave-progress" style="background: rgba(255,255,255,0.3); margin-top: 12px;">
+                                <div class="leave-fill high" style="width: {{ annual_percentage }}%; background: rgba(255,255,255,0.9);"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #3b82f6, #2563eb); border-radius: 12px; color: white;">
+                            <div style="font-size: 36px; font-weight: 700;">{{ leave_balance.sick_leave|floatformat:0 }}</div>
+                            <div style="opacity: 0.9;">Sick Leave</div>
+                            <div class="leave-progress" style="background: rgba(255,255,255,0.3); margin-top: 12px;">
+                                <div class="leave-fill high" style="width: {{ sick_percentage }}%; background: rgba(255,255,255,0.9);"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #f59e0b, #d97706); border-radius: 12px; color: white;">
+                            <div style="font-size: 36px; font-weight: 700;">{{ leave_balance.casual_leave|floatformat:0 }}</div>
+                            <div style="opacity: 0.9;">Casual Leave</div>
+                            <div class="leave-progress" style="background: rgba(255,255,255,0.3); margin-top: 12px;">
+                                <div class="leave-fill high" style="width: {{ casual_percentage }}%; background: rgba(255,255,255,0.9);"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="text-center mt-3">
+                    <a href="{% url 'hospital:staff_leave_request_create' %}" class="btn btn-primary btn-lg">
+                        <i class="bi bi-plus-circle me-2"></i>Request Leave
+                    </a>
+                </div>
+            </div>
+            {% endif %}
+            
+            <!-- Upcoming Shifts -->
+            {% if upcoming_shifts %}
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-4"><i class="bi bi-calendar-week me-2"></i>My Upcoming Shifts</h5>
+                
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Shift Type</th>
+                                <th>Time</th>
+                                <th>Department</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for shift in upcoming_shifts %}
+                            <tr>
+                                <td><strong>{{ shift.shift_date|date:"l, M d" }}</strong></td>
+                                <td><span class="badge bg-primary">{{ shift.get_shift_type_display }}</span></td>
+                                <td>{{ shift.start_time|time:"g:i A" }} - {{ shift.end_time|time:"g:i A" }}</td>
+                                <td>{{ shift.department.name }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- Right Column: Quick Actions & Info -->
+        <div class="col-lg-4">
+            <!-- Quick Actions -->
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); margin-bottom: 24px;">
+                <h5 class="mb-3"><i class="bi bi-lightning me-2"></i>Quick Actions</h5>
+                <div class="d-grid gap-2">
+                    <a href="{% url 'hospital:staff_leave_request_create' %}" class="btn btn-primary btn-modern">
+                        <i class="bi bi-calendar-plus me-2"></i>Request Leave
+                    </a>
+                    <a href="{% url 'hospital:staff_leave_list' %}" class="btn btn-outline-primary btn-modern">
+                        <i class="bi bi-list-ul me-2"></i>My Leave History
+                    </a>
+                    <a href="{% url 'hospital:activity_calendar' %}" class="btn btn-outline-info btn-modern">
+                        <i class="bi bi-calendar-event me-2"></i>View Activities
+                    </a>
+                    <a href="{% url 'hospital:staff_activities_calendar' %}" class="btn btn-outline-success btn-modern">
+                        <i class="bi bi-calendar3 me-2"></i>My Calendar
+                    </a>
+                </div>
+            </div>
+            
+            <!-- Pending Leave Requests -->
+            {% if pending_leaves %}
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); margin-bottom: 24px;">
+                <h5 class="mb-3">
+                    <i class="bi bi-hourglass-split me-2"></i>Pending Requests
+                    <span class="notification-badge">{{ pending_leaves.count }}</span>
+                </h5>
+                {% for leave in pending_leaves %}
+                <div class="action-card">
+                    <div class="mb-2">
+                        <strong>{{ leave.get_leave_type_display }}</strong>
+                        <span class="badge bg-warning float-end">Pending</span>
+                    </div>
+                    <div style="font-size: 13px; color: #6b7280;">
+                        <i class="bi bi-calendar-range me-1"></i>{{ leave.start_date|date:"M d" }} - {{ leave.end_date|date:"M d, Y" }}
+                    </div>
+                    <div style="font-size: 13px; color: #6b7280;">
+                        <i class="bi bi-clock me-1"></i>{{ leave.days_requested }} day{{ leave.days_requested|pluralize }}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            
+            <!-- Profile Summary -->
+            <div style="background: linear-gradient(135deg, #f3f4f6, white); border-radius: 16px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
+                <h6 class="mb-3"><i class="bi bi-person-badge me-2"></i>My Profile</h6>
+                <div style="font-size: 13px; line-height: 2;">
+                    <div><i class="bi bi-briefcase me-2 text-primary"></i><strong>Position:</strong> {{ staff.get_profession_display }}</div>
+                    <div><i class="bi bi-building me-2 text-success"></i><strong>Department:</strong> {{ staff.department.name }}</div>
+                    {% if staff.employee_id %}
+                        <div><i class="bi bi-badge-tm me-2 text-info"></i><strong>ID:</strong> {{ staff.employee_id }}</div>
+                    {% endif %}
+                    {% if staff.date_of_joining %}
+                        <div><i class="bi bi-calendar-check me-2 text-warning"></i><strong>Joined:</strong> {{ staff.date_of_joining|date:"M d, Y" }}</div>
+                    {% endif %}
+                    {% if last_review %}
+                        <div><i class="bi bi-star me-2 text-danger"></i><strong>Last Review:</strong> {{ last_review.review_date|date:"M d, Y" }}</div>
+                    {% endif %}
+                </div>
+                
+                <div class="d-grid gap-2 mt-3">
+                    <a href="{% url 'hospital:staff_detail' staff.pk %}" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-eye me-2"></i>View Full Profile
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function acknowledgeAlert(alertId) {
+    fetch(`/hms/staff/alert/${alertId}/acknowledge/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}',
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        }
+    });
+}
+
+// Auto-refresh every 5 minutes for real-time updates
+setInterval(function() {
+    location.reload();
+}, 300000);
+</script>
+{% endblock %}

@@ -1,0 +1,262 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="card shadow-sm mb-4" style="background: linear-gradient(135deg, #DC2626 0%, #991B1B 100%); color: white;">
+        <div class="card-body p-4">
+            <h2 class="mb-2">
+                <i class="bi bi-droplet-fill me-2"></i>
+                Blood Bank & Transfusion Management
+            </h2>
+            <p class="mb-0">State-of-the-art blood inventory and transfusion system</p>
+        </div>
+    </div>
+
+    <!-- Statistics -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <p class="text-muted mb-1">Total Inventory</p>
+                            <h2 class="mb-0">{{ stats.total_inventory }}</h2>
+                            <small class="text-muted">Available units</small>
+                        </div>
+                        <div class="bg-primary bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-droplet-fill text-primary" style="font-size: 32px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <p class="text-muted mb-1">Expiring Soon</p>
+                            <h2 class="mb-0 text-warning">{{ stats.expiring_soon }}</h2>
+                            <small class="text-muted">Within 7 days</small>
+                        </div>
+                        <div class="bg-warning bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-exclamation-triangle text-warning" style="font-size: 32px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <p class="text-muted mb-1">Pending Requests</p>
+                            <h2 class="mb-0 text-info">{{ stats.pending_requests }}</h2>
+                            <small class="text-muted">Awaiting processing</small>
+                        </div>
+                        <div class="bg-info bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-clipboard2-pulse text-info" style="font-size: 32px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <p class="text-muted mb-1">Active Donors</p>
+                            <h2 class="mb-0 text-success">{{ stats.active_donors }}</h2>
+                            <small class="text-muted">Eligible donors</small>
+                        </div>
+                        <div class="bg-success bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-people-fill text-success" style="font-size: 32px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <a href="{% url 'hospital:donor_registration' %}" class="card text-decoration-none border-0 shadow-sm hover-lift">
+                <div class="card-body text-center p-4">
+                    <i class="bi bi-person-plus-fill text-success" style="font-size: 48px;"></i>
+                    <h5 class="mt-3 mb-0">Register Donor</h5>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-4">
+            <a href="{% url 'hospital:transfusion_request_create' %}" class="card text-decoration-none border-0 shadow-sm hover-lift">
+                <div class="card-body text-center p-4">
+                    <i class="bi bi-clipboard2-plus-fill text-primary" style="font-size: 48px;"></i>
+                    <h5 class="mt-3 mb-0">Request Transfusion</h5>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-4">
+            <a href="{% url 'hospital:blood_inventory_list' %}" class="card text-decoration-none border-0 shadow-sm hover-lift">
+                <div class="card-body text-center p-4">
+                    <i class="bi bi-box-seam-fill text-info" style="font-size: 48px;"></i>
+                    <h5 class="mt-3 mb-0">View Inventory</h5>
+                </div>
+            </a>
+        </div>
+    </div>
+
+    <!-- Inventory by Blood Group -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header bg-white">
+            <h5 class="mb-0"><i class="bi bi-grid-3x3-gap-fill me-2"></i>Inventory by Blood Group</h5>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                {% for item in inventory_stats %}
+                <div class="col-md-3">
+                    <div class="card border {% if item.status == 'critical' %}border-danger{% elif item.status == 'low' %}border-warning{% else %}border-success{% endif %}">
+                        <div class="card-body text-center">
+                            <h3 class="mb-2">{{ item.group }}</h3>
+                            <h2 class="mb-1 {% if item.status == 'critical' %}text-danger{% elif item.status == 'low' %}text-warning{% else %}text-success{% endif %}">
+                                {{ item.available }}
+                            </h2>
+                            <p class="mb-2 small text-muted">Available units</p>
+                            {% if item.expiring_soon > 0 %}
+                                <span class="badge bg-warning text-dark">{{ item.expiring_soon }} expiring</span>
+                            {% endif %}
+                            {% if item.status == 'critical' %}
+                                <div class="mt-2">
+                                    <span class="badge bg-danger">🔴 CRITICAL</span>
+                                </div>
+                            {% elif item.status == 'low' %}
+                                <div class="mt-2">
+                                    <span class="badge bg-warning text-dark">⚠️ LOW</span>
+                                </div>
+                            {% else %}
+                                <div class="mt-2">
+                                    <span class="badge bg-success">✅ OK</span>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Recent Donations -->
+        <div class="col-md-6">
+            <div class="card shadow-sm">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-droplet-half me-2"></i>Recent Donations</h5>
+                    <a href="{% url 'hospital:donors_list' %}" class="btn btn-sm btn-outline-primary">View All</a>
+                </div>
+                <div class="card-body">
+                    {% if recent_donations %}
+                        <div class="list-group list-group-flush">
+                            {% for donation in recent_donations %}
+                            <div class="list-group-item px-0">
+                                <div class="d-flex justify-content-between">
+                                    <div>
+                                        <strong>{{ donation.donor.full_name }}</strong> ({{ donation.blood_group }})<br>
+                                        <small class="text-muted">{{ donation.donation_number }}</small>
+                                    </div>
+                                    <div class="text-end">
+                                        <span class="badge bg-{% if donation.is_approved %}success{% elif donation.testing_status == 'rejected' %}danger{% else %}warning{% endif %}">
+                                            {% if donation.is_approved %}Approved{% elif donation.testing_status == 'rejected' %}Rejected{% else %}Testing{% endif %}
+                                        </span><br>
+                                        <small class="text-muted">{{ donation.donation_date|date:"M d, H:i" }}</small>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-muted mb-0">No recent donations</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Pending Transfusion Requests -->
+        <div class="col-md-6">
+            <div class="card shadow-sm">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-clipboard2-pulse me-2"></i>Pending Requests</h5>
+                    <a href="{% url 'hospital:transfusion_requests_list' %}" class="btn btn-sm btn-outline-primary">View All</a>
+                </div>
+                <div class="card-body">
+                    {% if pending_requests %}
+                        <div class="list-group list-group-flush">
+                            {% for request in pending_requests %}
+                            <a href="{% url 'hospital:transfusion_request_detail' request.pk %}" class="list-group-item list-group-item-action px-0">
+                                <div class="d-flex justify-content-between">
+                                    <div>
+                                        <strong>{{ request.patient.full_name }}</strong> ({{ request.patient_blood_group }})<br>
+                                        <small class="text-muted">{{ request.component_type }} - {{ request.units_requested }} unit(s)</small>
+                                    </div>
+                                    <div class="text-end">
+                                        <span class="badge bg-{% if request.urgency == 'emergency' %}danger{% elif request.urgency == 'urgent' %}warning{% else %}info{% endif %}">
+                                            {{ request.get_urgency_display }}
+                                        </span><br>
+                                        <small class="text-muted">{{ request.requested_at|date:"M d, H:i" }}</small>
+                                    </div>
+                                </div>
+                            </a>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-muted mb-0">No pending requests</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Today's Activity -->
+    <div class="card shadow-sm mt-4">
+        <div class="card-header bg-white">
+            <h5 class="mb-0"><i class="bi bi-calendar-check me-2"></i>Today's Activity</h5>
+        </div>
+        <div class="card-body">
+            <div class="row text-center">
+                <div class="col-md-6">
+                    <h3 class="mb-1 text-success">{{ stats.donations_today }}</h3>
+                    <p class="text-muted mb-0">Donations Today</p>
+                </div>
+                <div class="col-md-6">
+                    <h3 class="mb-1 text-primary">{{ stats.transfusions_today }}</h3>
+                    <p class="text-muted mb-0">Transfusions Today</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.hover-lift {
+    transition: transform 0.2s;
+}
+.hover-lift:hover {
+    transform: translateY(-5px);
+}
+</style>
+{% endblock %}
+
+
+
+
+
+
+
+
+

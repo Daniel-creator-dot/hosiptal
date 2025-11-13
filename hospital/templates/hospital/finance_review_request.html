@@ -1,0 +1,201 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Finance Review - {{ request.request_number }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .finance-hero {
+        background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+        color: white;
+        border-radius: 24px;
+        padding: 40px;
+        margin-bottom: 32px;
+        box-shadow: 0 20px 60px rgba(16, 185, 129, 0.4);
+    }
+
+    .review-card {
+        background: white;
+        border-radius: 20px;
+        padding: 32px;
+        margin-bottom: 24px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+    }
+
+    .approval-info {
+        background: #EFF6FF;
+        border: 2px solid #BFDBFE;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 24px;
+    }
+
+    .budget-input {
+        width: 100%;
+        padding: 16px;
+        border: 2px solid #E5E7EB;
+        border-radius: 12px;
+        font-size: 24px;
+        font-weight: 700;
+        color: #10B981;
+        text-align: center;
+    }
+
+    .budget-input:focus {
+        outline: none;
+        border-color: #10B981;
+        box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1);
+    }
+
+    .btn-approve {
+        background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+        color: white;
+        border: none;
+        padding: 18px 48px;
+        border-radius: 16px;
+        font-weight: 700;
+        font-size: 18px;
+        cursor: pointer;
+    }
+
+    .btn-reject {
+        background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%);
+        color: white;
+        border: none;
+        padding: 18px 48px;
+        border-radius: 16px;
+        font-weight: 700;
+        font-size: 18px;
+        cursor: pointer;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="finance-hero">
+        <h1>
+            <i class="bi bi-cash-stack me-3"></i>Finance Review
+        </h1>
+        <div style="font-size: 18px; opacity: 0.9;">
+            Budget approval for {{ request.request_number }}
+        </div>
+    </div>
+
+    <div class="review-card">
+        <div class="approval-info">
+            <i class="bi bi-info-circle me-2"></i>
+            <strong>Procurement Approved By:</strong> {{ request.admin_approved_by.user.get_full_name }}
+            on {{ request.admin_approved_at|date:"d M Y, g:i A" }}
+        </div>
+
+        <h4 class="mb-4"><i class="bi bi="box-seam me-2"></i>Request Summary</h4>
+        
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <p><strong>Requesting Store:</strong> {{ request.requested_by_store.name }}</p>
+                <p><strong>Requested By:</strong> {{ request.requested_by.user.get_full_name }}</p>
+                <p><strong>Date:</strong> {{ request.request_date|date:"d M Y" }}</p>
+                <p><strong>Priority:</strong> <span class="badge bg-warning">{{ request.get_priority_display }}</span></p>
+            </div>
+            <div class="col-md-6">
+                <p><strong>Number of Items:</strong> {{ request.items.count }}</p>
+                <p><strong>Estimated Total:</strong> <span style="font-size: 28px; font-weight: 800; color: #10B981;">GHS {{ request.estimated_total|floatformat:2 }}</span></p>
+            </div>
+        </div>
+
+        {% if request.justification %}
+        <div class="alert alert-warning" style="border-radius: 12px;">
+            <strong><i class="bi bi-chat-left-text me-2"></i>Justification:</strong><br>
+            {{ request.justification }}
+        </div>
+        {% endif %}
+
+        <h5 class="mb-3">Items Breakdown:</h5>
+        <table class="table table-striped">
+            <thead class="table-primary">
+                <tr>
+                    <th>#</th>
+                    <th>Item</th>
+                    <th>Qty</th>
+                    <th>Unit Price</th>
+                    <th>Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in request.items.all %}
+                <tr>
+                    <td>{{ forloop.counter }}</td>
+                    <td>{{ item.item_name }}</td>
+                    <td>{{ item.quantity }}</td>
+                    <td>GHS {{ item.estimated_unit_price|floatformat:2 }}</td>
+                    <td>GHS {{ item.line_total|floatformat:2 }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="review-card">
+        <h4 class="mb-4"><i class="bi bi-wallet2 me-2"></i>Budget Approval</h4>
+        
+        <form method="post">
+            {% csrf_token %}
+            
+            <div class="mb-4">
+                <label class="fw-bold mb-2">Approved Budget Amount</label>
+                <input type="number" name="approved_budget" class="budget-input" 
+                       value="{{ request.estimated_total }}" step="0.01" min="0" required>
+                <small class="text-muted d-block mt-2">
+                    <i class="bi bi-info-circle me-1"></i>
+                    This amount will be recorded as an expense in accounting records
+                </small>
+            </div>
+
+            <div class="mb-4">
+                <label class="fw-bold mb-2">Notes (Optional)</label>
+                <textarea name="notes" class="form-control" rows="3" placeholder="Any budget notes or conditions..."></textarea>
+            </div>
+
+            <div class="alert alert-success" style="border-radius: 12px;">
+                <h6><i class="bi bi-check-circle me-2"></i>Upon Approval:</h6>
+                <ul class="mb-0">
+                    <li>Budget will be allocated for this procurement</li>
+                    <li>Expense entry will be created in accounting system</li>
+                    <li>Accounts Payable liability will be recorded</li>
+                    <li>Request will move to procurement for processing</li>
+                </ul>
+            </div>
+
+            <div class="action-buttons" style="display: flex; gap: 16px; justify-content: flex-end;">
+                <button type="submit" name="action" value="reject" class="btn-reject" 
+                        onclick="return confirm('Are you sure you want to REJECT this request? This will cancel the entire procurement.')">
+                    <i class="bi bi-x-circle me-2"></i>Reject Request
+                </button>
+                <button type="submit" name="action" value="approve" class="btn-approve" 
+                        onclick="return confirm('Approve budget and create accounting entry?')">
+                    <i class="bi bi-check-circle me-2"></i>Approve Budget & Create Expense
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

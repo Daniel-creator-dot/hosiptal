@@ -1,0 +1,258 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Receipt Search - Payment Verification{% endblock %}
+{% block page_title %}🔍 Receipt Search & Verification{% endblock %}
+{% block page_subtitle %}World-Class Payment Verification System{% endblock %}
+
+{% block extra_css %}
+<style>
+    .search-container {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 30px;
+    }
+    
+    .search-box {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 40px;
+        border-radius: 20px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        color: white;
+        margin-bottom: 30px;
+    }
+    
+    .search-input {
+        font-size: 18px;
+        padding: 15px 20px;
+        border-radius: 50px;
+        border: none;
+        width: 100%;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    
+    .search-btn {
+        padding: 15px 40px;
+        font-size: 18px;
+        font-weight: 600;
+        border-radius: 50px;
+        border: none;
+        background: white;
+        color: #667eea;
+        margin-top: 15px;
+        width: 100%;
+        transition: all 0.3s;
+    }
+    
+    .search-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+    }
+    
+    .result-card {
+        background: white;
+        border-radius: 15px;
+        padding: 25px;
+        margin-bottom: 20px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+        transition: all 0.3s;
+        border-left: 5px solid #667eea;
+    }
+    
+    .result-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+    }
+    
+    .receipt-number {
+        font-size: 24px;
+        font-weight: 700;
+        color: #667eea;
+        margin-bottom: 10px;
+    }
+    
+    .patient-name {
+        font-size: 18px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 5px;
+    }
+    
+    .badge-verified {
+        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        color: white;
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    
+    .badge-pending {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    
+    .amount-display {
+        font-size: 28px;
+        font-weight: 700;
+        color: #11998e;
+    }
+    
+    .search-methods {
+        background: #f8f9fa;
+        padding: 20px;
+        border-radius: 15px;
+        margin-top: 30px;
+    }
+    
+    .method-badge {
+        display: inline-block;
+        padding: 8px 16px;
+        background: white;
+        border-radius: 20px;
+        margin: 5px;
+        font-size: 13px;
+        border: 2px solid #667eea;
+        color: #667eea;
+        font-weight: 600;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="search-container">
+    <!-- Search Box -->
+    <div class="search-box">
+        <h3 style="margin-bottom: 20px; text-align: center;">
+            <i class="bi bi-search"></i> Search for Receipt
+        </h3>
+        <form method="GET" action="{% url 'hospital:search_receipt' %}">
+            <input type="text" 
+                   name="q" 
+                   class="search-input" 
+                   placeholder="Enter Receipt #, Patient MRN, Name, Phone, or QR Code..." 
+                   value="{{ query }}"
+                   autofocus>
+            <button type="submit" class="search-btn">
+                <i class="bi bi-search"></i> Search
+            </button>
+        </form>
+        
+        <div style="margin-top: 20px; text-align: center; font-size: 14px; opacity: 0.9;">
+            <div class="method-badge">Receipt #: RCP-2025-001234</div>
+            <div class="method-badge">MRN: PMC-2025-001</div>
+            <div class="method-badge">Name: John Smith</div>
+            <div class="method-badge">QR Hash</div>
+        </div>
+    </div>
+    
+    {% if query %}
+    <!-- Search Results -->
+    <div style="background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.08);">
+        <h5 style="margin-bottom: 20px; color: #333;">
+            <i class="bi bi-list-check"></i> Search Results 
+            {% if search_type %}
+            <span class="badge bg-primary">{{ search_type|title }}</span>
+            {% endif %}
+            <span class="badge bg-secondary">{{ count }} found</span>
+        </h5>
+        
+        {% if results %}
+        {% for receipt in results %}
+        <div class="result-card">
+            <div class="row">
+                <div class="col-md-8">
+                    <div class="receipt-number">
+                        <i class="bi bi-receipt"></i> {{ receipt.receipt_number }}
+                    </div>
+                    <div class="patient-name">
+                        <i class="bi bi-person"></i> {{ receipt.patient.full_name }}
+                    </div>
+                    <div style="color: #666; font-size: 14px; margin-top: 5px;">
+                        <i class="bi bi-credit-card"></i> MRN: {{ receipt.patient.mrn }} &nbsp;|&nbsp;
+                        <i class="bi bi-telephone"></i> {{ receipt.patient.phone_number|default:"N/A" }} &nbsp;|&nbsp;
+                        <i class="bi bi-calendar"></i> {{ receipt.created|date:"M d, Y H:i" }}
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <span class="badge bg-info">{{ receipt.get_payment_method_display }}</span>
+                        <span class="badge bg-secondary">{{ receipt.service_type|upper }}</span>
+                        {% if receipt.is_verified %}
+                        <span class="badge-verified"><i class="bi bi-check-circle"></i> Verified</span>
+                        {% else %}
+                        <span class="badge-pending"><i class="bi bi-clock"></i> Pending</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="col-md-4 text-end">
+                    <div class="amount-display">
+                        GHS {{ receipt.amount_paid|floatformat:2 }}
+                    </div>
+                    <div style="margin-top: 15px;">
+                        <a href="{% url 'hospital:receipt_detail' receipt.id %}" class="btn btn-primary btn-sm">
+                            <i class="bi bi-eye"></i> View Details
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="text-center py-5">
+            <i class="bi bi-inbox" style="font-size: 72px; color: #ccc;"></i>
+            <h5 style="color: #666; margin-top: 20px;">No receipts found matching "{{ query }}"</h5>
+            <p style="color: #999;">Try a different search term or check the spelling</p>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+    
+    <!-- Search Methods Guide -->
+    <div class="search-methods">
+        <h6 style="font-weight: 700; margin-bottom: 15px;">
+            <i class="bi bi-info-circle"></i> Search Methods
+        </h6>
+        <div class="row">
+            <div class="col-md-3">
+                <strong>Receipt Number:</strong><br>
+                <code>RCP-2025-001234</code>
+            </div>
+            <div class="col-md-3">
+                <strong>Patient MRN:</strong><br>
+                <code>PMC-2025-001</code>
+            </div>
+            <div class="col-md-3">
+                <strong>Patient Name:</strong><br>
+                <code>John Smith</code>
+            </div>
+            <div class="col-md-3">
+                <strong>QR Code Hash:</strong><br>
+                <code>a1b2c3d4...</code>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quick Actions -->
+    <div class="row mt-4">
+        <div class="col-md-6">
+            <a href="{% url 'hospital:scan_qr_code' %}" class="btn btn-lg btn-success w-100" style="border-radius: 15px;">
+                <i class="bi bi-camera"></i> Scan QR Code
+            </a>
+        </div>
+        <div class="col-md-6">
+            <a href="{% url 'hospital:verification_dashboard' %}" class="btn btn-lg btn-outline-primary w-100" style="border-radius: 15px;">
+                <i class="bi bi-speedometer2"></i> Dashboard
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+

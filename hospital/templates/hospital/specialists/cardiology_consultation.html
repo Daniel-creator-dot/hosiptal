@@ -1,0 +1,223 @@
+{% extends 'hospital/base.html' %}
+{% load humanize static %}
+
+{% block title %}Cardiology Consultation - {{ patient.full_name|default:"Patient" }}{% endblock %}
+
+{% block page_title %}Cardiology Consultation{% endblock %}
+{% block page_subtitle %}{% if patient %}{{ patient.full_name }} (MRN: {{ patient.mrn }}){% endif %}{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    <a href="{% url 'hospital:specialist_dashboard' %}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Specialists
+    </a>
+</div>
+
+<!-- Patient Info -->
+{% if patient %}
+<div class="modern-card mb-4">
+    <div class="row">
+        <div class="col-md-6">
+            <h5><i class="bi bi-person"></i> Patient Information</h5>
+            <table class="table table-sm">
+                <tr>
+                    <th style="width: 140px;">Name:</th>
+                    <td><strong>{{ patient.full_name }}</strong></td>
+                </tr>
+                <tr>
+                    <th>MRN:</th>
+                    <td>{{ patient.mrn }}</td>
+                </tr>
+                <tr>
+                    <th>Age/Gender:</th>
+                    <td>{{ patient.age }} years / {{ patient.get_gender_display }}</td>
+                </tr>
+                <tr>
+                    <th>Phone:</th>
+                    <td>{{ patient.phone_number|default:"—" }}</td>
+                </tr>
+            </table>
+        </div>
+        {% if encounter %}
+        <div class="col-md-6">
+            <h5><i class="bi bi-clipboard-pulse"></i> Encounter Information</h5>
+            <table class="table table-sm">
+                <tr>
+                    <th style="width: 140px;">Type:</th>
+                    <td><span class="badge bg-primary">{{ encounter.get_encounter_type_display }}</span></td>
+                </tr>
+                <tr>
+                    <th>Started:</th>
+                    <td>{{ encounter.started_at|date:"M d, Y H:i" }}</td>
+                </tr>
+                <tr>
+                    <th>Status:</th>
+                    <td><span class="badge bg-success">{{ encounter.get_status_display }}</span></td>
+                </tr>
+                <tr>
+                    <th>Chief Complaint:</th>
+                    <td>{{ encounter.chief_complaint|default:"—" }}</td>
+                </tr>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Cardiology Chart -->
+<div class="modern-card mb-4">
+    <h5 class="mb-4"><i class="bi bi-heart-pulse"></i> Cardiovascular Examination</h5>
+    
+    <form method="post" id="cardiology-form">
+        {% csrf_token %}
+        
+        <!-- Vital Signs -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <h6 class="mb-3">Cardiovascular Vitals</h6>
+                <div class="mb-3">
+                    <label class="form-label">Blood Pressure</label>
+                    <div class="input-group">
+                        <input type="number" name="systolic_bp" class="form-control" 
+                               value="{{ cardiology_chart.systolic_bp|default:'' }}" 
+                               placeholder="Systolic">
+                        <span class="input-group-text">/</span>
+                        <input type="number" name="diastolic_bp" class="form-control" 
+                               value="{{ cardiology_chart.diastolic_bp|default:'' }}" 
+                               placeholder="Diastolic">
+                        <span class="input-group-text">mmHg</span>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Heart Rate</label>
+                    <div class="input-group">
+                        <input type="number" name="heart_rate" class="form-control" 
+                               value="{{ cardiology_chart.heart_rate|default:'' }}" 
+                               placeholder="e.g., 72">
+                        <span class="input-group-text">bpm</span>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Respiratory Rate</label>
+                    <div class="input-group">
+                        <input type="number" name="respiratory_rate" class="form-control" 
+                               value="{{ cardiology_chart.respiratory_rate|default:'' }}" 
+                               placeholder="e.g., 16">
+                        <span class="input-group-text">/min</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <h6 class="mb-3">Clinical Assessment</h6>
+                <div class="mb-3">
+                    <label class="form-label">Heart Rhythm</label>
+                    <select name="rhythm" class="form-select">
+                        <option value="">Select rhythm...</option>
+                        <option value="regular" {% if cardiology_chart.rhythm == 'regular' %}selected{% endif %}>Regular</option>
+                        <option value="irregular" {% if cardiology_chart.rhythm == 'irregular' %}selected{% endif %}>Irregular</option>
+                        <option value="afib" {% if cardiology_chart.rhythm == 'afib' %}selected{% endif %}>Atrial Fibrillation</option>
+                        <option value="aflutter" {% if cardiology_chart.rhythm == 'aflutter' %}selected{% endif %}>Atrial Flutter</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Heart Sounds</label>
+                    <textarea name="heart_sounds" rows="2" class="form-control" 
+                              placeholder="e.g., S1 S2 normal, no murmurs">{{ cardiology_chart.heart_sounds|default:'' }}</textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Peripheral Pulses</label>
+                    <textarea name="peripheral_pulses" rows="2" class="form-control" 
+                              placeholder="e.g., All peripheral pulses palpable and equal">{{ cardiology_chart.peripheral_pulses|default:'' }}</textarea>
+                </div>
+            </div>
+        </div>
+        
+        <hr>
+        
+        <!-- ECG Findings -->
+        <div class="mb-4">
+            <h6 class="mb-3">ECG Findings</h6>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label class="form-label">ECG Date</label>
+                        <input type="date" name="ecg_date" class="form-control" 
+                               value="{{ cardiology_chart.ecg_date|date:'Y-m-d'|default:'' }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">ECG Findings</label>
+                        <textarea name="ecg_findings" rows="4" class="form-control" 
+                                  placeholder="ECG interpretation and findings...">{{ cardiology_chart.ecg_findings|default:'' }}</textarea>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label class="form-label">Other Investigations</label>
+                        <textarea name="other_investigations" rows="4" class="form-control" 
+                                  placeholder="Echo, stress test, angiography results...">{{ cardiology_chart.other_investigations|default:'' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <hr>
+        
+        <!-- Diagnosis & Management -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label class="form-label">Cardiovascular Diagnosis</label>
+                    <textarea name="diagnosis" rows="4" class="form-control" 
+                              placeholder="Cardiac diagnosis...">{{ cardiology_chart.diagnosis|default:'' }}</textarea>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label class="form-label">Treatment Plan</label>
+                    <textarea name="treatment_plan" rows="4" class="form-control" 
+                              placeholder="Medications, interventions, lifestyle modifications...">{{ cardiology_chart.treatment_plan|default:'' }}</textarea>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Follow-up -->
+        <div class="mb-4">
+            <label class="form-label">Follow-up Instructions</label>
+            <textarea name="followup_instructions" rows="3" class="form-control" 
+                      placeholder="Follow-up recommendations...">{{ cardiology_chart.followup_instructions|default:'' }}</textarea>
+        </div>
+        
+        <!-- Notes -->
+        <div class="mb-4">
+            <label class="form-label">Additional Notes</label>
+            <textarea name="notes" rows="3" class="form-control" 
+                      placeholder="Any additional notes...">{{ cardiology_chart.notes|default:'' }}</textarea>
+        </div>
+        
+        <!-- Action Buttons -->
+        <div class="text-end">
+            <button type="submit" name="action" value="save" class="btn btn-primary-modern btn-lg">
+                <i class="bi bi-save"></i> Save Consultation
+            </button>
+            {% if encounter %}
+            <button type="submit" name="action" value="save_complete" class="btn btn-success btn-lg ms-2">
+                <i class="bi bi-check-circle"></i> Save & Complete
+            </button>
+            {% endif %}
+        </div>
+    </form>
+</div>
+
+<!-- Chart History -->
+{% if patient %}
+<div class="modern-card">
+    <h5 class="mb-3"><i class="bi bi-clock-history"></i> Previous Cardiology Consultations</h5>
+    <div class="modern-table">
+        <p class="text-muted">Previous cardiology consultations will appear here.</p>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
+

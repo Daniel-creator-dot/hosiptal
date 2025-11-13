@@ -1,0 +1,165 @@
+{% extends 'hospital/base.html' %}
+{% load static crispy_forms_tags %}
+
+{% block title %}{{ title }} - Procurement{% endblock %}
+{% block page_title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .formset-table {
+        width: 100%;
+        margin-top: 20px;
+    }
+    .formset-table th {
+        background: #f8fafc;
+        padding: 12px;
+        font-weight: 600;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .formset-table td {
+        padding: 12px;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    .formset-row {
+        background: white;
+    }
+    .formset-row:hover {
+        background: #f8fafc;
+    }
+    .add-row {
+        margin-top: 16px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-12">
+        <div class="modern-card">
+            <div class="mb-3">
+                <a href="{% if object %}{% url 'hospital:procurement_request_detail' object.pk %}{% else %}{% url 'hospital:procurement_requests_list' %}{% endif %}" class="btn btn-outline-secondary btn-modern">
+                    <i class="bi bi-arrow-left"></i> Back
+                </a>
+            </div>
+            
+            <form method="post" id="procurementForm">
+                {% csrf_token %}
+                {% crispy form %}
+                
+                <div class="mt-4">
+                    <h5 style="font-weight: 600; margin-bottom: 16px;">Request Items</h5>
+                    <!-- Formset Management Form - Required hidden fields -->
+                    {{ formset.management_form }}
+                    {% if formset.management_form.errors %}
+                        <div class="alert alert-danger">
+                            {{ formset.management_form.errors }}
+                        </div>
+                    {% endif %}
+                    {% if formset.errors %}
+                        <div class="alert alert-danger">
+                            {% for error in formset.errors %}
+                                {{ error }}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                    {% if formset.non_form_errors %}
+                        <div class="alert alert-danger">
+                            {{ formset.non_form_errors }}
+                        </div>
+                    {% endif %}
+                    <div class="table-responsive">
+                        <table class="table formset-table" id="itemTable">
+                            <thead>
+                                <tr>
+                                    <th>Item Name *</th>
+                                    <th>Item Code</th>
+                                    <th>Quantity *</th>
+                                    <th>Unit</th>
+                                    <th>Unit Price *</th>
+                                    <th>Total</th>
+                                    <th>Delete</th>
+                                </tr>
+                            </thead>
+                            <tbody id="itemTableBody">
+                                {% for item_form in formset %}
+                                <tr class="formset-row">
+                                    <td>
+                                        {{ item_form.item_name }}
+                                        {% if item_form.item_name.errors %}
+                                            <div class="text-danger small">{{ item_form.item_name.errors }}</div>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {{ item_form.item_code }}
+                                        <small class="text-muted d-block">Auto-generated if blank</small>
+                                        {% if item_form.item_code.errors %}
+                                            <div class="text-danger small">{{ item_form.item_code.errors }}</div>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {{ item_form.quantity }}
+                                        {% if item_form.quantity.errors %}
+                                            <div class="text-danger small">{{ item_form.quantity.errors }}</div>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ item_form.unit_of_measure }}</td>
+                                    <td>
+                                        {{ item_form.estimated_unit_price }}
+                                        {% if item_form.estimated_unit_price.errors %}
+                                            <div class="text-danger small">{{ item_form.estimated_unit_price.errors }}</div>
+                                        {% endif %}
+                                    </td>
+                                    <td><span class="line-total">GHS 0.00</span></td>
+                                    <td>
+                                        {% if item_form.DELETE %}
+                                            {{ item_form.DELETE }}
+                                        {% endif %}
+                                        {% if item_form.id %}{{ item_form.id }}{% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <div class="mt-4">
+                    <button type="submit" class="btn btn-primary btn-modern">
+                        <i class="bi bi-save"></i> Save Request
+                    </button>
+                    <a href="{% if object %}{% url 'hospital:procurement_request_detail' object.pk %}{% else %}{% url 'hospital:procurement_requests_list' %}{% endif %}" class="btn btn-outline-secondary btn-modern">
+                        Cancel
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Calculate line totals dynamically
+    document.addEventListener('DOMContentLoaded', function() {
+        const table = document.getElementById('itemTableBody');
+        if (table) {
+            table.addEventListener('input', function(e) {
+                if (e.target.type === 'number') {
+                    const row = e.target.closest('tr');
+                    const quantity = parseFloat(row.querySelector('input[name$="-quantity"]')?.value || 0);
+                    const unitPrice = parseFloat(row.querySelector('input[name$="-estimated_unit_price"]')?.value || 0);
+                    const total = quantity * unitPrice;
+                    const totalCell = row.querySelector('.line-total');
+                    if (totalCell) {
+                        totalCell.textContent = 'GHS ' + total.toFixed(2);
+                    }
+                }
+            });
+        }
+    });
+</script>
+{{ formset.media }}
+{% endblock %}
+

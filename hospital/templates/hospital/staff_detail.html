@@ -1,0 +1,167 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Staff Detail - HMS{% endblock %}
+{% block page_title %}{{ staff.user.get_full_name|default:staff.user.username }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Staff Info -->
+    <div class="col-md-4">
+        <div class="modern-card mb-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 style="font-weight: 600; margin: 0;">Staff Information</h6>
+                <a href="{% url 'hospital:staff_edit' staff.pk %}" class="btn btn-sm btn-outline-primary">Edit</a>
+            </div>
+            <p><strong>Name:</strong> {{ staff.user.get_full_name|default:staff.user.username }}</p>
+            <p><strong>Employee ID:</strong> {{ staff.employee_id|default:"-" }}</p>
+            <p><strong>Profession:</strong> {{ staff.get_profession_display|default:"-" }}</p>
+            <p><strong>Email:</strong> {{ staff.user.email|default:"-" }}</p>
+            <p><strong>Department:</strong> {{ staff.department.name|default:"-" }}</p>
+            {% if staff.date_of_birth %}
+            <p><strong>Date of Birth:</strong> {{ staff.date_of_birth|date:"M d, Y" }} (Age: {{ staff.age|default:"-" }})</p>
+            {% endif %}
+            {% if staff.date_of_joining %}
+            <p><strong>Date of Joining:</strong> {{ staff.date_of_joining|date:"M d, Y" }} ({{ staff.years_of_service|default:"0" }} years of service)</p>
+            {% endif %}
+            <p><strong>Role/Groups:</strong> 
+                {% for group in staff.user.groups.all %}
+                <span class="badge-modern badge-info">{{ group.name }}</span>
+                {% empty %}
+                No roles assigned
+                {% endfor %}
+            </p>
+            <p><strong>Phone:</strong> {{ staff.phone_number|default:"-" }}</p>
+            <p><strong>Status:</strong> 
+                {% if staff.is_active %}
+                <span class="badge-modern badge-success">Active</span>
+                {% else %}
+                <span class="badge-modern badge-secondary">Inactive</span>
+                {% endif %}
+            </p>
+        </div>
+        
+        <!-- Contract Info -->
+        {% if contract %}
+        <div class="modern-card mb-4">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Contract</h6>
+            <p><strong>Type:</strong> {{ contract.get_contract_type_display }}</p>
+            <p><strong>Job Title:</strong> {{ contract.job_title }}</p>
+            <p><strong>Basic Salary:</strong> GHS {{ contract.basic_salary|floatformat:2|intcomma }}</p>
+            <p><strong>Allowances:</strong> GHS {{ contract.allowances|floatformat:2|intcomma }}</p>
+            <p><strong>Total Monthly:</strong> <strong style="color: var(--success);">GHS {{ contract.total_monthly_salary|floatformat:2|intcomma }}</strong></p>
+            <p><strong>Start Date:</strong> {{ contract.start_date|date:"M d, Y" }}</p>
+            {% if contract.end_date %}
+            <p><strong>End Date:</strong> {{ contract.end_date|date:"M d, Y" }}</p>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Leave Balance -->
+        {% if leave_balance %}
+        <div class="modern-card mb-4">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Leave Balance</h6>
+            <p><strong>Annual:</strong> {{ leave_balance.annual_leave }} days</p>
+            <p><strong>Sick:</strong> {{ leave_balance.sick_leave }} days</p>
+            <p><strong>Casual:</strong> {{ leave_balance.casual_leave }} days</p>
+            <p><strong>Comp-Off:</strong> {{ leave_balance.comp_off }} days</p>
+        </div>
+        {% endif %}
+        
+        <!-- Quick Actions -->
+        <div class="modern-card">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Quick Actions</h6>
+            <div class="d-grid gap-2">
+                {% if not contract %}
+                <a href="{% url 'hospital:staff_contract_create' staff.pk %}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-file-earmark-text"></i> Create Contract
+                </a>
+                {% endif %}
+                <a href="{% url 'hospital:staff_document_upload' staff.pk %}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-upload"></i> Upload Document
+                </a>
+                <a href="{% url 'hospital:performance_review_create' staff.pk %}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-star"></i> Performance Review
+                </a>
+                <a href="{% url 'hospital:training_record_create' staff.pk %}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-mortarboard"></i> Add Training
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Payroll History -->
+    <div class="col-md-8">
+        <div class="modern-card mb-4">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Payroll History</h6>
+            {% if payrolls %}
+            <div class="table-responsive">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Period</th>
+                            <th class="text-end">Earnings</th>
+                            <th class="text-end">Deductions</th>
+                            <th class="text-end">Net Pay</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for payroll in payrolls %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'hospital:payroll_detail' payroll.pk %}">{{ payroll.period.period_name }}</a>
+                            </td>
+                            <td class="text-end">GHS {{ payroll.total_earnings|floatformat:2 }}</td>
+                            <td class="text-end">GHS {{ payroll.total_deductions|floatformat:2 }}</td>
+                            <td class="text-end"><strong>GHS {{ payroll.net_pay|floatformat:2|intcomma }}</strong></td>
+                            <td>
+                                {% if payroll.payment_status == 'paid' %}
+                                <span class="badge-modern badge-success">Paid</span>
+                                {% elif payroll.payment_status == 'processed' %}
+                                <span class="badge-modern badge-info">Processed</span>
+                                {% else %}
+                                <span class="badge-modern badge-warning">Pending</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted text-center py-4">No payroll records</p>
+            {% endif %}
+        </div>
+        
+        <!-- Performance Reviews -->
+        {% if performance_reviews %}
+        <div class="modern-card mb-4">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Performance Reviews</h6>
+            {% for review in performance_reviews %}
+            <div style="padding: 12px; background: var(--light); border-radius: 8px; margin-bottom: 8px;">
+                <strong>{{ review.review_date|date:"M d, Y" }}</strong> - 
+                <span class="badge-modern badge-primary">{{ review.get_overall_rating_display }}</span>
+                <p style="margin: 8px 0 0 0; font-size: 13px;">{{ review.description|truncatewords:20 }}</p>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        
+        <!-- Training Records -->
+        {% if training_records %}
+        <div class="modern-card">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Training Records</h6>
+            {% for training in training_records %}
+            <div style="padding: 12px; background: var(--light); border-radius: 8px; margin-bottom: 8px;">
+                <strong>{{ training.training_title }}</strong><br>
+                <small>{{ training.start_date|date:"M d, Y" }} - {{ training.end_date|date:"M d, Y" }}</small>
+                <span class="badge-modern badge-info">{{ training.get_status_display }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+

@@ -1,0 +1,131 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Handover Sheets - HMS{% endblock %}
+{% block page_title %}Handover Sheets{% endblock %}
+{% block page_subtitle %}Nursing shift handover documentation{% endblock %}
+
+{% block content %}
+<!-- Filters -->
+<div class="modern-card mb-4">
+    <form method="get" class="row g-3">
+        <div class="col-md-4">
+            <label class="form-label">Ward</label>
+            <select name="ward" class="form-select form-control-modern">
+                <option value="">All Wards</option>
+                {% for ward in wards %}
+                <option value="{{ ward.id }}" {% if request.GET.ward == ward.id|stringformat:"s" %}selected{% endif %}>
+                    {{ ward.name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Shift Type</label>
+            <select name="shift_type" class="form-select form-control-modern">
+                <option value="">All Shifts</option>
+                <option value="morning" {% if request.GET.shift_type == 'morning' %}selected{% endif %}>Morning</option>
+                <option value="afternoon" {% if request.GET.shift_type == 'afternoon' %}selected{% endif %}>Afternoon</option>
+                <option value="night" {% if request.GET.shift_type == 'night' %}selected{% endif %}>Night</option>
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">&nbsp;</label>
+            <button type="submit" class="btn btn-primary-modern btn-modern w-100">
+                <i class="bi bi-filter"></i> Filter
+            </button>
+        </div>
+    </form>
+</div>
+
+<!-- Handover Sheets List -->
+{% if handovers %}
+    {% for handover in handovers %}
+    <div class="modern-card mb-3">
+        <div class="d-flex justify-content-between align-items-start mb-3" style="border-bottom: 2px solid var(--border); padding-bottom: 12px;">
+            <div>
+                <h5 style="font-weight: 600; margin: 0;">
+                    {{ handover.ward.name }} - {{ handover.get_shift_type_display }} Shift
+                </h5>
+                <div style="font-size: 13px; color: var(--gray); margin-top: 4px;">
+                    <i class="bi bi-calendar"></i> {{ handover.date|date:"M d, Y" }} | 
+                    <i class="bi bi-clock"></i> {{ handover.shift_start|time:"H:i" }} - {{ handover.shift_end|time:"H:i" }}
+                    {% if handover.created_by %}
+                    | <i class="bi bi-person"></i> {{ handover.created_by.user.get_full_name|default:"-" }}
+                    {% endif %}
+                </div>
+            </div>
+            <span class="badge-modern badge-{% if handover.status == 'completed' %}success{% else %}warning{% endif %}">
+                {{ handover.get_status_display }}
+            </span>
+        </div>
+        
+        <div class="row g-3">
+            <div class="col-md-4">
+                <strong>Patients Handed Over:</strong> {{ handover.patients_handed_over|default:"-" }}
+            </div>
+            <div class="col-md-4">
+                <strong>Admissions:</strong> {{ handover.new_admissions|default:"-" }}
+            </div>
+            <div class="col-md-4">
+                <strong>Discharges:</strong> {{ handover.discharges|default:"-" }}
+            </div>
+        </div>
+        
+        {% if handover.critical_issues %}
+        <div class="mt-3" style="background: #fee2e2; padding: 12px; border-radius: 8px; border-left: 4px solid #dc2626;">
+            <strong style="color: #dc2626;">Critical Issues:</strong>
+            <p style="margin: 8px 0 0 0; white-space: pre-wrap;">{{ handover.critical_issues }}</p>
+        </div>
+        {% endif %}
+        
+        {% if handover.notes %}
+        <div class="mt-3">
+            <strong>Notes:</strong>
+            <p style="margin: 8px 0 0 0; white-space: pre-wrap; color: var(--gray);">{{ handover.notes|truncatewords:50 }}</p>
+        </div>
+        {% endif %}
+        
+        <div class="mt-3">
+            <a href="#" class="btn btn-sm btn-outline-primary">View Details</a>
+            {% if handover.status != 'completed' %}
+            <button class="btn btn-sm btn-primary-modern">Complete</button>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+    
+    <!-- Pagination -->
+    {% if handovers.has_other_pages %}
+    <nav aria-label="Page navigation">
+        <ul class="pagination justify-content-center">
+            {% if handovers.has_previous %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ handovers.previous_page_number }}{% if request.GET.ward %}&ward={{ request.GET.ward }}{% endif %}{% if request.GET.shift_type %}&shift_type={{ request.GET.shift_type }}{% endif %}">Previous</a>
+            </li>
+            {% endif %}
+            
+            {% for num in handovers.paginator.page_range %}
+            {% if handovers.number == num %}
+            <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+            {% else %}
+            <li class="page-item"><a class="page-link" href="?page={{ num }}{% if request.GET.ward %}&ward={{ request.GET.ward }}{% endif %}{% if request.GET.shift_type %}&shift_type={{ request.GET.shift_type }}{% endif %}">{{ num }}</a></li>
+            {% endif %}
+            {% endfor %}
+            
+            {% if handovers.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ handovers.next_page_number }}{% if request.GET.ward %}&ward={{ request.GET.ward }}{% endif %}{% if request.GET.shift_type %}&shift_type={{ request.GET.shift_type }}{% endif %}">Next</a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+{% else %}
+<div class="modern-card text-center py-5">
+    <p class="text-muted">No handover sheets found</p>
+    <a href="/admin/hospital/handoversheet/add/" class="btn btn-primary-modern">Create Handover Sheet</a>
+</div>
+{% endif %}
+{% endblock %}
+

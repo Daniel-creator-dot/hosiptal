@@ -1,0 +1,364 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Hospital Settings - HMS{% endblock %}
+{% block page_title %}⚙️ Hospital Settings{% endblock %}
+{% block page_subtitle %}Configure hospital information, logo, and department details{% endblock %}
+
+{% block extra_css %}
+<style>
+    .settings-card {
+        background: white;
+        border-radius: 16px;
+        padding: 30px;
+        margin-bottom: 24px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    }
+
+    .settings-section-title {
+        font-size: 20px;
+        font-weight: 700;
+        color: #333;
+        margin-bottom: 20px;
+        padding-bottom: 12px;
+        border-bottom: 2px solid #e0e0e0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .settings-section-title i {
+        color: #2196F3;
+    }
+
+    .logo-preview-box {
+        background: #f5f5f5;
+        border: 2px dashed #ddd;
+        border-radius: 12px;
+        padding: 30px;
+        text-align: center;
+        margin-bottom: 20px;
+    }
+
+    .logo-preview-box img {
+        max-width: 300px;
+        max-height: 300px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    .logo-placeholder {
+        font-size: 80px;
+        color: #ddd;
+        margin-bottom: 16px;
+    }
+
+    .file-upload-label {
+        display: inline-block;
+        padding: 12px 24px;
+        background: #2196F3;
+        color: white;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.3s;
+        font-weight: 600;
+    }
+
+    .file-upload-label:hover {
+        background: #1976D2;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(33, 150, 243, 0.3);
+    }
+
+    .color-picker-preview {
+        width: 50px;
+        height: 50px;
+        border-radius: 8px;
+        border: 2px solid #ddd;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+
+    .color-picker-preview:hover {
+        transform: scale(1.1);
+    }
+
+    .form-control-modern {
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 12px 16px;
+        transition: all 0.3s;
+    }
+
+    .form-control-modern:focus {
+        border-color: #2196F3;
+        box-shadow: 0 0 0 0.2rem rgba(33, 150, 243, 0.15);
+    }
+
+    .save-button {
+        background: linear-gradient(135deg, #4CAF50 0%, #388E3C 100%);
+        color: white;
+        padding: 14px 32px;
+        border: none;
+        border-radius: 8px;
+        font-size: 16px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.3s;
+        box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+    }
+
+    .save-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(76, 175, 80, 0.4);
+    }
+
+    .preview-button {
+        background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+        color: white;
+        padding: 14px 32px;
+        border: none;
+        border-radius: 8px;
+        font-size: 16px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.3s;
+        box-shadow: 0 4px 12px rgba(33, 150, 243, 0.3);
+        text-decoration: none;
+        display: inline-block;
+    }
+
+    .preview-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(33, 150, 243, 0.4);
+        color: white;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    
+    <!-- Logo & Branding -->
+    <div class="settings-card">
+        <div class="settings-section-title">
+            <i class="bi bi-image"></i>
+            Logo & Branding
+        </div>
+        
+        <div class="logo-preview-box">
+            {% if settings.logo %}
+                <img src="{{ settings.logo.url }}" alt="Hospital Logo" id="logoPreview">
+                <p class="mt-3 text-muted">Current Logo</p>
+            {% else %}
+                <div class="logo-placeholder">
+                    <i class="bi bi-hospital"></i>
+                </div>
+                <p class="text-muted">No logo uploaded yet</p>
+            {% endif %}
+        </div>
+        
+        <div class="row g-3">
+            <div class="col-md-12">
+                <label class="form-label fw-bold">Upload Logo</label>
+                <input type="file" name="logo" id="logoInput" accept="image/*" class="d-none" onchange="previewLogo(this)">
+                <label for="logoInput" class="file-upload-label">
+                    <i class="bi bi-cloud-upload me-2"></i>Choose Logo Image
+                </label>
+                <small class="d-block mt-2 text-muted">Recommended: PNG or JPG, max 2MB, square format works best</small>
+            </div>
+            
+            <div class="col-md-3">
+                <label class="form-label fw-bold">Logo Width (px)</label>
+                <input type="number" name="logo_width" value="{{ settings.logo_width }}" class="form-control form-control-modern" min="50" max="500">
+            </div>
+            
+            <div class="col-md-3">
+                <label class="form-label fw-bold">Logo Height (px)</label>
+                <input type="number" name="logo_height" value="{{ settings.logo_height }}" class="form-control form-control-modern" min="50" max="500">
+            </div>
+            
+            <div class="col-md-6">
+                <label class="form-label fw-bold">Report Header Color</label>
+                <div class="d-flex gap-3 align-items-center">
+                    <input type="color" name="report_header_color" value="{{ settings.report_header_color }}" class="color-picker-preview">
+                    <input type="text" name="report_header_color_text" value="{{ settings.report_header_color }}" class="form-control form-control-modern" readonly>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Hospital Information -->
+    <div class="settings-card">
+        <div class="settings-section-title">
+            <i class="bi bi-building"></i>
+            Hospital Information
+        </div>
+        
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label fw-bold">Hospital Name</label>
+                <input type="text" name="hospital_name" value="{{ settings.hospital_name }}" class="form-control form-control-modern" required>
+            </div>
+            
+            <div class="col-md-6">
+                <label class="form-label fw-bold">Tagline</label>
+                <input type="text" name="hospital_tagline" value="{{ settings.hospital_tagline }}" class="form-control form-control-modern" placeholder="e.g., Quality Healthcare for All">
+            </div>
+            
+            <div class="col-md-12">
+                <label class="form-label fw-bold">Address</label>
+                <textarea name="address" class="form-control form-control-modern" rows="2">{{ settings.address }}</textarea>
+            </div>
+            
+            <div class="col-md-3">
+                <label class="form-label fw-bold">City</label>
+                <input type="text" name="city" value="{{ settings.city }}" class="form-control form-control-modern">
+            </div>
+            
+            <div class="col-md-3">
+                <label class="form-label fw-bold">State/Region</label>
+                <input type="text" name="state" value="{{ settings.state }}" class="form-control form-control-modern">
+            </div>
+            
+            <div class="col-md-3">
+                <label class="form-label fw-bold">Postal Code</label>
+                <input type="text" name="postal_code" value="{{ settings.postal_code }}" class="form-control form-control-modern">
+            </div>
+            
+            <div class="col-md-3">
+                <label class="form-label fw-bold">Country</label>
+                <input type="text" name="country" value="{{ settings.country }}" class="form-control form-control-modern">
+            </div>
+            
+            <div class="col-md-4">
+                <label class="form-label fw-bold">Phone</label>
+                <input type="tel" name="phone" value="{{ settings.phone }}" class="form-control form-control-modern" placeholder="+233 123 456 789">
+            </div>
+            
+            <div class="col-md-4">
+                <label class="form-label fw-bold">Email</label>
+                <input type="email" name="email" value="{{ settings.email }}" class="form-control form-control-modern" placeholder="info@hospital.com">
+            </div>
+            
+            <div class="col-md-4">
+                <label class="form-label fw-bold">Website</label>
+                <input type="url" name="website" value="{{ settings.website }}" class="form-control form-control-modern" placeholder="https://www.hospital.com">
+            </div>
+        </div>
+    </div>
+    
+    <!-- Laboratory Department -->
+    <div class="settings-card">
+        <div class="settings-section-title">
+            <i class="bi bi-flask"></i>
+            Laboratory Department
+        </div>
+        
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label fw-bold">Department Name</label>
+                <input type="text" name="lab_department_name" value="{{ settings.lab_department_name }}" class="form-control form-control-modern">
+            </div>
+            
+            <div class="col-md-6">
+                <label class="form-label fw-bold">Accreditation</label>
+                <input type="text" name="lab_accreditation" value="{{ settings.lab_accreditation }}" class="form-control form-control-modern" placeholder="e.g., ISO 15189:2012">
+            </div>
+            
+            <div class="col-md-4">
+                <label class="form-label fw-bold">Lab Phone</label>
+                <input type="tel" name="lab_phone" value="{{ settings.lab_phone }}" class="form-control form-control-modern">
+            </div>
+            
+            <div class="col-md-4">
+                <label class="form-label fw-bold">Lab Email</label>
+                <input type="email" name="lab_email" value="{{ settings.lab_email }}" class="form-control form-control-modern">
+            </div>
+            
+            <div class="col-md-4">
+                <label class="form-label fw-bold">License Number</label>
+                <input type="text" name="lab_license_number" value="{{ settings.lab_license_number }}" class="form-control form-control-modern">
+            </div>
+        </div>
+    </div>
+    
+    <!-- Report Footer -->
+    <div class="settings-card">
+        <div class="settings-section-title">
+            <i class="bi bi-file-text"></i>
+            Report Footer
+        </div>
+        
+        <div class="row g-3">
+            <div class="col-md-12">
+                <label class="form-label fw-bold">Footer Text</label>
+                <textarea name="report_footer_text" class="form-control form-control-modern" rows="3" placeholder="Text that appears at the bottom of printed reports...">{{ settings.report_footer_text }}</textarea>
+                <small class="text-muted">This text will appear at the bottom of all printed lab reports</small>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Action Buttons -->
+    <div class="d-flex gap-3 mb-5">
+        <button type="submit" class="save-button">
+            <i class="bi bi-check-circle me-2"></i>Save Settings
+        </button>
+        
+        {% if settings.logo %}
+        <a href="/admin/hospital/hospitalsettings/1/change/" target="_blank" class="preview-button">
+            <i class="bi bi-eye me-2"></i>View in Admin
+        </a>
+        {% endif %}
+    </div>
+</form>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Preview logo before upload
+function previewLogo(input) {
+    if (input.files && input.files[0]) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const preview = document.getElementById('logoPreview');
+            if (preview) {
+                preview.src = e.target.result;
+            } else {
+                const box = document.querySelector('.logo-preview-box');
+                box.innerHTML = `
+                    <img src="GHS {e.target.result}" alt="Logo Preview" id="logoPreview" style="max-width: 300px; max-height: 300px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+                    <p class="mt-3 text-muted">New Logo Preview</p>
+                `;
+            }
+        };
+        reader.readAsDataURL(input.files[0]);
+    }
+}
+
+// Sync color picker with text input
+document.querySelector('input[type="color"]').addEventListener('change', function() {
+    document.querySelector('input[name="report_header_color_text"]').value = this.value;
+});
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

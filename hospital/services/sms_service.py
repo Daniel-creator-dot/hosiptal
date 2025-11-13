@@ -1,0 +1,513 @@
+"""
+SMS Service Integration
+Handles SMS sending via API providers (Hubtel, Twilio, etc.)
+"""
+import requests
+import json
+from django.conf import settings
+from django.utils import timezone
+from ..models_advanced import SMSLog
+
+
+class SMSService:
+    """SMS sending service"""
+    
+    def __init__(self):
+        # SMS Notify GH API configuration
+        self.api_key = getattr(settings, 'SMS_API_KEY', '3316dce1-fd2a-4b4e-b6b2-60b30be375bb')
+        self.sender_id = getattr(settings, 'SMS_SENDER_ID', 'PrimeCare')
+        self.base_url = getattr(settings, 'SMS_API_URL', 'https://sms.smsnotifygh.com/smsapi')
+    
+    def send_sms(self, phone_number, message, message_type='general', recipient_name='', 
+                 related_object_id=None, related_object_type=''):
+        """
+        Send SMS message
+        
+        Args:
+            phone_number: Recipient phone number (format: +233XXXXXXXXX)
+            message: SMS message text
+            message_type: Type of message (appointment_reminder, result_ready, etc.)
+            recipient_name: Name of recipient
+            related_object_id: Related object UUID
+            related_object_type: Related object type
+            
+        Returns:
+            SMSLog instance
+        """
+        # Create SMS log entry
+        sms_log = SMSLog.objects.create(
+            recipient_phone=phone_number,
+            recipient_name=recipient_name,
+            message=message,
+            message_type=message_type,
+            status='pending',
+            related_object_id=related_object_id,
+            related_object_type=related_object_type
+        )
+        
+        try:
+            # Validate phone number
+            if not phone_number or not phone_number.strip():
+                sms_log.status = 'failed'
+                sms_log.error_message = "Phone number is required"
+                sms_log.save()
+                return sms_log
+            
+            # Format phone number for Ghana (233XXXXXXXXX format)
+            phone = phone_number.replace('+', '').replace(' ', '').replace('-', '').replace('(', '').replace(')', '').strip()
+            
+            # Remove leading zeros or country code prefix
+            if phone.startswith('0'):
+                phone = '233' + phone[1:]
+            elif not phone.startswith('233'):
+                if phone.startswith('00233'):
+                    phone = phone[2:]  # Remove 00 prefix
+                elif len(phone) == 9:  # Assume it's a local number without country code
+                    phone = '233' + phone
+                elif not phone.startswith('233'):
+                    phone = '233' + phone
+            
+            # Validate final phone number format
+            if not phone.startswith('233') or len(phone) != 12:
+                sms_log.status = 'failed'
+                sms_log.error_message = f"Invalid phone number format: {phone_number} (formatted: {phone})"
+                sms_log.save()
+                return sms_log
+            
+            # Prepare request payload for SMS Notify GH API
+            payload = {
+                'key': self.api_key,
+                'to': phone,
+                'msg': message,
+                'sender_id': self.sender_id
+            }
+            
+            # Send SMS via API (GET request for SMS Notify GH)
+            response = requests.get(
+                self.base_url,
+                params=payload,
+                timeout=30
+            )
+            
+            # Handle response - SMS Notify GH returns JSON format:
+            # {"success":true,"code":1000,"message":"message submitted successfully","data":{...}}
+            # OR plain text status codes: "1701" = Success, "1702" = Invalid URL, etc.
+            response_text = response.text.strip()
+            response_lower = response_text.lower()
+            
+            # Check for success indicators
+            if response.status_code == 200:
+                # Try to parse as JSON first (new API format)
+                try:
+                    import json
+                    response_json = json.loads(response_text)
+                    
+                    # Check for JSON success response
+                    if response_json.get('success') == True or response_json.get('code') == 1000:
+                        sms_log.status = 'sent'
+                        sms_log.sent_at = timezone.now()
+                        sms_log.provider_response = {
+                            'status': 'success',
+                            'status_code': response.status_code,
+                            'response': response_text,
+                            'parsed_response': response_json,
+                            'phone_sent_to': phone
+                        }
+                    else:
+                        # JSON response but not successful
+                        error_code = response_json.get('code', 'unknown')
+                        error_msg = response_json.get('message', response_text)
+                        sms_log.status = 'failed'
+                        sms_log.error_message = f"API Error (code {error_code}): {error_msg}"
+                        sms_log.provider_response = {
+                            'status': 'failed',
+                            'status_code': response.status_code,
+                            'response': response_text,
+                            'parsed_response': response_json,
+                            'phone_attempted': phone
+                        }
+                except (json.JSONDecodeError, ValueError):
+                    # Not JSON - try old format (plain text status codes)
+                    # Success codes: "1701" or contains "success"/"sent"
+                    if response_text.startswith('1701') or 'success' in response_lower or 'sent' in response_lower:
+                        sms_log.status = 'sent'
+                        sms_log.sent_at = timezone.now()
+                        sms_log.provider_response = {
+                            'status': 'success',
+                            'status_code': response.status_code,
+                            'response': response_text,
+                            'phone_sent_to': phone
+                        }
+                    else:
+                        # Error codes (old format)
+                        sms_log.status = 'failed'
+                        error_map = {
+                            '1702': 'Invalid URL',
+                            '1703': 'Invalid API key',
+                            '1704': 'Invalid phone number',
+                            '1705': 'Invalid message',
+                            '1706': 'Invalid sender ID',
+                            '1707': 'Insufficient balance',
+                            '1708': 'Invalid credentials'
+                        }
+                        error_code = response_text[:4] if len(response_text) >= 4 else 'unknown'
+                        error_msg = error_map.get(error_code, response_text)
+                        sms_log.error_message = f"API Error ({error_code}): {error_msg}"
+                        sms_log.provider_response = {
+                            'status': 'failed',
+                            'status_code': response.status_code,
+                            'response': response_text,
+                            'phone_attempted': phone
+                        }
+            else:
+                sms_log.status = 'failed'
+                sms_log.error_message = f"HTTP {response.status_code}: {response.text}"
+                sms_log.provider_response = {
+                    'status': 'failed',
+                    'status_code': response.status_code,
+                    'response': response.text,
+                    'phone_attempted': phone
+                }
+            
+        except requests.exceptions.Timeout:
+            sms_log.status = 'failed'
+            sms_log.error_message = "Request timeout - API did not respond within 30 seconds"
+        except requests.exceptions.ConnectionError as e:
+            sms_log.status = 'failed'
+            sms_log.error_message = f"Connection error: Unable to reach SMS API server"
+        except requests.exceptions.RequestException as e:
+            sms_log.status = 'failed'
+            sms_log.error_message = f"Request error: {str(e)}"
+        except Exception as e:
+            sms_log.status = 'failed'
+            sms_log.error_message = f"Unexpected error: {str(e)}"
+            import traceback
+            sms_log.provider_response = {'error_traceback': traceback.format_exc()}
+        
+        sms_log.save()
+        return sms_log
+    
+    
+    def send_appointment_reminder(self, appointment):
+        """Send appointment reminder SMS"""
+        patient = appointment.patient
+        provider = appointment.provider
+        date_str = appointment.appointment_date.strftime('%d/%m/%Y at %I:%M %p')
+        
+        message = (
+            f"Dear {patient.first_name},\n\n"
+            f"Your appointment with Dr. {provider.user.get_full_name()}\n"
+            f"is scheduled for {date_str}.\n\n"
+            f"Please arrive 15 minutes early.\n\n"
+            f"Reply STOP to opt out."
+        )
+        
+        return self.send_sms(
+            phone_number=patient.phone_number,
+            message=message,
+            message_type='appointment_reminder',
+            recipient_name=patient.full_name,
+            related_object_id=appointment.id,
+            related_object_type='Appointment'
+        )
+    
+    def send_lab_result_ready(self, lab_result):
+        """Send lab result ready notification"""
+        try:
+            patient = lab_result.order.encounter.patient
+            test_name = lab_result.test.name
+            
+            # Check if patient has phone number
+            if not patient.phone_number or not patient.phone_number.strip():
+                # Create a failed log entry
+                sms_log = SMSLog.objects.create(
+                    recipient_phone='',
+                    recipient_name=patient.full_name,
+                    message='',
+                    message_type='lab_result_ready',
+                    status='failed',
+                    error_message=f"Patient {patient.full_name} does not have a phone number",
+                    related_object_id=lab_result.id,
+                    related_object_type='LabResult'
+                )
+                return sms_log
+            
+            # Build message with result summary if available
+            message = f"Dear {patient.first_name},\n\n"
+            message += f"Your lab test result for {test_name} is ready.\n"
+            
+            # Add result summary if completed
+            if lab_result.status == 'completed' and lab_result.value:
+                result_text = f"Result: {lab_result.value}"
+                if lab_result.units:
+                    result_text += f" {lab_result.units}"
+                if lab_result.range_low and lab_result.range_high:
+                    result_text += f" (Normal range: {lab_result.range_low}-{lab_result.range_high})"
+                if lab_result.is_abnormal:
+                    result_text += " - ABNORMAL"
+                message += f"{result_text}\n"
+                
+                # Add verification info if available
+                if lab_result.verified_by:
+                    message += f"Verified by: Dr. {lab_result.verified_by.user.get_full_name or lab_result.verified_by.user.username}\n"
+                if lab_result.verified_at:
+                    message += f"Verified on: {lab_result.verified_at.strftime('%B %d, %Y at %I:%M %p')}\n"
+            
+            # Add reference number
+            message += f"Reference: {lab_result.order.encounter.patient.mrn}\n"
+            
+            message += "\nPlease visit the hospital or check your patient portal for full details.\n\n"
+            message += "Thank you,\nPrimeCare Hospital"
+            
+            return self.send_sms(
+                phone_number=patient.phone_number,
+                message=message,
+                message_type='lab_result_ready',
+                recipient_name=patient.full_name,
+                related_object_id=lab_result.id,
+                related_object_type='LabResult'
+            )
+        except AttributeError as e:
+            # Handle missing relationships
+            sms_log = SMSLog.objects.create(
+                recipient_phone='',
+                recipient_name='',
+                message='',
+                message_type='lab_result_ready',
+                status='failed',
+                error_message=f"Missing relationship: {str(e)}",
+                related_object_id=lab_result.id if hasattr(lab_result, 'id') else None,
+                related_object_type='LabResult'
+            )
+            return sms_log
+    
+    def send_payment_reminder(self, invoice):
+        """Send payment reminder SMS"""
+        patient = invoice.patient
+        amount = invoice.balance
+        
+        message = (
+            f"Dear {patient.first_name},\n\n"
+            f"You have an outstanding balance of GHS {amount:,.2f}\n"
+            f"on invoice {invoice.invoice_number}.\n"
+            f"Please settle at your earliest convenience.\n\n"
+            f"Thank you."
+        )
+        
+        return self.send_sms(
+            phone_number=patient.phone_number,
+            message=message,
+            message_type='payment_reminder',
+            recipient_name=patient.full_name,
+            related_object_id=invoice.id,
+            related_object_type='Invoice'
+        )
+    
+    def send_leave_approved(self, leave_request):
+        """Send leave approval notification SMS"""
+        staff = leave_request.staff
+        staff_name = staff.user.first_name or staff.user.get_full_name()
+        
+        # Get phone number from staff - check phone_number field first
+        phone_number = getattr(staff, 'phone_number', None) or getattr(staff, 'phone', None)
+        
+        # Also try user's username as phone (some systems use phone as username)
+        if not phone_number and staff.user.username and staff.user.username.replace('+', '').replace(' ', '').isdigit():
+            phone_number = staff.user.username
+        
+        if not phone_number:
+            # Create failed log
+            sms_log = SMSLog.objects.create(
+                recipient_phone='',
+                recipient_name=staff.user.get_full_name(),
+                message='',
+                message_type='leave_approved',
+                status='failed',
+                error_message=f"Staff {staff.user.get_full_name()} does not have a phone number. Checked: phone_number={getattr(staff, 'phone_number', 'N/A')}, phone={getattr(staff, 'phone', 'N/A')}, username={staff.user.username}",
+                related_object_id=leave_request.id,
+                related_object_type='LeaveRequest'
+            )
+            return sms_log
+        
+        message = (
+            f"Hello {staff_name},\n\n"
+            f"Your leave request has been approved.\n\n"
+            f"Type: {leave_request.get_leave_type_display()}\n"
+            f"Dates: {leave_request.start_date.strftime('%d/%m/%Y')} to {leave_request.end_date.strftime('%d/%m/%Y')}\n"
+            f"Days: {leave_request.days_requested} working day(s)\n\n"
+            f"Kindly ensure all pending duties are properly handed over before your departure. "
+            f"Wishing you a restful and refreshing break.\n\n"
+            f"— PrimeCare Management"
+        )
+        
+        return self.send_sms(
+            phone_number=phone_number,
+            message=message,
+            message_type='leave_approved',
+            recipient_name=staff.user.get_full_name(),
+            related_object_id=leave_request.id,
+            related_object_type='LeaveRequest'
+        )
+    
+    def send_leave_rejected(self, leave_request):
+        """Send leave rejection notification SMS"""
+        staff = leave_request.staff
+        staff_name = staff.user.first_name or staff.user.get_full_name()
+        
+        # Get phone number from staff - check phone_number field first
+        phone_number = getattr(staff, 'phone_number', None) or getattr(staff, 'phone', None)
+        
+        # Also try user's username as phone
+        if not phone_number and staff.user.username and staff.user.username.replace('+', '').replace(' ', '').isdigit():
+            phone_number = staff.user.username
+        
+        if not phone_number:
+            # Create failed log
+            sms_log = SMSLog.objects.create(
+                recipient_phone='',
+                recipient_name=staff.user.get_full_name(),
+                message='',
+                message_type='leave_rejected',
+                status='failed',
+                error_message=f"Staff {staff.user.get_full_name()} does not have a phone number",
+                related_object_id=leave_request.id,
+                related_object_type='LeaveRequest'
+            )
+            return sms_log
+        
+        message = (
+            f"Dear {staff_name},\n\n"
+            f"Your leave request has been REJECTED.\n\n"
+            f"Type: {leave_request.get_leave_type_display()}\n"
+            f"Dates: {leave_request.start_date.strftime('%d/%m/%Y')} to {leave_request.end_date.strftime('%d/%m/%Y')}\n"
+        )
+        
+        if leave_request.rejection_reason:
+            message += f"\nReason: {leave_request.rejection_reason}\n"
+        
+        message += (
+            f"\nPlease contact your supervisor for clarification.\n\n"
+            f"PrimeCare Hospital"
+        )
+        
+        return self.send_sms(
+            phone_number=phone_number,
+            message=message,
+            message_type='leave_rejected',
+            recipient_name=staff.user.get_full_name(),
+            related_object_id=leave_request.id,
+            related_object_type='LeaveRequest'
+        )
+    
+    def send_leave_submitted(self, leave_request):
+        """Send notification to manager when leave is submitted"""
+        staff = leave_request.staff
+        
+        # Get manager/supervisor (could be department head or HR)
+        manager_phone = None
+        manager_name = "Manager"
+        
+        if staff.department and hasattr(staff.department, 'head') and staff.department.head:
+            manager_staff = staff.department.head
+            manager_phone = manager_staff.phone if hasattr(manager_staff, 'phone') else None
+            manager_name = manager_staff.user.first_name or manager_staff.user.get_full_name()
+        
+        if not manager_phone:
+            # No manager phone, skip notification
+            return None
+        
+        message = (
+            f"Dear {manager_name},\n\n"
+            f"New leave request submitted by {staff.user.get_full_name()}:\n\n"
+            f"Type: {leave_request.get_leave_type_display()}\n"
+            f"Dates: {leave_request.start_date.strftime('%d/%m/%Y')} to {leave_request.end_date.strftime('%d/%m/%Y')}\n"
+            f"Days: {leave_request.days_requested}\n\n"
+            f"Please review and approve/reject.\n\n"
+            f"PrimeCare Hospital"
+        )
+        
+        return self.send_sms(
+            phone_number=manager_phone,
+            message=message,
+            message_type='leave_submitted',
+            recipient_name=manager_name,
+            related_object_id=leave_request.id,
+            related_object_type='LeaveRequest'
+        )
+    
+    def send_birthday_wish(self, staff):
+        """Send birthday wish SMS to staff"""
+        staff_name = staff.user.first_name or staff.user.get_full_name()
+        
+        # Get phone number
+        phone_number = staff.phone_number if staff.phone_number else None
+        
+        if not phone_number:
+            # Create failed log
+            sms_log = SMSLog.objects.create(
+                recipient_phone='',
+                recipient_name=staff.user.get_full_name(),
+                message='',
+                message_type='birthday_wish',
+                status='failed',
+                error_message=f"Staff {staff.user.get_full_name()} does not have a phone number",
+                related_object_id=staff.id,
+                related_object_type='Staff'
+            )
+            return sms_log
+        
+        # Calculate age
+        age = staff.age if staff.age else ''
+        age_text = f" (Age: {age})" if age else ''
+        
+        message = (
+            f"🎉 Happy Birthday, {staff_name}!{age_text}\n\n"
+            f"The entire PrimeCare Hospital family wishes you a wonderful day "
+            f"filled with joy, happiness, and good health.\n\n"
+            f"Thank you for your dedication and service!\n\n"
+            f"Best wishes,\n"
+            f"PrimeCare Hospital Management"
+        )
+        
+        return self.send_sms(
+            phone_number=phone_number,
+            message=message,
+            message_type='birthday_wish',
+            recipient_name=staff.user.get_full_name(),
+            related_object_id=staff.id,
+            related_object_type='Staff'
+        )
+    
+    def send_birthday_reminder_to_department(self, staff):
+        """Send birthday reminder to department head/colleagues"""
+        # Get department head or manager
+        if not staff.department:
+            return None
+        
+        department_head = staff.department.head if hasattr(staff.department, 'head') and staff.department.head else None
+        
+        if not department_head or not department_head.phone_number:
+            return None
+        
+        message = (
+            f"Birthday Reminder!\n\n"
+            f"It's {staff.user.get_full_name()}'s birthday today!\n"
+            f"Department: {staff.department.name}\n"
+            f"Profession: {staff.get_profession_display()}\n\n"
+            f"Consider celebrating with the team!\n\n"
+            f"PrimeCare Hospital"
+        )
+        
+        return self.send_sms(
+            phone_number=department_head.phone_number,
+            message=message,
+            message_type='birthday_reminder',
+            recipient_name=department_head.user.get_full_name(),
+            related_object_id=staff.id,
+            related_object_type='Staff'
+        )
+
+
+# Singleton instance
+sms_service = SMSService()
+

@@ -1,0 +1,763 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Procurement Dashboard - HMS{% endblock %}
+{% block page_title %}Procurement Dashboard{% endblock %}
+{% block page_subtitle %}Inventory Management & Procurement System{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.min.css">
+<style>
+    :root {
+        --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        --gradient-success: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        --gradient-warning: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        --gradient-info: linear-gradient(135deg, #30cfd0 0%, #330867 100%);
+        --gradient-danger: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+    }
+    
+    .stat-card-modern {
+        background: white;
+        border-radius: 20px;
+        padding: 28px;
+        margin-bottom: 24px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+        transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        position: relative;
+        overflow: hidden;
+        border: 1px solid rgba(255,255,255,0.2);
+    }
+    
+    .stat-card-modern::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 120px;
+        height: 120px;
+        background: radial-gradient(circle, rgba(255,255,255,0.3) 0%, transparent 70%);
+        border-radius: 50%;
+        transform: translate(30%, -30%);
+    }
+    
+    .stat-card-modern:hover {
+        transform: translateY(-8px) scale(1.02);
+        box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+    }
+    
+    .stat-card-modern .stat-icon {
+        width: 60px;
+        height: 60px;
+        border-radius: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+        margin-bottom: 16px;
+        box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+    }
+    
+    .stat-card-modern .stat-value {
+        font-size: 42px;
+        font-weight: 800;
+        margin-bottom: 8px;
+        background: var(--gradient-primary);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        line-height: 1.2;
+    }
+    
+    .stat-card-modern.primary .stat-icon { background: var(--gradient-primary); color: white; }
+    .stat-card-modern.info .stat-icon { background: var(--gradient-info); color: white; }
+    .stat-card-modern.success .stat-icon { background: var(--gradient-success); color: white; }
+    .stat-card-modern.warning .stat-icon { background: var(--gradient-warning); color: white; }
+    .stat-card-modern.danger .stat-icon { background: var(--gradient-danger); color: white; }
+    
+    .stat-card-modern .stat-label {
+        color: #64748b;
+        font-size: 14px;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    
+    .stat-card-modern .stat-trend {
+        margin-top: 12px;
+        font-size: 13px;
+        color: var(--success);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+    
+    .low-stock-item {
+        padding: 16px;
+        background: linear-gradient(135deg, #fff5e6 0%, #ffe8cc 100%);
+        border-left: 4px solid #f59e0b;
+        border-radius: 12px;
+        margin-bottom: 12px;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        cursor: pointer;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .low-stock-item::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 0;
+        height: 100%;
+        width: 4px;
+        background: linear-gradient(180deg, #f59e0b 0%, #d97706 100%);
+        transform: scaleY(0);
+        transition: transform 0.3s ease;
+    }
+    
+    .low-stock-item:hover {
+        transform: translateX(8px);
+        box-shadow: 0 8px 20px rgba(245, 158, 11, 0.2);
+        background: linear-gradient(135deg, #ffe8cc 0%, #ffd89b 100%);
+    }
+    
+    .low-stock-item:hover::before {
+        transform: scaleY(1);
+    }
+    
+    .chart-container {
+        background: white;
+        border-radius: 20px;
+        padding: 24px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+        margin-bottom: 24px;
+    }
+    
+    .status-badge-modern {
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .quick-action-card {
+        background: white;
+        border-radius: 20px;
+        padding: 24px;
+        text-align: center;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+        transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        border: 2px solid transparent;
+        cursor: pointer;
+        text-decoration: none;
+        color: inherit;
+        display: block;
+    }
+    
+    .quick-action-card:hover {
+        transform: translateY(-8px);
+        box-shadow: 0 16px 32px rgba(0,0,0,0.15);
+        border-color: var(--primary);
+        text-decoration: none;
+        color: inherit;
+    }
+    
+    .quick-action-card .icon {
+        width: 70px;
+        height: 70px;
+        border-radius: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 32px;
+        margin: 0 auto 16px;
+        background: var(--gradient-primary);
+        color: white;
+        box-shadow: 0 8px 16px rgba(102, 126, 234, 0.3);
+    }
+    
+    .quick-action-card h6 {
+        font-weight: 600;
+        margin: 0;
+        color: var(--dark);
+    }
+    
+    .modern-table {
+        border-collapse: separate;
+        border-spacing: 0;
+    }
+    
+    .modern-table thead th {
+        background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+        border: none;
+        padding: 16px;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 12px;
+        letter-spacing: 0.5px;
+        color: var(--dark);
+    }
+    
+    .modern-table tbody tr {
+        transition: all 0.2s ease;
+    }
+    
+    .modern-table tbody tr:hover {
+        background: #f8fafc;
+        transform: scale(1.01);
+    }
+    
+    .modern-table tbody td {
+        padding: 16px;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    
+    .pulse-animation {
+        animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+    
+    .fade-in {
+        animation: fadeIn 0.6s ease-in;
+    }
+    
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .progress-ring {
+        transform: rotate(-90deg);
+    }
+    
+    .progress-ring-circle {
+        transition: stroke-dashoffset 0.35s;
+        transform: rotate(-90deg);
+        transform-origin: 50% 50%;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Modern Summary Statistics -->
+<div class="row g-4 mb-4 fade-in">
+    <div class="col-md-3">
+        <div class="stat-card-modern primary">
+            <div class="stat-icon">
+                <i class="bi bi-shop"></i>
+            </div>
+            <div class="stat-value" style="background: var(--gradient-primary); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                {{ total_stores }}
+            </div>
+            <div class="stat-label">Active Stores</div>
+            <div class="stat-trend">
+                <i class="bi bi-arrow-up"></i> Operational
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card-modern info">
+            <div class="stat-icon">
+                <i class="bi bi-box-seam"></i>
+            </div>
+            <div class="stat-value" style="background: var(--gradient-info); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                {{ inventory_stats.total_items|default:0|intcomma }}
+            </div>
+            <div class="stat-label">Inventory Items</div>
+            <div class="stat-trend">
+                <i class="bi bi-check-circle"></i> In Stock
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card-modern success">
+            <div class="stat-icon">
+                <i class="bi bi-currency-exchange"></i>
+            </div>
+            <div class="stat-value" style="background: var(--gradient-success); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                GHS {{ inventory_stats.total_value|default:0|floatformat:0|intcomma }}
+            </div>
+            <div class="stat-label">Inventory Value</div>
+            <div class="stat-trend">
+                <i class="bi bi-graph-up"></i> Total Assets
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card-modern warning pulse-animation">
+            <div class="stat-icon">
+                <i class="bi bi-exclamation-triangle"></i>
+            </div>
+            <div class="stat-value" style="background: var(--gradient-warning); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                {{ inventory_stats.low_stock_items|default:0|intcomma }}
+            </div>
+            <div class="stat-label">Low Stock Alert</div>
+            <div class="stat-trend" style="color: var(--warning);">
+                <i class="bi bi-exclamation-circle"></i> Needs Attention
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Procurement Request Statistics with Modern Cards -->
+<div class="row g-4 mb-4 fade-in" style="animation-delay: 0.1s;">
+    <div class="col-md-3">
+        <div class="stat-card-modern primary">
+            <div class="stat-icon">
+                <i class="bi bi-file-earmark-text"></i>
+            </div>
+            <div class="stat-value" style="background: var(--gradient-primary); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                {{ procurement_stats.total_requests|default:0|intcomma }}
+            </div>
+            <div class="stat-label">Total Requests</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card-modern warning">
+            <div class="stat-icon">
+                <i class="bi bi-clock-history"></i>
+            </div>
+            <div class="stat-value" style="background: var(--gradient-warning); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                {{ procurement_stats.pending_admin|default:0|intcomma }}
+            </div>
+            <div class="stat-label">Pending Admin</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card-modern info">
+            <div class="stat-icon">
+                <i class="bi bi-cash-stack"></i>
+            </div>
+            <div class="stat-value" style="background: var(--gradient-info); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                {{ procurement_stats.pending_accounts|default:0|intcomma }}
+            </div>
+            <div class="stat-label">Pending Accounts</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card-modern success">
+            <div class="stat-icon">
+                <i class="bi bi-piggy-bank"></i>
+            </div>
+            <div class="stat-value" style="background: var(--gradient-success); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                GHS {{ procurement_stats.total_value|default:0|floatformat:0|intcomma }}
+            </div>
+            <div class="stat-label">Request Value</div>
+        </div>
+    </div>
+</div>
+
+<div class="row fade-in" style="animation-delay: 0.2s;">
+    <!-- Recent Procurement Requests with Modern Design -->
+    <div class="col-md-8">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h5 style="font-weight: 700; margin: 0; color: var(--dark);">Recent Procurement Requests</h5>
+                    <p class="text-muted small mb-0">Latest activity across all stores</p>
+                </div>
+                <a href="{% url 'hospital:procurement_requests_list' %}" class="btn btn-primary btn-modern">
+                    <i class="bi bi-arrow-right"></i> View All
+                </a>
+            </div>
+            {% if recent_requests %}
+            <div class="table-responsive">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Request #</th>
+                            <th>Store</th>
+                            <th>Status</th>
+                            <th>Amount</th>
+                            <th>Date</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for req in recent_requests %}
+                        <tr>
+                            <td><strong style="color: var(--primary);">{{ req.request_number }}</strong></td>
+                            <td>{{ req.requested_by_store.name }}</td>
+                            <td>
+                                {% if req.status == 'draft' %}
+                                    <span class="status-badge-modern" style="background: #e2e8f0; color: #475569;">Draft</span>
+                                {% elif req.status == 'submitted' %}
+                                    <span class="status-badge-modern" style="background: #dbeafe; color: #1e40af;">
+                                        <i class="bi bi-send"></i> Submitted
+                                    </span>
+                                {% elif req.status == 'admin_approved' %}
+                                    <span class="status-badge-modern" style="background: #fef3c7; color: #92400e;">
+                                        <i class="bi bi-check-circle"></i> Admin OK
+                                    </span>
+                                {% elif req.status == 'accounts_approved' %}
+                                    <span class="status-badge-modern" style="background: #d1fae5; color: #065f46;">
+                                        <i class="bi bi-check2-circle"></i> Accounts OK
+                                    </span>
+                                {% elif req.status == 'payment_processed' %}
+                                    <span class="status-badge-modern" style="background: #e0e7ff; color: #3730a3;">
+                                        <i class="bi bi-cash-coin"></i> Paid
+                                    </span>
+                                {% elif req.status == 'ordered' %}
+                                    <span class="status-badge-modern" style="background: #cffafe; color: #155e75;">
+                                        <i class="bi bi-cart"></i> Ordered
+                                    </span>
+                                {% elif req.status == 'received' %}
+                                    <span class="status-badge-modern" style="background: #dcfce7; color: #166534;">
+                                        <i class="bi bi-check-all"></i> Received
+                                    </span>
+                                {% else %}
+                                    <span class="status-badge-modern" style="background: #fee2e2; color: #991b1b;">
+                                        <i class="bi bi-x-circle"></i> Cancelled
+                                    </span>
+                                {% endif %}
+                            </td>
+                            <td><strong style="color: var(--success); font-size: 16px;">GHS {{ req.estimated_total|floatformat:2|intcomma }}</strong></td>
+                            <td>{{ req.request_date|date:"M d, Y" }}</td>
+                            <td>
+                                <a href="{% url 'hospital:procurement_request_detail' req.pk %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-eye"></i> View
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox" style="font-size: 48px; color: #cbd5e1;"></i>
+                <p class="text-muted mt-3">No procurement requests found</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Low Stock Items with Modern Design -->
+    <div class="col-md-4">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h5 style="font-weight: 700; margin: 0; color: var(--dark);">Low Stock Alerts</h5>
+                    <p class="text-muted small mb-0">Items needing attention</p>
+                </div>
+                <a href="{% url 'hospital:low_stock_report' %}" class="btn btn-sm btn-warning">
+                    <i class="bi bi-exclamation-triangle"></i>
+                </a>
+            </div>
+            {% if low_stock_items %}
+                <div style="max-height: 500px; overflow-y: auto;">
+                    {% for item in low_stock_items %}
+                    <div class="low-stock-item">
+                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
+                            <div style="font-weight: 700; color: var(--dark); font-size: 14px;">{{ item.item_name }}</div>
+                            <i class="bi bi-exclamation-triangle-fill" style="color: #f59e0b;"></i>
+                        </div>
+                        <div style="font-size: 12px; color: #64748b; margin-bottom: 6px;">
+                            <i class="bi bi-shop"></i> <strong>{{ item.store.name }}</strong>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 13px;">
+                            <span style="color: var(--danger); font-weight: 600;">
+                                <i class="bi bi-box"></i> Stock: {{ item.quantity_on_hand }}
+                            </span>
+                            <span style="color: #64748b;">
+                                Reorder: {{ item.reorder_level }}
+                            </span>
+                        </div>
+                        <div class="mt-2" style="width: 100%; height: 4px; background: #e2e8f0; border-radius: 2px; overflow: hidden;">
+                            {% widthratio item.quantity_on_hand item.reorder_level 100 as stock_percent %}
+                            <div style="height: 100%; width: {% if stock_percent > 100 %}100{% else %}{{ stock_percent }}{% endif %}%; 
+                                background: {% if stock_percent < 25 %}linear-gradient(90deg, #ef4444, #dc2626){% else %}linear-gradient(90deg, #f59e0b, #d97706){% endif %}; 
+                                transition: width 0.3s ease;">
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-check-circle-fill" style="font-size: 48px; color: var(--success);"></i>
+                <p class="text-success mt-3 mb-0">All items in stock!</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Top Suppliers Chart -->
+{% if top_suppliers %}
+<div class="row fade-in" style="animation-delay: 0.3s;">
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h5 style="font-weight: 700; margin: 0; color: var(--dark);">Top Suppliers by Purchase Value</h5>
+                    <p class="text-muted small mb-0">Highest spending suppliers</p>
+                </div>
+                <a href="{% url 'hospital:suppliers_list' %}" class="btn btn-sm btn-outline-primary">
+                    View All <i class="bi bi-arrow-right"></i>
+                </a>
+            </div>
+            <canvas id="topSuppliersChart" height="250"></canvas>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h5 style="font-weight: 700; margin: 0; color: var(--dark);">Top Suppliers by Items</h5>
+                    <p class="text-muted small mb-0">Suppliers with most items</p>
+                </div>
+            </div>
+            <div style="max-height: 350px; overflow-y: auto;">
+                {% for supplier in top_suppliers_by_items|slice:":10" %}
+                <div class="d-flex justify-content-between align-items-center p-3 mb-2" style="background: #f8fafc; border-radius: 12px;">
+                    <div>
+                        <h6 style="font-weight: 600; margin: 0; color: var(--dark);">{{ supplier.name }}</h6>
+                        <p class="text-muted small mb-0">{{ supplier.items_count|default:0 }} items</p>
+                    </div>
+                    <div class="text-end">
+                        <div style="font-size: 18px; font-weight: 700; color: var(--primary);">
+                            GHS {{ supplier.total_spent|default:0|floatformat:0|intcomma }}
+                        </div>
+                        <div class="text-muted small">{{ supplier.order_count|default:0 }} orders</div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Quick Action Cards -->
+<div class="row g-4 mt-4 fade-in" style="animation-delay: 0.4s;">
+    <div class="col-md-2">
+        <a href="{% url 'hospital:stores_list' %}" class="quick-action-card">
+            <div class="icon">
+                <i class="bi bi-shop"></i>
+            </div>
+            <h6>Stores</h6>
+        </a>
+    </div>
+    <div class="col-md-2">
+        <a href="{% url 'hospital:procurement_requests_list' %}" class="quick-action-card">
+            <div class="icon" style="background: var(--gradient-success);">
+                <i class="bi bi-file-earmark-text"></i>
+            </div>
+            <h6>Requests</h6>
+        </a>
+    </div>
+    <div class="col-md-2">
+        <a href="{% url 'hospital:store_transfers_list' %}" class="quick-action-card">
+            <div class="icon" style="background: var(--gradient-info);">
+                <i class="bi bi-arrow-left-right"></i>
+            </div>
+            <h6>Transfers</h6>
+        </a>
+    </div>
+    <div class="col-md-2">
+        <a href="{% url 'hospital:suppliers_list' %}" class="quick-action-card">
+            <div class="icon" style="background: var(--gradient-warning);">
+                <i class="bi bi-truck"></i>
+            </div>
+            <h6>Suppliers</h6>
+        </a>
+    </div>
+    <div class="col-md-2">
+        <a href="{% url 'hospital:inventory_management' %}" class="quick-action-card">
+            <div class="icon" style="background: var(--gradient-info);">
+                <i class="bi bi-boxes"></i>
+            </div>
+            <h6>Inventory</h6>
+        </a>
+    </div>
+    <div class="col-md-2">
+        <a href="{% url 'hospital:low_stock_report' %}" class="quick-action-card">
+            <div class="icon" style="background: var(--gradient-danger);">
+                <i class="bi bi-exclamation-triangle"></i>
+            </div>
+            <h6>Low Stock</h6>
+        </a>
+    </div>
+</div>
+
+<!-- Pending Transfers -->
+{% if pending_transfers %}
+<div class="modern-card mt-4 fade-in" style="animation-delay: 0.4s;">
+    <h5 style="font-weight: 700; margin-bottom: 20px; color: var(--dark);">Pending Store Transfers</h5>
+    <div class="table-responsive">
+        <table class="table modern-table">
+            <thead>
+                <tr>
+                    <th>Transfer #</th>
+                    <th>From → To</th>
+                    <th>Requested By</th>
+                    <th>Date</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for transfer in pending_transfers %}
+                <tr>
+                    <td><strong style="color: var(--primary);">{{ transfer.transfer_number }}</strong></td>
+                    <td>
+                        <span style="color: var(--danger);">{{ transfer.from_store.name }}</span>
+                        <i class="bi bi-arrow-right mx-2"></i>
+                        <span style="color: var(--success);">{{ transfer.to_store.name }}</span>
+                    </td>
+                    <td>
+                        {% if transfer.requested_by %}
+                            {{ transfer.requested_by.user.get_full_name|default:transfer.requested_by.user.username }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </td>
+                    <td>{{ transfer.transfer_date|date:"M d, Y" }}</td>
+                    <td>
+                        <a href="{% url 'hospital:store_transfer_detail' transfer.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+    // Add smooth scroll and animations
+    document.addEventListener('DOMContentLoaded', function() {
+        // Animate stat cards on scroll
+        const observerOptions = {
+            threshold: 0.1,
+            rootMargin: '0px 0px -50px 0px'
+        };
+        
+        const observer = new IntersectionObserver(function(entries) {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.style.animationPlayState = 'running';
+                }
+            });
+        }, observerOptions);
+        
+        document.querySelectorAll('.stat-card-modern, .modern-card, .quick-action-card').forEach(el => {
+            observer.observe(el);
+        });
+        
+        // Top Suppliers Chart
+        {% if top_suppliers %}
+        const ctx = document.getElementById('topSuppliersChart');
+        if (ctx) {
+            const suppliersData = {
+                labels: [
+                    {% for supplier in top_suppliers|slice:":10" %}
+                    '{{ supplier.name|truncatechars:20 }}'{% if not forloop.last %},{% endif %}
+                    {% endfor %}
+                ],
+                datasets: [{
+                    label: 'Total Spent (GHS)',
+                    data: [
+                        {% for supplier in top_suppliers|slice:":10" %}
+                        {{ supplier.total_spent|default:0 }}{% if not forloop.last %},{% endif %}
+                        {% endfor %}
+                    ],
+                    backgroundColor: [
+                        'rgba(102, 126, 234, 0.8)',
+                        'rgba(139, 92, 246, 0.8)',
+                        'rgba(59, 130, 246, 0.8)',
+                        'rgba(16, 185, 129, 0.8)',
+                        'rgba(245, 158, 11, 0.8)',
+                        'rgba(239, 68, 68, 0.8)',
+                        'rgba(236, 72, 153, 0.8)',
+                        'rgba(14, 165, 233, 0.8)',
+                        'rgba(34, 197, 94, 0.8)',
+                        'rgba(168, 85, 247, 0.8)'
+                    ],
+                    borderColor: [
+                        'rgba(102, 126, 234, 1)',
+                        'rgba(139, 92, 246, 1)',
+                        'rgba(59, 130, 246, 1)',
+                        'rgba(16, 185, 129, 1)',
+                        'rgba(245, 158, 11, 1)',
+                        'rgba(239, 68, 68, 1)',
+                        'rgba(236, 72, 153, 1)',
+                        'rgba(14, 165, 233, 1)',
+                        'rgba(34, 197, 94, 1)',
+                        'rgba(168, 85, 247, 1)'
+                    ],
+                    borderWidth: 2,
+                    borderRadius: 8
+                }]
+            };
+            
+            new Chart(ctx, {
+                type: 'bar',
+                data: suppliersData,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            padding: 12,
+                            titleFont: {
+                                size: 14,
+                                weight: 'bold'
+                            },
+                            bodyFont: {
+                                size: 13
+                            },
+                            callbacks: {
+                                label: function(context) {
+                                    return 'Total: GHS ' + context.parsed.y.toLocaleString();
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return 'GHS ' + value.toLocaleString();
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.05)'
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45
+                            },
+                            grid: {
+                                display: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        {% endif %}
+    });
+</script>
+{% endblock %}

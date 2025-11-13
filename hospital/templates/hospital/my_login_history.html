@@ -1,0 +1,215 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="card shadow-sm mb-4" style="background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%); color: white;">
+        <div class="card-body p-4">
+            <h2 class="mb-2">
+                <i class="bi bi-globe me-2"></i>
+                My Login History
+            </h2>
+            <p class="mb-0">Track where and when you've accessed the system</p>
+        </div>
+    </div>
+
+    <!-- Statistics -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <p class="text-muted mb-1">Total Logins</p>
+                            <h2 class="mb-0">{{ total_logins }}</h2>
+                        </div>
+                        <div class="bg-success bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-check-circle text-success" style="font-size: 32px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <p class="text-muted mb-1">Failed Attempts</p>
+                            <h2 class="mb-0 text-danger">{{ failed_attempts }}</h2>
+                        </div>
+                        <div class="bg-danger bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-x-circle text-danger" style="font-size: 32px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <p class="text-muted mb-1">Unique Locations</p>
+                            <h2 class="mb-0 text-info">{{ unique_locations }}</h2>
+                        </div>
+                        <div class="bg-info bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-geo-alt text-info" style="font-size: 32px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <p class="text-muted mb-1">Security Alerts</p>
+                            <h2 class="mb-0 text-warning">{{ security_alerts|length }}</h2>
+                        </div>
+                        <div class="bg-warning bg-opacity-10 rounded-circle p-3">
+                            <i class="bi bi-shield-exclamation text-warning" style="font-size: 32px;"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Current Session -->
+    {% if current_session %}
+    <div class="alert alert-info mb-4">
+        <h6><i class="bi bi-info-circle me-2"></i>Current Session</h6>
+        <div class="row">
+            <div class="col-md-6">
+                <p class="mb-1"><strong>Location:</strong> {{ current_session.location_display }}</p>
+                <p class="mb-1"><strong>IP Address:</strong> {{ current_session.ip_address }}</p>
+            </div>
+            <div class="col-md-6">
+                <p class="mb-1"><strong>Device:</strong> {{ current_session.browser }} on {{ current_session.os }}</p>
+                <p class="mb-0"><strong>Login Time:</strong> {{ current_session.login_time|date:"M d, Y H:i" }} ({{ current_session.login_time|timesince }} ago)</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Security Alerts -->
+    {% if security_alerts %}
+    <div class="card shadow-sm mb-4 border-warning">
+        <div class="card-header bg-warning text-dark">
+            <h5 class="mb-0"><i class="bi bi-shield-exclamation me-2"></i>Security Alerts ({{ security_alerts|length }})</h5>
+        </div>
+        <div class="card-body">
+            {% for alert in security_alerts %}
+            <div class="alert alert-{% if alert.severity == 'critical' %}danger{% elif alert.severity == 'high' %}warning{% else %}info{% endif %}">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h6>{{ alert.get_alert_type_display }}</h6>
+                        <p class="mb-1">{{ alert.description }}</p>
+                        <small class="text-muted">{{ alert.alert_time|date:"M d, Y H:i" }}</small>
+                    </div>
+                    <div>
+                        <span class="badge bg-{% if alert.severity == 'critical' %}danger{% elif alert.severity == 'high' %}warning{% else %}info{% endif %}">
+                            {{ alert.get_severity_display }}
+                        </span>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Login History -->
+    <div class="card shadow-sm">
+        <div class="card-header bg-white">
+            <h5 class="mb-0"><i class="bi bi-clock-history me-2"></i>Recent Logins ({{ login_history|length }})</h5>
+        </div>
+        <div class="card-body">
+            {% if login_history %}
+                {% for login in login_history %}
+                <div class="card mb-3 {% if login.is_suspicious %}border-warning{% elif login.status == 'failed' %}border-danger{% endif %}">
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-3">
+                                <h6 class="mb-2">📅 {{ login.login_time|date:"M d, Y" }}</h6>
+                                <p class="mb-1"><strong>{{ login.login_time|date:"H:i" }}</strong></p>
+                                <small class="text-muted">{{ login.login_time|timesince }} ago</small>
+                                {% if login.logout_time %}
+                                    <p class="mb-0 mt-2 small"><strong>Duration:</strong> {{ login.session_duration }} min</p>
+                                {% endif %}
+                            </div>
+                            <div class="col-md-4">
+                                <h6 class="mb-2">📍 Location</h6>
+                                {% if login.city %}
+                                    <p class="mb-1"><strong>{{ login.city }}</strong>, {{ login.country }}</p>
+                                    {% if login.region %}
+                                        <small class="text-muted">{{ login.region }}</small>
+                                    {% endif %}
+                                {% elif login.country %}
+                                    <p class="mb-1"><strong>{{ login.country }}</strong></p>
+                                {% else %}
+                                    <p class="mb-1 text-muted">Unknown Location</p>
+                                {% endif %}
+                                <p class="mb-0 small">
+                                    <span class="badge bg-secondary">{{ login.ip_address }}</span>
+                                    {% if login.isp %}
+                                        <br><small class="text-muted">ISP: {{ login.isp }}</small>
+                                    {% endif %}
+                                </p>
+                            </div>
+                            <div class="col-md-3">
+                                <h6 class="mb-2">💻 Device</h6>
+                                {% if login.browser %}
+                                    <p class="mb-1">{{ login.browser }} {% if login.browser_version %}{{ login.browser_version }}{% endif %}</p>
+                                {% endif %}
+                                {% if login.os %}
+                                    <p class="mb-1">{{ login.os }} {% if login.os_version %}{{ login.os_version }}{% endif %}</p>
+                                {% endif %}
+                                {% if login.device_type %}
+                                    <span class="badge bg-info">{{ login.get_device_type_display }}</span>
+                                {% endif %}
+                            </div>
+                            <div class="col-md-2 text-end">
+                                {% if login.status == 'success' %}
+                                    <span class="badge bg-success mb-2">✅ Success</span>
+                                {% elif login.status == 'failed' %}
+                                    <span class="badge bg-danger mb-2">❌ Failed</span>
+                                {% endif %}
+                                
+                                {% if login.is_new_location %}
+                                    <br><span class="badge bg-warning text-dark">🆕 New Location</span>
+                                {% endif %}
+                                
+                                {% if login.is_suspicious %}
+                                    <br><span class="badge bg-danger">⚠️ Suspicious</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="text-center py-5">
+                    <i class="bi bi-clock-history" style="font-size: 64px; opacity: 0.3;"></i>
+                    <p class="text-muted mt-3">No login history yet</p>
+                    <p class="small">Login activity will appear here after you log out and log back in</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+

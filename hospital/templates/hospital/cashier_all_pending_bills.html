@@ -1,0 +1,135 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2>{{ title }}</h2>
+            <p class="text-muted">All services awaiting payment - Process payment to generate receipt</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:cashier_patient_bills' %}" class="btn btn-success me-2">
+                <i class="bi bi-people"></i> View Patient Bills (Combined)
+            </a>
+            <a href="{% url 'hospital:centralized_cashier_dashboard' %}" class="btn btn-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Dashboard
+            </a>
+        </div>
+    </div>
+    
+    <!-- Search & Filter -->
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <form method="GET" class="input-group">
+                <input type="text" 
+                       name="search" 
+                       class="form-control form-control-lg" 
+                       placeholder="Search by patient name, MRN, or service..."
+                       value="{{ search }}">
+                <select name="service_type" class="form-select" style="max-width: 200px;">
+                    <option value="all" {% if service_filter == 'all' %}selected{% endif %}>All Services</option>
+                    <option value="lab" {% if service_filter == 'lab' %}selected{% endif %}>Lab Only</option>
+                    <option value="pharmacy" {% if service_filter == 'pharmacy' %}selected{% endif %}>Pharmacy Only</option>
+                    <option value="imaging" {% if service_filter == 'imaging' %}selected{% endif %}>Imaging Only</option>
+                </select>
+                <button class="btn btn-primary" type="submit">
+                    <i class="bi bi-search"></i> Search
+                </button>
+            </form>
+        </div>
+        <div class="col-md-4 text-end">
+            <div class="alert alert-info mb-0">
+                <strong>{{ total_pending }}</strong> pending bills<br>
+                <strong>GHS {{ total_amount }}</strong> total amount
+            </div>
+        </div>
+    </div>
+    
+    <!-- Pending Bills Table -->
+    <div class="card shadow">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">💰 All Pending Bills ({{ total_pending }})</h5>
+        </div>
+        <div class="card-body">
+            {% if pending_items %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Patient</th>
+                            <th>MRN</th>
+                            <th>Service</th>
+                            <th>Amount</th>
+                            <th>Ordered</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in pending_items %}
+                        <tr>
+                            <td>
+                                {% if item.type == 'lab' %}
+                                    <span class="badge bg-info">🧪 Lab</span>
+                                {% elif item.type == 'pharmacy' %}
+                                    <span class="badge bg-success">💊 Pharmacy</span>
+                                {% elif item.type == 'imaging' %}
+                                    <span class="badge" style="background: linear-gradient(135deg, #6f42c1 0%, #8e44ad 100%);">📷 Imaging</span>
+                                {% elif item.type == 'bed' %}
+                                    <span class="badge bg-warning text-dark">🛏️ Bed</span>
+                                {% elif item.type == 'consultation' %}
+                                    <span class="badge bg-primary">👨‍⚕️ Consultation</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ item.type|title }}</span>
+                                {% endif %}
+                            </td>
+                            <td><strong>{{ item.patient_name }}</strong></td>
+                            <td>{{ item.patient_mrn }}</td>
+                            <td>{{ item.service }}</td>
+                            <td><h5 class="mb-0 text-primary">GHS {{ item.price }}</h5></td>
+                            <td>{{ item.date|date:"M d, Y" }}</td>
+                            <td>
+                                <a href="{% url 'hospital:cashier_process_service_payment' item.type item.id %}" 
+                                   class="btn btn-primary">
+                                    <i class="bi bi-credit-card"></i> Process Payment
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <th colspan="4" class="text-end">TOTAL:</th>
+                            <th><h5 class="mb-0">GHS {{ total_amount }}</h5></th>
+                            <th colspan="2"></th>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-check-circle" style="font-size: 4em; color: #28a745;"></i>
+                <h4 class="mt-3">No Pending Bills</h4>
+                <p class="text-muted">All services have been paid for!</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Instructions -->
+    <div class="alert alert-info mt-4">
+        <h5><i class="bi bi-info-circle"></i> How to Process Payment:</h5>
+        <ol class="mb-0">
+            <li>Click "Process Payment" for the patient's service</li>
+            <li>Enter payment amount and method</li>
+            <li>System will <strong>automatically generate receipt with QR code</strong></li>
+            <li>Digital receipt sent to patient (Email + SMS)</li>
+            <li>Patient can then go to service point (Lab/Pharmacy) with QR code</li>
+            <li>Service point scans QR to verify payment and deliver service</li>
+        </ol>
+    </div>
+</div>
+{% endblock %}
+
+

@@ -1,0 +1,198 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Request Leave - HMS{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-10">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h1><i class="bi bi-calendar-plus"></i> Request Leave</h1>
+                    <p class="text-muted mb-0">Submit a new leave request for approval</p>
+                </div>
+                <a href="{% url 'hospital:staff_dashboard' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Back to Dashboard
+                </a>
+            </div>
+
+            <!-- Leave Balance Info -->
+            <div class="alert alert-info">
+                <h6><i class="bi bi-info-circle"></i> Your Leave Balance:</h6>
+                <div class="row text-center">
+                    <div class="col-md-3">
+                        <strong>Annual Leave</strong><br>
+                        <span class="badge bg-primary" style="font-size: 1.1rem;">{{ leave_balance.annual_leave }} days</span>
+                    </div>
+                    <div class="col-md-3">
+                        <strong>Sick Leave</strong><br>
+                        <span class="badge bg-success" style="font-size: 1.1rem;">{{ leave_balance.sick_leave }} days</span>
+                    </div>
+                    <div class="col-md-3">
+                        <strong>Casual Leave</strong><br>
+                        <span class="badge bg-info" style="font-size: 1.1rem;">{{ leave_balance.casual_leave }} days</span>
+                    </div>
+                    <div class="col-md-3">
+                        <strong>Comp Off</strong><br>
+                        <span class="badge bg-secondary" style="font-size: 1.1rem;">{{ leave_balance.comp_off }} days</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Leave Request Form -->
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Leave Request Form</h5>
+                </div>
+                <div class="card-body">
+                    <form method="POST" enctype="multipart/form-data">
+                        {% csrf_token %}
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Leave Type <span class="text-danger">*</span></label>
+                                <select name="leave_type" class="form-select" required>
+                                    <option value="">-- Select leave type --</option>
+                                    <option value="annual">Annual Leave ({{ leave_balance.annual_leave }} days available)</option>
+                                    <option value="sick">Sick Leave ({{ leave_balance.sick_leave }} days available)</option>
+                                    <option value="casual">Casual Leave ({{ leave_balance.casual_leave }} days available)</option>
+                                    <option value="emergency">Emergency Leave</option>
+                                    <option value="maternity">Maternity Leave</option>
+                                    <option value="paternity">Paternity Leave</option>
+                                    <option value="bereavement">Bereavement Leave</option>
+                                    <option value="study">Study Leave</option>
+                                    <option value="compensatory">Compensatory Leave ({{ leave_balance.comp_off }} days available)</option>
+                                    <option value="unpaid">Unpaid Leave</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Start Date <span class="text-danger">*</span></label>
+                                <input type="date" name="start_date" id="startDate" class="form-control" required min="{{ today|date:'Y-m-d' }}">
+                                <small class="form-text text-muted">First day of leave</small>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">End Date <span class="text-danger">*</span></label>
+                                <input type="date" name="end_date" id="endDate" class="form-control" required min="{{ today|date:'Y-m-d' }}">
+                                <small class="form-text text-muted">Last day of leave (inclusive)</small>
+                            </div>
+                        </div>
+
+                        <div id="daysCalculated" class="alert alert-success" style="display: none;">
+                            <strong>📊 Total Working Days:</strong> <span id="totalDays">0</span>
+                            <br><small class="text-muted">Weekends (Sat & Sun) excluded automatically</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Reason for Leave <span class="text-danger">*</span></label>
+                            <textarea name="reason" class="form-control" rows="4" required 
+                                      placeholder="Provide a clear reason for your leave request..."></textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Contact During Leave</label>
+                            <input type="text" name="contact_during_leave" class="form-control" 
+                                   placeholder="Phone number or email where you can be reached in emergencies">
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Covering Staff (Optional)</label>
+                                <select name="covering_staff" class="form-select">
+                                    <option value="">-- Select staff to cover --</option>
+                                    {% for colleague in other_staff %}
+                                    <option value="{{ colleague.pk }}">{{ colleague.user.get_full_name }} - {{ colleague.get_profession_display }}</option>
+                                    {% endfor %}
+                                </select>
+                                <small class="form-text text-muted">Who will handle your responsibilities?</small>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Supporting Document (if applicable)</label>
+                                <input type="file" name="attachment" class="form-control" 
+                                       accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
+                                <small class="form-text text-muted">Medical certificate, etc.</small>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Handover Notes (Optional)</label>
+                            <textarea name="handover_notes" class="form-control" rows="3"
+                                      placeholder="Important information for covering staff..."></textarea>
+                        </div>
+
+                        <div class="alert alert-info mb-3">
+                            <h6><i class="bi bi-calendar-week"></i> Working Days Calculation</h6>
+                            <p class="mb-0"><strong>Note:</strong> Leave days are calculated based on <strong>working days only</strong> (Monday-Friday). Weekends (Saturday & Sunday) are automatically excluded from the count.</p>
+                        </div>
+
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle"></i> 
+                            <strong>Please Note:</strong>
+                            <ul class="mb-0 mt-2">
+                                <li>Leave days count <strong>working days only</strong> - weekends excluded automatically</li>
+                                <li>Leave requests should be submitted at least 7 days in advance (except emergencies)</li>
+                                <li>Your supervisor/manager will review and approve/reject the request</li>
+                                <li>You'll receive SMS notification when your request is processed</li>
+                                <li>For sick leave > 3 days, medical certificate is required</li>
+                            </ul>
+                        </div>
+
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                            <a href="{% url 'hospital:staff_dashboard' %}" class="btn btn-secondary">
+                                <i class="bi bi-x-circle"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-save"></i> Create Request
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const startDate = document.getElementById('startDate');
+    const endDate = document.getElementById('endDate');
+    const daysCalculated = document.getElementById('daysCalculated');
+    const totalDays = document.getElementById('totalDays');
+
+    // Calculate working days (excluding weekends)
+    function calculateWorkingDays() {
+        if (startDate.value && endDate.value) {
+            const start = new Date(startDate.value);
+            const end = new Date(endDate.value);
+            
+            let workingDays = 0;
+            let currentDate = new Date(start);
+            
+            while (currentDate <= end) {
+                // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+                const dayOfWeek = currentDate.getDay();
+                // Count only Monday (1) to Friday (5)
+                if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                    workingDays++;
+                }
+                currentDate.setDate(currentDate.getDate() + 1);
+            }
+            
+            if (workingDays > 0) {
+                totalDays.textContent = workingDays + ' working day(s)';
+                daysCalculated.style.display = 'block';
+            } else {
+                daysCalculated.style.display = 'none';
+            }
+        }
+    }
+
+    startDate.addEventListener('change', calculateWorkingDays);
+    endDate.addEventListener('change', calculateWorkingDays);
+});
+</script>
+{% endblock %}
+

@@ -1,0 +1,388 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Laboratory Dashboard - HMS{% endblock %}
+{% block page_title %}Laboratory Dashboard{% endblock %}
+{% block page_subtitle %}Manage lab tests, orders, and results{% endblock %}
+
+{% block content %}
+<!-- Statistics Cards -->
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="modern-card stat-card-primary text-center">
+            <div class="stat-icon" style="width: 48px; height: 48px; border-radius: 12px; margin: 0 auto 12px; display: flex; align-items: center; justify-content: center;">
+                <i class="bi bi-flask" style="font-size: 24px;"></i>
+            </div>
+            <div class="stat-value" style="font-size: 32px; font-weight: 700;">{{ total_tests }}</div>
+            <div class="stat-label">Available Tests</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card stat-card-info text-center">
+            <div class="stat-icon" style="width: 48px; height: 48px; border-radius: 12px; margin: 0 auto 12px; display: flex; align-items: center; justify-content: center;">
+                <i class="bi bi-clipboard-data" style="font-size: 24px;"></i>
+            </div>
+            <div class="stat-value" style="font-size: 32px; font-weight: 700;">{{ total_results }}</div>
+            <div class="stat-label">Total Results</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card stat-card-warning text-center">
+            <div class="stat-icon" style="width: 48px; height: 48px; border-radius: 12px; margin: 0 auto 12px; display: flex; align-items: center; justify-content: center;">
+                <i class="bi bi-clock-history" style="font-size: 24px;"></i>
+            </div>
+            <div class="stat-value" style="font-size: 32px; font-weight: 700;">{{ pending_tests }}</div>
+            <div class="stat-label">Pending Orders</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card stat-card-success text-center">
+            <div class="stat-icon" style="width: 48px; height: 48px; border-radius: 12px; margin: 0 auto 12px; display: flex; align-items: center; justify-content: center;">
+                <i class="bi bi-hourglass-split" style="font-size: 24px;"></i>
+            </div>
+            <div class="stat-value" style="font-size: 32px; font-weight: 700;">{{ avg_tat_hours }}h</div>
+            <div class="stat-label">Avg Turnaround</div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- Pending Orders -->
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin: 0;">
+                    <i class="bi bi-clock-history me-2"></i>Pending Lab Orders
+                </h5>
+                <span class="badge-modern badge-warning">{{ pending_orders|length }}</span>
+            </div>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Patient</th>
+                            <th>Requested By</th>
+                            <th>Time</th>
+                            <th>Priority</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for order in pending_orders %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'hospital:patient_detail' order.encounter.patient.pk %}" style="text-decoration: none; font-weight: 600;">
+                                    {{ order.encounter.patient.full_name }}
+                                </a>
+                            </td>
+                            <td>{{ order.requested_by.user.get_full_name|default:order.requested_by.user.username }}</td>
+                            <td>{{ order.requested_at|timesince }} ago</td>
+                            <td>
+                                <span class="badge-modern badge-{% if order.priority == 'stat' %}danger{% elif order.priority == 'urgent' %}warning{% else %}info{% endif %}">
+                                    {{ order.get_priority_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <button type="button" class="btn btn-success" 
+                                            onclick="updateOrderStatus('{{ order.pk }}', 'start')"
+                                            title="Start Processing">
+                                        <i class="bi bi-play-circle"></i>
+                                    </button>
+                                    <a href="{% url 'hospital:encounter_detail' order.encounter.pk %}" class="btn btn-outline-primary">
+                                        View
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="5" class="text-center text-muted py-3">No pending orders</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- In Progress Results -->
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin: 0;">
+                    <i class="bi bi-hourglass-split me-2"></i>In Progress Results
+                </h5>
+                <span class="badge-modern badge-info">{{ in_progress_results|length }}</span>
+            </div>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Patient</th>
+                            <th>Test</th>
+                            <th>Ordered</th>
+                            <th>Technician</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for result in in_progress_results %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'hospital:patient_detail' result.order.encounter.patient.pk %}" style="text-decoration: none; font-weight: 600;">
+                                    {{ result.order.encounter.patient.full_name }}
+                                </a>
+                            </td>
+                            <td>{{ result.test.name }}</td>
+                            <td>{{ result.created|timesince }} ago</td>
+                            <td>{{ result.verified_by.user.get_full_name|default:"-" }}</td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <a href="{% url 'hospital:tabular_lab_report' result.pk %}" class="btn btn-primary" title="Tabular Entry">
+                                        <i class="bi bi-table"></i> Enter
+                                    </a>
+                                    <a href="{% url 'hospital:edit_lab_result' result.pk %}" class="btn btn-outline-secondary" title="Simple Entry">
+                                        <i class="bi bi-pencil-square"></i>
+                                    </a>
+                                </div>
+                            </td>                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="5" class="text-center text-muted py-3">No tests in progress</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Today's Results & Pending Verification -->
+<div class="row g-4 mt-2">
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin: 0; color: var(--success);">
+                    <i class="bi bi-check-circle me-2"></i>Completed Today
+                </h5>
+                <span class="badge-modern badge-success">{{ today_results|length }}</span>
+            </div>
+            <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Patient</th>
+                            <th>Test</th>
+                            <th>Status</th>
+                            <th>Result</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for result in today_results %}
+                        <tr>
+                            <td>{{ result.order.encounter.patient.full_name }}</td>
+                            <td>{{ result.test.name }}</td>
+                            <td>
+                                {% if result.is_abnormal %}
+                                <span class="badge-modern badge-danger">Abnormal</span>
+                                {% else %}
+                                <span class="badge-modern badge-success">Normal</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:send_lab_result_sms' result.pk %}" class="btn btn-sm btn-outline-info" title="Send SMS">
+                                    <i class="bi bi-send"></i>
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-3">No results completed today</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 style="font-weight: 600; margin: 0; color: var(--warning);">
+                    <i class="bi bi-exclamation-circle me-2"></i>Pending Verification
+                </h5>
+                <span class="badge-modern badge-warning">{{ pending_results|length }}</span>
+            </div>
+            <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                <table class="table modern-table">
+                    <thead>
+                        <tr>
+                            <th>Patient</th>
+                            <th>Test</th>
+                            <th>Ordered</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for result in pending_results %}
+                        <tr>
+                            <td>{{ result.order.encounter.patient.full_name }}</td>
+                            <td>{{ result.test.name }}</td>
+                            <td>{{ result.created|timesince }} ago</td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <a href="{% url 'hospital:tabular_lab_report' result.pk %}" class="btn btn-success" title="Start & Enter Results">
+                                        <i class="bi bi-table"></i> Enter
+                                    </a>
+                                    <a href="/admin/hospital/labresult/{{ result.pk }}/change/" class="btn btn-outline-primary" title="View Details">
+                                        <i class="bi bi-eye"></i>
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-3">No pending results</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mt-4">
+    <a href="{% url 'hospital:lab_results_list' %}" class="btn btn-primary-modern">
+        <i class="bi bi-list-check"></i> View All Lab Results
+    </a>
+    {% if abnormal_results > 0 %}
+    <div class="alert alert-warning mt-3" style="border-radius: 12px;">
+        <i class="bi bi-exclamation-triangle me-2"></i>
+        <strong>Alert:</strong> {{ abnormal_results }} abnormal result{{ abnormal_results|pluralize }} require attention.
+    </div>
+    {% endif %}
+</div>
+
+<script>
+let autoRefreshTimer;
+
+function updateOrderStatus(orderId, action) {
+    const formData = new FormData();
+    formData.append('action', action);
+    formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    
+    fetch(`/hms/api/order/${orderId}/update-status/`, {
+        method: 'POST',
+        body: formData,
+        headers: {'X-Requested-With': 'XMLHttpRequest'}
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            clearTimeout(autoRefreshTimer);
+            location.reload();
+        } else {
+            alert(data.error || 'Error updating order status');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error updating order status');
+    });
+}
+
+function updateLabResultStatus(resultId, action) {
+    const formData = new FormData();
+    formData.append('action', action);
+    formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    
+    fetch(`/hms/api/lab-result/${resultId}/update-status/`, {
+        method: 'POST',
+        body: formData,
+        headers: {'X-Requested-With': 'XMLHttpRequest'}
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            clearTimeout(autoRefreshTimer);
+            location.reload();
+        } else {
+            alert(data.error || 'Error updating lab result status');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error updating lab result status');
+    });
+}
+
+function completeLabResult(resultId) {
+    // Prompt for result value
+    const value = prompt('Enter test result value:');
+    if (value === null) return;
+    
+    const notes = prompt('Enter notes (optional):') || '';
+    
+    const formData = new FormData();
+    formData.append('action', 'complete');
+    formData.append('value', value);
+    formData.append('notes', notes);
+    formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    
+    fetch(`/hms/api/lab-result/${resultId}/update-status/`, {
+        method: 'POST',
+        body: formData,
+        headers: {'X-Requested-With': 'XMLHttpRequest'}
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            clearTimeout(autoRefreshTimer);
+            location.reload();
+        } else {
+            alert(data.error || 'Error completing lab result');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error completing lab result');
+    });
+}
+
+// Auto-refresh every 30 seconds
+function refreshDashboard() {
+    fetch(`/hms/api/dashboard-stats/?type=laboratory`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Could update stats here
+            }
+        })
+        .catch(error => console.error('Error refreshing stats:', error));
+}
+
+autoRefreshTimer = setInterval(() => {
+    refreshDashboard();
+    // Full page refresh every 2 minutes
+    if (Math.random() < 0.1) {
+        location.reload();
+    }
+}, 30000);
+
+// Pause refresh on user interaction
+document.addEventListener('mousemove', () => {
+    clearInterval(autoRefreshTimer);
+    autoRefreshTimer = setInterval(() => {
+        refreshDashboard();
+        if (Math.random() < 0.1) {
+            location.reload();
+        }
+    }, 30000);
+});
+</script>
+{% endblock %}
+

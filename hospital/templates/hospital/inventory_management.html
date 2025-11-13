@@ -1,0 +1,227 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Inventory Management - Procurement{% endblock %}
+{% block page_title %}Inventory Management{% endblock %}
+{% block page_subtitle %}Comprehensive inventory tracking and analysis{% endblock %}
+
+{% block extra_css %}
+<style>
+    .inventory-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        margin-bottom: 20px;
+        transition: all 0.3s ease;
+    }
+    
+    .inventory-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(0,0,0,0.12);
+    }
+    
+    .store-summary-card {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        margin-bottom: 16px;
+        border-left: 4px solid var(--primary);
+        transition: all 0.3s ease;
+    }
+    
+    .store-summary-card:hover {
+        transform: translateX(4px);
+        border-left-width: 6px;
+    }
+    
+    .item-card {
+        background: #f8fafc;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        transition: all 0.2s ease;
+    }
+    
+    .item-card:hover {
+        background: #f1f5f9;
+        transform: translateX(4px);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mb-4 d-flex justify-content-between align-items-center">
+    <a href="{% url 'hospital:procurement_dashboard' %}" class="btn btn-outline-secondary btn-modern">
+        <i class="bi bi-arrow-left"></i> Back to Dashboard
+    </a>
+    <div>
+        <a href="{% url 'hospital:store_create' %}" class="btn btn-primary btn-modern">
+            <i class="bi bi-plus-circle"></i> Add Store
+        </a>
+        <a href="{% url 'hospital:inventory_item_create' %}" class="btn btn-primary btn-modern ms-2">
+            <i class="bi bi-plus-circle"></i> Add Inventory Item
+        </a>
+    </div>
+</div>
+
+<!-- Inventory by Store -->
+<div class="modern-card mb-4">
+    <h5 style="font-weight: 700; margin-bottom: 24px; color: var(--dark);">Inventory Summary by Store</h5>
+    {% if inventory_by_store %}
+    <div class="row">
+        {% for store in inventory_by_store %}
+        <div class="col-md-6 col-lg-4">
+            <div class="store-summary-card">
+                <h6 style="font-weight: 700; margin-bottom: 12px; color: var(--primary);">
+                    <i class="bi bi-shop"></i> {{ store.name }}
+                </h6>
+                <div class="row mb-3">
+                    <div class="col-6">
+                        <div class="text-muted small mb-1">Items</div>
+                        <div style="font-size: 24px; font-weight: 700; color: var(--primary);">
+                            {{ store.item_count|default:0|intcomma }}
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="text-muted small mb-1">Total Value</div>
+                        <div style="font-size: 20px; font-weight: 700; color: var(--success);">
+                            GHS {{ store.total_value|default:0|floatformat:0|intcomma }}
+                        </div>
+                    </div>
+                </div>
+                {% if store.low_stock_count > 0 %}
+                <div class="alert alert-warning py-2 mb-0">
+                    <i class="bi bi-exclamation-triangle"></i> 
+                    <strong>{{ store.low_stock_count }}</strong> item(s) need reordering
+                </div>
+                {% else %}
+                <div class="alert alert-success py-2 mb-0">
+                    <i class="bi bi-check-circle"></i> All items in stock
+                </div>
+                {% endif %}
+                <div class="mt-3">
+                    <a href="{% url 'hospital:store_detail' store.pk %}" class="btn btn-sm btn-outline-primary w-100">
+                        <i class="bi bi-eye"></i> View Details
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-muted text-center py-4">No stores with inventory</p>
+    {% endif %}
+</div>
+
+<div class="row">
+    <!-- Top Items by Value -->
+    <div class="col-md-6">
+        <div class="inventory-card">
+            <h5 style="font-weight: 700; margin-bottom: 20px; color: var(--dark);">
+                <i class="bi bi-trophy"></i> Top Items by Value
+            </h5>
+            {% if top_items_by_value %}
+            <div style="max-height: 500px; overflow-y: auto;">
+                {% for item in top_items_by_value %}
+                <div class="item-card">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div style="flex: 1;">
+                            <h6 style="font-weight: 600; margin: 0; color: var(--dark);">{{ item.item_name }}</h6>
+                            <p class="text-muted small mb-0">
+                                <i class="bi bi-shop"></i> {{ item.store.name }}
+                            </p>
+                        </div>
+                        <div class="text-end">
+                            <div style="font-size: 18px; font-weight: 700; color: var(--success);">
+                                GHS {{ item.total_value|floatformat:2|intcomma }}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="text-muted small">
+                            Stock: <strong>{{ item.quantity_on_hand|intcomma }}</strong> {{ item.unit_of_measure }}
+                        </span>
+                        <span class="text-muted small">
+                            Unit: GHS {{ item.unit_cost|floatformat:2|intcomma }}
+                        </span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted text-center py-4">No items found</p>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Recent Activity -->
+    <div class="col-md-6">
+        <div class="inventory-card">
+            <h5 style="font-weight: 700; margin-bottom: 20px; color: var(--dark);">
+                <i class="bi bi-clock-history"></i> Recent Activity
+            </h5>
+            
+            <!-- Recent Transfers -->
+            <h6 style="font-weight: 600; margin-bottom: 12px; color: var(--primary); font-size: 14px;">
+                Recent Transfers
+            </h6>
+            {% if recent_transfers %}
+            <div style="max-height: 200px; overflow-y: auto; margin-bottom: 24px;">
+                {% for transfer in recent_transfers %}
+                <div class="item-card">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong style="color: var(--primary);">{{ transfer.transfer_number }}</strong>
+                            <div class="text-muted small">
+                                {{ transfer.from_store.name }} → {{ transfer.to_store.name }}
+                            </div>
+                        </div>
+                        <span class="badge bg-info">{{ transfer.get_status_display }}</span>
+                    </div>
+                    <div class="text-muted small mt-2">
+                        {{ transfer.transfer_date|date:"M d, Y" }}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted small mb-3">No recent transfers</p>
+            {% endif %}
+            
+            <!-- Recent Procurements -->
+            <h6 style="font-weight: 600; margin-bottom: 12px; color: var(--success); font-size: 14px;">
+                Recent Procurements
+            </h6>
+            {% if recent_procurements %}
+            <div style="max-height: 200px; overflow-y: auto;">
+                {% for proc in recent_procurements %}
+                <div class="item-card">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong style="color: var(--success);">{{ proc.request_number }}</strong>
+                            <div class="text-muted small">
+                                {{ proc.requested_by_store.name }}
+                            </div>
+                        </div>
+                        <div class="text-end">
+                            <div style="font-weight: 700; color: var(--success);">
+                                GHS {{ proc.estimated_total|floatformat:0|intcomma }}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="text-muted small mt-2">
+                        {{ proc.request_date|date:"M d, Y" }}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted small">No recent procurements</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+

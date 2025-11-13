@@ -1,0 +1,590 @@
+{% extends "hospital/base.html" %}
+{% load humanize %}
+{% load static %}
+
+{% block title %}World-Class Inventory Management{% endblock %}
+
+{% block extra_css %}
+<style>
+    :root {
+        --inventory-primary: #6366f1;
+        --inventory-success: #10b981;
+        --inventory-warning: #f59e0b;
+        --inventory-danger: #ef4444;
+        --inventory-info: #3b82f6;
+    }
+    
+    .inventory-dashboard {
+        padding: 20px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+    }
+    
+    .dashboard-header {
+        background: white;
+        border-radius: 20px;
+        padding: 30px;
+        margin-bottom: 30px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+    }
+    
+    .dashboard-header h1 {
+        font-size: 2.5rem;
+        font-weight: 700;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 10px;
+    }
+    
+    .store-filter {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        margin-top: 20px;
+    }
+    
+    .store-filter select {
+        padding: 10px 20px;
+        border: 2px solid #e5e7eb;
+        border-radius: 10px;
+        font-size: 14px;
+        min-width: 200px;
+    }
+    
+    .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+    
+    .metric-card {
+        background: white;
+        border-radius: 16px;
+        padding: 25px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+    }
+    
+    .metric-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 4px;
+    }
+    
+    .metric-card.primary::before { background: var(--inventory-primary); }
+    .metric-card.success::before { background: var(--inventory-success); }
+    .metric-card.warning::before { background: var(--inventory-warning); }
+    .metric-card.danger::before { background: var(--inventory-danger); }
+    .metric-card.info::before { background: var(--inventory-info); }
+    
+    .metric-icon {
+        width: 50px;
+        height: 50px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        margin-bottom: 15px;
+    }
+    
+    .metric-card.primary .metric-icon { background: rgba(99, 102, 241, 0.1); color: var(--inventory-primary); }
+    .metric-card.success .metric-icon { background: rgba(16, 185, 129, 0.1); color: var(--inventory-success); }
+    .metric-card.warning .metric-icon { background: rgba(245, 158, 11, 0.1); color: var(--inventory-warning); }
+    .metric-card.danger .metric-icon { background: rgba(239, 68, 68, 0.1); color: var(--inventory-danger); }
+    .metric-card.info .metric-icon { background: rgba(59, 130, 246, 0.1); color: var(--inventory-info); }
+    
+    .metric-value {
+        font-size: 2rem;
+        font-weight: 700;
+        margin-bottom: 5px;
+    }
+    
+    .metric-label {
+        color: #6b7280;
+        font-size: 0.9rem;
+        font-weight: 500;
+    }
+    
+    .metric-trend {
+        font-size: 0.85rem;
+        margin-top: 10px;
+        padding: 5px 10px;
+        border-radius: 6px;
+        display: inline-block;
+    }
+    
+    .trend-up { background: rgba(16, 185, 129, 0.1); color: var(--inventory-success); }
+    .trend-down { background: rgba(239, 68, 68, 0.1); color: var(--inventory-danger); }
+    
+    .content-section {
+        background: white;
+        border-radius: 16px;
+        padding: 25px;
+        margin-bottom: 20px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+    
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 15px;
+        border-bottom: 2px solid #f3f4f6;
+    }
+    
+    .section-title {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: #1f2937;
+    }
+    
+    .action-button {
+        padding: 10px 20px;
+        border-radius: 10px;
+        border: none;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        text-decoration: none;
+        display: inline-block;
+    }
+    
+    .btn-primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    
+    .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+    
+    .alert-item {
+        padding: 15px;
+        border-radius: 10px;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        transition: all 0.3s ease;
+    }
+    
+    .alert-item:hover {
+        transform: translateX(5px);
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    }
+    
+    .alert-critical { background: rgba(239, 68, 68, 0.1); border-left: 4px solid #ef4444; }
+    .alert-high { background: rgba(245, 158, 11, 0.1); border-left: 4px solid #f59e0b; }
+    .alert-medium { background: rgba(59, 130, 246, 0.1); border-left: 4px solid #3b82f6; }
+    
+    .chart-container {
+        height: 300px;
+        margin-top: 20px;
+    }
+    
+    .quick-actions {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+        margin-top: 20px;
+    }
+    
+    .quick-action-card {
+        padding: 20px;
+        border-radius: 12px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        border: 2px solid #f3f4f6;
+        text-decoration: none;
+        color: #1f2937;
+    }
+    
+    .quick-action-card:hover {
+        border-color: var(--inventory-primary);
+        transform: translateY(-3px);
+        box-shadow: 0 4px 15px rgba(99, 102, 241, 0.2);
+    }
+    
+    .quick-action-icon {
+        font-size: 2rem;
+        margin-bottom: 10px;
+    }
+    
+    .badge-count {
+        background: var(--inventory-danger);
+        color: white;
+        font-size: 0.75rem;
+        padding: 3px 8px;
+        border-radius: 12px;
+        margin-left: 8px;
+    }
+    
+    .inventory-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0 8px;
+    }
+    
+    .inventory-table thead th {
+        background: #f9fafb;
+        padding: 12px;
+        text-align: left;
+        font-weight: 600;
+        color: #6b7280;
+        font-size: 0.875rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .inventory-table tbody tr {
+        background: white;
+        transition: all 0.3s ease;
+    }
+    
+    .inventory-table tbody tr:hover {
+        transform: scale(1.01);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    
+    .inventory-table tbody td {
+        padding: 15px 12px;
+        border-top: 1px solid #f3f4f6;
+        border-bottom: 1px solid #f3f4f6;
+    }
+    
+    .inventory-table tbody td:first-child {
+        border-left: 1px solid #f3f4f6;
+        border-top-left-radius: 8px;
+        border-bottom-left-radius: 8px;
+    }
+    
+    .inventory-table tbody td:last-child {
+        border-right: 1px solid #f3f4f6;
+        border-top-right-radius: 8px;
+        border-bottom-right-radius: 8px;
+    }
+    
+    .status-badge {
+        padding: 5px 12px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+    
+    .status-low { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+    .status-normal { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+    .status-out { background: rgba(107, 114, 128, 0.1); color: #6b7280; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="inventory-dashboard">
+    <!-- Dashboard Header -->
+    <div class="dashboard-header">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                <h1><i class="bi bi-box-seam"></i> Inventory Management</h1>
+                <p class="text-muted mb-0">State-of-the-art supply chain management with complete accountability</p>
+            </div>
+            <div>
+                <a href="{% url 'hospital:inventory:requisitions_list' %}" class="action-button btn-primary">
+                    <i class="bi bi-plus-circle"></i> New Requisition
+                </a>
+            </div>
+        </div>
+        
+        <!-- Store Filter -->
+        <div class="store-filter">
+            <label for="storeFilter"><i class="bi bi-shop"></i> Filter by Store:</label>
+            <select id="storeFilter" class="form-select" onchange="filterByStore(this.value)">
+                <option value="">All Stores</option>
+                {% for store in all_stores %}
+                <option value="{{ store.id }}" {% if selected_store and selected_store.id == store.id %}selected{% endif %}>
+                    {{ store.name }} ({{ store.get_store_type_display }})
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+    
+    <!-- Key Metrics -->
+    <div class="metrics-grid">
+        <!-- Total Value -->
+        <div class="metric-card primary">
+            <div class="metric-icon"><i class="bi bi-currency-dollar"></i></div>
+            <div class="metric-value">GHS {{ total_inventory_value|floatformat:2|intcomma }}</div>
+            <div class="metric-label">Total Inventory Value</div>
+        </div>
+        
+        <!-- Total Items -->
+        <div class="metric-card info">
+            <div class="metric-icon"><i class="bi bi-boxes"></i></div>
+            <div class="metric-value">{{ total_items|intcomma }}</div>
+            <div class="metric-label">Total Items in Stock</div>
+            <small class="text-muted">{{ total_skus|intcomma }} SKUs</small>
+        </div>
+        
+        <!-- Low Stock Alerts -->
+        <div class="metric-card warning">
+            <div class="metric-icon"><i class="bi bi-exclamation-triangle"></i></div>
+            <div class="metric-value">{{ low_stock_count }}</div>
+            <div class="metric-label">Low Stock Items</div>
+            <a href="{% url 'hospital:inventory:items_list' %}?status=low_stock" class="btn btn-sm btn-warning mt-2">View Items</a>
+        </div>
+        
+        <!-- Out of Stock -->
+        <div class="metric-card danger">
+            <div class="metric-icon"><i class="bi bi-x-circle"></i></div>
+            <div class="metric-value">{{ out_of_stock_count }}</div>
+            <div class="metric-label">Out of Stock</div>
+            <a href="{% url 'hospital:inventory:items_list' %}?status=out_of_stock" class="btn btn-sm btn-danger mt-2">View Items</a>
+        </div>
+        
+        <!-- Active Alerts -->
+        <div class="metric-card danger">
+            <div class="metric-icon"><i class="bi bi-bell"></i></div>
+            <div class="metric-value">{{ total_alerts }}</div>
+            <div class="metric-label">Active Alerts</div>
+            <small class="text-danger">{{ critical_alerts }} Critical</small>
+        </div>
+        
+        <!-- Expiring Soon -->
+        <div class="metric-card warning">
+            <div class="metric-icon"><i class="bi bi-calendar-x"></i></div>
+            <div class="metric-value">{{ expiring_soon_count }}</div>
+            <div class="metric-label">Expiring in 30 Days</div>
+            <small class="text-muted">{{ expired_count }} Already Expired</small>
+        </div>
+        
+        <!-- Turnover Rate -->
+        <div class="metric-card success">
+            <div class="metric-icon"><i class="bi bi-arrow-repeat"></i></div>
+            <div class="metric-value">{{ turnover_rate }}%</div>
+            <div class="metric-label">Inventory Turnover</div>
+            <small class="text-muted">Last 30 Days</small>
+        </div>
+        
+        <!-- Pending Requisitions -->
+        <div class="metric-card info">
+            <div class="metric-icon"><i class="bi bi-clipboard-check"></i></div>
+            <div class="metric-value">{{ pending_requisitions }}</div>
+            <div class="metric-label">Pending Requisitions</div>
+            <a href="{% url 'hospital:inventory:requisitions_list' %}?status=submitted" class="btn btn-sm btn-info mt-2">Review</a>
+        </div>
+    </div>
+    
+    <!-- Quick Actions -->
+    <div class="content-section">
+        <div class="section-header">
+            <h3 class="section-title"><i class="bi bi-lightning-charge-fill"></i> Quick Actions</h3>
+        </div>
+        
+        <div class="quick-actions">
+            <a href="{% url 'hospital:inventory:items_list' %}" class="quick-action-card">
+                <div class="quick-action-icon">📦</div>
+                <strong>View Inventory</strong>
+                <div class="text-muted small">Browse all items</div>
+            </a>
+            
+            <a href="{% url 'hospital:inventory:requisitions_list' %}" class="quick-action-card">
+                <div class="quick-action-icon">📋</div>
+                <strong>Requisitions</strong>
+                {% if pending_requisitions > 0 %}
+                <span class="badge-count">{{ pending_requisitions }}</span>
+                {% endif %}
+            </a>
+            
+            <a href="{% url 'hospital:inventory:transfers_list' %}" class="quick-action-card">
+                <div class="quick-action-icon">🚚</div>
+                <strong>Store Transfers</strong>
+                {% if pending_transfers_in > 0 or pending_transfers_out > 0 %}
+                <span class="badge-count">{{ pending_transfers_in|add:pending_transfers_out }}</span>
+                {% endif %}
+            </a>
+            
+            <a href="{% url 'hospital:inventory:alerts_list' %}" class="quick-action-card">
+                <div class="quick-action-icon">🔔</div>
+                <strong>Stock Alerts</strong>
+                {% if total_alerts > 0 %}
+                <span class="badge-count">{{ total_alerts }}</span>
+                {% endif %}
+            </a>
+            
+            <a href="{% url 'hospital:inventory:analytics' %}" class="quick-action-card">
+                <div class="quick-action-icon">📊</div>
+                <strong>Analytics</strong>
+                <div class="text-muted small">Reports & Insights</div>
+            </a>
+            
+            <a href="{% url 'hospital:procurement_dashboard' %}" class="quick-action-card">
+                <div class="quick-action-icon">🛒</div>
+                <strong>Procurement</strong>
+                <div class="text-muted small">Purchase orders</div>
+            </a>
+        </div>
+    </div>
+    
+    <!-- Recent Stock Alerts -->
+    <div class="row">
+        <div class="col-md-6">
+            <div class="content-section">
+                <div class="section-header">
+                    <h3 class="section-title"><i class="bi bi-bell-fill"></i> Recent Alerts</h3>
+                    <a href="{% url 'hospital:inventory:alerts_list' %}" class="action-button btn-primary btn-sm">View All</a>
+                </div>
+                
+                {% if recent_alerts %}
+                    {% for alert in recent_alerts %}
+                    <div class="alert-item {% if alert.severity == 'critical' %}alert-critical{% elif alert.severity == 'high' %}alert-high{% else %}alert-medium{% endif %}">
+                        <div style="flex-grow: 1;">
+                            <strong>{{ alert.get_alert_type_display }}</strong>
+                            <div class="text-muted small">{{ alert.inventory_item.item_name }} - {{ alert.store.name }}</div>
+                            <div class="small mt-1">{{ alert.message }}</div>
+                        </div>
+                        <a href="{% url 'hospital:inventory:resolve_alert' alert_id=alert.id %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-check-circle"></i> Resolve
+                        </a>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center text-muted py-4">
+                        <i class="bi bi-check-circle" style="font-size: 3rem;"></i>
+                        <p class="mt-2">No active alerts. Everything is running smoothly!</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Inventory by Category -->
+        <div class="col-md-6">
+            <div class="content-section">
+                <div class="section-header">
+                    <h3 class="section-title"><i class="bi bi-pie-chart-fill"></i> Inventory by Category</h3>
+                </div>
+                
+                {% if inventory_by_category %}
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Category</th>
+                                <th>Items</th>
+                                <th>Total Value</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for cat in inventory_by_category %}
+                            <tr>
+                                <td>
+                                    <a href="{% url 'hospital:inventory:items_list' %}?category={{ cat.category__id }}">
+                                        {{ cat.category__name }}
+                                    </a>
+                                </td>
+                                <td>{{ cat.total_items|intcomma }}</td>
+                                <td><strong>GHS {{ cat.total_value|floatformat:2|intcomma }}</strong></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                {% else %}
+                    <p class="text-muted text-center py-4">No categories found.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Top Items by Value -->
+    <div class="content-section">
+        <div class="section-header">
+            <h3 class="section-title"><i class="bi bi-star-fill"></i> Top 10 Items by Value</h3>
+        </div>
+        
+        {% if top_items_by_value %}
+            <table class="inventory-table">
+                <thead>
+                    <tr>
+                        <th>Item Code</th>
+                        <th>Item Name</th>
+                        <th>Store</th>
+                        <th>Quantity</th>
+                        <th>Unit Cost</th>
+                        <th>Total Value</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in top_items_by_value %}
+                    <tr>
+                        <td><code>{{ item.item_code }}</code></td>
+                        <td><strong>{{ item.item_name }}</strong></td>
+                        <td>{{ item.store.name }}</td>
+                        <td>{{ item.quantity_on_hand|intcomma }}</td>
+                        <td>GHS {{ item.unit_cost|floatformat:2 }}</td>
+                        <td><strong>GHS {{ item.total_value|floatformat:2|intcomma }}</strong></td>
+                        <td>
+                            {% if item.quantity_on_hand == 0 %}
+                                <span class="status-badge status-out">Out of Stock</span>
+                            {% elif item.quantity_on_hand <= item.reorder_level %}
+                                <span class="status-badge status-low">Low Stock</span>
+                            {% else %}
+                                <span class="status-badge status-normal">Normal</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{% url 'hospital:inventory:item_detail' item_id=item.id %}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-eye"></i> View
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p class="text-muted text-center py-4">No inventory items found.</p>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+function filterByStore(storeId) {
+    if (storeId) {
+        window.location.href = '?store=' + storeId;
+    } else {
+        window.location.href = '{% url "hospital:inventory:inventory_dashboard" %}';
+    }
+}
+
+// Auto-refresh stats every 30 seconds
+setInterval(function() {
+    fetch('{% url "hospital:inventory:api_stats" %}' + window.location.search)
+        .then(response => response.json())
+        .then(data => {
+            // Update live stats without full page reload
+            console.log('Stats updated:', data);
+        });
+}, 30000);
+</script>
+{% endblock %}
+
+
+
+
+
+
+

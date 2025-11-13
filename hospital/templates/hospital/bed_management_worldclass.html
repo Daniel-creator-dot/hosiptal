@@ -1,0 +1,560 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize hospital_extras %}
+
+{% block title %}Bed Management - HMS{% endblock %}
+{% block page_title %}🛏️ Intelligent Bed Management{% endblock %}
+{% block page_subtitle %}Real-time bed allocation and occupancy tracking{% endblock %}
+
+{% block extra_head %}
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+{% endblock %}
+
+{% block extra_css %}
+<!-- CACHE BUSTER v4.0 - FORCED NO-CACHE + DJANGO URL RENDERING -->
+<style>
+    .bed-hero {
+        background: linear-gradient(135deg, #0EA5E9 0%, #0284C7 100%);
+        color: white;
+        border-radius: 20px;
+        padding: 40px;
+        margin-bottom: 30px;
+        box-shadow: 0 10px 30px rgba(14, 165, 233, 0.3);
+    }
+
+    .occupancy-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+    }
+
+    .occupancy-card {
+        background: rgba(255,255,255,0.15);
+        backdrop-filter: blur(10px);
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+    }
+
+    .occupancy-percentage {
+        font-size: 48px;
+        font-weight: 800;
+        margin-bottom: 8px;
+    }
+
+    .occupancy-label {
+        font-size: 12px;
+        opacity: 0.9;
+    }
+
+    .ward-section {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+
+    .ward-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 2px solid #E5E7EB;
+    }
+
+    .ward-name {
+        font-size: 22px;
+        font-weight: 700;
+        color: #1F2937;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .ward-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        background: #EEF2FF;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #4F46E5;
+        font-size: 24px;
+    }
+
+    .ward-stats {
+        display: flex;
+        gap: 20px;
+    }
+
+    .ward-stat {
+        text-align: center;
+    }
+
+    .ward-stat-value {
+        font-size: 24px;
+        font-weight: 700;
+    }
+
+    .ward-stat-label {
+        font-size: 11px;
+        color: #6B7280;
+        text-transform: uppercase;
+    }
+
+    .bed-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 12px;
+    }
+
+    .bed-card {
+        background: #F9FAFB;
+        border: 2px solid #E5E7EB;
+        border-radius: 12px;
+        padding: 16px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s;
+        position: relative;
+    }
+
+    .bed-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 6px 16px rgba(0,0,0,0.1);
+    }
+
+    .bed-card.available {
+        background: #ECFDF5;
+        border-color: #10B981;
+    }
+
+    .bed-card.occupied {
+        background: #FEE2E2;
+        border-color: #EF4444;
+    }
+
+    .bed-card.maintenance {
+        background: #FEF3C7;
+        border-color: #F59E0B;
+    }
+
+    .bed-card.reserved {
+        background: #DBEAFE;
+        border-color: #3B82F6;
+    }
+
+    .bed-number {
+        font-size: 24px;
+        font-weight: 800;
+        color: #1F2937;
+        margin-bottom: 8px;
+    }
+
+    .bed-status-badge {
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+
+    .bed-status-available { background: #10B981; color: white; }
+    .bed-status-occupied { background: #EF4444; color: white; }
+    .bed-status-maintenance { background: #F59E0B; color: white; }
+    .bed-status-reserved { background: #3B82F6; color: white; }
+
+    .bed-patient-info {
+        margin-top: 12px;
+        font-size: 12px;
+        color: #6B7280;
+        line-height: 1.4;
+    }
+
+    .admit-button {
+        position: fixed;
+        bottom: 30px;
+        right: 30px;
+        width: 70px;
+        height: 70px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #10B981, #059669);
+        color: white;
+        border: none;
+        font-size: 32px;
+        cursor: pointer;
+        box-shadow: 0 8px 24px rgba(16, 185, 129, 0.4);
+        transition: all 0.3s;
+        z-index: 1000;
+    }
+
+    .admit-button:hover {
+        transform: scale(1.1);
+        box-shadow: 0 12px 32px rgba(16, 185, 129, 0.5);
+    }
+
+    .filter-tabs {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 24px;
+        flex-wrap: wrap;
+    }
+
+    .filter-tab {
+        padding: 12px 24px;
+        border-radius: 25px;
+        background: white;
+        border: 2px solid #E5E7EB;
+        color: #374151;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+        text-decoration: none;
+    }
+
+    .filter-tab:hover {
+        border-color: #4F46E5;
+        color: #4F46E5;
+    }
+
+    .filter-tab.active {
+        background: #4F46E5;
+        color: white;
+        border-color: #4F46E5;
+    }
+
+    .occupancy-bar {
+        height: 24px;
+        background: #E5E7EB;
+        border-radius: 12px;
+        overflow: hidden;
+        margin-top: 12px;
+    }
+
+    .occupancy-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #10B981, #059669);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 700;
+        font-size: 12px;
+    }
+
+    .occupancy-fill.high {
+        background: linear-gradient(90deg, #F59E0B, #D97706);
+    }
+
+    .occupancy-fill.critical {
+        background: linear-gradient(90deg, #EF4444, #DC2626);
+    }
+
+    @media (max-width: 768px) {
+        .bed-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Hero Section -->
+<div class="bed-hero">
+    <div class="d-flex justify-content-between align-items-start mb-4">
+        <div>
+            <h2 style="font-weight: 800; font-size: 32px; margin-bottom: 12px;">Bed Management Center</h2>
+            <p style="opacity: 0.9; font-size: 16px; margin: 0;">
+                Real-time bed allocation · Total: {{ total_beds }} beds
+            </p>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="{% url 'hospital:admission_create' %}" class="btn btn-light btn-lg">
+                <i class="bi bi-plus-circle me-2"></i>New Admission
+            </a>
+            <a href="{% url 'hospital:bed_utilization_report' %}" class="btn btn-outline-light btn-lg">
+                <i class="bi bi-graph-up me-2"></i>Reports
+            </a>
+        </div>
+    </div>
+    
+    <div class="occupancy-grid">
+        <div class="occupancy-card">
+            <div class="occupancy-percentage" style="color: #10B981;">{{ available_beds }}</div>
+            <div class="occupancy-label">Available Beds</div>
+        </div>
+        <div class="occupancy-card">
+            <div class="occupancy-percentage" style="color: #EF4444;">{{ occupied_beds }}</div>
+            <div class="occupancy-label">Occupied</div>
+        </div>
+        <div class="occupancy-card">
+            <div class="occupancy-percentage" style="color: #F59E0B;">{{ maintenance_beds }}</div>
+            <div class="occupancy-label">Maintenance</div>
+        </div>
+        <div class="occupancy-card">
+            <div class="occupancy-percentage" style="color: #3B82F6;">{{ reserved_beds }}</div>
+            <div class="occupancy-label">Reserved</div>
+        </div>
+        <div class="occupancy-card">
+            <div class="occupancy-percentage">{{ occupancy_rate|floatformat:0 }}%</div>
+            <div class="occupancy-label">Occupancy Rate</div>
+        </div>
+    </div>
+</div>
+
+<!-- Filter Tabs -->
+<div class="filter-tabs">
+    <a href="?" class="filter-tab {% if not ward_filter and not status_filter %}active{% endif %}">
+        <i class="bi bi-grid me-1"></i>All Wards
+    </a>
+    <a href="?status=available" class="filter-tab {% if status_filter == 'available' %}active{% endif %}">
+        <i class="bi bi-check-circle me-1"></i>Available Only
+    </a>
+    <a href="?status=occupied" class="filter-tab {% if status_filter == 'occupied' %}active{% endif %}">
+        <i class="bi bi-person-fill me-1"></i>Occupied Only
+    </a>
+    {% for ward in all_wards %}
+    <a href="?ward={{ ward.pk }}" class="filter-tab {% if ward_filter == ward.pk|stringformat:'s' %}active{% endif %}">
+        {{ ward.name }}
+    </a>
+    {% endfor %}
+</div>
+
+<!-- Ward Sections -->
+{% regroup beds by ward as beds_by_ward %}
+{% for ward_group in beds_by_ward %}
+<div class="ward-section">
+    <div class="ward-header">
+        <div class="ward-name">
+            <div class="ward-icon">
+                <i class="bi bi-hospital"></i>
+            </div>
+            <span>{{ ward_group.grouper.name }}</span>
+            <span class="badge bg-info">{{ ward_group.grouper.get_ward_type_display }}</span>
+        </div>
+        
+        <div class="ward-stats">
+            <div class="ward-stat">
+                <div class="ward-stat-value" style="color: #1F2937;">{{ ward_group.grouper.capacity }}</div>
+                <div class="ward-stat-label">Capacity</div>
+            </div>
+            <div class="ward-stat">
+                <div class="ward-stat-value" style="color: #10B981;">
+                    {{ ward_stats|get_item:ward_group.grouper.pk|get_item:"available_count" }}
+                </div>
+                <div class="ward-stat-label">Available</div>
+            </div>
+            <div class="ward-stat">
+                <div class="ward-stat-value" style="color: #EF4444;">
+                    {{ ward_stats|get_item:ward_group.grouper.pk|get_item:"occupied_count" }}
+                </div>
+                <div class="ward-stat-label">Occupied</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Occupancy Bar -->
+    <div class="occupancy-bar">
+        {% with occupancy=ward_stats|get_item:ward_group.grouper.pk|get_item:"occupancy_percentage" %}
+        <div class="occupancy-fill {% if occupancy > 90 %}critical{% elif occupancy > 75 %}high{% endif %}" style="width: {{ occupancy }}%;">
+            {{ occupancy|floatformat:0 }}% Occupied
+        </div>
+        {% endwith %}
+    </div>
+    
+    <!-- Bed Grid -->
+    <div class="bed-grid mt-4">
+        {% for bed in ward_group.list %}
+        <div class="bed-card {{ bed.status }}" onclick="selectBed('{{ bed.pk }}', '{{ bed.bed_number }}', '{{ bed.status }}')" data-bed-id="{{ bed.pk }}">
+            <div class="bed-number">{{ bed.bed_number }}</div>
+            <span class="bed-status-badge bed-status-{{ bed.status }}">
+                {{ bed.get_status_display }}
+            </span>
+            
+            {% if bed.status == 'occupied' and bed.current_patient %}
+            <div class="bed-patient-info">
+                <strong>{{ bed.current_patient.full_name|truncatewords:3 }}</strong><br>
+                <small>{{ bed.current_patient.mrn }}</small><br>
+                <small>{{ bed.admission_days }} days</small>
+            </div>
+            {% elif bed.status == 'maintenance' %}
+            <div class="bed-patient-info">
+                <i class="bi bi-tools"></i><br>
+                <small>Under maintenance</small>
+            </div>
+            {% elif bed.status == 'reserved' %}
+            <div class="bed-patient-info">
+                <i class="bi bi-bookmark"></i><br>
+                <small>Reserved</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endfor %}
+
+<!-- Empty State -->
+{% if not beds %}
+<div class="text-center py-5">
+    <i class="bi bi-inbox" style="font-size: 80px; color: #ddd;"></i>
+    <h4 class="mt-3">No Beds Found</h4>
+    <p class="text-muted">Try adjusting your filters</p>
+</div>
+{% endif %}
+
+<!-- Quick Admit Button -->
+<button class="admit-button" onclick="window.location='{% url 'hospital:admission_create' %}'" title="Quick Admit">
+    <i class="bi bi-person-plus"></i>
+</button>
+
+<!-- Bed Selection Modal -->
+<div class="modal fade" id="bedModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Bed Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="bedModalContent">
+                <p class="text-muted">Loading...</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" id="admitToBedBtn" style="display: none;">
+                    <i class="bi bi-person-plus me-2"></i>Admit Patient Here
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Django URL constants (prevents caching issues)
+const ADMISSION_CREATE_URL = "{% url 'hospital:admission_create' %}";
+const ADMISSION_DETAIL_URL_BASE = "/hms/admissions/";
+const ADMISSION_DISCHARGE_URL_BASE = "/hms/admissions/";
+
+let selectedBedId = null;
+
+function selectBed(bedId, bedNumber, bedStatus) {
+    selectedBedId = bedId;
+    
+    // Show modal with bed details
+    const modal = new bootstrap.Modal(document.getElementById('bedModal'));
+    const modalContent = document.getElementById('bedModalContent');
+    const admitBtn = document.getElementById('admitToBedBtn');
+    
+    // Fetch bed details
+    fetch(`/hms/api/bed/${bedId}/details/`)
+        .then(r => r.json())
+        .then(data => {
+            let html = `
+                <div class="mb-3">
+                    <h4>Bed ${bedNumber}</h4>
+                    <span class="badge bg-${getStatusColor(bedStatus)}">${bedStatus.toUpperCase()}</span>
+                </div>
+            `;
+            
+            if (data.patient) {
+                html += `
+                    <div class="alert alert-info">
+                        <strong>Current Patient:</strong> ${data.patient.name}<br>
+                        <strong>MRN:</strong> ${data.patient.mrn}<br>
+                        <strong>Admitted:</strong> ${data.admission_date}<br>
+                        <strong>Days:</strong> ${data.admission_days}
+                    </div>
+                `;
+                
+                // Add bed charges if available
+                if (data.bed_charges) {
+                    html += `
+                        <div class="alert alert-warning" style="border-left: 4px solid #F59E0B;">
+                            <h6 class="mb-2"><i class="bi bi-currency-dollar"></i> Bed Charges</h6>
+                            <div><strong>Daily Rate:</strong> GHS ${data.bed_charges.daily_rate.toFixed(2)}</div>
+                            <div><strong>Days:</strong> ${data.bed_charges.days} day(s)</div>
+                            <div style="font-size: 18px; font-weight: bold; margin-top: 8px; color: #D97706;">
+                                <strong>Current Total:</strong> GHS ${data.bed_charges.total.toFixed(2)}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                html += `
+                    <div class="d-grid gap-2">
+                        <a href="/hms/admission-review/${data.encounter_id}/" class="btn btn-info btn-lg">
+                            <i class="bi bi-clipboard2-pulse me-2"></i>Add Doctor's Review & Notes
+                        </a>
+                        <a href="GHS {ADMISSION_DETAIL_URL_BASE}${data.admission_id}/" class="btn btn-primary">
+                            <i class="bi bi-eye me-2"></i>View Admission Details
+                        </a>
+                        <button class="btn btn-success" onclick="dischargePatient('${data.admission_id}')">
+                            <i class="bi bi-box-arrow-right me-2"></i>Discharge Patient
+                        </button>
+                    </div>
+                `;
+                admitBtn.style.display = 'none';
+            } else {
+                html += `
+                    <div class="alert alert-success">
+                        <i class="bi bi-check-circle me-2"></i>
+                        This bed is available for admission
+                    </div>
+                `;
+                admitBtn.style.display = 'block';
+                admitBtn.onclick = () => {
+                    window.location = `${ADMISSION_CREATE_URL}?bed=${bedId}`;
+                };
+            }
+            
+            modalContent.innerHTML = html;
+            modal.show();
+        })
+        .catch(err => {
+            modalContent.innerHTML = '<p class="text-danger">Error loading bed details</p>';
+            modal.show();
+        });
+}
+
+function getStatusColor(status) {
+    const colors = {
+        'available': 'success',
+        'occupied': 'danger',
+        'maintenance': 'warning',
+        'reserved': 'info'
+    };
+    return colors[status] || 'secondary';
+}
+
+function dischargePatient(admissionId) {
+    if (confirm('Are you sure you want to discharge this patient?')) {
+        window.location = `${ADMISSION_DISCHARGE_URL_BASE}${admissionId}/discharge/`;
+    }
+}
+
+// Auto-refresh every 60 seconds
+setInterval(() => {
+    if (!document.hidden) {
+        location.reload();
+    }
+}, 60000);
+
+// Keyboard shortcuts
+document.addEventListener('keydown', function(e) {
+    // Alt + A for quick admit
+    if (e.altKey && e.key === 'a') {
+        e.preventDefault();
+        window.location = '{% url "hospital:admission_create" %}';
+    }
+});
+</script>
+{% endblock %}
+

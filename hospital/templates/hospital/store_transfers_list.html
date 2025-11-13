@@ -1,0 +1,85 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Store Transfers - Procurement{% endblock %}
+{% block page_title %}Store Transfers{% endblock %}
+{% block page_subtitle %}All store-to-store transfers{% endblock %}
+
+{% block content %}
+<div class="modern-card">
+    <!-- Filters -->
+    <div class="mb-3 d-flex justify-content-between align-items-center">
+        <div>
+            <a href="{% url 'hospital:procurement_dashboard' %}" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Dashboard
+            </a>
+            <a href="{% url 'hospital:store_transfer_create' %}" class="btn btn-sm btn-primary ms-2">
+                <i class="bi bi-plus-circle"></i> New Transfer
+            </a>
+        </div>
+        <form method="get" class="d-flex gap-2">
+            <select name="status" class="form-select form-select-sm" style="width: auto;">
+                <option value="">All Statuses</option>
+                {% for value, label in status_choices %}
+                <option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+        </form>
+    </div>
+    
+    {% if transfers %}
+    <div class="table-responsive">
+        <table class="table modern-table">
+            <thead>
+                <tr>
+                    <th>Transfer #</th>
+                    <th>From Store</th>
+                    <th>To Store</th>
+                    <th>Date</th>
+                    <th>Requested By</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for transfer in transfers %}
+                <tr>
+                    <td><strong>{{ transfer.transfer_number }}</strong></td>
+                    <td>{{ transfer.from_store.name }}</td>
+                    <td>{{ transfer.to_store.name }}</td>
+                    <td>{{ transfer.transfer_date|date:"M d, Y" }}</td>
+                    <td>
+                        {% if transfer.requested_by %}
+                            {{ transfer.requested_by.user.get_full_name|default:transfer.requested_by.user.username }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if transfer.status == 'pending' %}
+                            <span class="badge-modern badge-secondary">Pending</span>
+                        {% elif transfer.status == 'approved' %}
+                            <span class="badge-modern badge-warning">Approved</span>
+                        {% elif transfer.status == 'in_transit' %}
+                            <span class="badge-modern badge-info">In Transit</span>
+                        {% elif transfer.status == 'completed' %}
+                            <span class="badge-modern badge-success">Completed</span>
+                        {% else %}
+                            <span class="badge-modern badge-danger">Cancelled</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{% url 'hospital:store_transfer_detail' transfer.pk %}" class="btn btn-sm btn-outline-primary">View</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-muted text-center py-4">No store transfers found</p>
+    {% endif %}
+</div>
+{% endblock %}
+

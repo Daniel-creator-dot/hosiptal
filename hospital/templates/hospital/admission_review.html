@@ -1,0 +1,487 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize math_filters %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="card shadow-sm mb-4" style="background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); color: white;">
+        <div class="card-body p-4">
+            <div class="row align-items-center">
+                <div class="col-md-8">
+                    <h3 class="mb-2">
+                        <i class="bi bi-hospital-fill me-2"></i>
+                        Admission Review
+                    </h3>
+                    <h4 class="mb-2">{{ patient.full_name }}</h4>
+                    <div class="d-flex gap-4">
+                        <span><i class="bi bi-card-text me-2"></i>MRN: {{ patient.mrn }}</span>
+                        <span><i class="bi bi-calendar me-2"></i>{{ patient.age }} years • {{ patient.get_gender_display }}</span>
+                        <span><i class="bi bi-clock-history me-2"></i>Day {{ days_admitted }} ({{ hours_admitted }}h since admission)</span>
+                    </div>
+                </div>
+                <div class="col-md-4 text-end">
+                    <a href="{% url 'hospital:admitted_patients_list' %}" class="btn btn-light me-2">
+                        <i class="bi bi-arrow-left me-2"></i>Back to List
+                    </a>
+                    <a href="{% url 'hospital:patient_detail' patient.pk %}" class="btn btn-outline-light">
+                        <i class="bi bi-person me-2"></i>Full Profile
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Left Column - Main Review Area -->
+        <div class="col-md-8">
+            <!-- Quick Actions -->
+            <div class="row g-3 mb-4">
+                <div class="col-md-4">
+                    <button class="btn btn-primary w-100 btn-lg" data-bs-toggle="modal" data-bs-target="#addProgressNoteModal">
+                        <i class="bi bi-journal-plus"></i><br>
+                        <small>Add Progress Note</small>
+                    </button>
+                </div>
+                <div class="col-md-4">
+                    <button class="btn btn-success w-100 btn-lg" data-bs-toggle="modal" data-bs-target="#addMedicationModal">
+                        <i class="bi bi-prescription2"></i><br>
+                        <small>Add Medication</small>
+                    </button>
+                </div>
+                <div class="col-md-4">
+                    <button class="btn btn-info w-100 btn-lg" data-bs-toggle="modal" data-bs-target="#updateStatusModal">
+                        <i class="bi bi-clipboard2-pulse"></i><br>
+                        <small>Update Status</small>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Current Diagnosis & Status -->
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-clipboard2-check me-2"></i>Current Status</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>Diagnosis</h6>
+                            <p class="border-start border-3 border-primary ps-3">
+                                {{ encounter.diagnosis|default:"Not yet diagnosed" }}
+                            </p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Chief Complaint</h6>
+                            <p class="border-start border-3 border-success ps-3">
+                                {{ encounter.chief_complaint|default:"Not recorded" }}
+                            </p>
+                        </div>
+                    </div>
+                    {% if encounter.notes %}
+                        <h6 class="mt-3">Clinical Notes</h6>
+                        <div class="bg-light p-3 rounded">
+                            {{ encounter.notes|linebreaks }}
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Progress Notes (For Next Shift) -->
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0"><i class="bi bi-journal-medical me-2"></i>Progress Notes (Shift Handover)</h5>
+                </div>
+                <div class="card-body">
+                    {% if clinical_notes %}
+                        {% for note in clinical_notes %}
+                        <div class="card mb-3 {% if forloop.first %}border-success border-2{% endif %}">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between mb-2">
+                                    <div>
+                                        <span class="badge bg-{% if note.note_type == 'progress' %}info{% elif note.note_type == 'admission' %}primary{% else %}secondary{% endif %}">
+                                            {{ note.get_note_type_display }}
+                                        </span>
+                                        {% if forloop.first %}
+                                            <span class="badge bg-success">Latest</span>
+                                        {% endif %}
+                                    </div>
+                                    <small class="text-muted">
+                                        {{ note.created|date:"M d, Y H:i" }} by Dr. {{ note.created_by.get_full_name }}
+                                    </small>
+                                </div>
+                                
+                                {% if note.subjective %}
+                                    <p class="mb-2"><strong class="text-primary">S:</strong> {{ note.subjective }}</p>
+                                {% endif %}
+                                {% if note.objective %}
+                                    <p class="mb-2"><strong class="text-success">O:</strong> {{ note.objective }}</p>
+                                {% endif %}
+                                {% if note.assessment %}
+                                    <p class="mb-2"><strong class="text-warning">A:</strong> {{ note.assessment }}</p>
+                                {% endif %}
+                                {% if note.plan %}
+                                    <p class="mb-2"><strong class="text-danger">P:</strong> {{ note.plan }}</p>
+                                {% endif %}
+                                {% if note.notes %}
+                                    <p class="mb-0 small text-muted border-top pt-2">{{ note.notes }}</p>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            No progress notes yet. Add one for the next shift!
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Current Medications -->
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="bi bi-prescription2 me-2"></i>Current Medications</h5>
+                </div>
+                <div class="card-body">
+                    {% if current_prescriptions %}
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Medication</th>
+                                        <th>Dosage</th>
+                                        <th>Frequency</th>
+                                        <th>Route</th>
+                                        <th>Prescribed By</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for rx in current_prescriptions %}
+                                    <tr>
+                                        <td>
+                                            <strong>{{ rx.drug.name }}</strong><br>
+                                            <small class="text-muted">{{ rx.drug.strength }}</small>
+                                        </td>
+                                        <td>{{ rx.dosage_instructions|default:"-" }}</td>
+                                        <td>{{ rx.frequency|default:"-" }}</td>
+                                        <td>{{ rx.route|default:"Oral" }}</td>
+                                        <td>
+                                            <small>Dr. {{ rx.prescribed_by.get_full_name }}<br>
+                                            {{ rx.created|date:"M d, H:i" }}</small>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-info">
+                                                Prescribed
+                                            </span>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <p class="text-muted mb-0">No medications prescribed yet.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Recent Lab Results -->
+            {% if recent_lab_results %}
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-clipboard-pulse me-2"></i>Recent Lab Results</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Test</th>
+                                    <th>Result</th>
+                                    <th>Units</th>
+                                    <th>Reference</th>
+                                    <th>Date</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for result in recent_lab_results %}
+                                <tr>
+                                    <td>{{ result.test.name }}</td>
+                                    <td class="{% if result.is_abnormal %}text-danger fw-bold{% endif %}">
+                                        {{ result.value|default:result.qualitative_result }}
+                                        {% if result.is_abnormal %}<i class="bi bi-exclamation-triangle text-danger"></i>{% endif %}
+                                    </td>
+                                    <td>{{ result.units|default:"-" }}</td>
+                                    <td>
+                                        {% if result.range_low and result.range_high %}
+                                            {{ result.range_low }}-{{ result.range_high }}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td><small>{{ result.created|date:"M d, H:i" }}</small></td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Right Column - Vitals & Quick Info -->
+        <div class="col-md-4">
+            <!-- Latest Vitals -->
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-danger text-white">
+                    <h6 class="mb-0"><i class="bi bi-heart-pulse me-2"></i>Latest Vital Signs</h6>
+                </div>
+                <div class="card-body">
+                    {% if latest_vitals %}
+                        <p class="mb-2"><small class="text-muted">Recorded {{ latest_vitals.recorded_at|timesince }} ago</small></p>
+                        {% if latest_vitals.temperature %}
+                            <p class="mb-2"><i class="bi bi-thermometer me-2"></i> <strong>Temperature:</strong> {{ latest_vitals.temperature }}°C</p>
+                        {% endif %}
+                        {% if latest_vitals.systolic %}
+                            <p class="mb-2"><i class="bi bi-activity me-2"></i> <strong>Blood Pressure:</strong> {{ latest_vitals.systolic }}/{{ latest_vitals.diastolic }} mmHg</p>
+                        {% endif %}
+                        {% if latest_vitals.heart_rate %}
+                            <p class="mb-2"><i class="bi bi-heart me-2"></i> <strong>Heart Rate:</strong> {{ latest_vitals.heart_rate }} bpm</p>
+                        {% endif %}
+                        {% if latest_vitals.respiratory_rate %}
+                            <p class="mb-2"><i class="bi bi-lungs me-2"></i> <strong>Respiratory:</strong> {{ latest_vitals.respiratory_rate }} /min</p>
+                        {% endif %}
+                        {% if latest_vitals.oxygen_saturation %}
+                            <p class="mb-0"><i class="bi bi-moisture me-2"></i> <strong>SpO₂:</strong> {{ latest_vitals.oxygen_saturation }}%</p>
+                        {% endif %}
+                    {% else %}
+                        <p class="text-muted mb-0">No vitals recorded</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Recent Vitals Trend -->
+            {% if recent_vitals|length > 1 %}
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-secondary text-white">
+                    <h6 class="mb-0"><i class="bi bi-graph-up me-2"></i>Vitals Trend</h6>
+                </div>
+                <div class="card-body">
+                    {% for vital in recent_vitals %}
+                    <div class="{% if not forloop.last %}border-bottom pb-2 mb-2{% endif %}">
+                        <small class="text-muted d-block">{{ vital.recorded_at|date:"M d, H:i" }}</small>
+                        {% if vital.temperature %}<small>🌡️ {{ vital.temperature }}°C</small>{% endif %}
+                        {% if vital.systolic %}<small class="ms-2">💓 {{ vital.systolic }}/{{ vital.diastolic }}</small>{% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Active Problems -->
+            {% if problems %}
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-dark text-white">
+                    <h6 class="mb-0"><i class="bi bi-list-ul me-2"></i>Active Problems</h6>
+                </div>
+                <div class="card-body">
+                    {% for problem in problems %}
+                    <div class="{% if not forloop.last %}border-bottom pb-2 mb-2{% endif %}">
+                        <strong>{{ problem.problem_name }}</strong><br>
+                        <small class="text-muted">{{ problem.onset_date|date:"M d, Y"|default:"Onset unknown" }}</small>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Admission Info -->
+            <div class="card shadow-sm">
+                <div class="card-header bg-info text-white">
+                    <h6 class="mb-0"><i class="bi bi-info-circle me-2"></i>Admission Info</h6>
+                </div>
+                <div class="card-body">
+                    <p class="mb-2"><strong>Admitted:</strong><br>{{ encounter.started_at|date:"M d, Y H:i" }}</p>
+                    <p class="mb-2"><strong>Duration:</strong><br>{{ days_admitted }} days, {{ hours_admitted }} hours</p>
+                    <p class="mb-0"><strong>Admitting Doctor:</strong><br>Dr. {{ encounter.provider.get_full_name|default:"Not assigned" }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Progress Note Modal -->
+<div class="modal fade" id="addProgressNoteModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title"><i class="bi bi-journal-plus me-2"></i>Add Progress Note</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="add_progress_note">
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <strong>For Next Shift:</strong> Document patient status so the next doctor can quickly understand current condition and plan.
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label"><strong>Subjective</strong> (Patient's complaints)</label>
+                            <textarea name="subjective" class="form-control" rows="3" 
+                                      placeholder="What patient reports..."></textarea>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label"><strong>Objective</strong> (Your findings)</label>
+                            <textarea name="objective" class="form-control" rows="3" 
+                                      placeholder="Physical exam, vitals..."></textarea>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label"><strong>Assessment</strong> (Your conclusion)</label>
+                        <textarea name="assessment" class="form-control" rows="2" 
+                                  placeholder="Current diagnosis/impression..."></textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label"><strong>Plan</strong> (What to do next)</label>
+                        <textarea name="plan" class="form-control" rows="3" 
+                                  placeholder="Treatment plan, orders, monitoring..."></textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Additional Notes</label>
+                        <textarea name="note_content" class="form-control" rows="2" 
+                                  placeholder="Any other important information..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-circle me-2"></i>Save Progress Note
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Add Medication Modal -->
+<div class="modal fade" id="addMedicationModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title"><i class="bi bi-prescription2 me-2"></i>Add Medication</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="add_medication">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label"><strong>Select Medication</strong></label>
+                        <select name="drug_id" class="form-select" required>
+                            <option value="">-- Choose Drug --</option>
+                            {% for drug in available_drugs %}
+                                <option value="{{ drug.pk }}">{{ drug.name }} {{ drug.strength }} ({{ drug.form }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Dosage Instructions</label>
+                            <input type="text" name="dosage_instructions" class="form-control" 
+                                   placeholder="e.g., 1 tablet" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Frequency</label>
+                            <select name="frequency" class="form-select">
+                                <option value="once_daily">Once daily</option>
+                                <option value="twice_daily">Twice daily</option>
+                                <option value="three_times_daily">Three times daily</option>
+                                <option value="four_times_daily">Four times daily</option>
+                                <option value="as_needed">As needed (PRN)</option>
+                                <option value="every_4_hours">Every 4 hours</option>
+                                <option value="every_6_hours">Every 6 hours</option>
+                                <option value="every_8_hours">Every 8 hours</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Quantity</label>
+                            <input type="number" name="quantity" class="form-control" value="1" min="1" required>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Duration (days)</label>
+                            <input type="number" name="duration_days" class="form-control" placeholder="e.g., 7">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Route</label>
+                            <select name="route" class="form-select">
+                                <option value="oral">Oral</option>
+                                <option value="iv">IV (Intravenous)</option>
+                                <option value="im">IM (Intramuscular)</option>
+                                <option value="sc">SC (Subcutaneous)</option>
+                                <option value="topical">Topical</option>
+                                <option value="inhaled">Inhaled</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-success">
+                        <i class="bi bi-check-circle me-2"></i>Add Medication
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Update Status Modal -->
+<div class="modal fade" id="updateStatusModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-info text-white">
+                <h5 class="modal-title"><i class="bi bi-clipboard2-pulse me-2"></i>Update Patient Status</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_status">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Update Diagnosis</label>
+                        <textarea name="diagnosis" class="form-control" rows="2" 
+                                  placeholder="Current diagnosis">{{ encounter.diagnosis }}</textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Status Notes</label>
+                        <textarea name="status_notes" class="form-control" rows="3" 
+                                  placeholder="Status update, changes in condition..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-info">
+                        <i class="bi bi-check-circle me-2"></i>Update Status
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+

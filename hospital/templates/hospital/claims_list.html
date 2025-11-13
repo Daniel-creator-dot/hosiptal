@@ -1,0 +1,143 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Insurance Claims - HMS{% endblock %}
+{% block page_title %}Insurance Claims{% endblock %}
+{% block page_subtitle %}Manage and track insurance claims{% endblock %}
+
+{% block content %}
+<!-- Statistics -->
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="modern-card text-center">
+            <h6 class="text-muted mb-2">Total Claims</h6>
+            <h3 class="mb-0">{{ stats.total_claims }}</h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center">
+            <h6 class="text-muted mb-2">Total Billed</h6>
+            <h3 class="mb-0 text-primary">GHS {{ stats.total_billed|floatformat:2|intcomma }}</h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center">
+            <h6 class="text-muted mb-2">Total Paid</h6>
+            <h3 class="mb-0 text-success">GHS {{ stats.total_paid|floatformat:2|intcomma }}</h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center">
+            <h6 class="text-muted mb-2">Pending</h6>
+            <h3 class="mb-0 text-warning">{{ stats.pending }}</h3>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="modern-card mb-4">
+    <form method="get" class="row g-3">
+        <div class="col-md-4">
+            <label class="form-label">Search</label>
+            <input type="text" name="q" value="{{ query }}" class="form-control form-control-modern" placeholder="Claim #, Patient, MRN">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Status</label>
+            <select name="status" class="form-select form-control-modern">
+                <option value="all">All Status</option>
+                <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Draft</option>
+                <option value="submitted" {% if status_filter == 'submitted' %}selected{% endif %}>Submitted</option>
+                <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid</option>
+                <option value="denied" {% if status_filter == 'denied' %}selected{% endif %}>Denied</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Payer</label>
+            <select name="payer" class="form-select form-control-modern">
+                <option value="">All Payers</option>
+                {% for payer in payers %}
+                <option value="{{ payer.pk }}" {% if payer_filter == payer.pk|stringformat:"s" %}selected{% endif %}>{{ payer.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">&nbsp;</label>
+            <button type="submit" class="btn btn-primary-modern w-100">Filter</button>
+        </div>
+    </form>
+</div>
+
+<!-- Claims List -->
+<div class="modern-card">
+    <div class="table-responsive">
+        <table class="table modern-table">
+            <thead>
+                <tr>
+                    <th>Claim #</th>
+                    <th>Patient</th>
+                    <th>Payer</th>
+                    <th>Service Date</th>
+                    <th>Billed</th>
+                    <th>Approved</th>
+                    <th>Paid</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for claim in claims %}
+                <tr>
+                    <td><strong>{{ claim.claim_number }}</strong></td>
+                    <td>
+                        <a href="{% url 'hospital:patient_detail' claim.patient.pk %}">{{ claim.patient.full_name }}</a>
+                        <br><small class="text-muted">{{ claim.patient.mrn }}</small>
+                    </td>
+                    <td>{{ claim.payer.name }}</td>
+                    <td>{{ claim.service_date|date:"d/m/Y" }}</td>
+                    <td>GHS {{ claim.billed_amount|floatformat:2 }}</td>
+                    <td>GHS {{ claim.approved_amount|floatformat:2 }}</td>
+                    <td>GHS {{ claim.paid_amount|floatformat:2 }}</td>
+                    <td>
+                        <span class="badge-modern badge-{% if claim.status == 'paid' %}success{% elif claim.status == 'submitted' %}info{% elif claim.status in 'denied,rejected' %}danger{% elif claim.status == 'draft' %}secondary{% else %}warning{% endif %}">
+                            {{ claim.get_status_display }}
+                        </span>
+                    </td>
+                    <td>
+                        <div class="btn-group" role="group">
+                            <a href="{% url 'hospital:claim_detail' claim.pk %}" class="btn btn-sm btn-outline-primary">View</a>
+                            {% if claim.status == 'draft' %}
+                            <a href="{% url 'hospital:submit_claim' claim.pk %}" class="btn btn-sm btn-outline-success">Submit</a>
+                            {% elif claim.status == 'accepted' %}
+                            <a href="{% url 'hospital:process_claim_payment' claim.pk %}" class="btn btn-sm btn-outline-info">Pay</a>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="9" class="text-center text-muted py-4">No claims found</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Pagination -->
+    {% if claims.has_other_pages %}
+    <div class="d-flex justify-content-center mt-4">
+        <nav>
+            <ul class="pagination">
+                {% if claims.has_previous %}
+                <li class="page-item"><a class="page-link" href="?page={{ claims.previous_page_number }}&q={{ query }}&status={{ status_filter }}&payer={{ payer_filter }}">Previous</a></li>
+                {% endif %}
+                <li class="page-item active"><span class="page-link">Page {{ claims.number }} of {{ claims.paginator.num_pages }}</span></li>
+                {% if claims.has_next %}
+                <li class="page-item"><a class="page-link" href="?page={{ claims.next_page_number }}&q={{ query }}&status={{ status_filter }}&payer={{ payer_filter }}">Next</a></li>
+                {% endif %}
+            </ul>
+        </nav>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+

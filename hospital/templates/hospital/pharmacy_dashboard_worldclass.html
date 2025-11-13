@@ -1,0 +1,762 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Pharmacy - World-Class System{% endblock %}
+
+{% block extra_css %}
+<style>
+    :root {
+        --pharmacy-primary: #10b981;
+        --pharmacy-success: #059669;
+        --pharmacy-warning: #f59e0b;
+        --pharmacy-danger: #ef4444;
+        --pharmacy-info: #3b82f6;
+        --dark: #1f2937;
+        --gray: #6b7280;
+        --light: #f9fafb;
+    }
+    
+    .pharmacy-header {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+        padding: 32px;
+        border-radius: 16px;
+        margin-bottom: 24px;
+        box-shadow: 0 4px 20px rgba(16, 185, 129, 0.3);
+    }
+    
+    .stat-card-pharmacy {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        transition: all 0.3s;
+        border-left: 4px solid var(--pharmacy-primary);
+    }
+    
+    .stat-card-pharmacy:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    }
+    
+    .medication-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 16px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        border-left: 4px solid var(--pharmacy-primary);
+        transition: all 0.2s;
+    }
+    
+    .medication-card:hover {
+        box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+        transform: translateX(4px);
+    }
+    
+    .priority-badge {
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    
+    .priority-stat {
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        color: white;
+    }
+    
+    .priority-urgent {
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        color: white;
+    }
+    
+    .priority-routine {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        color: white;
+    }
+    
+    .pharmacy-tabs {
+        background: white;
+        border-radius: 16px;
+        padding: 8px;
+        margin-bottom: 24px;
+    }
+    
+    .pharmacy-tab {
+        padding: 12px 24px;
+        border: none;
+        background: transparent;
+        border-radius: 12px;
+        font-weight: 600;
+        transition: all 0.2s;
+        color: var(--gray);
+    }
+    
+    .pharmacy-tab.active {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+    }
+    
+    .pharmacy-tab:hover {
+        background: var(--light);
+    }
+    
+    .dispense-modal {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        z-index: 9999;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .dispense-modal.show {
+        display: flex;
+    }
+    
+    .modal-content-pharmacy {
+        background: white;
+        border-radius: 20px;
+        padding: 32px;
+        max-width: 900px;
+        width: 90%;
+        max-height: 90vh;
+        overflow-y: auto;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    
+    .drug-search-input {
+        width: 100%;
+        padding: 12px 16px;
+        border: 2px solid #e5e7eb;
+        border-radius: 12px;
+        font-size: 14px;
+        transition: all 0.2s;
+    }
+    
+    .drug-search-input:focus {
+        outline: none;
+        border-color: var(--pharmacy-primary);
+        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+    }
+    
+    .drug-item {
+        padding: 12px;
+        border: 2px solid #e5e7eb;
+        border-radius: 8px;
+        margin-bottom: 8px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .drug-item:hover {
+        border-color: var(--pharmacy-primary);
+        background: rgba(16, 185, 129, 0.05);
+    }
+    
+    .drug-item.selected {
+        border-color: var(--pharmacy-primary);
+        background: rgba(16, 185, 129, 0.1);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="pharmacy-header">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h1 style="font-size: 32px; font-weight: 700; margin-bottom: 8px;">
+                    <i class="bi bi-capsule-pill me-3"></i>Pharmacy - World-Class System
+                </h1>
+                <p style="font-size: 16px; opacity: 0.9; margin: 0;">
+                    Serve patients directly • Smart dispensing • Automatic accounting
+                </p>
+            </div>
+            <div class="col-md-4 text-end">
+                <div style="font-size: 14px; opacity: 0.9;">
+                    <i class="bi bi-clock me-2"></i>{{ now|date:"F d, Y - H:i" }}
+                </div>
+                <div style="font-size: 12px; opacity: 0.8; margin-top: 4px;">
+                    Pharmacist: {{ request.user.get_full_name|default:request.user.username }}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quick Access Buttons -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-12">
+            <div style="background: white; border-radius: 16px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                <div class="d-flex gap-2 flex-wrap">
+                    <a href="{% url 'hospital:pharmacy_pending_dispensing' %}" class="btn btn-primary btn-lg">
+                        <i class="bi bi-capsule me-2"></i>Dispense Prescriptions
+                    </a>
+                    <a href="{% url 'hospital:drug_formulary_list' %}" class="btn btn-outline-success">
+                        <i class="bi bi-capsule-pill me-2"></i>View All Drugs (62)
+                    </a>
+                    <a href="{% url 'hospital:pharmacy_stock_list' %}" class="btn btn-outline-primary">
+                        <i class="bi bi-box-seam me-2"></i>Stock Management
+                    </a>
+                    <a href="/admin/hospital/drug/" class="btn btn-outline-secondary" target="_blank">
+                        <i class="bi bi-gear me-2"></i>Manage Drugs
+                    </a>
+                </div>
+                
+                <div class="alert alert-info mt-3 mb-0">
+                    <i class="bi bi-info-circle me-2"></i>
+                    <strong>Payment Workflow:</strong> All pharmacy payments must be processed at <strong>CASHIER</strong> first. 
+                    After patient pays at cashier, prescriptions will appear in "Ready to Dispense" for pharmacist to dispense.
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Statistics -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="stat-card-pharmacy">
+                <div style="font-size: 14px; color: var(--gray); margin-bottom: 8px;">
+                    Pending Orders
+                </div>
+                <div style="font-size: 36px; font-weight: 700; color: var(--pharmacy-primary);">
+                    {{ pending_orders|length }}
+                </div>
+                <div style="font-size: 12px; color: var(--gray); margin-top: 4px;">
+                    Awaiting dispensing
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card-pharmacy">
+                <div style="font-size: 14px; color: var(--gray); margin-bottom: 8px;">
+                    Today's Prescriptions
+                </div>
+                <div style="font-size: 36px; font-weight: 700; color: var(--pharmacy-info);">
+                    {{ today_prescriptions|length }}
+                </div>
+                <div style="font-size: 12px; color: var(--gray); margin-top: 4px;">
+                    Dispensed today
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card-pharmacy">
+                <div style="font-size: 14px; color: var(--gray); margin-bottom: 8px;">
+                    Stock Value
+                </div>
+                <div style="font-size: 28px; font-weight: 700; color: var(--pharmacy-success);">
+                    GHS {{ stock_value|floatformat:0|intcomma }}
+                </div>
+                <div style="font-size: 12px; color: var(--gray); margin-top: 4px;">
+                    Total inventory
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card-pharmacy">
+                <div style="font-size: 14px; color: var(--gray); margin-bottom: 8px;">
+                    Stock Alerts
+                </div>
+                <div style="font-size: 36px; font-weight: 700; color: var(--pharmacy-warning);">
+                    {{ low_stock|length|add:expiring_stock|length }}
+                </div>
+                <div style="font-size: 12px; color: var(--gray); margin-top: 4px;">
+                    Requires attention
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Tabs -->
+    <div class="pharmacy-tabs">
+        <button class="pharmacy-tab active" onclick="switchTab('pending')" id="pendingTab">
+            <i class="bi bi-clock-history me-2"></i>Pending ({{ pending_orders|length }})
+        </button>
+        <button class="pharmacy-tab" onclick="switchTab('today')" id="todayTab">
+            <i class="bi bi-calendar-check me-2"></i>Today's Prescriptions ({{ today_prescriptions|length }})
+        </button>
+        <button class="pharmacy-tab" onclick="switchTab('stock')" id="stockTab">
+            <i class="bi bi-box-seam me-2"></i>Stock Alerts ({{ low_stock|length|add:expiring_stock|length }})
+        </button>
+    </div>
+    
+    <!-- Tab Content -->
+    <div id="pendingContent" class="tab-content-pharmacy">
+        {% for order in pending_orders %}
+        <div class="medication-card" style="border-left-color: {% if order.priority == 'stat' %}var(--pharmacy-danger){% elif order.priority == 'urgent' %}var(--pharmacy-warning){% else %}var(--pharmacy-primary){% endif %};">
+            <div class="row align-items-center">
+                <div class="col-md-4">
+                    <div style="font-weight: 700; font-size: 18px; color: var(--dark);">
+                        <i class="bi bi-person-circle me-2"></i>{{ order.encounter.patient.full_name }}
+                    </div>
+                    <div style="font-size: 13px; color: var(--gray); margin-top: 4px;">
+                        MRN: {{ order.encounter.patient.mrn }} | Age: {{ order.encounter.patient.age }}
+                    </div>
+                    <div style="font-size: 12px; color: var(--gray); margin-top: 2px;">
+                        Phone: {{ order.encounter.patient.phone_number|default:"N/A" }}
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div style="font-size: 12px; color: var(--gray);">Prescribed by</div>
+                    <div style="font-weight: 600; font-size: 14px;">
+                        {{ order.requested_by.user.get_full_name|default:order.requested_by.user.username }}
+                    </div>
+                    <div style="font-size: 11px; color: var(--gray); margin-top: 2px;">
+                        {{ order.requested_at|timesince }} ago
+                    </div>
+                </div>
+                <div class="col-md-2 text-center">
+                    <span class="priority-badge priority-{% if order.priority == 'stat' %}stat{% elif order.priority == 'urgent' %}urgent{% else %}routine{% endif %}">
+                        {{ order.get_priority_display }}
+                    </span>
+                </div>
+                <div class="col-md-3 text-end">
+                    <button class="btn btn-success" style="border-radius: 12px; font-weight: 600; padding: 10px 20px;" onclick="dispenseOrder('{{ order.pk }}', '{{ order.encounter.patient.full_name }}', '{{ order.encounter.patient.mrn }}')">
+                        <i class="bi bi-capsule me-2"></i>Dispense Medication
+                    </button>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-check-circle" style="font-size: 64px; opacity: 0.3;"></i>
+            <p class="mt-3" style="font-size: 18px;">No pending medication orders</p>
+            <p style="font-size: 14px;">All prescriptions have been dispensed</p>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <div id="todayContent" class="tab-content-pharmacy" style="display: none;">
+        {% for prescription in today_prescriptions %}
+        <div class="medication-card" style="border-left-color: var(--pharmacy-success);">
+            <div class="row align-items-center">
+                <div class="col-md-3">
+                    <div style="font-weight: 700; font-size: 16px; color: var(--dark);">
+                        {{ prescription.order.encounter.patient.full_name }}
+                    </div>
+                    <div style="font-size: 12px; color: var(--gray);">
+                        MRN: {{ prescription.order.encounter.patient.mrn }}
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div style="font-size: 12px; color: var(--gray);">Medication</div>
+                    <div style="font-weight: 600; font-size: 15px;">
+                        {{ prescription.drug.name }} {{ prescription.drug.strength }}
+                    </div>
+                    <div style="font-size: 12px; color: var(--gray);">
+                        Qty: {{ prescription.quantity }} | {{ prescription.dose }} {{ prescription.frequency }}
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div style="font-size: 11px; color: var(--gray);">Dispensed</div>
+                    <div style="font-weight: 600; font-size: 13px;">
+                        {{ prescription.created|date:"H:i" }}
+                    </div>
+                    <div style="font-size: 11px; color: var(--gray);">
+                        By: {{ prescription.prescribed_by.user.get_full_name|truncatewords:2 }}
+                    </div>
+                </div>
+                <div class="col-md-2 text-end">
+                    <button class="btn btn-outline-primary btn-sm" onclick="viewPrescriptionDetails('{{ prescription.pk }}')">
+                        <i class="bi bi-eye"></i> View Details
+                    </button>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-calendar-x" style="font-size: 64px; opacity: 0.3;"></i>
+            <p class="mt-3" style="font-size: 18px;">No prescriptions dispensed today</p>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <div id="stockContent" class="tab-content-pharmacy" style="display: none;">
+        <div class="row">
+            <div class="col-md-6">
+                <div class="modern-card mb-4">
+                    <h5 style="font-weight: 600; margin-bottom: 20px; color: var(--pharmacy-danger);">
+                        <i class="bi bi-exclamation-triangle me-2"></i>Low Stock Alert ({{ low_stock|length }})
+                    </h5>
+                    {% for stock in low_stock %}
+                    <div class="alert alert-warning" style="border-radius: 12px; margin-bottom: 12px;">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <div style="font-weight: 600;">{{ stock.drug.name }} {{ stock.drug.strength }}</div>
+                                <div style="font-size: 12px;">Batch: {{ stock.batch_number }}</div>
+                            </div>
+                            <div class="text-end">
+                                <div style="font-weight: 700; color: var(--pharmacy-danger);">{{ stock.quantity_on_hand }} units</div>
+                                <div style="font-size: 11px;">Reorder: {{ stock.reorder_level }}</div>
+                            </div>
+                        </div>
+                    </div>
+                    {% empty %}
+                    <p class="text-muted">No low stock items</p>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="modern-card mb-4">
+                    <h5 style="font-weight: 600; margin-bottom: 20px; color: var(--pharmacy-warning);">
+                        <i class="bi bi-calendar-event me-2"></i>Expiring Soon ({{ expiring_stock|length }})
+                    </h5>
+                    {% for stock in expiring_stock %}
+                    <div class="alert alert-info" style="border-radius: 12px; margin-bottom: 12px;">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <div style="font-weight: 600;">{{ stock.drug.name }} {{ stock.drug.strength }}</div>
+                                <div style="font-size: 12px;">Batch: {{ stock.batch_number }}</div>
+                            </div>
+                            <div class="text-end">
+                                <div style="font-weight: 700; color: var(--pharmacy-warning);">{{ stock.expiry_date|date:"M d, Y" }}</div>
+                                <div style="font-size: 11px;">{{ stock.quantity_on_hand }} units left</div>
+                            </div>
+                        </div>
+                    </div>
+                    {% empty %}
+                    <p class="text-muted">No expiring items</p>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Dispensing Modal -->
+<div id="dispenseModal" class="dispense-modal">
+    <div class="modal-content-pharmacy">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h4 style="font-weight: 700; margin: 0;">
+                <i class="bi bi-capsule-pill me-2" style="color: var(--pharmacy-primary);"></i>
+                Dispense Medication
+            </h4>
+            <button class="btn-close" onclick="closeDispenseModal()"></button>
+        </div>
+        
+        <div id="dispenseContent">
+            <div class="text-center py-5">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-3 text-muted">Loading order details...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Tab switching
+function switchTab(tab) {
+    // Hide all contents
+    document.querySelectorAll('.tab-content-pharmacy').forEach(el => {
+        el.style.display = 'none';
+    });
+    
+    // Remove active from all tabs
+    document.querySelectorAll('.pharmacy-tab').forEach(el => {
+        el.classList.remove('active');
+    });
+    
+    // Show selected content
+    document.getElementById(tab + 'Content').style.display = 'block';
+    document.getElementById(tab + 'Tab').classList.add('active');
+}
+
+// Open dispensing modal
+let currentOrderId = null;
+let currentPatientName = null;
+
+function dispenseOrder(orderId, patientName, mrn) {
+    currentOrderId = orderId;
+    currentPatientName = patientName;
+    
+    const modal = document.getElementById('dispenseModal');
+    const content = document.getElementById('dispenseContent');
+    
+    // Show loading
+    content.innerHTML = `
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-3 text-muted">Loading prescriptions...</p>
+        </div>
+    `;
+    
+    modal.classList.add('show');
+    
+    // Fetch order prescriptions
+    fetch(`/hms/api/pharmacy/order/${orderId}/prescriptions/`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                renderDispenseForm(data);
+            } else {
+                content.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="bi bi-exclamation-circle me-2"></i>
+                        ${data.error || 'Failed to load order details'}
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            content.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-circle me-2"></i>
+                    Error loading order. Please try again.
+                </div>
+            `;
+        });
+}
+
+function renderDispenseForm(data) {
+    const patient = data.patient;
+    const prescriptions = data.prescriptions;
+    let totalAmount = 0;
+    
+    let html = `
+        <!-- Patient Info -->
+        <div style="padding: 20px; background: linear-gradient(135deg, #dbeafe, #e0f2fe); border-radius: 12px; margin-bottom: 24px;">
+            <div class="row">
+                <div class="col-md-8">
+                    <div style="font-weight: 700; font-size: 20px; color: var(--dark);">
+                        ${patient.full_name}
+                    </div>
+                    <div style="font-size: 14px; color: var(--gray); margin-top: 4px;">
+                        MRN: ${patient.mrn} | Age: ${patient.age} | Phone: ${patient.phone_number || 'N/A'}
+                    </div>
+                </div>
+                <div class="col-md-4 text-end">
+                    <div style="font-size: 13px; color: var(--gray);">Total Items</div>
+                    <div style="font-weight: 700; font-size: 24px; color: var(--pharmacy-primary);">
+                        ${prescriptions.length}
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Prescriptions List -->
+        <h6 style="font-weight: 600; margin-bottom: 16px;">Prescribed Medications:</h6>
+        <div class="table-responsive mb-4">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Medication</th>
+                        <th>Dose & Frequency</th>
+                        <th>Quantity</th>
+                        <th class="text-end">Unit Price</th>
+                        <th class="text-end">Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+    
+    prescriptions.forEach(rx => {
+        const drugPrice = rx.drug_price || 0;
+        const total = drugPrice * rx.quantity;
+        totalAmount += total;
+        
+        // Stock indicator
+        const stockAvailable = rx.stock_available || 0;
+        let stockStatus = '';
+        let stockColor = '';
+        
+        if (stockAvailable >= rx.quantity) {
+            stockStatus = '✅ In Stock';
+            stockColor = 'var(--pharmacy-success)';
+        } else if (stockAvailable > 0) {
+            stockStatus = `⚠️ Low (${stockAvailable} available)`;
+            stockColor = 'var(--pharmacy-warning)';
+        } else {
+            stockStatus = '❌ Out of Stock';
+            stockColor = 'var(--pharmacy-danger)';
+        }
+        
+        html += `
+            <tr>
+                <td>
+                    <div style="font-weight: 600;">${rx.drug_name} ${rx.drug_strength}</div>
+                    <div style="font-size: 11px; color: var(--gray);">${rx.drug_form}</div>
+                    <div style="font-size: 11px; color: ${stockColor}; margin-top: 2px;">${stockStatus}</div>
+                </td>
+                <td>
+                    <div style="font-size: 13px;">${rx.dose}</div>
+                    <div style="font-size: 11px; color: var(--gray);">${rx.frequency}</div>
+                    <div style="font-size: 10px; color: var(--gray);">${rx.duration || ''}</div>
+                </td>
+                <td><strong>${rx.quantity}</strong></td>
+                <td class="text-end">GHS ${drugPrice.toFixed(2)}</td>
+                <td class="text-end"><strong>GHS ${total.toFixed(2)}</strong></td>
+            </tr>
+        `;
+    });
+    
+    html += `
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <th colspan="4" class="text-end">TOTAL:</th>
+                        <th class="text-end text-success">GHS ${totalAmount.toFixed(2)}</th>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+        
+        <!-- Payment Info Alert -->
+        <div class="alert" style="background: linear-gradient(135deg, #fef3c7, #fde68a); border-radius: 12px; border-left: 4px solid var(--pharmacy-warning); margin-bottom: 20px;">
+            <div class="d-flex align-items-center">
+                <i class="bi bi-info-circle" style="font-size: 24px; color: var(--pharmacy-warning); margin-right: 12px;"></i>
+                <div>
+                    <div style="font-weight: 600; margin-bottom: 4px;">Payment Required</div>
+                    <div style="font-size: 13px;">Patient must pay at cashier before dispensing. Total: GHS ${totalAmount.toFixed(2)}</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Actions -->
+        <div class="d-grid gap-3">
+            ${prescriptions.length > 0 ? `
+                <a href="/hms/cashier/central/patient-bills/?search=${patient.mrn}" target="_blank" class="btn btn-lg btn-success" style="border-radius: 12px; font-weight: 600;">
+                    <i class="bi bi-cash-coin me-2"></i>Send to Cashier (GHS ${totalAmount.toFixed(2)})
+                </a>
+                <button class="btn btn-outline-primary btn-lg" style="border-radius: 12px;" onclick="checkPaymentStatus()">
+                    <i class="bi bi-shield-check me-2"></i>Verify Payment & Dispense
+                </button>
+            ` : ''}
+            <button class="btn btn-outline-secondary" onclick="closeDispenseModal()">
+                Cancel
+            </button>
+        </div>
+    `;
+    
+    document.getElementById('dispenseContent').innerHTML = html;
+}
+
+function checkPaymentStatus() {
+    if (!currentOrderId) return;
+    
+    // Check if payment has been made for the prescriptions
+    fetch(`/hms/api/pharmacy/order/${currentOrderId}/payment-status/`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.payment_verified) {
+                // Payment verified, proceed with dispensing
+                confirmDispense();
+            } else {
+                // Payment not verified
+                alert('❌ Payment not verified!\n\nPlease ensure patient has paid at cashier before dispensing.\n\nSend patient to cashier first.');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            // For now, allow dispensing even if check fails
+            if (confirm('Unable to verify payment status. Proceed with dispensing anyway?')) {
+                confirmDispense();
+            }
+        });
+}
+
+function confirmDispense() {
+    if (!currentOrderId) return;
+    
+    if (confirm(`Confirm dispensing medications for ${currentPatientName}?`)) {
+        // Mark prescriptions as dispensed
+        fetch(`/hms/api/pharmacy/order/${currentOrderId}/dispense/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                order_id: currentOrderId,
+                dispensed_by: '{{ request.user.id }}'
+            })
+        })
+        .then(response => {
+            // Handle all responses (including error status codes)
+            return response.json().then(data => ({
+                status: response.status,
+                ok: response.ok,
+                data: data
+            }));
+        })
+        .then(result => {
+            const data = result.data;
+            
+            if (result.ok && data.success) {
+                alert('✅ Medications dispensed successfully!');
+                closeDispenseModal();
+                location.reload();
+            } else if (result.status === 403 && data.payment_required) {
+                // Payment required error
+                alert('💰 PAYMENT REQUIRED\n\n' + 
+                      (data.message || 'Patient must pay at cashier before medications can be dispensed.') +
+                      '\n\nPlease send patient to cashier first.');
+            } else {
+                // Other errors
+                alert('❌ Error: ' + (data.message || data.error || 'Failed to dispense medications'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('❌ Network Error: Unable to connect to server. Please try again.');
+        });
+    }
+}
+
+function closeDispenseModal() {
+    document.getElementById('dispenseModal').classList.remove('show');
+    currentOrderId = null;
+    currentPatientName = null;
+}
+
+function viewPrescriptionDetails(prescriptionId) {
+    alert('View prescription details: ' + prescriptionId);
+    // TODO: Implement detailed prescription view
+}
+
+// Close modal on outside click
+document.getElementById('dispenseModal')?.addEventListener('click', function(e) {
+    if (e.target === this) {
+        closeDispenseModal();
+    }
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closeDispenseModal();
+    }
+});
+
+// Get CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+</script>
+{% endblock %}
+

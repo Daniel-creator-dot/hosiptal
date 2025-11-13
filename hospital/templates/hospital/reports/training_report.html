@@ -1,0 +1,147 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Training Report - HMS{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1><i class="bi bi-book"></i> Training Report</h1>
+            <p class="text-muted mb-0">Staff training and development records</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:hr_reports_dashboard' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Reports
+            </a>
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body text-center">
+                    <h3 class="text-primary mb-0">{{ total_trainings }}</h3>
+                    <small class="text-muted">Total Trainings</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body text-center">
+                    <h3 class="text-success mb-0">{{ completed }}</h3>
+                    <small class="text-muted">Completed</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Year</label>
+                    <select name="year" class="form-select">
+                        {% for year in years %}
+                        <option value="{{ year }}" {% if year_filter == year|stringformat:"s" %}selected{% endif %}>
+                            {{ year }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Department</label>
+                    <select name="department" class="form-select">
+                        <option value="">All Departments</option>
+                        {% for dept in departments %}
+                        <option value="{{ dept.pk }}" {% if department_filter == dept.pk|stringformat:"s" %}selected{% endif %}>
+                            {{ dept.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6 d-flex align-items-end gap-2">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-filter"></i> Filter
+                    </button>
+                    <a href="?{{ request.GET.urlencode }}&export=csv" class="btn btn-success">
+                        <i class="bi bi-download"></i> Export
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Training Records -->
+    <div class="card">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">
+                <i class="bi bi-list-ul"></i> Training Records
+                <span class="badge bg-light text-dark ms-2">{{ trainings.count }}</span>
+            </h5>
+        </div>
+        <div class="card-body">
+            {% if trainings %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Staff Name</th>
+                            <th>Department</th>
+                            <th>Training Title</th>
+                            <th>Type</th>
+                            <th>Date</th>
+                            <th>Duration</th>
+                            <th>Provider</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for training in trainings %}
+                        <tr>
+                            <td>
+                                <strong>{{ training.staff.user.get_full_name }}</strong>
+                            </td>
+                            <td>{{ training.staff.department.name|default:"-" }}</td>
+                            <td>{{ training.training_title }}</td>
+                            <td><span class="badge bg-info">{{ training.get_training_type_display }}</span></td>
+                            <td>
+                                {% if training.start_date %}
+                                    {{ training.start_date|date:"M d, Y" }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if training.duration_hours %}
+                                    {{ training.duration_hours }} hrs
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>{{ training.provider|default:"-" }}</td>
+                            <td>
+                                {% if training.status == 'completed' %}
+                                    <span class="badge bg-success">Completed</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ training.get_status_display }}</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-journal-bookmark" style="font-size: 3rem; opacity: 0.5;"></i>
+                <p class="text-muted mt-3">No training records found</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+

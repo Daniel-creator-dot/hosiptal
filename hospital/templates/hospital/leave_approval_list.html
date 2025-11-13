@@ -1,0 +1,321 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Leave Approval - Manager - HMS{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1><i class="bi bi-clipboard-check"></i> Leave Requests - Approval</h1>
+            <p class="text-muted mb-0">Review and approve/reject leave requests</p>
+        </div>
+        <a href="{% url 'hospital:create_leave_for_staff' %}" class="btn btn-primary">
+            <i class="bi bi-plus-circle"></i> Create Leave for Staff
+        </a>
+    </div>
+
+    <!-- Quick Filter Tabs -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="btn-group w-100" role="group">
+                <a href="?status=pending" class="btn {% if status_filter == 'pending' %}btn-warning{% else %}btn-outline-warning{% endif %}">
+                    <i class="bi bi-clock-history"></i> Pending
+                    <span class="badge bg-dark ms-1">{{ status_counts.pending }}</span>
+                </a>
+                <a href="?status=approved" class="btn {% if status_filter == 'approved' %}btn-success{% else %}btn-outline-success{% endif %}">
+                    <i class="bi bi-check-circle"></i> Approved
+                    <span class="badge bg-dark ms-1">{{ status_counts.approved }}</span>
+                </a>
+                <a href="?status=rejected" class="btn {% if status_filter == 'rejected' %}btn-danger{% else %}btn-outline-danger{% endif %}">
+                    <i class="bi bi-x-circle"></i> Rejected
+                    <span class="badge bg-dark ms-1">{{ status_counts.rejected }}</span>
+                </a>
+                <a href="?status=cancelled" class="btn {% if status_filter == 'cancelled' %}btn-secondary{% else %}btn-outline-secondary{% endif %}">
+                    <i class="bi bi-slash-circle"></i> Cancelled
+                    <span class="badge bg-dark ms-1">{{ status_counts.cancelled }}</span>
+                </a>
+                <a href="?status=all" class="btn {% if status_filter == 'all' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                    <i class="bi bi-list"></i> All
+                    <span class="badge bg-dark ms-1">{{ status_counts.all }}</span>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leave Requests -->
+    <div class="card">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">
+                {% if status_filter == 'pending' %}
+                    <i class="bi bi-clock-history"></i> Pending Leave Requests
+                {% elif status_filter == 'approved' %}
+                    <i class="bi bi-check-circle"></i> Approved Leave Requests
+                {% elif status_filter == 'rejected' %}
+                    <i class="bi bi-x-circle"></i> Rejected Leave Requests
+                {% elif status_filter == 'cancelled' %}
+                    <i class="bi bi-slash-circle"></i> Cancelled Leave Requests
+                {% else %}
+                    <i class="bi bi-list"></i> All Leave Requests
+                {% endif %}
+                <span class="badge bg-light text-dark ms-2">{{ leave_requests.count }}</span>
+            </h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Request #</th>
+                            <th>Staff Name</th>
+                            <th>Department</th>
+                            <th>Leave Type</th>
+                            <th>Start Date</th>
+                            <th>End Date</th>
+                            <th>Days</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for leave in leave_requests %}
+                        <tr>
+                            <td><strong>{{ leave.request_number|default:"DRAFT" }}</strong></td>
+                            <td>
+                                <strong>{{ leave.staff.user.get_full_name }}</strong>
+                                <br><small class="text-muted">{{ leave.staff.get_profession_display }}</small>
+                            </td>
+                            <td>{% if leave.staff.department %}{{ leave.staff.department.name }}{% else %}-{% endif %}</td>
+                            <td><span class="badge bg-info">{{ leave.get_leave_type_display }}</span></td>
+                            <td>{{ leave.start_date|date:"M d, Y" }}</td>
+                            <td>{{ leave.end_date|date:"M d, Y" }}</td>
+                            <td><strong>{{ leave.days_requested }}</strong> day{{ leave.days_requested|pluralize }}</td>
+                            <td>
+                                <span class="badge bg-{% if leave.status == 'approved' %}success{% elif leave.status == 'rejected' %}danger{% elif leave.status == 'pending' %}warning{% else %}secondary{% endif %}">
+                                    {{ leave.get_status_display }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if leave.status == 'pending' %}
+                                <div class="btn-group" role="group">
+                                    <button type="button" class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#approveModal{{ leave.pk }}">
+                                        <i class="bi bi-check-circle"></i> Approve
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-danger" data-bs-toggle="modal" data-bs-target="#rejectModal{{ leave.pk }}">
+                                        <i class="bi bi-x-circle"></i> Reject
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-info" data-bs-toggle="modal" data-bs-target="#detailModal{{ leave.pk }}">
+                                        <i class="bi bi-eye"></i> Details
+                                    </button>
+                                </div>
+
+                                <!-- Approve Modal (Only for Pending) -->
+                                <div class="modal fade" id="approveModal{{ leave.pk }}" tabindex="-1">
+                                    <div class="modal-dialog">
+                                        <div class="modal-content">
+                                            <div class="modal-header bg-success text-white">
+                                                <h5 class="modal-title">Approve Leave Request</h5>
+                                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                <p>Are you sure you want to approve this leave request?</p>
+                                                <div class="alert alert-info">
+                                                    <strong>{{ leave.staff.user.get_full_name }}</strong><br>
+                                                    {{ leave.get_leave_type_display }}<br>
+                                                    {{ leave.start_date|date:"M d, Y" }} to {{ leave.end_date|date:"M d, Y" }}<br>
+                                                    <strong>{{ leave.days_requested }} days</strong>
+                                                </div>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                                <form method="POST" action="{% url 'hospital:leave_approve' leave.pk %}" style="display: inline;">
+                                                    {% csrf_token %}
+                                                    <button type="submit" class="btn btn-success">Approve Leave</button>
+                                                </form>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Reject Modal -->
+                                <div class="modal fade" id="rejectModal{{ leave.pk }}" tabindex="-1">
+                                    <div class="modal-dialog">
+                                        <div class="modal-content">
+                                            <form method="POST" action="{% url 'hospital:leave_reject' leave.pk %}">
+                                                {% csrf_token %}
+                                                <div class="modal-header bg-danger text-white">
+                                                    <h5 class="modal-title">Reject Leave Request</h5>
+                                                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                                                </div>
+                                                <div class="modal-body">
+                                                    <div class="alert alert-warning">
+                                                        <strong>{{ leave.staff.user.get_full_name }}</strong><br>
+                                                        {{ leave.get_leave_type_display }}<br>
+                                                        {{ leave.start_date|date:"M d, Y" }} to {{ leave.end_date|date:"M d, Y" }}
+                                                    </div>
+                                                    <div class="mb-3">
+                                                        <label class="form-label">Reason for Rejection <span class="text-danger">*</span></label>
+                                                        <textarea name="reason" class="form-control" rows="3" required 
+                                                                  placeholder="Provide a clear reason for rejection..."></textarea>
+                                                    </div>
+                                                </div>
+                                                <div class="modal-footer">
+                                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                                    <button type="submit" class="btn btn-danger">Reject Leave</button>
+                                                </div>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% else %}
+                                <button class="btn btn-sm btn-info" data-bs-toggle="modal" data-bs-target="#detailModal{{ leave.pk }}">
+                                    <i class="bi bi-eye"></i> View
+                                </button>
+                                {% endif %}
+
+                                <!-- Detail Modal (For ALL leave statuses) -->
+                                <div class="modal fade" id="detailModal{{ leave.pk }}" tabindex="-1">
+                                    <div class="modal-dialog modal-lg">
+                                        <div class="modal-content">
+                                            <div class="modal-header {% if leave.status == 'approved' %}bg-success{% elif leave.status == 'rejected' %}bg-danger{% elif leave.status == 'cancelled' %}bg-secondary{% else %}bg-info{% endif %} text-white">
+                                                <h5 class="modal-title">
+                                                    <i class="bi bi-{% if leave.status == 'approved' %}check-circle{% elif leave.status == 'rejected' %}x-circle{% elif leave.status == 'cancelled' %}slash-circle{% else %}eye{% endif %}"></i>
+                                                    Leave Request Details
+                                                </h5>
+                                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                <!-- Status Badge -->
+                                                <div class="mb-3 text-center">
+                                                    <span class="badge bg-{% if leave.status == 'approved' %}success{% elif leave.status == 'rejected' %}danger{% elif leave.status == 'pending' %}warning{% else %}secondary{% endif %}" style="font-size: 1.1em; padding: 0.5em 1em;">
+                                                        {{ leave.get_status_display|upper }}
+                                                    </span>
+                                                </div>
+
+                                                <div class="row">
+                                                    <div class="col-md-6 mb-3">
+                                                        <p class="text-muted mb-1"><i class="bi bi-person"></i> Staff Member</p>
+                                                        <strong>{{ leave.staff.user.get_full_name }}</strong>
+                                                    </div>
+                                                    <div class="col-md-6 mb-3">
+                                                        <p class="text-muted mb-1"><i class="bi bi-building"></i> Department</p>
+                                                        <strong>{% if leave.staff.department %}{{ leave.staff.department.name }}{% else %}-{% endif %}</strong>
+                                                    </div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-md-6 mb-3">
+                                                        <p class="text-muted mb-1"><i class="bi bi-calendar-event"></i> Leave Type</p>
+                                                        <span class="badge bg-info">{{ leave.get_leave_type_display }}</span>
+                                                    </div>
+                                                    <div class="col-md-6 mb-3">
+                                                        <p class="text-muted mb-1"><i class="bi bi-clock"></i> Working Days</p>
+                                                        <strong>{{ leave.days_requested }} day{{ leave.days_requested|pluralize }}</strong>
+                                                        <small class="text-muted d-block">(Weekends excluded)</small>
+                                                    </div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-md-6 mb-3">
+                                                        <p class="text-muted mb-1"><i class="bi bi-calendar-check"></i> Start Date</p>
+                                                        <strong>{{ leave.start_date|date:"F d, Y" }}</strong>
+                                                    </div>
+                                                    <div class="col-md-6 mb-3">
+                                                        <p class="text-muted mb-1"><i class="bi bi-calendar-x"></i> End Date</p>
+                                                        <strong>{{ leave.end_date|date:"F d, Y" }}</strong>
+                                                    </div>
+                                                </div>
+
+                                                <hr>
+
+                                                <div class="mb-3">
+                                                    <p class="text-muted mb-1"><i class="bi bi-chat-left-text"></i> Reason for Leave</p>
+                                                    <div class="alert alert-light">{{ leave.reason }}</div>
+                                                </div>
+
+                                                {% if leave.contact_during_leave %}
+                                                <div class="mb-3">
+                                                    <p class="text-muted mb-1"><i class="bi bi-telephone"></i> Contact During Leave</p>
+                                                    <strong>{{ leave.contact_during_leave }}</strong>
+                                                </div>
+                                                {% endif %}
+
+                                                {% if leave.covering_staff %}
+                                                <div class="mb-3">
+                                                    <p class="text-muted mb-1"><i class="bi bi-person-badge"></i> Covering Staff</p>
+                                                    <strong>{{ leave.covering_staff.user.get_full_name }}</strong>
+                                                </div>
+                                                {% endif %}
+
+                                                {% if leave.handover_notes %}
+                                                <div class="mb-3">
+                                                    <p class="text-muted mb-1"><i class="bi bi-journal-text"></i> Handover Notes</p>
+                                                    <div class="alert alert-light">{{ leave.handover_notes }}</div>
+                                                </div>
+                                                {% endif %}
+
+                                                <!-- Approval/Rejection Info -->
+                                                {% if leave.status == 'approved' and leave.approved_by %}
+                                                <hr>
+                                                <div class="alert alert-success">
+                                                    <h6><i class="bi bi-check-circle"></i> Approval Information</h6>
+                                                    <p class="mb-1"><strong>Approved By:</strong> {{ leave.approved_by.user.get_full_name }}</p>
+                                                    <p class="mb-0"><strong>Approved At:</strong> {{ leave.approved_at|date:"F d, Y - g:i A" }}</p>
+                                                </div>
+                                                {% elif leave.status == 'rejected' and leave.approved_by %}
+                                                <hr>
+                                                <div class="alert alert-danger">
+                                                    <h6><i class="bi bi-x-circle"></i> Rejection Information</h6>
+                                                    <p class="mb-1"><strong>Rejected By:</strong> {{ leave.approved_by.user.get_full_name }}</p>
+                                                    <p class="mb-1"><strong>Rejected At:</strong> {{ leave.approved_at|date:"F d, Y - g:i A" }}</p>
+                                                    {% if leave.rejection_reason %}
+                                                    <p class="mb-0"><strong>Reason:</strong><br>{{ leave.rejection_reason }}</p>
+                                                    {% endif %}
+                                                </div>
+                                                {% endif %}
+
+                                                <!-- Request Info -->
+                                                {% if leave.request_number %}
+                                                <div class="mt-3">
+                                                    <small class="text-muted">
+                                                        <i class="bi bi-hash"></i> Request Number: <strong>{{ leave.request_number }}</strong>
+                                                    </small>
+                                                </div>
+                                                {% endif %}
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                                                    <i class="bi bi-x-circle"></i> Close
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="9" class="text-center text-muted py-4">
+                                <i class="bi bi-inbox" style="font-size: 2rem;"></i>
+                                <p class="mb-0 mt-2">
+                                    {% if status_filter == 'pending' %}
+                                        No pending leave requests
+                                    {% elif status_filter == 'approved' %}
+                                        No approved leave requests
+                                    {% elif status_filter == 'rejected' %}
+                                        No rejected leave requests
+                                    {% elif status_filter == 'cancelled' %}
+                                        No cancelled leave requests
+                                    {% else %}
+                                        No leave requests found
+                                    {% endif %}
+                                </p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

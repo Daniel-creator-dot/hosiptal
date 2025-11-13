@@ -1,0 +1,223 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Invoices - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    .invoice-card {
+        background: white;
+        border-radius: 12px;
+        padding: 25px;
+        margin-bottom: 20px;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+        border-left: 4px solid #ed8936;
+        animation: slideIn 0.5s ease-out;
+    }
+    
+    .invoice-card:hover {
+        transform: translateX(5px);
+        box-shadow: 0 5px 20px rgba(0,0,0,0.15);
+    }
+    
+    .invoice-card.status-paid {
+        border-left-color: #48bb78;
+    }
+    
+    .invoice-card.status-overdue {
+        border-left-color: #f56565;
+    }
+    
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    .amount-display {
+        font-size: 1.8rem;
+        font-weight: bold;
+        color: #2d3748;
+    }
+    
+    .balance-display {
+        font-size: 1.3rem;
+        font-weight: bold;
+        color: #f56565;
+    }
+    
+    .paid-display {
+        font-size: 1.3rem;
+        font-weight: bold;
+        color: #48bb78;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 style="font-weight: 700; color: #2d3748;">💰 Invoices</h1>
+        <p class="text-muted mb-0">Manage billing and invoices</p>
+    </div>
+    <div>
+        <a href="{% url 'hospital:export_invoices_csv' %}" class="btn btn-success me-2" style="border-radius: 10px; padding: 10px 25px;">
+            <i class="bi bi-download"></i> Export CSV
+        </a>
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-center" style="background: linear-gradient(135deg, #ed8936 0%, #dd6b20 100%); color: white; border: none;">
+            <div class="card-body" style="padding: 25px;">
+                <h3 style="font-size: 2rem; margin: 10px 0; font-weight: bold;">GHS {{ stats.total_revenue|floatformat:0|intcomma|default:"0" }}</h3>
+                <p style="margin: 0; opacity: 0.9;">Total Revenue</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center" style="background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%); color: white; border: none;">
+            <div class="card-body" style="padding: 25px;">
+                <h3 style="font-size: 2rem; margin: 10px 0; font-weight: bold;">GHS {{ stats.outstanding_balance|floatformat:0|intcomma|default:"0" }}</h3>
+                <p style="margin: 0; opacity: 0.9;">Outstanding</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center" style="background: linear-gradient(135deg, #48bb78 0%, #38a169 100%); color: white; border: none;">
+            <div class="card-body" style="padding: 25px;">
+                <h3 style="font-size: 2.5rem; margin: 10px 0; font-weight: bold;">{{ stats.paid_invoices|default:0 }}</h3>
+                <p style="margin: 0; opacity: 0.9;">Paid Invoices</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;">
+            <div class="card-body" style="padding: 25px;">
+                <h3 style="font-size: 2.5rem; margin: 10px 0; font-weight: bold;">{{ stats.total_invoices|default:0 }}</h3>
+                <p style="margin: 0; opacity: 0.9;">Total Invoices</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Invoices List -->
+{% if invoices %}
+    {% for invoice in invoices %}
+    <div class="invoice-card status-{{ invoice.status }}">
+        <div class="row align-items-center">
+            <div class="col-md-3">
+                <h5 style="margin: 0 0 5px 0; color: #2d3748;">
+                    <a href="{% url 'hospital:invoice_detail' invoice.pk %}" style="text-decoration: none; color: inherit;">
+                        {{ invoice.invoice_number }}
+                    </a>
+                </h5>
+                <div style="font-size: 0.85rem; color: #667eea; font-weight: 600; margin-bottom: 8px;">
+                    <a href="{% url 'hospital:patient_detail' invoice.patient.pk %}" style="text-decoration: none; color: inherit;">
+                        <i class="bi bi-person"></i> {{ invoice.patient.full_name }}
+                    </a>
+                </div>
+                <div style="font-size: 0.9rem; color: #718096;">
+                    <i class="bi bi-calendar"></i> {{ invoice.issued_at|date:"M d, Y" }}
+                    {% if invoice.due_at %}
+                    <br><i class="bi bi-calendar-event"></i> Due: {{ invoice.due_at|date:"M d, Y" }}
+                    {% endif %}
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="amount-display">
+                    GHS {{ invoice.total_amount|floatformat:2|intcomma }}
+                </div>
+                <div style="font-size: 0.85rem; color: #718096;">
+                    Total Amount
+                </div>
+            </div>
+            <div class="col-md-2">
+                {% if invoice.status == 'paid' %}
+                <div class="paid-display">
+                    Paid
+                </div>
+                {% elif invoice.balance > 0 %}
+                <div class="balance-display">
+                    GHS {{ invoice.balance|floatformat:2|intcomma }}
+                </div>
+                <div style="font-size: 0.85rem; color: #718096;">
+                    Balance
+                </div>
+                {% else %}
+                <div style="color: #48bb78; font-weight: bold;">
+                    GHS 0.00
+                </div>
+                {% endif %}
+            </div>
+            <div class="col-md-2 text-center">
+                <span class="badge bg-{% if invoice.status == 'paid' %}success{% elif invoice.status == 'overdue' %}danger{% elif invoice.status == 'issued' %}warning{% else %}secondary{% endif %}" style="padding: 8px 15px; font-size: 0.9rem;">
+                    {{ invoice.get_status_display }}
+                </span>
+                {% if invoice.status == 'overdue' %}
+                <br><small class="text-danger mt-2 d-block">Overdue</small>
+                {% endif %}
+            </div>
+            <div class="col-md-2 text-end">
+                <a href="{% url 'hospital:invoice_detail' invoice.pk %}" class="btn btn-sm btn-outline-primary" style="border-radius: 8px;">
+                    <i class="bi bi-eye"></i> View Details
+                </a>
+            </div>
+        </div>
+        {% if invoice.payer %}
+        <div class="row mt-3">
+            <div class="col-12">
+                <div style="background: #f7fafc; padding: 12px; border-radius: 8px;">
+                    <strong style="color: #2d3748;">Payer:</strong>
+                    <span style="color: #718096;">{{ invoice.payer.name }}</span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+    
+    <!-- Pagination -->
+    {% if invoices.has_other_pages %}
+    <nav aria-label="Page navigation" class="mt-4">
+        <ul class="pagination justify-content-center">
+            {% if invoices.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?page=1" style="border-radius: 10px 0 0 10px;">First</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ invoices.previous_page_number }}">Previous</a>
+                </li>
+            {% endif %}
+            <li class="page-item active">
+                <span class="page-link" style="background: #667eea; border-color: #667eea; border-radius: 10px; margin: 0 5px;">
+                    Page {{ invoices.number }} of {{ invoices.paginator.num_pages }}
+                </span>
+            </li>
+            {% if invoices.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ invoices.next_page_number }}">Next</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ invoices.paginator.num_pages }}" style="border-radius: 0 10px 10px 0;">Last</a>
+                </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+{% else %}
+    <div class="text-center" style="padding: 60px 20px; background: white; border-radius: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.1);">
+        <div style="font-size: 4rem; margin-bottom: 20px;">💰</div>
+        <h4 style="color: #718096;">No invoices found</h4>
+        <p class="text-muted">Invoices will appear here once created</p>
+    </div>
+{% endif %}
+{% endblock %}

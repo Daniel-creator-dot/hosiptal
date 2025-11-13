@@ -1,0 +1,502 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Admit Patient - HMS{% endblock %}
+{% block page_title %}🏥 Patient Admission{% endblock %}
+{% block page_subtitle %}Admit patient and assign bed{% endblock %}
+
+{% block extra_css %}
+<style>
+    .admission-wizard {
+        max-width: 900px;
+        margin: 0 auto;
+    }
+
+    .step-indicator {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 40px;
+        position: relative;
+    }
+
+    .step-indicator::before {
+        content: '';
+        position: absolute;
+        top: 24px;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: #E5E7EB;
+        z-index: 0;
+    }
+
+    .step {
+        flex: 1;
+        text-align: center;
+        position: relative;
+        z-index: 1;
+    }
+
+    .step-circle {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: #E5E7EB;
+        color: #6B7280;
+        margin: 0 auto 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 18px;
+        border: 4px solid white;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .step.completed .step-circle {
+        background: #10B981;
+        color: white;
+    }
+
+    .step.active .step-circle {
+        background: #4F46E5;
+        color: white;
+        animation: pulse 2s infinite;
+    }
+
+    .step-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: #6B7280;
+    }
+
+    .step.active .step-label {
+        color: #4F46E5;
+    }
+
+    .admission-card {
+        background: white;
+        border-radius: 16px;
+        padding: 32px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        margin-bottom: 24px;
+    }
+
+    .section-title {
+        font-size: 20px;
+        font-weight: 700;
+        color: #1F2937;
+        margin-bottom: 24px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .section-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        background: #EEF2FF;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #4F46E5;
+        font-size: 20px;
+    }
+
+    .patient-select-card {
+        background: #F9FAFB;
+        border: 2px solid #E5E7EB;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+
+    .patient-select-card:hover {
+        border-color: #4F46E5;
+        background: #EEF2FF;
+    }
+
+    .patient-select-card.selected {
+        border-color: #4F46E5;
+        background: #EEF2FF;
+        box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+    }
+
+    .bed-select-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        gap: 12px;
+    }
+
+    .bed-select-card {
+        background: #ECFDF5;
+        border: 2px solid #10B981;
+        border-radius: 12px;
+        padding: 16px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+
+    .bed-select-card:hover {
+        transform: scale(1.05);
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+    }
+
+    .bed-select-card.selected {
+        background: #4F46E5;
+        border-color: #4F46E5;
+        color: white;
+    }
+
+    .bed-select-number {
+        font-size: 24px;
+        font-weight: 800;
+    }
+
+    .bed-select-ward {
+        font-size: 11px;
+        margin-top: 4px;
+    }
+
+    .form-label-modern {
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 8px;
+        display: block;
+    }
+
+    .form-input-modern {
+        width: 100%;
+        padding: 12px 16px;
+        border: 2px solid #E5E7EB;
+        border-radius: 8px;
+        font-size: 14px;
+    }
+
+    .form-input-modern:focus {
+        border-color: #4F46E5;
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+    }
+
+    .btn-modern-large {
+        padding: 16px 48px;
+        border-radius: 12px;
+        font-size: 16px;
+        font-weight: 700;
+        border: none;
+        cursor: pointer;
+        transition: all 0.3s;
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .btn-admit {
+        background: linear-gradient(135deg, #10B981, #059669);
+        color: white;
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    }
+
+    .btn-admit:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="admission-wizard">
+    <!-- Step Indicator -->
+    <div class="step-indicator">
+        <div class="step completed" id="step1">
+            <div class="step-circle">✓</div>
+            <div class="step-label">Select Patient</div>
+        </div>
+        <div class="step active" id="step2">
+            <div class="step-circle">2</div>
+            <div class="step-label">Select Bed</div>
+        </div>
+        <div class="step" id="step3">
+            <div class="step-circle">3</div>
+            <div class="step-label">Confirm Admission</div>
+        </div>
+    </div>
+    
+    <form method="post" id="admissionForm">
+        {% csrf_token %}
+        
+        <!-- Step 1: Select Patient -->
+        <div class="admission-card" id="step1Panel">
+            <div class="section-title">
+                <div class="section-icon"><i class="bi bi-person"></i></div>
+                <span>Select Patient to Admit</span>
+            </div>
+            
+            <input type="text" id="patientSearch" class="form-input-modern mb-3" placeholder="🔍 Search by name or MRN..." oninput="filterPatients(this.value)">
+            
+            <div style="max-height: 400px; overflow-y: auto;">
+                {% for encounter in encounters %}
+                <div class="patient-select-card" onclick="selectPatient('{{ encounter.pk }}', '{{ encounter.patient.full_name }}', '{{ encounter.patient.mrn }}')">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="mb-1" style="font-weight: 700;">{{ encounter.patient.full_name }}</h6>
+                            <div class="text-muted small">
+                                MRN: {{ encounter.patient.mrn }} · 
+                                {{ encounter.patient.age }}y · 
+                                {{ encounter.patient.get_gender_display }}
+                            </div>
+                            <div class="mt-2" style="font-size: 13px;">
+                                <strong>Complaint:</strong> {{ encounter.chief_complaint|truncatewords:10 }}
+                            </div>
+                        </div>
+                        <div>
+                            <span class="badge bg-primary">{{ encounter.get_encounter_type_display }}</span>
+                        </div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="text-center py-5">
+                    <i class="bi bi-inbox" style="font-size: 64px; color: #ccc;"></i>
+                    <p class="text-muted mt-3">No active encounters ready for admission</p>
+                </div>
+                {% endfor %}
+            </div>
+            
+            <input type="hidden" name="encounter_id" id="selectedEncounterId">
+            
+            <div class="text-center mt-4">
+                <button type="button" class="btn-modern-large btn-admit" onclick="nextStep(2)" id="step1NextBtn" disabled>
+                    <span>Next: Select Bed</span>
+                    <i class="bi bi-arrow-right"></i>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Step 2: Select Bed -->
+        <div class="admission-card" id="step2Panel" style="display: none;">
+            <div class="section-title">
+                <div class="section-icon"><i class="bi bi-bed"></i></div>
+                <span>Select Available Bed</span>
+            </div>
+            
+            <div class="mb-3">
+                <select class="form-input-modern" onchange="filterBedsByWard(this.value)">
+                    <option value="">All Wards</option>
+                    {% regroup available_beds by ward as beds_by_ward %}
+                    {% for ward_group in beds_by_ward %}
+                    <option value="{{ ward_group.grouper.pk }}">{{ ward_group.grouper.name }} ({{ ward_group.list|length }} beds)</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            {% regroup available_beds by ward as beds_by_ward %}
+            {% for ward_group in beds_by_ward %}
+            <div class="ward-bed-section" data-ward="{{ ward_group.grouper.pk }}">
+                <h6 class="fw-bold mb-3">{{ ward_group.grouper.name }}</h6>
+                <div class="bed-select-grid">
+                    {% for bed in ward_group.list %}
+                    <div class="bed-select-card {% if selected_bed and selected_bed.pk == bed.pk %}selected{% endif %}" 
+                         onclick="selectBed('{{ bed.pk }}', '{{ bed.bed_number }}', '{{ bed.ward.name }}')">
+                        <div class="bed-select-number">{{ bed.bed_number }}</div>
+                        <div class="bed-select-ward">{{ bed.get_bed_type_display }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+            
+            <input type="hidden" name="bed_id" id="selectedBedId" {% if selected_bed %}value="{{ selected_bed.pk }}"{% endif %}>
+            
+            <div class="d-flex gap-3 justify-content-center mt-4">
+                <button type="button" class="btn btn-outline-secondary btn-lg" onclick="previousStep(1)">
+                    <i class="bi bi-arrow-left me-2"></i>Back
+                </button>
+                <button type="button" class="btn-modern-large btn-admit" onclick="nextStep(3)" id="step2NextBtn" {% if not selected_bed %}disabled{% endif %}>
+                    <span>Next: Confirm</span>
+                    <i class="bi bi-arrow-right"></i>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Step 3: Confirm and Details -->
+        <div class="admission-card" id="step3Panel" style="display: none;">
+            <div class="section-title">
+                <div class="section-icon"><i class="bi bi-check-circle"></i></div>
+                <span>Confirm Admission Details</span>
+            </div>
+            
+            <div class="alert alert-info" id="confirmationSummary">
+                <strong>Selected Patient:</strong> <span id="selectedPatientName">-</span><br>
+                <strong>Bed Assignment:</strong> <span id="selectedBedInfo">-</span>
+            </div>
+            
+            <div class="row g-3">
+                <div class="col-md-12">
+                    <label class="form-label-modern">
+                        Primary Diagnosis (ICD-10)
+                        <span class="text-muted" style="font-size: 0.875rem; font-weight: normal;">- Start typing to search WHO diagnosis codes</span>
+                    </label>
+                    <input type="text" 
+                           name="diagnosis_icd10" 
+                           id="diagnosisInput"
+                           class="form-input-modern" 
+                           list="diagnosisList"
+                           placeholder="Type to search: e.g., 'Pneumonia' or 'J18.9'"
+                           autocomplete="off">
+                    <datalist id="diagnosisList">
+                        {% if diagnosis_codes %}
+                        {% for code in diagnosis_codes %}
+                        <option value="{{ code.code }}">{{ code.code }} - {{ code.short_description }}</option>
+                        {% endfor %}
+                        {% endif %}
+                    </datalist>
+                    <small class="text-muted">
+                        <i class="bi bi-info-circle me-1"></i>
+                        Common diagnoses: Pneumonia (J18.9), UTI (N39.0), Hypertension (I10), Diabetes (E11.9)
+                    </small>
+                </div>
+                
+                <div class="col-md-12">
+                    <label class="form-label-modern">Admission Notes</label>
+                    <textarea name="notes" class="form-input-modern" rows="4" placeholder="Reason for admission, treatment plan, special requirements..."></textarea>
+                </div>
+            </div>
+            
+            <div class="d-flex gap-3 justify-content-center mt-4">
+                <button type="button" class="btn btn-outline-secondary btn-lg" onclick="previousStep(2)">
+                    <i class="bi bi-arrow-left me-2"></i>Back
+                </button>
+                <button type="submit" class="btn-modern-large btn-admit">
+                    <i class="bi bi-check-circle-fill"></i>
+                    <span>Complete Admission</span>
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let selectedPatientInfo = {};
+let selectedBedInfo = {};
+let currentStep = 1;
+
+function selectPatient(encounterId, patientName, mrn) {
+    // Remove selection from all cards
+    document.querySelectorAll('.patient-select-card').forEach(card => {
+        card.classList.remove('selected');
+    });
+    
+    // Add selection to clicked card
+    event.target.closest('.patient-select-card').classList.add('selected');
+    
+    // Store selection
+    document.getElementById('selectedEncounterId').value = encounterId;
+    selectedPatientInfo = {id: encounterId, name: patientName, mrn: mrn};
+    
+    // Enable next button
+    document.getElementById('step1NextBtn').disabled = false;
+}
+
+function selectBed(bedId, bedNumber, wardName) {
+    // Remove selection from all bed cards
+    document.querySelectorAll('.bed-select-card').forEach(card => {
+        card.classList.remove('selected');
+    });
+    
+    // Add selection to clicked card
+    event.target.closest('.bed-select-card').classList.add('selected');
+    
+    // Store selection
+    document.getElementById('selectedBedId').value = bedId;
+    selectedBedInfo = {id: bedId, number: bedNumber, ward: wardName};
+    
+    // Enable next button
+    document.getElementById('step2NextBtn').disabled = false;
+}
+
+function nextStep(step) {
+    // Hide all panels
+    for (let i = 1; i <= 3; i++) {
+        document.getElementById(`step${i}Panel`).style.display = 'none';
+        document.getElementById(`step${i}`).classList.remove('active', 'completed');
+    }
+    
+    // Mark previous steps as completed
+    for (let i = 1; i < step; i++) {
+        document.getElementById(`step${i}`).classList.add('completed');
+    }
+    
+    // Show current step
+    document.getElementById(`step${step}Panel`).style.display = 'block';
+    document.getElementById(`step${step}`).classList.add('active');
+    
+    // Update confirmation summary
+    if (step === 3) {
+        document.getElementById('selectedPatientName').textContent = `${selectedPatientInfo.name} (${selectedPatientInfo.mrn})`;
+        document.getElementById('selectedBedInfo').textContent = `${selectedBedInfo.ward} - Bed ${selectedBedInfo.number}`;
+    }
+    
+    currentStep = step;
+}
+
+function previousStep(step) {
+    nextStep(step);
+}
+
+function filterPatients(query) {
+    const cards = document.querySelectorAll('.patient-select-card');
+    cards.forEach(card => {
+        const text = card.textContent.toLowerCase();
+        if (text.includes(query.toLowerCase())) {
+            card.style.display = 'block';
+        } else {
+            card.style.display = 'none';
+        }
+    });
+}
+
+function filterBedsByWard(wardId) {
+    const sections = document.querySelectorAll('.ward-bed-section');
+    sections.forEach(section => {
+        if (!wardId || section.dataset.ward === wardId) {
+            section.style.display = 'block';
+        } else {
+            section.style.display = 'none';
+        }
+    });
+}
+
+// Auto-select if bed was pre-selected in URL
+{% if selected_encounter %}
+window.addEventListener('DOMContentLoaded', function() {
+    selectedPatientInfo = {
+        id: '{{ selected_encounter.pk }}',
+        name: '{{ selected_encounter.patient.full_name }}',
+        mrn: '{{ selected_encounter.patient.mrn }}'
+    };
+    document.getElementById('selectedEncounterId').value = '{{ selected_encounter.pk }}';
+    document.getElementById('step1NextBtn').disabled = false;
+    showStep(2);
+});
+{% elif selected_bed %}
+window.addEventListener('DOMContentLoaded', function() {
+    selectedBedInfo = {
+        id: '{{ selected_bed.pk }}',
+        number: '{{ selected_bed.bed_number }}',
+        ward: '{{ selected_bed.ward.name }}'
+    };
+    document.getElementById('step2NextBtn').disabled = false;
+});
+{% endif %}
+</script>
+{% endblock %}
+

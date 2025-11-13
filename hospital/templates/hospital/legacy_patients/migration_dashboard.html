@@ -1,0 +1,407 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Migration Dashboard - HMS{% endblock %}
+{% block page_title %}🚀 Legacy Patient Migration Dashboard{% endblock %}
+{% block page_subtitle %}Monitor and manage patient data migration from old system{% endblock %}
+
+{% block extra_css %}
+<style>
+    .hero-stats {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 20px;
+        padding: 40px;
+        margin-bottom: 30px;
+        box-shadow: 0 15px 40px rgba(102, 126, 234, 0.3);
+    }
+    
+    .hero-stat {
+        text-align: center;
+    }
+    
+    .hero-number {
+        font-size: 3.5rem;
+        font-weight: 800;
+        line-height: 1;
+        margin-bottom: 10px;
+    }
+    
+    .hero-label {
+        font-size: 1rem;
+        opacity: 0.9;
+    }
+    
+    .progress-circle {
+        width: 200px;
+        height: 200px;
+        border-radius: 50%;
+        background: conic-gradient(#28a745 {{ migration_percentage }}%, rgba(255,255,255,0.2) {{ migration_percentage }}%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto;
+        position: relative;
+    }
+    
+    .progress-circle-inner {
+        width: 160px;
+        height: 160px;
+        border-radius: 50%;
+        background: white;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .progress-percentage {
+        font-size: 3rem;
+        font-weight: 800;
+        color: #28a745;
+    }
+    
+    .action-card {
+        background: white;
+        border-radius: 16px;
+        padding: 30px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        margin-bottom: 24px;
+        border-left: 4px solid #007bff;
+        transition: all 0.3s;
+    }
+    
+    .action-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 20px rgba(0,0,0,0.12);
+    }
+    
+    .action-card.success {
+        border-left-color: #28a745;
+    }
+    
+    .action-card.warning {
+        border-left-color: #ffc107;
+    }
+    
+    .action-card.info {
+        border-left-color: #17a2b8;
+    }
+    
+    .migration-btn {
+        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        color: white;
+        padding: 15px 30px;
+        border-radius: 12px;
+        border: none;
+        font-weight: 700;
+        font-size: 1.1rem;
+        cursor: pointer;
+        transition: all 0.3s;
+        text-decoration: none;
+        display: inline-block;
+    }
+    
+    .migration-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(40, 167, 69, 0.3);
+        color: white;
+        text-decoration: none;
+    }
+    
+    .migration-btn:active {
+        transform: translateY(0);
+    }
+    
+    .patient-mini-card {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 10px;
+        border-left: 3px solid #ffc107;
+    }
+    
+    .timeline-item {
+        position: relative;
+        padding-left: 40px;
+        padding-bottom: 20px;
+    }
+    
+    .timeline-item::before {
+        content: '';
+        position: absolute;
+        left: 10px;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: #e9ecef;
+    }
+    
+    .timeline-dot {
+        position: absolute;
+        left: 0;
+        top: 5px;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: #28a745;
+        border: 3px solid white;
+        box-shadow: 0 0 0 2px #28a745;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Hero Statistics -->
+    <div class="hero-stats">
+        <div class="row align-items-center">
+            <div class="col-md-3">
+                <div class="hero-stat">
+                    <div class="hero-number">{{ total_legacy|intcomma }}</div>
+                    <div class="hero-label">Legacy Patients</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="hero-stat">
+                    <div class="hero-number">{{ total_migrated|intcomma }}</div>
+                    <div class="hero-label">Successfully Migrated</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="hero-stat">
+                    <div class="hero-number">{{ total_not_migrated|intcomma }}</div>
+                    <div class="hero-label">Pending Migration</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="progress-circle">
+                    <div class="progress-circle-inner">
+                        <div class="progress-percentage">{{ migration_percentage|floatformat:0 }}%</div>
+                        <div class="small text-muted">Complete</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Quick Actions -->
+        <div class="col-md-8">
+            <div class="action-card success">
+                <h4 class="mb-3">
+                    <i class="bi bi-rocket-takeoff me-2"></i>
+                    Migration Actions
+                </h4>
+                <p class="text-muted mb-4">
+                    Migrate all remaining legacy patients to the new Hospital Management System.
+                    This process will preserve all patient data and create proper medical records.
+                </p>
+                
+                <div class="d-flex gap-3 flex-wrap">
+                    <form method="POST" action="{% url 'hospital:bulk_migrate_patients' %}" style="display: inline;">
+                        {% csrf_token %}
+                        <input type="hidden" name="limit" value="1000">
+                        <button type="submit" class="migration-btn" 
+                                onclick="return confirm('This will migrate up to 1000 patients. Continue?')">
+                            <i class="bi bi-lightning-charge me-2"></i>
+                            Migrate All Remaining Patients
+                        </button>
+                    </form>
+                    
+                    <a href="{% url 'hospital:legacy_patient_list' %}" class="btn btn-outline-primary btn-lg">
+                        <i class="bi bi-list me-2"></i>
+                        Browse All Legacy Patients
+                    </a>
+                </div>
+                
+                <div class="alert alert-info mt-4 mb-0">
+                    <i class="bi bi-info-circle me-2"></i>
+                    <strong>Note:</strong> Migration is safe and reversible. All original legacy data remains intact.
+                    Migrated patients will have MRNs starting with "PMC-LEG-".
+                </div>
+            </div>
+
+            <!-- Unmigrated Patients Sample -->
+            {% if unmigrated_sample %}
+            <div class="action-card warning">
+                <h5 class="mb-3">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    Patients Awaiting Migration
+                    <span class="badge bg-warning text-dark ms-2">{{ total_not_migrated|intcomma }}</span>
+                </h5>
+                <p class="text-muted mb-3">Sample of legacy patients not yet migrated:</p>
+                
+                {% for patient in unmigrated_sample %}
+                <div class="patient-mini-card">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong>{{ patient.full_name }}</strong>
+                            <small class="text-muted ms-2">PID: {{ patient.pid }}</small>
+                            {% if patient.display_phone %}
+                            <small class="text-muted ms-2">📞 {{ patient.display_phone }}</small>
+                            {% endif %}
+                        </div>
+                        <div>
+                            <a href="{% url 'hospital:legacy_patient_detail' pid=patient.pid %}" 
+                               class="btn btn-sm btn-primary">
+                                View & Migrate
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+                
+                <div class="text-end mt-3">
+                    <a href="{% url 'hospital:legacy_patient_list' %}?status=not_migrated" 
+                       class="btn btn-outline-warning">
+                        View All Unmigrated →
+                    </a>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Recent Migrated Patients -->
+            {% if recent_migrated %}
+            <div class="action-card success">
+                <h5 class="mb-3">
+                    <i class="bi bi-check-circle me-2"></i>
+                    Recently Migrated Patients
+                </h5>
+                
+                <div class="timeline">
+                    {% for patient in recent_migrated %}
+                    <div class="timeline-item">
+                        <div class="timeline-dot"></div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>{{ patient.full_name }}</strong>
+                                <small class="text-muted ms-2">MRN: {{ patient.mrn }}</small>
+                                <div class="small text-muted">
+                                    Migrated {{ patient.created|naturaltime }}
+                                </div>
+                            </div>
+                            <a href="{% url 'hospital:patient_detail' pk=patient.pk %}" 
+                               class="btn btn-sm btn-success">
+                                <i class="bi bi-folder-open me-1"></i>Open
+                            </a>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Sidebar -->
+        <div class="col-md-4">
+            <!-- System Status -->
+            <div class="action-card info">
+                <h5 class="mb-3">
+                    <i class="bi bi-speedometer2 me-2"></i>
+                    System Status
+                </h5>
+                
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted">Total Django Patients:</span>
+                        <strong>{{ total_django|intcomma }}</strong>
+                    </div>
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted">Legacy Patients:</span>
+                        <strong>{{ total_legacy|intcomma }}</strong>
+                    </div>
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted">Migration Status:</span>
+                        <strong class="text-success">{{ migration_percentage|floatformat:1 }}%</strong>
+                    </div>
+                </div>
+                
+                <div class="progress" style="height: 20px;">
+                    <div class="progress-bar bg-success" role="progressbar" 
+                         style="width: {{ migration_percentage }}%;" 
+                         aria-valuenow="{{ migration_percentage }}" 
+                         aria-valuemin="0" 
+                         aria-valuemax="100">
+                        {{ migration_percentage|floatformat:0 }}%
+                    </div>
+                </div>
+                
+                {% if migration_percentage == 100 %}
+                <div class="alert alert-success mt-3 mb-0">
+                    <i class="bi bi-check-circle me-2"></i>
+                    <strong>Migration Complete!</strong><br>
+                    All legacy patients have been successfully migrated.
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Quick Links -->
+            <div class="action-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-link-45deg me-2"></i>
+                    Quick Links
+                </h5>
+                
+                <div class="d-grid gap-2">
+                    <a href="{% url 'hospital:legacy_patient_list' %}" class="btn btn-outline-primary">
+                        <i class="bi bi-people me-2"></i>All Legacy Patients
+                    </a>
+                    <a href="{% url 'hospital:legacy_patient_list' %}?status=migrated" class="btn btn-outline-success">
+                        <i class="bi bi-check-circle me-2"></i>Migrated Patients
+                    </a>
+                    <a href="{% url 'hospital:legacy_patient_list' %}?status=not_migrated" class="btn btn-outline-warning">
+                        <i class="bi bi-exclamation-circle me-2"></i>Pending Migration
+                    </a>
+                    <a href="{% url 'hospital:patient_list' %}" class="btn btn-outline-info">
+                        <i class="bi bi-folder me-2"></i>All HMS Patients
+                    </a>
+                </div>
+            </div>
+
+            <!-- Migration Tips -->
+            <div class="action-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-lightbulb me-2"></i>
+                    Migration Tips
+                </h5>
+                
+                <ul class="small">
+                    <li class="mb-2">
+                        Legacy patients are preserved in the original database for reference
+                    </li>
+                    <li class="mb-2">
+                        Migrated patients get MRNs starting with "PMC-LEG-" for easy identification
+                    </li>
+                    <li class="mb-2">
+                        All patient data including contact info, DOB, and address are migrated
+                    </li>
+                    <li class="mb-2">
+                        You can migrate patients individually or in bulk
+                    </li>
+                    <li>
+                        Doctors can access both legacy and new patients from their dashboards
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Auto-refresh migration status every 30 seconds
+setTimeout(() => {
+    if (!document.hidden) {
+        location.reload();
+    }
+}, 30000);
+</script>
+{% endblock %}
+
+
+
+
+
+

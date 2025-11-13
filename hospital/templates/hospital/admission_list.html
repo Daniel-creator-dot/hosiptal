@@ -1,0 +1,217 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Admissions - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    .admission-card {
+        background: white;
+        border-radius: 12px;
+        padding: 25px;
+        margin-bottom: 20px;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+        border-left: 4px solid #4299e1;
+        animation: slideIn 0.5s ease-out;
+    }
+    
+    .admission-card:hover {
+        transform: translateX(5px);
+        box-shadow: 0 5px 20px rgba(0,0,0,0.15);
+        border-left-color: #48bb78;
+    }
+    
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    .bed-badge {
+        background: linear-gradient(135deg, #4299e1 0%, #3182ce 100%);
+        color: white;
+        padding: 8px 18px;
+        border-radius: 25px;
+        font-weight: 600;
+        display: inline-block;
+    }
+    
+    .ward-badge {
+        background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+        color: white;
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+    
+    .duration-badge {
+        background: #f7fafc;
+        color: #2d3748;
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        border: 2px solid #e2e8f0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 style="font-weight: 700; color: #2d3748;">🛏️ Admissions</h1>
+        <p class="text-muted mb-0">Track all patient admissions and bed assignments</p>
+    </div>
+    <div>
+        <a href="{% url 'hospital:bed_availability' %}" class="btn btn-info me-2" style="border-radius: 10px; padding: 10px 25px;">
+            <i class="bi bi-grid"></i> Bed Availability
+        </a>
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-center" style="background: linear-gradient(135deg, #4299e1 0%, #3182ce 100%); color: white; border: none;">
+            <div class="card-body" style="padding: 25px;">
+                <h3 style="font-size: 2.5rem; margin: 10px 0; font-weight: bold;">{{ stats.current_admissions|default:0 }}</h3>
+                <p style="margin: 0; opacity: 0.9;">Current Admissions</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center" style="background: linear-gradient(135deg, #48bb78 0%, #38a169 100%); color: white; border: none;">
+            <div class="card-body" style="padding: 25px;">
+                <h3 style="font-size: 2.5rem; margin: 10px 0; font-weight: bold;">{{ stats.available_beds|default:0 }}</h3>
+                <p style="margin: 0; opacity: 0.9;">Available Beds</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;">
+            <div class="card-body" style="padding: 25px;">
+                <h3 style="font-size: 2.5rem; margin: 10px 0; font-weight: bold;">{{ stats.total_beds|default:0 }}</h3>
+                <p style="margin: 0; opacity: 0.9;">Total Beds</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center" style="background: linear-gradient(135deg, #ed8936 0%, #dd6b20 100%); color: white; border: none;">
+            <div class="card-body" style="padding: 25px;">
+                <h3 style="font-size: 2.5rem; margin: 10px 0; font-weight: bold;">{{ stats.bed_occupancy_rate|default:0 }}%</h3>
+                <p style="margin: 0; opacity: 0.9;">Occupancy Rate</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Admissions List -->
+{% if admissions %}
+    {% for admission in admissions %}
+    <div class="admission-card">
+        <div class="row align-items-center">
+            <div class="col-md-1">
+                <div class="patient-avatar-small" style="width: 55px; height: 55px; font-size: 1.3rem;">
+                    {{ admission.encounter.patient.first_name.0|upper }}{{ admission.encounter.patient.last_name.0|upper }}
+                </div>
+            </div>
+            <div class="col-md-4">
+                <h5 style="margin: 0 0 5px 0; color: #2d3748;">
+                    <a href="{% url 'hospital:patient_detail' admission.encounter.patient.pk %}" style="text-decoration: none; color: inherit;">
+                        {{ admission.encounter.patient.full_name }}
+                    </a>
+                </h5>
+                <div style="font-size: 0.85rem; color: #667eea; font-weight: 600; margin-bottom: 8px;">
+                    MRN: {{ admission.encounter.patient.mrn }}
+                </div>
+                {% if admission.ward %}
+                <span class="ward-badge">
+                    <i class="bi bi-building"></i> {{ admission.ward.name }}
+                </span>
+                {% endif %}
+            </div>
+            <div class="col-md-3">
+                <div style="margin-bottom: 8px;">
+                    <span class="bed-badge">
+                        <i class="bi bi-bed"></i> Bed: {{ admission.bed.bed_number|default:"Not Assigned" }}
+                    </span>
+                </div>
+                <div style="font-size: 0.9rem; color: #718096;">
+                    <i class="bi bi-calendar-event"></i> Admitted: {{ admission.admit_date|date:"M d, Y H:i" }}
+                    {% if admission.discharge_date %}
+                    <br><i class="bi bi-calendar-check"></i> Discharged: {{ admission.discharge_date|date:"M d, Y H:i" }}
+                    {% endif %}
+                </div>
+                {% if not admission.discharge_date %}
+                <span class="duration-badge mt-2 d-inline-block">
+                    <i class="bi bi-clock"></i> {{ admission.admit_date|timesince }}
+                </span>
+                {% endif %}
+            </div>
+            <div class="col-md-2 text-center">
+                <span class="badge bg-{% if admission.status == 'admitted' %}success{% elif admission.status == 'discharged' %}secondary{% else %}warning{% endif %}" style="padding: 8px 15px; font-size: 0.9rem;">
+                    {{ admission.get_status_display }}
+                </span>
+            </div>
+            <div class="col-md-2 text-end">
+                <a href="{% url 'hospital:patient_detail' admission.encounter.patient.pk %}" class="btn btn-sm btn-outline-primary" style="border-radius: 8px;">
+                    <i class="bi bi-eye"></i> View Patient
+                </a>
+            </div>
+        </div>
+        {% if admission.admission_notes %}
+        <div class="row mt-3">
+            <div class="col-12">
+                <div style="background: #f7fafc; padding: 12px; border-radius: 8px; border-left: 3px solid #4299e1;">
+                    <strong style="color: #2d3748;">Notes:</strong>
+                    <span style="color: #718096;">{{ admission.admission_notes|truncatewords:30 }}</span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+    
+    <!-- Pagination -->
+    {% if admissions.has_other_pages %}
+    <nav aria-label="Page navigation" class="mt-4">
+        <ul class="pagination justify-content-center">
+            {% if admissions.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?page=1" style="border-radius: 10px 0 0 10px;">First</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ admissions.previous_page_number }}">Previous</a>
+                </li>
+            {% endif %}
+            <li class="page-item active">
+                <span class="page-link" style="background: #667eea; border-color: #667eea; border-radius: 10px; margin: 0 5px;">
+                    Page {{ admissions.number }} of {{ admissions.paginator.num_pages }}
+                </span>
+            </li>
+            {% if admissions.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ admissions.next_page_number }}">Next</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ admissions.paginator.num_pages }}" style="border-radius: 0 10px 10px 0;">Last</a>
+                </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+{% else %}
+    <div class="text-center" style="padding: 60px 20px; background: white; border-radius: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.1);">
+        <div style="font-size: 4rem; margin-bottom: 20px;">🛏️</div>
+        <h4 style="color: #718096;">No admissions found</h4>
+        <p class="text-muted">Admissions will appear here once patients are admitted</p>
+    </div>
+{% endif %}
+{% endblock %}

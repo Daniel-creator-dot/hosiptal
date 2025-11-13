@@ -1,0 +1,228 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Verify Payment - Lab - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    .receipt-search-box {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 40px;
+        border-radius: 12px;
+        margin-bottom: 30px;
+    }
+    
+    .search-input {
+        font-size: 24px;
+        padding: 15px;
+        border: 3px solid white;
+        border-radius: 8px;
+        text-align: center;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    
+    .receipt-info {
+        background: #f0fdf4;
+        border: 2px solid #10b981;
+        border-radius: 12px;
+        padding: 20px;
+        margin-top: 20px;
+    }
+    
+    .verify-success-btn {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+        border: none;
+        padding: 15px 40px;
+        border-radius: 8px;
+        font-size: 18px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    
+    <!-- Header -->
+    <div class="mb-4">
+        <a href="{% url 'hospital:lab_payment_verification_dashboard' %}" class="btn btn-outline-primary mb-3">
+            <i class="bi bi-arrow-left"></i> Back to Verification Dashboard
+        </a>
+        <h2><i class="bi bi-search"></i> Verify Payment by Receipt Number</h2>
+    </div>
+    
+    <!-- Test & Patient Info -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h5 class="text-primary mb-3">Lab Test</h5>
+                    <p class="mb-1"><strong>{{ lab_result.test.name }}</strong></p>
+                    <p class="mb-1 text-muted">Code: {{ lab_result.test.code }}</p>
+                    {% if test_price %}
+                    <p class="mb-0"><strong>Price: <span style="color: #10b981;">GHS {{ test_price }}</span></strong></p>
+                    {% endif %}
+                </div>
+                <div class="col-md-6">
+                    <h5 class="text-primary mb-3">Patient</h5>
+                    <p class="mb-1"><strong>{{ patient.full_name }}</strong></p>
+                    <p class="mb-1 text-muted">MRN: {{ patient.mrn }}</p>
+                    <p class="mb-0 text-muted">Phone: {{ patient.phone_number|default:"N/A" }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    {% if existing_receipt %}
+    <!-- Already Verified -->
+    <div class="alert alert-success">
+        <h5><i class="bi bi-check-circle"></i> Payment Already Verified!</h5>
+        <p class="mb-1">Receipt Number: <strong>{{ existing_receipt.receipt_number }}</strong></p>
+        <p class="mb-1">Amount: <strong>GHS {{ existing_receipt.amount_paid }}</strong></p>
+        <p class="mb-0">Paid on: {{ existing_receipt.receipt_date|date:"d M Y h:i A" }}</p>
+    </div>
+    {% else %}
+    
+    <!-- Receipt Search -->
+    <div class="receipt-search-box">
+        <h3 class="text-center mb-4">
+            <i class="bi bi-receipt"></i> Enter Receipt Number
+        </h3>
+        <form method="post" id="verifyForm">
+            {% csrf_token %}
+            <div class="mb-4">
+                <input 
+                    type="text" 
+                    name="receipt_number" 
+                    id="receiptNumber"
+                    class="form-control search-input" 
+                    placeholder="REC-YYYYMM-XXXXXX"
+                    required
+                    autofocus
+                >
+            </div>
+            
+            <div class="d-flex gap-3">
+                <button type="button" class="btn btn-light flex-fill" onclick="searchReceipt()">
+                    <i class="bi bi-search"></i> Search Receipt
+                </button>
+                <button type="submit" class="verify-success-btn flex-fill">
+                    <i class="bi bi-check-circle"></i> Verify & Continue
+                </button>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Receipt Info Display -->
+    <div id="receiptInfo" style="display: none;">
+        <div class="receipt-info">
+            <h5 class="mb-3"><i class="bi bi-receipt-cutoff"></i> Receipt Details</h5>
+            <div class="row">
+                <div class="col-md-6">
+                    <p class="mb-2"><strong>Receipt Number:</strong> <span id="infoReceiptNum"></span></p>
+                    <p class="mb-2"><strong>Amount:</strong> <span id="infoAmount" style="color: #10b981; font-size: 20px;"></span></p>
+                    <p class="mb-2"><strong>Date:</strong> <span id="infoDate"></span></p>
+                </div>
+                <div class="col-md-6">
+                    <p class="mb-2"><strong>Patient:</strong> <span id="infoPatient"></span></p>
+                    <p class="mb-2"><strong>MRN:</strong> <span id="infoMRN"></span></p>
+                    <p class="mb-2"><strong>Description:</strong> <span id="infoDescription"></span></p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    {% endif %}
+    
+</div>
+
+<script>
+function searchReceipt() {
+    const receiptNumber = document.getElementById('receiptNumber').value.trim();
+    
+    if (!receiptNumber) {
+        alert('Please enter receipt number');
+        return;
+    }
+    
+    // Show loading
+    const receiptInfo = document.getElementById('receiptInfo');
+    receiptInfo.style.display = 'block';
+    receiptInfo.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-primary"></div><p class="mt-2">Searching receipt...</p></div>';
+    
+    // Search via API
+    fetch('/hms/lab/api/search-receipt/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}'
+        },
+        body: JSON.stringify({ receipt_number: receiptNumber })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Display receipt info
+            document.getElementById('infoReceiptNum').textContent = data.receipt.receipt_number;
+            document.getElementById('infoAmount').textContent = 'GHS ' + data.receipt.amount.toFixed(2);
+            document.getElementById('infoDate').textContent = data.receipt.date;
+            document.getElementById('infoPatient').textContent = data.receipt.patient_name;
+            document.getElementById('infoMRN').textContent = data.receipt.patient_mrn;
+            document.getElementById('infoDescription').textContent = data.receipt.description;
+            
+            receiptInfo.innerHTML = `
+                <div class="receipt-info">
+                    <h5 class="mb-3"><i class="bi bi-check-circle text-success"></i> Receipt Found!</h5>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <p class="mb-2"><strong>Receipt Number:</strong> ${data.receipt.receipt_number}</p>
+                            <p class="mb-2"><strong>Amount:</strong> <span style="color: #10b981; font-size: 20px;">GHS ${data.receipt.amount.toFixed(2)}</span></p>
+                            <p class="mb-2"><strong>Date:</strong> ${data.receipt.date}</p>
+                            <p class="mb-2"><strong>Payment Method:</strong> ${data.receipt.payment_method}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <p class="mb-2"><strong>Patient:</strong> ${data.receipt.patient_name}</p>
+                            <p class="mb-2"><strong>MRN:</strong> ${data.receipt.patient_mrn}</p>
+                            <p class="mb-2"><strong>Description:</strong> ${data.receipt.description}</p>
+                            <p class="mb-2"><strong>Received By:</strong> ${data.receipt.received_by}</p>
+                        </div>
+                    </div>
+                    <div class="alert alert-success mt-3 mb-0">
+                        <i class="bi bi-info-circle"></i> Receipt verified. Click "Verify & Continue" above to proceed.
+                    </div>
+                </div>
+            `;
+        } else {
+            receiptInfo.innerHTML = `
+                <div class="alert alert-danger">
+                    <h5><i class="bi bi-x-circle"></i> Receipt Not Found</h5>
+                    <p class="mb-0">${data.message}</p>
+                </div>
+            `;
+        }
+    })
+    .catch(error => {
+        receiptInfo.innerHTML = `
+            <div class="alert alert-danger">
+                <h5><i class="bi bi-exclamation-triangle"></i> Error</h5>
+                <p class="mb-0">Failed to search receipt. Please try again.</p>
+            </div>
+        `;
+        console.error('Error:', error);
+    });
+}
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+

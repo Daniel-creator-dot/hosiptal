@@ -1,0 +1,317 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}QR Code Scanner - Payment Verification{% endblock %}
+{% block page_title %}📷 QR Code Scanner{% endblock %}
+{% block page_subtitle %}World-Class QR Verification with Camera Support{% endblock %}
+
+{% block extra_css %}
+<style>
+    .scanner-container {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 30px;
+    }
+    
+    .scanner-box {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 30px;
+        padding: 50px;
+        color: white;
+        text-align: center;
+        box-shadow: 0 20px 60px rgba(102, 126, 234, 0.3);
+        margin-bottom: 30px;
+    }
+    
+    #video-container {
+        position: relative;
+        background: #000;
+        border-radius: 20px;
+        overflow: hidden;
+        margin: 30px 0;
+        max-width: 640px;
+        margin-left: auto;
+        margin-right: auto;
+    }
+    
+    #video {
+        width: 100%;
+        height: auto;
+        display: none;
+    }
+    
+    .scan-overlay {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 300px;
+        height: 300px;
+        border: 3px solid #38ef7d;
+        border-radius: 20px;
+        box-shadow: 0 0 0 2000px rgba(0,0,0,0.3);
+        pointer-events: none;
+    }
+    
+    .scan-corners {
+        position: absolute;
+        width: 40px;
+        height: 40px;
+        border: 5px solid #38ef7d;
+    }
+    
+    .corner-tl { top: -5px; left: -5px; border-right: none; border-bottom: none; }
+    .corner-tr { top: -5px; right: -5px; border-left: none; border-bottom: none; }
+    .corner-bl { bottom: -5px; left: -5px; border-right: none; border-top: none; }
+    .corner-br { bottom: -5px; right: -5px; border-left: none; border-top: none; }
+    
+    .scan-btn {
+        padding: 20px 50px;
+        font-size: 20px;
+        font-weight: 700;
+        border-radius: 50px;
+        border: none;
+        background: white;
+        color: #667eea;
+        margin: 20px 10px;
+        transition: all 0.3s;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    }
+    
+    .scan-btn:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 15px 40px rgba(0,0,0,0.3);
+    }
+    
+    .result-box {
+        background: white;
+        border-radius: 20px;
+        padding: 40px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        margin-top: 30px;
+        display: none;
+    }
+    
+    .result-valid {
+        border-left: 10px solid #11998e;
+    }
+    
+    .result-invalid {
+        border-left: 10px solid #f5576c;
+    }
+    
+    .manual-input {
+        background: white;
+        border-radius: 20px;
+        padding: 40px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+    }
+    
+    .manual-input input {
+        font-size: 16px;
+        padding: 15px 20px;
+        border-radius: 15px;
+        border: 2px solid #e0e0e0;
+        width: 100%;
+        transition: all 0.3s;
+    }
+    
+    .manual-input input:focus {
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="scanner-container">
+    <div class="scanner-box">
+        <i class="bi bi-qr-code-scan" style="font-size: 100px; margin-bottom: 30px;"></i>
+        <h2 style="font-weight: 800; margin-bottom: 20px;">QR Code Scanner</h2>
+        <p style="font-size: 18px; opacity: 0.9;">
+            Scan receipt QR codes for instant verification
+        </p>
+        
+        <div id="video-container" style="display: none;">
+            <video id="video" autoplay></video>
+            <div class="scan-overlay">
+                <div class="scan-corners corner-tl"></div>
+                <div class="scan-corners corner-tr"></div>
+                <div class="scan-corners corner-bl"></div>
+                <div class="scan-corners corner-br"></div>
+            </div>
+        </div>
+        
+        <div>
+            <button id="start-scan-btn" class="scan-btn" onclick="startCamera()">
+                <i class="bi bi-camera-fill"></i> Start Camera
+            </button>
+            <button id="stop-scan-btn" class="scan-btn" onclick="stopCamera()" style="display: none; background: #f5576c;">
+                <i class="bi bi-camera-video-off"></i> Stop Camera
+            </button>
+        </div>
+        
+        <div style="margin-top: 30px; opacity: 0.8;">
+            <small>
+                <i class="bi bi-shield-check"></i> Secure • Encrypted • Fraud Protected
+            </small>
+        </div>
+    </div>
+    
+    <!-- Manual Entry -->
+    <div class="manual-input">
+        <h5 style="font-weight: 700; margin-bottom: 20px; color: #333;">
+            <i class="bi bi-keyboard"></i> Or Enter QR Code Manually
+        </h5>
+        <form id="manual-verify-form" onsubmit="verifyManual(event)">
+            <input type="text" 
+                   id="manual-qr-input" 
+                   placeholder="Paste QR code data here..." 
+                   class="form-control">
+            <button type="submit" class="btn btn-primary btn-lg w-100 mt-3" style="border-radius: 15px;">
+                <i class="bi bi-check-circle"></i> Verify
+            </button>
+        </form>
+    </div>
+    
+    <!-- Results -->
+    <div id="result-box" class="result-box">
+        <div id="result-content"></div>
+    </div>
+</div>
+
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script>
+let html5QrCode;
+
+function startCamera() {
+    const videoContainer = document.getElementById('video-container');
+    const startBtn = document.getElementById('start-scan-btn');
+    const stopBtn = document.getElementById('stop-scan-btn');
+    
+    videoContainer.style.display = 'block';
+    startBtn.style.display = 'none';
+    stopBtn.style.display = 'inline-block';
+    
+    html5QrCode = new Html5Qrcode("video-container");
+    
+    html5QrCode.start(
+        { facingMode: "environment" },
+        {
+            fps: 10,
+            qrbox: { width: 250, height: 250 }
+        },
+        (decodedText) => {
+            // QR Code detected!
+            stopCamera();
+            verifyQRCode(decodedText);
+        }
+    ).catch(err => {
+        console.error('Camera error:', err);
+        alert('Unable to access camera. Please check permissions.');
+    });
+}
+
+function stopCamera() {
+    const videoContainer = document.getElementById('video-container');
+    const startBtn = document.getElementById('start-scan-btn');
+    const stopBtn = document.getElementById('stop-scan-btn');
+    
+    if (html5QrCode) {
+        html5QrCode.stop();
+    }
+    
+    videoContainer.style.display = 'none';
+    startBtn.style.display = 'inline-block';
+    stopBtn.style.display = 'none';
+}
+
+function verifyManual(event) {
+    event.preventDefault();
+    const qrData = document.getElementById('manual-qr-input').value;
+    if (qrData) {
+        verifyQRCode(qrData);
+    }
+}
+
+function verifyQRCode(qrData) {
+    const resultBox = document.getElementById('result-box');
+    const resultContent = document.getElementById('result-content');
+    
+    // Show loading
+    resultBox.style.display = 'block';
+    resultBox.className = 'result-box';
+    resultContent.innerHTML = '<div class="text-center"><div class="spinner-border text-primary"></div><p class="mt-3">Verifying...</p></div>';
+    
+    // Make AJAX request
+    fetch('{% url "hospital:verify_qr_code" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-CSRFToken': '{{ csrf_token }}'
+        },
+        body: 'qr_data=' + encodeURIComponent(qrData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            resultBox.className = 'result-box result-valid';
+            resultContent.innerHTML = `
+                <div class="text-center mb-4">
+                    <i class="bi bi-check-circle-fill text-success" style="font-size: 72px;"></i>
+                    <h3 class="mt-3" style="color: #11998e; font-weight: 700;">✓ VALID RECEIPT</h3>
+                </div>
+                <div class="row">
+                    <div class="col-md-6">
+                        <strong>Receipt:</strong> ${data.receipt.receipt_number}<br>
+                        <strong>Amount:</strong> GHS ${data.receipt.amount}<br>
+                        <strong>Date:</strong> ${data.receipt.date}
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Patient:</strong> ${data.receipt.patient.name}<br>
+                        <strong>MRN:</strong> ${data.receipt.patient.mrn}<br>
+                        <strong>Service:</strong> ${data.receipt.service_type}
+                    </div>
+                </div>
+                <div class="text-center mt-4">
+                    <a href="/hms/verification/receipt/${data.receipt.id}/" class="btn btn-primary">
+                        <i class="bi bi-eye"></i> View Full Details
+                    </a>
+                </div>
+            `;
+        } else {
+            resultBox.className = 'result-box result-invalid';
+            const severity = data.severity || 'low';
+            const fraudAlert = data.fraud_alert ? '<div class="alert alert-danger mt-3"><i class="bi bi-exclamation-triangle-fill"></i> <strong>FRAUD ALERT!</strong> This receipt may be tampered.</div>' : '';
+            
+            resultContent.innerHTML = `
+                <div class="text-center mb-4">
+                    <i class="bi bi-x-circle-fill text-danger" style="font-size: 72px;"></i>
+                    <h3 class="mt-3" style="color: #f5576c; font-weight: 700;">✗ INVALID</h3>
+                </div>
+                <div class="alert alert-danger">
+                    <i class="bi bi-shield-x"></i> ${data.error}
+                </div>
+                ${fraudAlert}
+            `;
+        }
+    })
+    .catch(error => {
+        resultBox.className = 'result-box result-invalid';
+        resultContent.innerHTML = `
+            <div class="text-center">
+                <i class="bi bi-exclamation-circle text-warning" style="font-size: 72px;"></i>
+                <h4 class="mt-3">Verification Error</h4>
+                <p>${error.message}</p>
+            </div>
+        `;
+    });
+}
+</script>
+{% endblock %}
+
+
+
+
+
+

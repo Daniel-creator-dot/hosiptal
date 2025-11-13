@@ -1,0 +1,1163 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Search - HMS{% endblock %}
+{% block page_title %}Global Search{% endblock %}
+{% block page_subtitle %}Search across all records{% endblock %}
+
+{% block extra_css %}
+<style>
+    .search-results-section {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+        border: 1px solid var(--border);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    
+    .result-item {
+        padding: 16px;
+        border-bottom: 1px solid #f0f0f0;
+        transition: all 0.2s;
+        border-left: 3px solid transparent;
+    }
+    
+    .result-item:hover {
+        background: #f8f9fa;
+        border-left-color: var(--primary);
+        transform: translateX(2px);
+    }
+    
+    .result-item:last-child {
+        border-bottom: none;
+    }
+    
+    .result-section-title {
+        font-weight: 600;
+        margin-bottom: 20px;
+        color: var(--dark);
+        font-size: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    
+    .result-count-badge {
+        background: var(--primary);
+        color: white;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 500;
+    }
+    
+    .result-item-title {
+        margin: 0 0 8px 0;
+        font-weight: 600;
+        font-size: 16px;
+    }
+    
+    .result-item-link {
+        text-decoration: none;
+        color: inherit;
+        transition: color 0.2s;
+    }
+    
+    .result-item-link:hover {
+        color: var(--primary);
+    }
+    
+    .result-item-meta {
+        font-size: 13px;
+        color: var(--gray);
+        line-height: 1.6;
+    }
+    
+    .search-empty-icon {
+        font-size: 48px;
+        color: var(--gray);
+        margin-bottom: 16px;
+    }
+    
+    .search-empty-icon-large {
+        font-size: 64px;
+        color: var(--gray);
+        margin-bottom: 20px;
+    }
+    
+    .search-empty-hint {
+        font-size: 14px;
+    }
+    
+    .search-empty-heading {
+        font-weight: 600;
+        margin-bottom: 10px;
+    }
+    
+    .search-highlight {
+        background: #fff3cd;
+        padding: 2px 4px;
+        border-radius: 3px;
+        font-weight: 500;
+    }
+    
+    .filter-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 24px;
+        border: 1px solid var(--border);
+    }
+    
+    .filter-section {
+        margin-bottom: 20px;
+    }
+    
+    .filter-section:last-child {
+        margin-bottom: 0;
+    }
+    
+    .filter-label {
+        font-weight: 600;
+        margin-bottom: 8px;
+        font-size: 14px;
+        color: var(--dark);
+    }
+    
+    .search-stats {
+        background: linear-gradient(135deg, var(--primary) 0%, #0056b3 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 24px;
+    }
+    
+    .search-stats h5 {
+        margin: 0 0 8px 0;
+        font-weight: 600;
+    }
+    
+    .search-stats p {
+        margin: 0;
+        opacity: 0.9;
+    }
+    
+    .category-filter-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+    }
+    
+    .category-btn {
+        padding: 8px 16px;
+        border: 2px solid var(--border);
+        background: white;
+        border-radius: 20px;
+        font-size: 13px;
+        transition: all 0.2s;
+        cursor: pointer;
+        text-decoration: none;
+        color: var(--dark);
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .category-btn:hover {
+        border-color: var(--primary);
+        color: var(--primary);
+        transform: translateY(-1px);
+    }
+    
+    .category-btn.active {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: white;
+    }
+    
+    .loading-spinner {
+        display: none;
+    }
+    
+    .loading .loading-spinner {
+        display: inline-block;
+    }
+    
+    .keyboard-hint {
+        font-size: 11px;
+        color: var(--gray);
+        margin-top: 8px;
+    }
+    
+    @media (max-width: 768px) {
+        .result-item-title {
+            font-size: 14px;
+        }
+        
+        .category-filter-buttons {
+            flex-direction: column;
+        }
+        
+        .category-btn {
+            width: 100%;
+            justify-content: center;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Search Form -->
+<div class="modern-card mb-4">
+    <form method="get" action="{% url 'hospital:global_search' %}" id="searchForm">
+        <div class="row g-3">
+            <div class="col-md-8">
+                <input 
+                    type="text" 
+                    name="q" 
+                    id="searchInput"
+                    value="{{ query }}" 
+                    class="form-control form-control-modern" 
+                    placeholder="Search patients, encounters, invoices, appointments, staff, drugs, lab results, prescriptions, orders, medical records, referrals, insurance, departments, specialties, wards, beds..."
+                    autofocus
+                    autocomplete="off"
+                >
+                <small class="keyboard-hint">
+                    <i class="bi bi-keyboard me-1"></i>Press <kbd>Enter</kbd> to search, <kbd>Esc</kbd> to clear
+                </small>
+            </div>
+            <div class="col-md-2">
+                <label for="categoryFilter" class="visually-hidden">Category Filter</label>
+                <select name="category" class="form-select form-control-modern" id="categoryFilter" title="Filter by category">
+                    <option value="">All Categories</option>
+                    <option value="patients" {% if category_filter == 'patients' %}selected{% endif %}>Patients</option>
+                    <option value="encounters" {% if category_filter == 'encounters' %}selected{% endif %}>Encounters</option>
+                    <option value="invoices" {% if category_filter == 'invoices' %}selected{% endif %}>Invoices</option>
+                    <option value="appointments" {% if category_filter == 'appointments' %}selected{% endif %}>Appointments</option>
+                    <option value="staff" {% if category_filter == 'staff' %}selected{% endif %}>Staff</option>
+                    <option value="drugs" {% if category_filter == 'drugs' %}selected{% endif %}>Drugs</option>
+                    <option value="lab_results" {% if category_filter == 'lab_results' %}selected{% endif %}>Lab Results</option>
+                    <option value="prescriptions" {% if category_filter == 'prescriptions' %}selected{% endif %}>Prescriptions</option>
+                    <option value="orders" {% if category_filter == 'orders' %}selected{% endif %}>Orders</option>
+                    <option value="medical_records" {% if category_filter == 'medical_records' %}selected{% endif %}>Medical Records</option>
+                    <option value="referrals" {% if category_filter == 'referrals' %}selected{% endif %}>Referrals</option>
+                    <option value="insurance" {% if category_filter == 'insurance' %}selected{% endif %}>Insurance</option>
+                    <option value="insurance_companies" {% if category_filter == 'insurance_companies' %}selected{% endif %}>Insurance Companies</option>
+                    <option value="departments" {% if category_filter == 'departments' %}selected{% endif %}>Departments</option>
+                    <option value="specialties" {% if category_filter == 'specialties' %}selected{% endif %}>Specialties</option>
+                    <option value="wards" {% if category_filter == 'wards' %}selected{% endif %}>Wards</option>
+                    <option value="beds" {% if category_filter == 'beds' %}selected{% endif %}>Beds</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary-modern btn-modern w-100" id="searchBtn">
+                    <i class="bi bi-search"></i> Search
+                    <span class="loading-spinner ms-2">
+                        <i class="bi bi-arrow-repeat spin"></i>
+                    </span>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Advanced Filters -->
+        {% if query %}
+        <div class="row g-3 mt-3" id="advancedFilters">
+            <div class="col-md-3">
+                <label for="statusFilter" class="form-label small fw-bold">Status</label>
+                <select name="status" id="statusFilter" class="form-select form-select-sm" title="Filter by status">
+                    <option value="">All Statuses</option>
+                    <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Active</option>
+                    <option value="completed" {% if status_filter == 'completed' %}selected{% endif %}>Completed</option>
+                    <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
+                    <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid</option>
+                    <option value="inactive" {% if status_filter == 'inactive' %}selected{% endif %}>Inactive</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label for="dateFrom" class="form-label small fw-bold">Date From</label>
+                <input type="date" name="date_from" id="dateFrom" value="{{ date_from }}" class="form-control form-control-sm" title="Filter from date" placeholder="Select start date">
+            </div>
+            <div class="col-md-3">
+                <label for="dateTo" class="form-label small fw-bold">Date To</label>
+                <input type="date" name="date_to" id="dateTo" value="{{ date_to }}" class="form-control form-control-sm" title="Filter to date" placeholder="Select end date">
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+                {% if query or category_filter or status_filter or date_from or date_to %}
+                <a href="{% url 'hospital:global_search' %}" class="btn btn-outline-secondary btn-sm w-100">
+                    <i class="bi bi-x-circle"></i> Clear Filters
+                </a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </form>
+</div>
+
+{% if query %}
+    {% if has_results %}
+        <!-- Search Statistics -->
+        <div class="search-stats">
+            <h5><i class="bi bi-graph-up me-2"></i>Search Results</h5>
+            <p>Found <strong>{{ total_results }}</strong> result{{ total_results|pluralize }} across {% if category_filter %}{{ category_filter|title }}{% else %}all categories{% endif %}</p>
+        </div>
+        
+        <!-- Category Filter Buttons -->
+        <div class="category-filter-buttons mb-4">
+            <a href="?q={{ query }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" 
+               class="category-btn {% if not category_filter %}active{% endif %}">
+                <i class="bi bi-grid"></i> All
+            </a>
+            {% for category, count in result_counts.items %}
+                {% if count > 0 %}
+                <a href="?q={{ query }}&category={{ category }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" 
+                   class="category-btn {% if category_filter == category %}active{% endif %}">
+                    <i class="bi bi-{% if category == 'patients' %}person{% elif category == 'encounters' %}hospital{% elif category == 'invoices' %}receipt{% elif category == 'appointments' %}calendar{% elif category == 'staff' %}person-badge{% elif category == 'drugs' %}capsule{% elif category == 'lab_results' %}file-medical{% elif category == 'prescriptions' %}prescription2{% elif category == 'orders' %}clipboard-check{% elif category == 'medical_records' %}file-earmark-medical{% elif category == 'referrals' %}arrow-right-circle{% elif category == 'insurance' %}shield-check{% elif category == 'insurance_companies' %}building{% elif category == 'departments' %}building-gear{% elif category == 'specialties' %}heart-pulse{% elif category == 'wards' %}hospital{% elif category == 'beds' %}bed{% endif %}"></i>
+                    {{ category|title|truncatewords:1 }} ({{ count }})
+                </a>
+                {% endif %}
+            {% endfor %}
+        </div>
+        
+        <!-- Patients Results -->
+        {% if results.patients %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-person-fill me-2"></i>Patients</span>
+                <span class="result-count-badge">{{ result_counts.patients|default:results.patients|length }} result{{ result_counts.patients|default:results.patients|length|pluralize }}</span>
+            </h5>
+            {% for patient in results.patients %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            <a href="{% url 'hospital:patient_detail' patient.pk %}" class="result-item-link">
+                                {{ patient.full_name }}
+                            </a>
+                        </h6>
+                        <div class="result-item-meta">
+                            MRN: {{ patient.mrn }} | 
+                            Age: {{ patient.age }} | 
+                            Gender: {{ patient.get_gender_display }} | 
+                            Phone: {{ patient.phone_number|default:"N/A" }}
+                            {% if patient.email %} | Email: {{ patient.email }}{% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <a href="{% url 'hospital:patient_detail' patient.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View Profile
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.patients > results.patients|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.patients|length }} of {{ result_counts.patients }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Encounters Results -->
+        {% if results.encounters %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-hospital me-2"></i>Encounters</span>
+                <span class="result-count-badge">{{ result_counts.encounters|default:results.encounters|length }} result{{ result_counts.encounters|default:results.encounters|length|pluralize }}</span>
+            </h5>
+            {% for encounter in results.encounters %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            <a href="{% url 'hospital:encounter_detail' encounter.pk %}" class="result-item-link">
+                                {{ encounter.patient.full_name }} - {{ encounter.get_encounter_type_display }}
+                            </a>
+                        </h6>
+                        <div class="result-item-meta">
+                            {{ encounter.started_at|date:"M d, Y H:i" }} | 
+                            Status: {{ encounter.get_status_display }} | 
+                            Complaint: {{ encounter.chief_complaint|truncatewords:10 }}
+                            {% if encounter.provider %} | Provider: {{ encounter.provider.user.get_full_name|default:encounter.provider.user.username }}{% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <span class="badge-modern badge-{% if encounter.status == 'active' %}success{% elif encounter.status == 'completed' %}info{% else %}warning{% endif %} me-2">
+                            {{ encounter.get_status_display }}
+                        </span>
+                        <a href="{% url 'hospital:encounter_detail' encounter.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.encounters > results.encounters|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.encounters|length }} of {{ result_counts.encounters }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Invoices Results -->
+        {% if results.invoices %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-receipt-cutoff me-2"></i>Invoices</span>
+                <span class="result-count-badge">{{ result_counts.invoices|default:results.invoices|length }} result{{ result_counts.invoices|default:results.invoices|length|pluralize }}</span>
+            </h5>
+            {% for invoice in results.invoices %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            <a href="{% url 'hospital:invoice_detail' invoice.pk %}" class="result-item-link">
+                                Invoice #{{ invoice.invoice_number }}
+                            </a>
+                        </h6>
+                        <div class="result-item-meta">
+                            Patient: {{ invoice.patient.full_name }} | 
+                            Date: {{ invoice.issued_at|date:"M d, Y" }} | 
+                            Amount: GHS {{ invoice.total_amount|floatformat:2 }}
+                            {% if invoice.balance > 0 %} | Balance: GHS {{ invoice.balance|floatformat:2 }}{% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <span class="badge-modern badge-{% if invoice.status == 'paid' %}success{% elif invoice.status == 'overdue' %}danger{% else %}warning{% endif %} me-2">
+                            {{ invoice.get_status_display }}
+                        </span>
+                        <a href="{% url 'hospital:invoice_detail' invoice.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.invoices > results.invoices|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.invoices|length }} of {{ result_counts.invoices }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Appointments Results -->
+        {% if results.appointments %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-calendar-event me-2"></i>Appointments</span>
+                <span class="result-count-badge">{{ result_counts.appointments|default:results.appointments|length }} result{{ result_counts.appointments|default:results.appointments|length|pluralize }}</span>
+            </h5>
+            {% for appointment in results.appointments %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            {{ appointment.patient.full_name }} with {{ appointment.provider.user.get_full_name|default:appointment.provider.user.username }}
+                        </h6>
+                        <div class="result-item-meta">
+                            {{ appointment.appointment_date|date:"M d, Y H:i" }} |
+                            Department: {{ appointment.department.name }} |
+                            Reason: {{ appointment.reason|truncatewords:8 }}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <span class="badge-modern badge-{% if appointment.status == 'confirmed' %}success{% elif appointment.status == 'cancelled' %}danger{% else %}info{% endif %} me-2">
+                            {{ appointment.get_status_display }}
+                        </span>
+                        <a href="/admin/hospital/appointment/{{ appointment.id }}/change/" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.appointments > results.appointments|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.appointments|length }} of {{ result_counts.appointments }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Staff Results -->
+        {% if results.staff %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-person-badge me-2"></i>Staff</span>
+                <span class="result-count-badge">{{ result_counts.staff|default:results.staff|length }} result{{ result_counts.staff|default:results.staff|length|pluralize }}</span>
+            </h5>
+            {% for staff in results.staff %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            <a href="{% url 'hospital:staff_detail' staff.pk %}" class="result-item-link">
+                                {{ staff.user.get_full_name|default:staff.user.username }}
+                            </a>
+                        </h6>
+                        <div class="result-item-meta">
+                            {% if staff.employee_id %}Employee ID: {{ staff.employee_id }}{% endif %}
+                            {% if staff.employee_id and staff.get_profession_display %} | {% endif %}
+                            {% if staff.get_profession_display %}Profession: {{ staff.get_profession_display }}{% endif %}
+                            {% if staff.get_profession_display and staff.department %} | {% endif %}
+                            {% if staff.department %}Department: {{ staff.department.name }}{% endif %}
+                            {% if staff.department and staff.registration_number %} | {% endif %}
+                            {% if staff.registration_number %}License: {{ staff.registration_number }}{% endif %}
+                        </div>
+                        <div class="result-item-meta mt-1">
+                            {% if staff.leave_balance %}
+                                <i class="bi bi-calendar-check text-success"></i> Annual Leave: <strong>{{ staff.leave_balance.annual_leave }}</strong> days
+                                {% if staff.leave_balance.sick_leave %}
+                                    | <i class="bi bi-heart-pulse text-info"></i> Sick Leave: <strong>{{ staff.leave_balance.sick_leave }}</strong> days
+                                {% endif %}
+                            {% else %}
+                                <span class="text-muted"><i class="bi bi-info-circle"></i> No leave balance configured</span>
+                            {% endif %}
+                            {% if staff.current_leave %}
+                                | <span class="badge bg-warning text-dark"><i class="bi bi-airplane"></i> On Leave</span> 
+                                {{ staff.current_leave.get_leave_type_display }}: {{ staff.current_leave.start_date|date:"M d" }} - {{ staff.current_leave.end_date|date:"M d, Y" }}
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        {% if staff.is_active %}
+                            <span class="badge-modern badge-success me-2">Active</span>
+                        {% else %}
+                            <span class="badge-modern badge-secondary me-2">Inactive</span>
+                        {% endif %}
+                        {% if staff.get_profession_display %}
+                            <span class="badge-modern badge-info me-2">
+                                {{ staff.get_profession_display }}
+                            </span>
+                        {% endif %}
+                        <a href="{% url 'hospital:staff_detail' staff.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.staff > results.staff|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.staff|length }} of {{ result_counts.staff }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Drugs Results -->
+        {% if results.drugs %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-capsule me-2"></i>Drugs</span>
+                <span class="result-count-badge">{{ result_counts.drugs|default:results.drugs|length }} result{{ result_counts.drugs|default:results.drugs|length|pluralize }}</span>
+            </h5>
+            {% for drug in results.drugs %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            <a href="{% url 'hospital:drug_detail' drug.pk %}" class="result-item-link">
+                                {{ drug.name }}
+                            </a>
+                        </h6>
+                        <div class="result-item-meta">
+                            {% if drug.generic_name %}Generic: {{ drug.generic_name }}{% endif %}
+                            {% if drug.generic_name and drug.strength %} | {% endif %}
+                            {% if drug.strength %}Strength: {{ drug.strength }}{% endif %}
+                            {% if drug.strength and drug.form %} | {% endif %}
+                            {% if drug.form %}Form: {{ drug.form }}{% endif %}
+                            {% if drug.form and drug.pack_size %} | {% endif %}
+                            {% if drug.pack_size %}Pack: {{ drug.pack_size }}{% endif %}
+                            {% if drug.atc_code %} | ATC: {{ drug.atc_code }}{% endif %}
+                            {% if drug.is_controlled %} | <span class="text-warning">Controlled Substance</span>{% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        {% if drug.is_active %}
+                            <span class="badge-modern badge-success me-2">Active</span>
+                        {% else %}
+                            <span class="badge-modern badge-secondary me-2">Inactive</span>
+                        {% endif %}
+                        {% if drug.is_controlled %}
+                            <span class="badge-modern badge-warning me-2">Controlled</span>
+                        {% endif %}
+                        <a href="{% url 'hospital:drug_detail' drug.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.drugs > results.drugs|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.drugs|length }} of {{ result_counts.drugs }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Lab Results -->
+        {% if results.lab_results %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-file-medical me-2"></i>Lab Results</span>
+                <span class="result-count-badge">{{ result_counts.lab_results|default:results.lab_results|length }} result{{ result_counts.lab_results|default:results.lab_results|length|pluralize }}</span>
+            </h5>
+            {% for lab_result in results.lab_results %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            {{ lab_result.test.name }} - {{ lab_result.order.encounter.patient.full_name }}
+                        </h6>
+                        <div class="result-item-meta">
+                            Test: {{ lab_result.test.name }} ({{ lab_result.test.code }}) | 
+                            Patient: {{ lab_result.order.encounter.patient.full_name }} | 
+                            Date: {{ lab_result.created|date:"M d, Y H:i" }}
+                            {% if lab_result.value %} | Result: {{ lab_result.value }} {{ lab_result.units|default:"" }}{% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <span class="badge-modern badge-{% if lab_result.status == 'completed' %}success{% elif lab_result.status == 'pending' %}warning{% else %}info{% endif %} me-2">
+                            {{ lab_result.get_status_display }}
+                        </span>
+                        <a href="/admin/hospital/labresult/{{ lab_result.id }}/change/" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.lab_results > results.lab_results|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.lab_results|length }} of {{ result_counts.lab_results }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Prescriptions Results -->
+        {% if results.prescriptions %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-prescription2 me-2"></i>Prescriptions</span>
+                <span class="result-count-badge">{{ result_counts.prescriptions|default:results.prescriptions|length }} result{{ result_counts.prescriptions|default:results.prescriptions|length|pluralize }}</span>
+            </h5>
+            {% for prescription in results.prescriptions %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            {{ prescription.drug.name }} - {{ prescription.encounter.patient.full_name }}
+                        </h6>
+                        <div class="result-item-meta">
+                            Drug: {{ prescription.drug.name }} | 
+                            Patient: {{ prescription.encounter.patient.full_name }} | 
+                            Date: {{ prescription.created|date:"M d, Y" }}
+                            {% if prescription.instructions %} | Instructions: {{ prescription.instructions|truncatewords:10 }}{% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <span class="badge-modern badge-{% if prescription.status == 'dispensed' %}success{% elif prescription.status == 'pending' %}warning{% else %}info{% endif %} me-2">
+                            {{ prescription.get_status_display }}
+                        </span>
+                        <a href="/admin/hospital/prescription/{{ prescription.id }}/change/" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.prescriptions > results.prescriptions|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.prescriptions|length }} of {{ result_counts.prescriptions }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Orders Results -->
+        {% if results.orders %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-clipboard-check me-2"></i>Orders</span>
+                <span class="result-count-badge">{{ result_counts.orders|default:results.orders|length }} result{{ result_counts.orders|default:results.orders|length|pluralize }}</span>
+            </h5>
+            {% for order in results.orders %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            {{ order.get_order_type_display }} - {{ order.encounter.patient.full_name }}
+                        </h6>
+                        <div class="result-item-meta">
+                            Type: {{ order.get_order_type_display }} | 
+                            Patient: {{ order.encounter.patient.full_name }} | 
+                            Priority: {{ order.get_priority_display }} | 
+                            Date: {{ order.requested_at|date:"M d, Y H:i" }}
+                            {% if order.notes %} | Notes: {{ order.notes|truncatewords:8 }}{% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <span class="badge-modern badge-{% if order.status == 'completed' %}success{% elif order.status == 'in_progress' %}info{% elif order.status == 'pending' %}warning{% else %}secondary{% endif %} me-2">
+                            {{ order.get_status_display }}
+                        </span>
+                        <a href="{% url 'hospital:order_detail' order.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.orders > results.orders|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.orders|length }} of {{ result_counts.orders }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Medical Records Results -->
+        {% if results.medical_records %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-file-earmark-medical me-2"></i>Medical Records</span>
+                <span class="result-count-badge">{{ result_counts.medical_records|default:results.medical_records|length }} result{{ result_counts.medical_records|default:results.medical_records|length|pluralize }}</span>
+            </h5>
+            {% for record in results.medical_records %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            {{ record.patient.full_name }} - {{ record.diagnosis|truncatewords:5|default:"Medical Record" }}
+                        </h6>
+                        <div class="result-item-meta">
+                            Patient: {{ record.patient.full_name }} | 
+                            Date: {{ record.record_date|date:"M d, Y" }}
+                            {% if record.diagnosis %} | Diagnosis: {{ record.diagnosis|truncatewords:10 }}{% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <a href="{% url 'hospital:medical_record_detail' record.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.medical_records > results.medical_records|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.medical_records|length }} of {{ result_counts.medical_records }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Referrals Results -->
+        {% if results.referrals %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-arrow-right-circle me-2"></i>Referrals</span>
+                <span class="result-count-badge">{{ result_counts.referrals|default:results.referrals|length }} result{{ result_counts.referrals|default:results.referrals|length|pluralize }}</span>
+            </h5>
+            {% for referral in results.referrals %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            {{ referral.encounter.patient.full_name }} → {{ referral.specialty.name }}
+                        </h6>
+                        <div class="result-item-meta">
+                            Patient: {{ referral.encounter.patient.full_name }} | 
+                            Specialty: {{ referral.specialty.name }} | 
+                            Date: {{ referral.referred_date|date:"M d, Y" }}
+                            {% if referral.specialist %} | Specialist: {{ referral.specialist.staff.user.get_full_name|default:referral.specialist.staff.user.username }}{% endif %}
+                            {% if referral.reason %} | Reason: {{ referral.reason|truncatewords:8 }}{% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <span class="badge-modern badge-{% if referral.status == 'completed' %}success{% elif referral.status == 'pending' %}warning{% else %}info{% endif %} me-2">
+                            {{ referral.get_status_display }}
+                        </span>
+                        <a href="{% url 'hospital:referral_detail' referral.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.referrals > results.referrals|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.referrals|length }} of {{ result_counts.referrals }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Insurance Results -->
+        {% if results.insurance %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-shield-check me-2"></i>Insurance</span>
+                <span class="result-count-badge">{{ result_counts.insurance|default:results.insurance|length }} result{{ result_counts.insurance|default:results.insurance|length|pluralize }}</span>
+            </h5>
+            {% for insurance in results.insurance %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            <a href="{% url 'hospital:insurance_detail' insurance.pk %}" class="result-item-link">
+                                {{ insurance.patient.full_name }} - {{ insurance.insurance_company.name }}
+                            </a>
+                        </h6>
+                        <div class="result-item-meta">
+                            Patient: {{ insurance.patient.full_name }} | 
+                            Company: {{ insurance.insurance_company.name }} | 
+                            Policy: {{ insurance.policy_number|default:"N/A" }} | 
+                            Coverage: {{ insurance.coverage_percentage|default:"N/A" }}%
+                            {% if insurance.expiry_date %} | Expires: {{ insurance.expiry_date|date:"M d, Y" }}{% endif %}
+                            {% if insurance.is_active %} | <span class="text-success">Active</span>{% else %} | <span class="text-danger">Inactive</span>{% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        {% if insurance.is_active %}
+                            <span class="badge-modern badge-success me-2">Active</span>
+                        {% else %}
+                            <span class="badge-modern badge-secondary me-2">Inactive</span>
+                        {% endif %}
+                        {% if insurance.expiry_date and insurance.expiry_date|date:"Y-m-d" < "now"|date:"Y-m-d" %}
+                            <span class="badge-modern badge-danger me-2">Expired</span>
+                        {% endif %}
+                        <a href="{% url 'hospital:insurance_detail' insurance.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.insurance > results.insurance|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.insurance|length }} of {{ result_counts.insurance }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Insurance Companies Results -->
+        {% if results.insurance_companies %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-building me-2"></i>Insurance Companies</span>
+                <span class="result-count-badge">{{ result_counts.insurance_companies|default:results.insurance_companies|length }} result{{ result_counts.insurance_companies|default:results.insurance_companies|length|pluralize }}</span>
+            </h5>
+            {% for company in results.insurance_companies %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            <a href="{% url 'hospital:insurance_company_detail' company.pk %}" class="result-item-link">
+                                {{ company.name }}
+                            </a>
+                        </h6>
+                        <div class="result-item-meta">
+                            {% if company.code %}Code: {{ company.code }}{% endif %}
+                            {% if company.code and company.contact_phone %} | {% endif %}
+                            {% if company.contact_phone %}Phone: {{ company.contact_phone }}{% endif %}
+                            {% if company.contact_email %} | Email: {{ company.contact_email }}{% endif %}
+                            {% if company.address %} | Address: {{ company.address|truncatewords:8 }}{% endif %}
+                            {% if company.is_active %} | <span class="text-success">Active</span>{% else %} | <span class="text-danger">Inactive</span>{% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        {% if company.is_active %}
+                            <span class="badge-modern badge-success me-2">Active</span>
+                        {% else %}
+                            <span class="badge-modern badge-secondary me-2">Inactive</span>
+                        {% endif %}
+                        <a href="{% url 'hospital:insurance_company_detail' company.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.insurance_companies > results.insurance_companies|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.insurance_companies|length }} of {{ result_counts.insurance_companies }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Departments Results -->
+        {% if results.departments %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-building-gear me-2"></i>Departments</span>
+                <span class="result-count-badge">{{ result_counts.departments|default:results.departments|length }} result{{ result_counts.departments|default:results.departments|length|pluralize }}</span>
+            </h5>
+            {% for department in results.departments %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            <a href="{% url 'hospital:department_detail' department.pk %}" class="result-item-link">
+                                {{ department.name }}
+                            </a>
+                        </h6>
+                        <div class="result-item-meta">
+                            {% if department.code %}Code: {{ department.code }}{% endif %}
+                            {% if department.code and department.description %} | {% endif %}
+                            {% if department.description %}Description: {{ department.description|truncatewords:10 }}{% endif %}
+                            {% if department.is_active %} | <span class="text-success">Active</span>{% else %} | <span class="text-danger">Inactive</span>{% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        {% if department.is_active %}
+                            <span class="badge-modern badge-success me-2">Active</span>
+                        {% else %}
+                            <span class="badge-modern badge-secondary me-2">Inactive</span>
+                        {% endif %}
+                        <a href="{% url 'hospital:department_detail' department.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.departments > results.departments|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.departments|length }} of {{ result_counts.departments }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Specialties Results -->
+        {% if results.specialties %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-heart-pulse me-2"></i>Specialties</span>
+                <span class="result-count-badge">{{ result_counts.specialties|default:results.specialties|length }} result{{ result_counts.specialties|default:results.specialties|length|pluralize }}</span>
+            </h5>
+            {% for specialty in results.specialties %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            <a href="/admin/hospital/specialty/{{ specialty.id }}/change/" class="result-item-link">
+                                {{ specialty.name }}
+                            </a>
+                        </h6>
+                        <div class="result-item-meta">
+                            {% if specialty.code %}Code: {{ specialty.code }}{% endif %}
+                            {% if specialty.code and specialty.description %} | {% endif %}
+                            {% if specialty.description %}Description: {{ specialty.description|truncatewords:10 }}{% endif %}
+                            {% if specialty.is_active %} | <span class="text-success">Active</span>{% else %} | <span class="text-danger">Inactive</span>{% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        {% if specialty.is_active %}
+                            <span class="badge-modern badge-success me-2">Active</span>
+                        {% else %}
+                            <span class="badge-modern badge-secondary me-2">Inactive</span>
+                        {% endif %}
+                        <a href="/admin/hospital/specialty/{{ specialty.id }}/change/" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.specialties > results.specialties|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.specialties|length }} of {{ result_counts.specialties }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Wards Results -->
+        {% if results.wards %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-hospital me-2"></i>Wards</span>
+                <span class="result-count-badge">{{ result_counts.wards|default:results.wards|length }} result{{ result_counts.wards|default:results.wards|length|pluralize }}</span>
+            </h5>
+            {% for ward in results.wards %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            <a href="{% url 'hospital:ward_detail' ward.pk %}" class="result-item-link">
+                                {{ ward.name }}
+                            </a>
+                        </h6>
+                        <div class="result-item-meta">
+                            Type: {{ ward.get_ward_type_display }} | 
+                            Department: {{ ward.department.name }} | 
+                            Capacity: {{ ward.capacity }} beds
+                            {% if ward.is_active %} | <span class="text-success">Active</span>{% else %} | <span class="text-danger">Inactive</span>{% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        {% if ward.is_active %}
+                            <span class="badge-modern badge-success me-2">Active</span>
+                        {% else %}
+                            <span class="badge-modern badge-secondary me-2">Inactive</span>
+                        {% endif %}
+                        <span class="badge-modern badge-info me-2">{{ ward.get_ward_type_display }}</span>
+                        <a href="{% url 'hospital:ward_detail' ward.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.wards > results.wards|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.wards|length }} of {{ result_counts.wards }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Beds Results -->
+        {% if results.beds %}
+        <div class="search-results-section">
+            <h5 class="result-section-title">
+                <span><i class="bi bi-bed me-2"></i>Beds</span>
+                <span class="result-count-badge">{{ result_counts.beds|default:results.beds|length }} result{{ result_counts.beds|default:results.beds|length|pluralize }}</span>
+            </h5>
+            {% for bed in results.beds %}
+            <div class="result-item">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="result-item-title">
+                            <a href="{% url 'hospital:ward_detail' bed.ward.pk %}" class="result-item-link">
+                                Bed {{ bed.bed_number }} - {{ bed.ward.name }}
+                            </a>
+                        </h6>
+                        <div class="result-item-meta">
+                            Ward: {{ bed.ward.name }} ({{ bed.ward.get_ward_type_display }}) | 
+                            Department: {{ bed.ward.department.name }}
+                            {% if bed.is_occupied %} | <span class="text-danger">Occupied</span>{% else %} | <span class="text-success">Available</span>{% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        {% if bed.is_occupied %}
+                            <span class="badge-modern badge-danger me-2">Occupied</span>
+                        {% else %}
+                            <span class="badge-modern badge-success me-2">Available</span>
+                        {% endif %}
+                        <a href="{% url 'hospital:ward_detail' bed.ward.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View Ward
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if result_counts.beds > results.beds|length %}
+            <div class="text-center mt-3">
+                <small class="text-muted">Showing {{ results.beds|length }} of {{ result_counts.beds }} results</small>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+    {% else %}
+        <div class="modern-card text-center py-5">
+            <i class="bi bi-search search-empty-icon"></i>
+            <h5 class="search-empty-heading">No results found</h5>
+            <p class="text-muted">No results found for "<strong>{{ query }}</strong>"</p>
+            <p class="text-muted search-empty-hint">Try different keywords, check spelling, or use filters to narrow your search</p>
+            <div class="mt-3">
+                <a href="{% url 'hospital:global_search' %}" class="btn btn-outline-primary">
+                    <i class="bi bi-arrow-left"></i> Clear Search
+                </a>
+            </div>
+        </div>
+    {% endif %}
+{% else %}
+    <div class="modern-card text-center py-5">
+        <i class="bi bi-search search-empty-icon-large"></i>
+        <h5 class="search-empty-heading">Search Everything</h5>
+        <p class="text-muted">Enter a search term above to find patients, encounters, invoices, appointments, staff, drugs, lab results, prescriptions, orders, medical records, and referrals</p>
+        <div class="mt-4">
+            <div class="row g-3 justify-content-center">
+                <div class="col-md-8">
+                    <div class="card">
+                        <div class="card-body text-start">
+                            <h6 class="fw-bold mb-3"><i class="bi bi-lightbulb me-2"></i>Search Tips</h6>
+                            <ul class="mb-0 small">
+                                <li><strong>Patients:</strong> Search by name, MRN, phone number, email, or national ID</li>
+                                <li><strong>Encounters:</strong> Search by patient name, MRN, or chief complaint</li>
+                                <li><strong>Invoices:</strong> Search by patient name or invoice number</li>
+                                <li><strong>Staff:</strong> Search by name, employee ID, license number, or email</li>
+                                <li><strong>Drugs:</strong> Search by brand name, generic name, ATC code, or manufacturer</li>
+                                <li><strong>Lab Results:</strong> Search by patient name, test name, or test code</li>
+                                <li><strong>Prescriptions:</strong> Search by patient name or drug name</li>
+                                <li><strong>Insurance:</strong> Search by patient name, policy number, or insurance company</li>
+                                <li><strong>Insurance Companies:</strong> Search by company name, code, or contact information</li>
+                                <li><strong>Departments:</strong> Search by department name, code, or description</li>
+                                <li><strong>Specialties:</strong> Search by specialty name, code, or description</li>
+                                <li><strong>Wards:</strong> Search by ward name, code, or type</li>
+                                <li><strong>Beds:</strong> Search by bed number, ward name, or department</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('searchInput');
+    const searchForm = document.getElementById('searchForm');
+    const searchBtn = document.getElementById('searchBtn');
+    const categoryFilter = document.getElementById('categoryFilter');
+    
+    // Keyboard shortcuts
+    searchInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            window.location.href = '{% url "hospital:global_search" %}';
+        }
+    });
+    
+    // Auto-submit on category change if query exists
+    if (categoryFilter && searchInput.value) {
+        categoryFilter.addEventListener('change', function() {
+            searchForm.submit();
+        });
+    }
+    
+    // Loading state
+    searchForm.addEventListener('submit', function() {
+        searchBtn.classList.add('loading');
+    });
+    
+    // Focus search on Ctrl+K or Cmd+K
+    document.addEventListener('keydown', function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            searchInput.focus();
+        }
+    });
+    
+    // Highlight search query in results (simple version)
+    if (searchInput.value) {
+        const query = searchInput.value.toLowerCase();
+        // This is a simple implementation - for production, consider server-side highlighting
+    }
+});
+</script>
+{% endblock %}
+server

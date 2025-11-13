@@ -1,0 +1,278 @@
+{% extends 'hospital/base.html' %}
+{% load static crispy_forms_tags %}
+
+{% block title %}{{ title }} - Procurement{% endblock %}
+{% block page_title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .formset-table {
+        width: 100%;
+        margin-top: 20px;
+    }
+    .formset-table th {
+        background: #f8fafc;
+        padding: 12px;
+        font-weight: 600;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .formset-table td {
+        padding: 12px;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    .formset-row {
+        background: white;
+    }
+    .formset-row:hover {
+        background: #f8fafc;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-12">
+        <div class="modern-card">
+            <div class="mb-3">
+                <a href="{% url 'hospital:store_transfers_list' %}" class="btn btn-outline-secondary btn-modern">
+                    <i class="bi bi-arrow-left"></i> Back
+                </a>
+            </div>
+            
+            <form method="post" id="transferForm">
+                {% csrf_token %}
+                
+                <div class="card mb-4">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0"><i class="bi bi-info-circle"></i> Transfer Information</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label"><strong>From Store</strong></label>
+                                {{ form.from_store }}
+                                {% if form.from_store.errors %}
+                                <div class="text-danger">{{ form.from_store.errors }}</div>
+                                {% endif %}
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label"><strong>To Store</strong></label>
+                                {{ form.to_store }}
+                                {% if form.to_store.errors %}
+                                <div class="text-danger">{{ form.to_store.errors }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label"><strong>Transfer Date</strong></label>
+                                {{ form.transfer_date }}
+                                {% if form.transfer_date.errors %}
+                                <div class="text-danger">{{ form.transfer_date.errors }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Notes (Optional)</label>
+                            {{ form.notes }}
+                            {% if form.notes.errors %}
+                            <div class="text-danger">{{ form.notes.errors }}</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0"><i class="bi bi-box-seam"></i> Transfer Items</h5>
+                    </div>
+                    <div class="card-body">
+                        {{ formset.management_form }}
+                        
+                        {% if formset.non_form_errors %}
+                        <div class="alert alert-danger">
+                            {{ formset.non_form_errors }}
+                        </div>
+                        {% endif %}
+                        
+                        <div class="table-responsive">
+                            <table class="table formset-table" id="itemTable">
+                                <thead>
+                                    <tr>
+                                        <th>Item Code</th>
+                                        <th>Item Name</th>
+                                        <th>Quantity</th>
+                                        <th>Unit</th>
+                                        <th>Unit Cost</th>
+                                        <th>Total</th>
+                                        <th>Delete</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="itemTableBody">
+                                    {% for line_form in formset %}
+                                    <tr class="formset-row">
+                                        <td>
+                                            {{ line_form.item_code }}
+                                            {% if line_form.item_code.errors %}
+                                            <div class="text-danger small">{{ line_form.item_code.errors }}</div>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {{ line_form.item_name }}
+                                            {% if line_form.item_name.errors %}
+                                            <div class="text-danger small">{{ line_form.item_name.errors }}</div>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {{ line_form.quantity }}
+                                            {% if line_form.quantity.errors %}
+                                            <div class="text-danger small">{{ line_form.quantity.errors }}</div>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {{ line_form.unit_of_measure }}
+                                        </td>
+                                        <td>
+                                            {{ line_form.unit_cost }}
+                                            {% if line_form.unit_cost.errors %}
+                                            <div class="text-danger small">{{ line_form.unit_cost.errors }}</div>
+                                            {% endif %}
+                                        </td>
+                                        <td><span class="line-total">GHS 0.00</span></td>
+                                        <td>
+                                            {% if line_form.DELETE %}
+                                                {{ line_form.DELETE }}
+                                            {% endif %}
+                                            {% if line_form.id %}{{ line_form.id }}{% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <div class="alert alert-info mt-3">
+                            <i class="bi bi-info-circle"></i> <strong>Note:</strong> Add at least one item to the transfer. Use the rows above to enter item details.
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-4">
+                    <button type="submit" class="btn btn-primary btn-lg">
+                        <i class="bi bi-save"></i> Save Transfer
+                    </button>
+                    <a href="{% url 'hospital:store_transfers_list' %}" class="btn btn-outline-secondary btn-lg">
+                        <i class="bi bi-x-circle"></i> Cancel
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Calculate line totals dynamically
+    document.addEventListener('DOMContentLoaded', function() {
+        const table = document.getElementById('itemTableBody');
+        if (table) {
+            // Calculate totals on page load
+            updateAllTotals();
+            
+            // Update totals on input
+            table.addEventListener('input', function(e) {
+                if (e.target.type === 'number' || e.target.name.includes('quantity') || e.target.name.includes('unit_cost')) {
+                    const row = e.target.closest('tr');
+                    updateRowTotal(row);
+                }
+            });
+        }
+    });
+    
+    function updateRowTotal(row) {
+        const quantityInput = row.querySelector('input[name*="quantity"]');
+        const unitCostInput = row.querySelector('input[name*="unit_cost"]');
+        const totalCell = row.querySelector('.line-total');
+        
+        if (quantityInput && unitCostInput && totalCell) {
+            const quantity = parseFloat(quantityInput.value || 0);
+            const unitCost = parseFloat(unitCostInput.value || 0);
+            const total = quantity * unitCost;
+            totalCell.textContent = 'GHS ' + total.toFixed(2);
+        }
+    }
+    
+    function updateAllTotals() {
+        const rows = document.querySelectorAll('#itemTableBody tr');
+        rows.forEach(row => updateRowTotal(row));
+    }
+    
+    // Form validation before submit
+    document.getElementById('transferForm').addEventListener('submit', function(e) {
+        const rows = document.querySelectorAll('#itemTableBody tr');
+        let hasItem = false;
+        let hasError = false;
+        
+        rows.forEach(row => {
+            const itemCode = row.querySelector('input[name*="item_code"]');
+            const itemName = row.querySelector('input[name*="item_name"]');
+            const quantity = row.querySelector('input[name*="quantity"]');
+            const unitCost = row.querySelector('input[name*="unit_cost"]');
+            const deleteCheckbox = row.querySelector('input[name*="DELETE"]');
+            
+            // Skip if row is marked for deletion
+            if (deleteCheckbox?.checked) {
+                return;
+            }
+            
+            // Check if row has any data
+            const hasData = itemCode?.value.trim() || itemName?.value.trim() || 
+                           quantity?.value || unitCost?.value;
+            
+            if (hasData) {
+                // If row has some data, validate all required fields
+                if (!itemName?.value.trim()) {
+                    hasError = true;
+                    if (itemName) itemName.classList.add('is-invalid');
+                    alert('Please enter Item Name for all items.');
+                    e.preventDefault();
+                    return;
+                }
+                if (!quantity?.value || quantity.value <= 0) {
+                    hasError = true;
+                    if (quantity) quantity.classList.add('is-invalid');
+                    alert('Please enter Quantity for all items.');
+                    e.preventDefault();
+                    return;
+                }
+                if (!unitCost?.value || unitCost.value < 0) {
+                    hasError = true;
+                    if (unitCost) unitCost.classList.add('is-invalid');
+                    alert('Please enter Unit Cost for all items.');
+                    e.preventDefault();
+                    return;
+                }
+                hasItem = true;
+            }
+        });
+        
+        if (!hasError && !hasItem) {
+            e.preventDefault();
+            alert('Please add at least one transfer item.\n\nFill in:\n- Item Name (required)\n- Quantity (required)\n- Unit Cost (required)');
+            return false;
+        }
+    });
+    
+    // Remove validation error styling on input
+    document.querySelectorAll('input').forEach(input => {
+        input.addEventListener('input', function() {
+            this.classList.remove('is-invalid');
+        });
+    });
+</script>
+{{ formset.media }}
+{% endblock %}
+

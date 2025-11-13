@@ -1,0 +1,711 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Queue Display - HMS{% endblock %}
+
+{% block extra_head %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    :root {
+        --queue-primary: #6366F1;
+        --queue-success: #10B981;
+        --queue-warning: #F59E0B;
+        --queue-danger: #EF4444;
+        --queue-info: #3B82F6;
+    }
+
+    body {
+        background: #F3F4F6;
+    }
+
+    /* Hero Header */
+    .queue-hero {
+        background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%);
+        color: white;
+        border-radius: 24px;
+        padding: 48px;
+        margin-bottom: 32px;
+        box-shadow: 0 20px 60px rgba(102, 126, 234, 0.4);
+        position: relative;
+        overflow: hidden;
+    }
+
+    .queue-hero::before {
+        content: '';
+        position: absolute;
+        top: -50%;
+        right: -10%;
+        width: 500px;
+        height: 500px;
+        background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+        border-radius: 50%;
+    }
+
+    .queue-hero h1 {
+        font-size: 42px;
+        font-weight: 800;
+        margin-bottom: 8px;
+    }
+
+    .queue-hero-subtitle {
+        font-size: 18px;
+        opacity: 0.9;
+    }
+
+    /* Statistics Cards */
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin-bottom: 32px;
+    }
+
+    .stat-card {
+        background: white;
+        border-radius: 20px;
+        padding: 24px;
+        text-align: center;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+        transition: all 0.3s;
+        border: 2px solid transparent;
+    }
+
+    .stat-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.12);
+    }
+
+    .stat-card.waiting {
+        border-color: var(--queue-warning);
+    }
+
+    .stat-card.progress {
+        border-color: var(--queue-success);
+    }
+
+    .stat-card.completed {
+        border-color: var(--queue-info);
+    }
+
+    .stat-number {
+        font-size: 48px;
+        font-weight: 900;
+        font-family: 'Orbitron', sans-serif;
+        line-height: 1;
+        margin-bottom: 8px;
+    }
+
+    .stat-number.waiting { color: var(--queue-warning); }
+    .stat-number.progress { color: var(--queue-success); }
+    .stat-number.completed { color: var(--queue-info); }
+
+    .stat-label {
+        font-size: 14px;
+        color: #6B7280;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    /* Queue Sections */
+    .queue-section {
+        background: white;
+        border-radius: 24px;
+        padding: 32px;
+        margin-bottom: 24px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+    }
+
+    .queue-section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+        padding-bottom: 16px;
+        border-bottom: 2px solid #F3F4F6;
+    }
+
+    .queue-section-title {
+        font-size: 24px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .queue-badge {
+        background: linear-gradient(135deg, var(--queue-warning) 0%, #FB923C 100%);
+        color: white;
+        padding: 8px 20px;
+        border-radius: 50px;
+        font-size: 18px;
+        font-weight: 700;
+        font-family: 'Orbitron', sans-serif;
+    }
+
+    .queue-badge.progress {
+        background: linear-gradient(135deg, var(--queue-success) 0%, #34D399 100%);
+    }
+
+    /* Patient Cards */
+    .patient-card {
+        background: linear-gradient(145deg, #FFFFFF 0%, #F9FAFB 100%);
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 16px;
+        border: 2px solid #E5E7EB;
+        transition: all 0.3s;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .patient-card::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 6px;
+        background: var(--queue-warning);
+    }
+
+    .patient-card.priority-stat::before {
+        background: var(--queue-danger);
+        animation: pulse-danger 2s infinite;
+    }
+
+    .patient-card.priority-urgent::before {
+        background: var(--queue-warning);
+    }
+
+    .patient-card.in-progress::before {
+        background: var(--queue-success);
+        animation: pulse-success 2s infinite;
+    }
+
+    .patient-card:hover {
+        transform: translateX(8px);
+        box-shadow: 0 8px 30px rgba(0,0,0,0.1);
+        border-color: var(--queue-primary);
+    }
+
+    @keyframes pulse-danger {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+
+    @keyframes pulse-success {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.6; }
+    }
+
+    .queue-number {
+        font-size: 56px;
+        font-weight: 900;
+        font-family: 'Orbitron', sans-serif;
+        background: linear-gradient(135deg, var(--queue-primary) 0%, #8B5CF6 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        line-height: 1;
+    }
+
+    .patient-info h5 {
+        font-size: 20px;
+        font-weight: 700;
+        color: #1F2937;
+        margin: 0 0 8px 0;
+    }
+
+    .patient-meta {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        font-size: 14px;
+        color: #6B7280;
+    }
+
+    .patient-meta i {
+        color: var(--queue-primary);
+    }
+
+    .priority-badge {
+        padding: 6px 16px;
+        border-radius: 50px;
+        font-weight: 700;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .priority-badge.stat {
+        background: linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%);
+        color: #991B1B;
+    }
+
+    .priority-badge.urgent {
+        background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%);
+        color: #92400E;
+    }
+
+    .priority-badge.normal {
+        background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%);
+        color: #1E40AF;
+    }
+
+    .wait-timer {
+        font-size: 16px;
+        font-weight: 600;
+        color: #EF4444;
+        font-family: 'Orbitron', sans-serif;
+    }
+
+    .wait-timer.long {
+        color: #DC2626;
+        animation: blink 1s infinite;
+    }
+
+    @keyframes blink {
+        0%, 50%, 100% { opacity: 1; }
+        25%, 75% { opacity: 0.6; }
+    }
+
+    /* Action Buttons */
+    .action-btn {
+        padding: 12px 24px;
+        border-radius: 12px;
+        border: none;
+        font-weight: 600;
+        transition: all 0.3s;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .action-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+
+    .btn-call {
+        background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+        color: white;
+    }
+
+    .btn-call:hover {
+        background: linear-gradient(135deg, #059669 0%, #047857 100%);
+    }
+
+    .btn-complete {
+        background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+        color: white;
+    }
+
+    .btn-skip {
+        background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+        color: white;
+    }
+
+    /* Call Next Button */
+    .call-next-btn {
+        background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+        color: white;
+        border: none;
+        border-radius: 16px;
+        padding: 16px 32px;
+        font-size: 18px;
+        font-weight: 700;
+        box-shadow: 0 8px 30px rgba(16, 185, 129, 0.4);
+        transition: all 0.3s;
+        cursor: pointer;
+    }
+
+    .call-next-btn:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 12px 40px rgba(16, 185, 129, 0.5);
+    }
+
+    .call-next-btn:active {
+        transform: translateY(0);
+    }
+
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+    }
+
+    .empty-state-icon {
+        font-size: 80px;
+        color: #D1D5DB;
+        margin-bottom: 16px;
+    }
+
+    .empty-state-text {
+        font-size: 18px;
+        color: #9CA3AF;
+        font-weight: 600;
+    }
+
+    /* Filter Section */
+    .filter-section {
+        background: white;
+        border-radius: 20px;
+        padding: 24px;
+        margin-bottom: 32px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.06);
+    }
+
+    .filter-label {
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 8px;
+        display: block;
+    }
+
+    .filter-select {
+        width: 100%;
+        padding: 12px 16px;
+        border: 2px solid #E5E7EB;
+        border-radius: 12px;
+        font-size: 15px;
+        transition: all 0.3s;
+    }
+
+    .filter-select:focus {
+        outline: none;
+        border-color: var(--queue-primary);
+        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .queue-hero h1 {
+            font-size: 32px;
+        }
+
+        .queue-number {
+            font-size: 40px;
+        }
+
+        .patient-card {
+            padding: 16px;
+        }
+    }
+
+    /* Audio Indicator */
+    .audio-indicator {
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        background: white;
+        border-radius: 50%;
+        width: 60px;
+        height: 60px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+
+    .audio-indicator:hover {
+        transform: scale(1.1);
+    }
+
+    .audio-indicator i {
+        font-size: 24px;
+        color: var(--queue-primary);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Hero Header -->
+    <div class="queue-hero">
+        <h1>
+            <i class="bi bi-list-ol me-3"></i>Queue Management
+        </h1>
+        <div class="queue-hero-subtitle">
+            Real-time patient queue monitoring and control
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="stats-grid">
+        <div class="stat-card waiting">
+            <div class="stat-number waiting" id="waitingCount">{{ waiting|length }}</div>
+            <div class="stat-label">
+                <i class="bi bi-hourglass-split me-1"></i>Waiting
+            </div>
+        </div>
+        <div class="stat-card progress">
+            <div class="stat-number progress" id="progressCount">{{ in_progress|length }}</div>
+            <div class="stat-label">
+                <i class="bi bi-activity me-1"></i>In Progress
+            </div>
+        </div>
+        <div class="stat-card completed">
+            <div class="stat-number completed" id="completedCount">0</div>
+            <div class="stat-label">
+                <i class="bi bi-check-circle me-1"></i>Completed Today
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" style="color: #6366F1;" id="avgWaitTime">--</div>
+            <div class="stat-label">
+                <i class="bi bi-clock me-1"></i>Avg Wait (min)
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter Section -->
+    <div class="filter-section">
+        <form method="get" class="row g-3">
+            <div class="col-md-4">
+                <label class="filter-label">
+                    <i class="bi bi-building me-2"></i>Department
+                </label>
+                <select name="department" class="filter-select">
+                    <option value="">All Departments</option>
+                    {% for dept in departments %}
+                    <option value="{{ dept.id }}" {% if selected_department == dept.id|stringformat:"s" %}selected{% endif %}>
+                        {{ dept.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="filter-label">
+                    <i class="bi bi-geo-alt me-2"></i>Location
+                </label>
+                <select name="location" class="filter-select">
+                    <option value="">All Locations</option>
+                    <option value="clinic" {% if selected_location == 'clinic' %}selected{% endif %}>Clinic</option>
+                    <option value="ward" {% if selected_location == 'ward' %}selected{% endif %}>Ward</option>
+                    <option value="er" {% if selected_location == 'er' %}selected{% endif %}>Emergency Room</option>
+                    <option value="pharmacy" {% if selected_location == 'pharmacy' %}selected{% endif %}>Pharmacy</option>
+                    <option value="lab" {% if selected_location == 'lab' %}selected{% endif %}>Laboratory</option>
+                    <option value="imaging" {% if selected_location == 'imaging' %}selected{% endif %}>Imaging</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="filter-label">&nbsp;</label>
+                <button type="submit" class="action-btn btn-call w-100">
+                    <i class="bi bi-funnel"></i> Apply Filters
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <div class="row g-4">
+        <!-- Waiting Queue -->
+        <div class="col-lg-6">
+            <div class="queue-section">
+                <div class="queue-section-header">
+                    <div class="queue-section-title">
+                        <span class="queue-badge">{{ waiting|length }}</span>
+                        Waiting
+                    </div>
+                    <form method="post" action="{% url 'hospital:queue_call_next' %}" id="callNextForm">
+                        {% csrf_token %}
+                        {% if selected_department %}<input type="hidden" name="department" value="{{ selected_department }}">{% endif %}
+                        {% if selected_location %}<input type="hidden" name="location" value="{{ selected_location }}">{% endif %}
+                        <button type="submit" class="call-next-btn">
+                            <i class="bi bi-telephone-forward me-2"></i>Call Next
+                        </button>
+                    </form>
+                </div>
+
+                <div id="waitingList">
+                    {% if waiting %}
+                        {% for queue in waiting %}
+                        <div class="patient-card priority-{{ queue.priority }}">
+                            <div class="row align-items-center">
+                                <div class="col-auto">
+                                    <div class="queue-number">{{ queue.queue_number }}</div>
+                                </div>
+                                <div class="col">
+                                    <div class="patient-info">
+                                        <h5>{{ queue.encounter.patient.full_name }}</h5>
+                                        <div class="patient-meta">
+                                            <span><i class="bi bi-person-badge me-1"></i>{{ queue.encounter.patient.mrn }}</span>
+                                            <span class="priority-badge priority-{{ queue.priority }}">
+                                                {{ queue.get_priority_display }}
+                                            </span>
+                                            <span class="wait-timer" data-checked-in="{{ queue.check_in_time|date:'c' }}">
+                                                <i class="bi bi-clock me-1"></i>
+                                                <span class="timer-text">
+                                                    {% if queue.estimated_wait_minutes %}
+                                                        {{ queue.estimated_wait_minutes }} min
+                                                    {% else %}
+                                                        --
+                                                    {% endif %}
+                                                </span>
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-auto">
+                                    <a href="{% url 'hospital:queue_action' queue_id=queue.pk action='call' %}" class="action-btn btn-call">
+                                        <i class="bi bi-telephone"></i> Call
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="empty-state">
+                            <div class="empty-state-icon">
+                                <i class="bi bi-inbox"></i>
+                            </div>
+                            <div class="empty-state-text">No patients waiting</div>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- In Progress -->
+        <div class="col-lg-6">
+            <div class="queue-section">
+                <div class="queue-section-header">
+                    <div class="queue-section-title">
+                        <span class="queue-badge progress">{{ in_progress|length }}</span>
+                        In Progress
+                    </div>
+                </div>
+
+                <div id="progressList">
+                    {% if in_progress %}
+                        {% for queue in in_progress %}
+                        <div class="patient-card in-progress">
+                            <div class="row align-items-center">
+                                <div class="col-auto">
+                                    <div class="queue-number">{{ queue.queue_number }}</div>
+                                </div>
+                                <div class="col">
+                                    <div class="patient-info">
+                                        <h5>{{ queue.encounter.patient.full_name }}</h5>
+                                        <div class="patient-meta">
+                                            <span><i class="bi bi-person-badge me-1"></i>{{ queue.encounter.patient.mrn }}</span>
+                                            {% if queue.started_time or queue.called_time %}
+                                            <span><i class="bi bi-clock-history me-1"></i>Called {{ queue.started_time|default:queue.called_time|timesince }} ago</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-auto d-flex gap-2">
+                                    <a href="{% url 'hospital:queue_action' queue_id=queue.pk action='complete' %}" class="action-btn btn-complete">
+                                        <i class="bi bi-check-circle"></i> Complete
+                                    </a>
+                                    <a href="{% url 'hospital:queue_action' queue_id=queue.pk action='skip' %}" class="action-btn btn-skip">
+                                        <i class="bi bi-skip-forward"></i>
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="empty-state">
+                            <div class="empty-state-icon">
+                                <i class="bi bi-clipboard-check"></i>
+                            </div>
+                            <div class="empty-state-text">No patients in progress</div>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="text-center mt-4">
+        <a href="{% url 'hospital:queue_create' %}" class="action-btn btn-call" style="font-size: 18px; padding: 16px 40px;">
+            <i class="bi bi-plus-circle me-2"></i>Add Patient to Queue
+        </a>
+    </div>
+</div>
+
+<!-- Audio Indicator -->
+<div class="audio-indicator" id="audioToggle" title="Toggle sound">
+    <i class="bi bi-volume-up" id="audioIcon"></i>
+</div>
+
+<!-- Hidden audio element -->
+<audio id="notificationSound" preload="auto">
+    <source src="{% static 'hospital/sounds/notification.mp3' %}" type="audio/mpeg">
+</audio>
+
+<script>
+// Audio management
+let audioEnabled = true;
+const audioToggle = document.getElementById('audioToggle');
+const audioIcon = document.getElementById('audioIcon');
+const notificationSound = document.getElementById('notificationSound');
+
+audioToggle.addEventListener('click', function() {
+    audioEnabled = !audioEnabled;
+    audioIcon.className = audioEnabled ? 'bi bi-volume-up' : 'bi bi-volume-mute';
+});
+
+// Update wait timers
+function updateTimers() {
+    document.querySelectorAll('.wait-timer').forEach(timer => {
+        const checkedIn = new Date(timer.dataset.checkedIn);
+        const now = new Date();
+        const diffMinutes = Math.floor((now - checkedIn) / (1000 * 60));
+        const timerText = timer.querySelector('.timer-text');
+        
+        if (diffMinutes < 1) {
+            timerText.textContent = 'Just now';
+        } else if (diffMinutes < 60) {
+            timerText.textContent = `GHS {diffMinutes} min`;
+            if (diffMinutes > 30) {
+                timer.classList.add('long');
+            }
+        } else {
+            const hours = Math.floor(diffMinutes / 60);
+            const mins = diffMinutes % 60;
+            timerText.textContent = `GHS {hours}h GHS {mins}m`;
+            timer.classList.add('long');
+        }
+    });
+}
+
+// Initial timer update
+updateTimers();
+// Update every minute
+setInterval(updateTimers, 60000);
+
+// Auto-refresh queue every 10 seconds
+setInterval(function() {
+    location.reload();
+}, 10000);
+
+// Call next with audio
+document.getElementById('callNextForm')?.addEventListener('submit', function(e) {
+    if (audioEnabled) {
+        notificationSound.play().catch(err => console.log('Audio play failed:', err));
+    }
+});
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+

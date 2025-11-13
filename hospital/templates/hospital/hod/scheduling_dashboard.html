@@ -1,0 +1,204 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}HOD Scheduling Dashboard - {{ department.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2><i class="bi bi-calendar3"></i> Department Scheduling</h2>
+            <p class="text-muted">{{ department.name }} - Head of Department Controls</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:dashboard' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Dashboard
+            </a>
+        </div>
+    </div>
+    
+    <!-- Quick Stats -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <i class="bi bi-people" style="font-size: 32px; color: #667eea;"></i>
+                    <h3 class="mt-2">{{ staff_count }}</h3>
+                    <p class="text-muted mb-0">Department Staff</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <i class="bi bi-clock" style="font-size: 32px; color: #10b981;"></i>
+                    <h3 class="mt-2">{{ shifts_this_week }}</h3>
+                    <p class="text-muted mb-0">Shifts This Week</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <i class="bi bi-table" style="font-size: 32px; color: #f59e0b;"></i>
+                    <h3 class="mt-2">{{ timetable_count }}</h3>
+                    <p class="text-muted mb-0">Timetable Entries</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <i class="bi bi-file-earmark-text" style="font-size: 32px; color: #ef4444;"></i>
+                    <h3 class="mt-2">{{ shift_templates.count }}</h3>
+                    <p class="text-muted mb-0">Shift Templates</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Action Buttons -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-lightning-fill"></i> Quick Actions</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <a href="{% url 'hospital:hod_create_timetable' %}" class="btn btn-success w-100">
+                                <i class="bi bi-table"></i> Create Timetable Entry
+                            </a>
+                        </div>
+                        <div class="col-md-3">
+                            <a href="{% url 'hospital:hod_create_shift' %}" class="btn btn-info w-100">
+                                <i class="bi bi-clock-history"></i> Assign Shift
+                            </a>
+                        </div>
+                        <div class="col-md-3">
+                            <a href="{% url 'hospital:hod_bulk_assign_shifts' %}" class="btn btn-warning w-100">
+                                <i class="bi bi-people-fill"></i> Bulk Assign Shifts
+                            </a>
+                        </div>
+                        <div class="col-md-3">
+                            <a href="{% url 'hospital:hod_upload_roster' %}" class="btn btn-secondary w-100">
+                                <i class="bi bi-upload"></i> Upload Monthly Roster
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- This Week's Shifts -->
+    <div class="card mb-4">
+        <div class="card-header bg-info text-white">
+            <h5 class="mb-0"><i class="bi bi-calendar-week"></i> This Week's Shifts ({{ week_start|date:"M d" }} - {{ week_end|date:"M d, Y" }})</h5>
+        </div>
+        <div class="card-body">
+            {% if this_week_shifts %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Staff</th>
+                            <th>Shift Type</th>
+                            <th>Time</th>
+                            <th>Location</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for shift in this_week_shifts %}
+                        <tr>
+                            <td>{{ shift.shift_date|date:"D, M d" }}</td>
+                            <td>{{ shift.staff.full_name }}</td>
+                            <td>
+                                <span class="badge bg-primary">{{ shift.get_shift_type_display }}</span>
+                            </td>
+                            <td>{{ shift.start_time|time:"H:i" }} - {{ shift.end_time|time:"H:i" }}</td>
+                            <td>{{ shift.assigned_location|default:"-" }}</td>
+                            <td>
+                                {% if shift.is_confirmed %}
+                                    <span class="badge bg-success">Confirmed</span>
+                                {% else %}
+                                    <span class="badge bg-warning">Pending</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-calendar-x" style="font-size: 48px;"></i>
+                <p class="mt-3">No shifts scheduled for this week</p>
+                <a href="{% url 'hospital:hod_create_shift' %}" class="btn btn-primary">
+                    <i class="bi bi-plus"></i> Create First Shift
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Weekly Timetable -->
+    <div class="card">
+        <div class="card-header bg-success text-white">
+            <h5 class="mb-0"><i class="bi bi-table"></i> Department Timetable</h5>
+        </div>
+        <div class="card-body">
+            {% if active_timetables %}
+            <div class="table-responsive">
+                <table class="table table-bordered">
+                    <thead>
+                        <tr>
+                            <th>Day</th>
+                            <th>Time</th>
+                            <th>Activity</th>
+                            <th>Location</th>
+                            <th>Staff Assigned</th>
+                            <th>Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for entry in active_timetables %}
+                        <tr>
+                            <td><strong>{{ entry.get_weekday_display }}</strong></td>
+                            <td>{{ entry.start_time|time:"H:i" }} - {{ entry.end_time|time:"H:i" }}</td>
+                            <td>{{ entry.activity_name }}</td>
+                            <td>{{ entry.location|default:"-" }}</td>
+                            <td>{{ entry.assigned_staff.count }}/{{ entry.required_staff_count }}</td>
+                            <td>{{ entry.duration_hours|floatformat:1 }}h</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-table" style="font-size: 48px;"></i>
+                <p class="mt-3">No timetable entries yet</p>
+                <a href="{% url 'hospital:hod_create_timetable' %}" class="btn btn-success">
+                    <i class="bi bi-plus"></i> Create Timetable Entry
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
