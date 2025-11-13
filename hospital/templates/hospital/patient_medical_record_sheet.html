@@ -399,30 +399,48 @@
                     <th>Location</th>
                     <th>Status</th>
                     <th>Duration</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for encounter in encounters %}
-                <tr onclick="window.location='{% url 'hospital:encounter_detail' encounter.pk %}'" style="cursor: pointer;">
-                    <td>
+                <tr>
+                    <td onclick="window.location='{% url 'hospital:encounter_detail' encounter.pk %}'" style="cursor: pointer;">
                         <strong>{{ encounter.started_at|date:"M d, Y" }}</strong><br>
                         <small style="color: #6B7280;">{{ encounter.started_at|date:"H:i" }}</small>
                     </td>
-                    <td><span class="badge bg-primary">{{ encounter.get_encounter_type_display }}</span></td>
-                    <td>{{ encounter.chief_complaint|truncatewords:8 }}</td>
-                    <td>{{ encounter.diagnosis|truncatewords:8|default:"<em>Not specified</em>" }}</td>
-                    <td>{{ encounter.provider.user.get_full_name|default:"Not assigned" }}</td>
-                    <td>{{ encounter.location.name|default:"-" }}</td>
-                    <td>
+                    <td onclick="window.location='{% url 'hospital:encounter_detail' encounter.pk %}'" style="cursor: pointer;"><span class="badge bg-primary">{{ encounter.get_encounter_type_display }}</span></td>
+                    <td onclick="window.location='{% url 'hospital:encounter_detail' encounter.pk %}'" style="cursor: pointer;">{{ encounter.chief_complaint|truncatewords:8 }}</td>
+                    <td onclick="window.location='{% url 'hospital:encounter_detail' encounter.pk %}'" style="cursor: pointer;">{{ encounter.diagnosis|truncatewords:8|default:"<em>Not specified</em>" }}</td>
+                    <td onclick="window.location='{% url 'hospital:encounter_detail' encounter.pk %}'" style="cursor: pointer;">{{ encounter.provider.user.get_full_name|default:"Not assigned" }}</td>
+                    <td onclick="window.location='{% url 'hospital:encounter_detail' encounter.pk %}'" style="cursor: pointer;">{{ encounter.location.name|default:"-" }}</td>
+                    <td onclick="window.location='{% url 'hospital:encounter_detail' encounter.pk %}'" style="cursor: pointer;">
                         <span class="status-badge status-{{ encounter.status }}">
                             {{ encounter.get_status_display }}
                         </span>
                     </td>
-                    <td>
+                    <td onclick="window.location='{% url 'hospital:encounter_detail' encounter.pk %}'" style="cursor: pointer;">
                         {% if encounter.get_duration_minutes %}
                             {{ encounter.get_duration_minutes }} min
                         {% else %}
                             -
+                        {% endif %}
+                    </td>
+                    <td onclick="event.stopPropagation();">
+                        {% if encounter.encounter_type == 'surgery' and encounter.status == 'active' %}
+                            {% if "SURGERY STARTED" in encounter.notes %}
+                                <button onclick="endSurgery('{{ encounter.pk }}')" class="btn btn-sm btn-danger" style="white-space: nowrap;">
+                                    <i class="bi bi-stop-circle-fill"></i> End Surgery
+                                </button>
+                            {% else %}
+                                <button onclick="startSurgery('{{ encounter.pk }}')" class="btn btn-sm btn-success" style="white-space: nowrap;">
+                                    <i class="bi bi-play-circle-fill"></i> Start Surgery
+                                </button>
+                            {% endif %}
+                        {% else %}
+                            <a href="{% url 'hospital:encounter_detail' encounter.pk %}" class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation();">
+                                <i class="bi bi-eye"></i> View
+                            </a>
                         {% endif %}
                     </td>
                 </tr>
@@ -803,6 +821,97 @@ function showSection(sectionName) {
     
     // Add active class to clicked tab
     event.target.classList.add('active');
+}
+
+// Surgery control functions
+function startSurgery(encounterId) {
+    if (!confirm('Are you ready to start the surgery?\n\nThis will:\n• Begin the surgery timer\n• Record start time\n• Notify the surgical team')) {
+        return;
+    }
+    
+    const btn = event.target;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Starting...';
+    
+    const formData = new FormData();
+    formData.append('action', 'start');
+    
+    fetch(`/hms/encounters/${encounterId}/surgery-control/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('✅ Surgery started successfully!');
+            location.reload();
+        } else {
+            alert('❌ ' + (data.error || 'Failed to start surgery'));
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-play-circle-fill"></i> Start Surgery';
+        }
+    })
+    .catch(error => {
+        alert('❌ An error occurred while starting the surgery');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-play-circle-fill"></i> Start Surgery';
+    });
+}
+
+function endSurgery(encounterId) {
+    if (!confirm('Are you sure you want to end the surgery?\n\nThis will:\n• Stop the surgery timer\n• Record end time\n• Mark surgery as completed')) {
+        return;
+    }
+    
+    const btn = event.target;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Ending...';
+    
+    const formData = new FormData();
+    formData.append('action', 'complete');
+    
+    fetch(`/hms/encounters/${encounterId}/surgery-control/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('✅ Surgery ended successfully!');
+            location.reload();
+        } else {
+            alert('❌ ' + (data.error || 'Failed to end surgery'));
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-stop-circle-fill"></i> End Surgery';
+        }
+    })
+    .catch(error => {
+        alert('❌ An error occurred while ending the surgery');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-stop-circle-fill"></i> End Surgery';
+    });
+}
+
+// Helper function to get CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
 }
 </script>
 {% endblock %}
