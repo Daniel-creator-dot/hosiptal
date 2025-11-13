@@ -7,8 +7,13 @@ RUN apt-get update && apt-get install -y \
     postgresql-client \
     curl \
     gcc \
+    g++ \
     python3-dev \
     libpq-dev \
+    libmagic1 \
+    libmagic-dev \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip
