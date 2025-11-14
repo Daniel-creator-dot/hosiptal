@@ -427,21 +427,31 @@ def dashboard(request):
 
 @login_required
 def patient_list(request):
-    """List all patients - Shows both new Django patients and legacy imported patients"""
+    """List all patients - OPTIMIZED for mobile performance"""
     from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
     from .models_legacy_patients import LegacyPatient
     from datetime import datetime
+    from django.core.cache import cache
     
     query = request.GET.get('q', '').strip()
     source_filter = request.GET.get('source', 'all')  # 'all', 'new', 'legacy'
     page_number = request.GET.get('page', 1)
+    per_page = 25  # Reduced from 50 for faster mobile loading
+    
+    # Cache counts for 5 minutes to avoid repeated expensive queries
+    cache_key = f'patient_counts_{source_filter}'
+    counts = cache.get(cache_key)
+    if not counts:
+        new_count = Patient.objects.filter(is_deleted=False).count()
+        legacy_count = LegacyPatient.objects.count()
+        counts = {'new': new_count, 'legacy': legacy_count, 'total': new_count + legacy_count}
+        cache.set(cache_key, counts, 300)  # Cache for 5 minutes
+    
+    new_count = counts['new']
+    legacy_count = counts['legacy']
+    total_count = counts['total']
     
     all_patients = []
-    
-    # Get counts for filter dropdown
-    new_count = Patient.objects.filter(is_deleted=False).count()
-    legacy_count = LegacyPatient.objects.count()
-    total_count = new_count + legacy_count
     
     # Filter based on source selection
     if source_filter == 'new':
@@ -520,22 +530,31 @@ def patient_list(request):
                 'edit_url': None,  # Legacy patients are read-only
             })
     
-    else:  # 'all' - show both
-        # Get new patients
+    else:  # 'all' - show both (OPTIMIZED: limit initial load)
+        # MOBILE OPTIMIZATION: Only load 100 most recent from each source
+        # This prevents loading thousands of patients on initial page load
+        limit = 100 if not query else 1000  # Search needs more records
+        
+        # Get new patients (limited)
         django_patients = Patient.objects.filter(is_deleted=False).only(
             'id', 'first_name', 'last_name', 'middle_name', 'mrn', 'date_of_birth', 
             'gender', 'phone_number', 'created'
-        ).order_by('-created')
+        ).order_by('-created')[:limit]
         
         if query:
-            django_patients = django_patients.filter(
+            django_patients = Patient.objects.filter(
+                is_deleted=False
+            ).filter(
                 Q(first_name__icontains=query) |
                 Q(last_name__icontains=query) |
                 Q(middle_name__icontains=query) |
                 Q(mrn__icontains=query) |
                 Q(phone_number__icontains=query) |
                 Q(national_id__icontains=query)
-            )
+            ).only(
+                'id', 'first_name', 'last_name', 'middle_name', 'mrn', 'date_of_birth', 
+                'gender', 'phone_number', 'created'
+            ).order_by('-created')[:limit]
         
         # Add new patients
         for p in django_patients:
@@ -553,20 +572,23 @@ def patient_list(request):
                 'edit_url': f"/hms/patients/{p.id}/edit/",
             })
         
-        # Get legacy patients
-        legacy_patients = LegacyPatient.objects.all().only(
-            'id', 'pid', 'fname', 'lname', 'mname', 'DOB', 'sex', 'phone_cell', 'pmc_mrn'
-        ).order_by('lname', 'fname')
-        
+        # Get legacy patients (limited for performance)
         if query:
-            legacy_patients = legacy_patients.filter(
+            legacy_patients = LegacyPatient.objects.filter(
                 Q(fname__icontains=query) |
                 Q(lname__icontains=query) |
                 Q(mname__icontains=query) |
                 Q(pid__icontains=query) |
                 Q(phone_cell__icontains=query) |
                 Q(pmc_mrn__icontains=query)
-            )
+            ).only(
+                'id', 'pid', 'fname', 'lname', 'mname', 'DOB', 'sex', 'phone_cell', 'pmc_mrn'
+            ).order_by('lname', 'fname')[:limit]
+        else:
+            # No search: only load 100 most recent legacy patients
+            legacy_patients = LegacyPatient.objects.all().only(
+                'id', 'pid', 'fname', 'lname', 'mname', 'DOB', 'sex', 'phone_cell', 'pmc_mrn'
+            ).order_by('-id')[:limit]
         
         # Add legacy patients
         for lp in legacy_patients:
@@ -595,8 +617,8 @@ def patient_list(request):
                 'edit_url': None,  # Legacy patients are read-only
             })
     
-    # PAGINATION - Show 50 patients per page
-    paginator = Paginator(all_patients, 50)
+    # PAGINATION - Show 25 patients per page (faster on mobile)
+    paginator = Paginator(all_patients, per_page)
     
     try:
         patients_page = paginator.page(page_number)
@@ -845,62 +867,82 @@ def patient_create(request):
 
 @login_required
 def patient_detail(request, pk):
-    """Comprehensive patient detail view with complete medical records"""
+    """OPTIMIZED patient detail view for fast mobile loading"""
+    from .models import Encounter, VitalSign, Order, Invoice, LabResult
+    from django.core.cache import cache
+    
+    # Get patient with optimized query
     patient = get_object_or_404(
-        Patient.objects.select_related('primary_insurance').prefetch_related('encounters', 'invoices'),
+        Patient.objects.select_related('primary_insurance'),
         pk=pk, 
         is_deleted=False
     )
     
-    # Get ALL related encounters with full details
-    from .models import Encounter, VitalSign, Order, Invoice, LabResult
+    # MOBILE OPTIMIZATION: Limit initial data load
+    # Use smaller limits for faster page load - users can click "View More" if needed
+    ENCOUNTER_LIMIT = 10  # Reduced from 20
+    VITALS_LIMIT = 10  # Reduced from 50
+    RESULTS_LIMIT = 10  # Reduced from 30
+    ORDERS_LIMIT = 10  # Reduced from 30
+    INVOICES_LIMIT = 10  # Reduced from 20
+    
+    # Get encounters with optimized query
     all_encounters = Encounter.objects.filter(
         patient=patient,
         is_deleted=False
-    ).select_related('provider__user', 'provider__department', 'location').order_by('-started_at')
+    ).select_related('provider__user', 'location').order_by('-started_at')
     
-    encounters = all_encounters[:20]  # Show more encounters
-    active_encounters = all_encounters.filter(status='active')
-    completed_encounters = all_encounters.filter(status='completed')[:10]
+    encounters = all_encounters[:ENCOUNTER_LIMIT]
+    active_encounters = all_encounters.filter(status='active')[:5]
+    completed_encounters = all_encounters.filter(status='completed')[:5]
     
-    # Get ALL vital signs history
+    # Get vital signs (limited)
     all_vitals = VitalSign.objects.filter(
         encounter__patient=patient,
         is_deleted=False
-    ).select_related('encounter').order_by('-recorded_at')[:50]  # Last 50 vitals
+    ).select_related('encounter').order_by('-recorded_at')[:VITALS_LIMIT]
     
-    # Get ALL orders (lab, medication, imaging)
+    # Get orders (limited)
     all_orders = Order.objects.filter(
         encounter__patient=patient,
         is_deleted=False
-    ).select_related('encounter', 'requested_by__user').order_by('-requested_at')[:30]
+    ).select_related('encounter', 'requested_by__user').order_by('-requested_at')[:ORDERS_LIMIT]
     
-    # Get ALL lab results
+    # Get lab results (limited)
     all_lab_results = LabResult.objects.filter(
         order__encounter__patient=patient,
         is_deleted=False
-    ).select_related('test', 'order__encounter').order_by('-verified_at')[:30]
+    ).select_related('test', 'order__encounter').order_by('-verified_at')[:RESULTS_LIMIT]
     
-    # Get ALL medications/prescriptions
+    # Get medications (limited)
     try:
         from .models import Prescription
         all_prescriptions = Prescription.objects.filter(
             order__encounter__patient=patient,
             is_deleted=False
-        ).select_related('drug', 'order__encounter', 'prescribed_by__user').order_by('-created')[:30]
+        ).select_related('drug', 'order__encounter').order_by('-created')[:ORDERS_LIMIT]
     except:
         all_prescriptions = []
     
-    # Get ALL invoices and billing history
+    # Get invoices (limited)
     all_invoices = Invoice.objects.filter(
         patient=patient,
         is_deleted=False
-    ).order_by('-issued_at')[:20]
+    ).order_by('-issued_at')[:INVOICES_LIMIT]
     
-    # Calculate statistics
-    total_encounters = all_encounters.count()
-    total_vitals = VitalSign.objects.filter(encounter__patient=patient, is_deleted=False).count()
-    total_orders = Order.objects.filter(encounter__patient=patient, is_deleted=False).count()
+    # Cache expensive count queries for 2 minutes
+    stats_cache_key = f'patient_stats_{pk}'
+    stats = cache.get(stats_cache_key)
+    if not stats:
+        total_encounters = all_encounters.count()
+        total_vitals = VitalSign.objects.filter(encounter__patient=patient, is_deleted=False).count()
+        total_orders = Order.objects.filter(encounter__patient=patient, is_deleted=False).count()
+        stats = {'encounters': total_encounters, 'vitals': total_vitals, 'orders': total_orders}
+        cache.set(stats_cache_key, stats, 120)  # Cache for 2 minutes
+    
+    total_encounters = stats['encounters']
+    total_vitals = stats['vitals']
+    total_orders = stats['orders']
     total_lab_tests = LabResult.objects.filter(order__encounter__patient=patient, is_deleted=False).count()
     
     # Get latest vital signs
