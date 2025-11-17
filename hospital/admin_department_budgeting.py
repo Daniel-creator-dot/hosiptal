@@ -438,3 +438,9 @@ class BudgetReportAdmin(admin.ModelAdmin):
         return format_html('<span class="badge bg-{}">{:.1f}%</span>', color, percentage)
     utilization_display.short_description = 'Utilization'
 
+
+
+
+
+
+

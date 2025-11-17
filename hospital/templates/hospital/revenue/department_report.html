@@ -1,0 +1,122 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Department Revenue Report - HMS{% endblock %}
+{% block page_title %}Department Revenue{% endblock %}
+{% block page_subtitle %}Compare revenue performance across departments{% endblock %}
+
+{% block content %}
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="get" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">From</label>
+                <input type="date" class="form-control" name="date_from" value="{{ date_from|date:'Y-m-d' }}">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">To</label>
+                <input type="date" class="form-control" name="date_to" value="{{ date_to|date:'Y-m-d' }}">
+            </div>
+            <div class="col-md-4 d-flex align-items-end gap-2">
+                <button type="submit" class="btn btn-primary flex-grow-1">
+                    <i class="bi bi-filter"></i> Apply
+                </button>
+                <a href="{% url 'hospital:revenue_streams_dashboard' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-bar-chart"></i>
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-md-4">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <p class="text-muted text-uppercase mb-1">Total Revenue</p>
+                <h2 class="mb-0">GHS {{ total_revenue|floatformat:2|intcomma }}</h2>
+                <small class="text-muted">Across {{ dept_data|length }} departments</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <p class="text-muted text-uppercase mb-1">Top Department</p>
+                {% if dept_data %}
+                <h2 class="mb-0">{{ dept_data.0.department.name }}</h2>
+                <small class="text-muted">GHS {{ dept_data.0.total|floatformat:2|intcomma }}</small>
+                {% else %}
+                <h2 class="mb-0 text-muted">No data</h2>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <p class="text-muted text-uppercase mb-1">Average Per Dept</p>
+                <h2 class="mb-0">
+                    {% if dept_data %}
+                        GHS {{ average_per_department|floatformat:2|intcomma }}
+                    {% else %}
+                        <span class="text-muted">GHS 0.00</span>
+                    {% endif %}
+                </h2>
+                <small class="text-muted">Simple average of included departments</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+        <div>
+            <h5 class="mb-0">Revenue Breakdown</h5>
+            <small>{{ date_from|date:"M d, Y" }} – {{ date_to|date:"M d, Y" }}</small>
+        </div>
+        <div>
+            <a href="{% url 'hospital:revenue_streams_dashboard' %}" class="btn btn-outline-light btn-sm">
+                <i class="bi bi-arrow-left"></i> Streams Dashboard
+            </a>
+        </div>
+    </div>
+    <div class="table-responsive">
+        <table class="table align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Department</th>
+                    <th class="text-end">Total (GHS)</th>
+                    <th class="text-end">Transactions</th>
+                    <th class="text-end">Avg Ticket</th>
+                    <th class="text-end">Mix %</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in dept_data %}
+                <tr>
+                    <td class="fw-semibold">{{ row.department.name }}</td>
+                    <td class="text-end">GHS {{ row.total|floatformat:2|intcomma }}</td>
+                    <td class="text-end">{{ row.count }}</td>
+                    <td class="text-end">
+                        {% if row.count > 0 %}
+                        GHS {{ row.average|floatformat:2|intcomma }}
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                    <td class="text-end">
+                        <span class="badge bg-primary">{{ row.percentage|floatformat:1 }}%</span>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="text-center text-muted py-4">No revenue recorded for the selected period.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+

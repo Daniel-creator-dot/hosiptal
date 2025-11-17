@@ -1,0 +1,320 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Patient QR Check-In{% endblock %}
+
+{% block extra_css %}
+<style>
+    body {
+        background: #f5f6fb;
+    }
+    .card {
+        border: none;
+        border-radius: 18px;
+        box-shadow: 0 20px 45px rgba(15, 23, 42, 0.08);
+    }
+    .scan-console {
+        padding: 28px;
+        background: white;
+        border-radius: 18px;
+    }
+    .scan-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+    #qr-video-container {
+        width: 100%;
+        min-height: 320px;
+        border-radius: 16px;
+        border: 2px dashed #c7d2fe;
+        background: #eef2ff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+    }
+    #qr-video-container video {
+        width: 100%;
+        border-radius: 14px;
+    }
+    .scan-actions button {
+        border-radius: 999px;
+        padding-left: 24px;
+        padding-right: 24px;
+    }
+    .config-card {
+        padding: 24px;
+    }
+    .config-card h5 {
+        font-weight: 700;
+    }
+    .result-card {
+        padding: 24px;
+        border-left: 4px solid transparent;
+    }
+    .result-card.success {
+        border-color: #22c55e;
+        background: #ecfdf5;
+    }
+    .result-card.warning {
+        border-color: #f97316;
+        background: #fff7ed;
+    }
+    .result-card.error {
+        border-color: #f43f5e;
+        background: #fef2f2;
+    }
+    #manual-input {
+        border-radius: 12px;
+        padding: 14px;
+    }
+    @media (max-width: 767px) {
+        .scan-header {
+            flex-direction: column;
+            gap: 12px;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+        <div>
+            <h2 class="mb-0">Patient QR Check-In</h2>
+            <p class="text-muted mb-0">Scan the ID card to auto-create an encounter and queue ticket.</p>
+        </div>
+        <div class="text-end">
+            <span class="badge bg-primary text-white fw-semibold">
+                {{ hospital_settings.hospital_name|default:"PrimeCare Medical Center" }}
+            </span>
+        </div>
+    </div>
+    <div class="row g-4">
+        <div class="col-lg-8">
+            <div class="scan-console card">
+                <div class="scan-header">
+                    <div>
+                        <h4 class="mb-1">Live Scanner</h4>
+                        <small id="scan-status" class="text-muted">Camera idle</small>
+                    </div>
+                    <div class="scan-actions">
+                        <button id="start-scan-btn" class="btn btn-primary me-2" type="button">
+                            <i class="bi bi-camera-video"></i> Start Camera
+                        </button>
+                        <button id="stop-scan-btn" class="btn btn-outline-secondary" type="button" disabled>
+                            <i class="bi bi-stop-circle"></i> Stop
+                        </button>
+                    </div>
+                </div>
+                <div id="qr-video-container">
+                    <div class="text-center text-muted">
+                        <i class="bi bi-qr-code-scan" style="font-size: 4rem;"></i>
+                        <p class="mt-3 mb-0">Start the camera and point to the patient's card</p>
+                    </div>
+                </div>
+                <div class="mt-4">
+                    <label for="manual-input" class="form-label fw-semibold">
+                        <i class="bi bi-keyboard"></i> Manual Entry (optional)
+                    </label>
+                    <div class="input-group">
+                        <input type="text" id="manual-input" class="form-control" placeholder="Paste QR payload data">
+                        <button class="btn btn-outline-primary" id="manual-submit" type="button">
+                            Process
+                        </button>
+                    </div>
+                    <small class="text-muted">Use this if the QR label is scratched. Format: PCMCARD|patient_id|token</small>
+                </div>
+                <div class="mt-4" id="result-wrapper" style="display:none;">
+                    <div id="result-card" class="result-card">
+                        <div id="result-content"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="card config-card mb-4">
+                <h5>Visit Preferences</h5>
+                <div class="mb-3">
+                    <label class="form-label">Encounter Type</label>
+                    <select id="encounter-type" class="form-select">
+                        <option value="outpatient" selected>Outpatient</option>
+                        <option value="emergency">Emergency</option>
+                        <option value="inpatient">Inpatient</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Department</label>
+                    <select id="department-select" class="form-select">
+                        {% for department in departments %}
+                            <option value="{{ department.pk }}" {% if default_department and default_department.pk == department.pk %}selected{% endif %}>
+                                {{ department.name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="mb-0">
+                    <label class="form-label">Chief Complaint / Reason</label>
+                    <textarea id="chief-complaint" class="form-control" rows="3" placeholder="eg. Follow-up review, BP check, etc."></textarea>
+                </div>
+            </div>
+            <div class="card config-card">
+                <h5>Workflow Tips</h5>
+                <ul class="list-unstyled mb-0">
+                    <li class="mb-3">
+                        <i class="bi bi-check-circle text-success me-2"></i>
+                        Active queue tickets for the day are reused automatically.
+                    </li>
+                    <li class="mb-3">
+                        <i class="bi bi-check-circle text-success me-2"></i>
+                        New visits auto-create encounters, queue numbers, and SMS alerts.
+                    </li>
+                    <li class="mb-0">
+                        <i class="bi bi-shield-lock text-primary me-2"></i>
+                        QR tokens rotate when cards are reprinted for extra security.
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+    const scanStatus = document.getElementById('scan-status');
+    const startBtn = document.getElementById('start-scan-btn');
+    const stopBtn = document.getElementById('stop-scan-btn');
+    const manualInput = document.getElementById('manual-input');
+    const manualSubmit = document.getElementById('manual-submit');
+    const resultWrapper = document.getElementById('result-wrapper');
+    const resultCard = document.getElementById('result-card');
+    const resultContent = document.getElementById('result-content');
+    let html5QrCode = null;
+    let isScanning = false;
+    
+    function updateStatus(message, state = 'muted') {
+        scanStatus.textContent = message;
+        scanStatus.className = `text-${state}`;
+    }
+    
+    function startCamera() {
+        if (isScanning) return;
+        html5QrCode = new Html5Qrcode('qr-video-container');
+        html5QrCode.start(
+            { facingMode: "environment" },
+            { fps: 10, qrbox: { width: 280, height: 280 } },
+            decodedText => {
+                stopCamera();
+                processQr(decodedText);
+            },
+            errorMessage => {
+                // ignore frame scan errors
+            }
+        ).then(() => {
+            isScanning = true;
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            updateStatus('Camera active - align QR within the frame', 'success');
+        }).catch(err => {
+            updateStatus('Unable to access camera: ' + err, 'danger');
+        });
+    }
+    
+    function stopCamera() {
+        if (!html5QrCode) return;
+        html5QrCode.stop().then(() => {
+            html5QrCode.clear();
+            html5QrCode = null;
+            isScanning = false;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            updateStatus('Camera idle', 'muted');
+        }).catch(() => {});
+    }
+    
+    function processQr(qrData) {
+        if (!qrData) return;
+        updateStatus('Processing QR code...', 'info');
+        resultWrapper.style.display = 'block';
+        resultCard.className = 'result-card';
+        resultContent.innerHTML = `
+            <div class="text-center py-4">
+                <div class="spinner-border text-primary"></div>
+                <p class="mt-3 mb-0">Creating visit...</p>
+            </div>
+        `;
+        
+        const payload = new URLSearchParams();
+        payload.append('qr_data', qrData);
+        payload.append('encounter_type', document.getElementById('encounter-type').value);
+        payload.append('department_id', document.getElementById('department-select').value || '');
+        payload.append('chief_complaint', document.getElementById('chief-complaint').value);
+        
+        fetch("{% url 'hospital:patient_qr_checkin_api' %}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: payload.toString()
+        }).then(response => response.json().then(data => ({ status: response.status, body: data })))
+        .then(({ status, body }) => {
+            if (body.success) {
+                resultCard.className = 'result-card success';
+                updateStatus('Check-in successful!', 'success');
+                const already = body.already_checked_in;
+                resultContent.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div>
+                            <h5 class="mb-1">${body.patient.name}</h5>
+                            <small class="text-muted">MRN: ${body.patient.mrn}</small>
+                        </div>
+                        <span class="badge bg-success">${already ? 'Already in Queue' : 'New Visit'}</span>
+                    </div>
+                    <div class="mb-3">
+                        <div><strong>Queue:</strong> ${body.queue.number} (Pos ${body.queue.position || 'N/A'})</div>
+                        <div><strong>Department:</strong> ${body.queue.department || '—'}</div>
+                        <div><strong>Status:</strong> ${body.queue.status}</div>
+                        ${body.queue.estimated_wait !== undefined ? `<div><strong>Est. Wait:</strong> ${body.queue.estimated_wait} min</div>` : ''}
+                    </div>
+                    <div>
+                        <div><strong>Encounter:</strong> ${body.encounter.type}</div>
+                        <div><strong>Started:</strong> ${body.encounter.started_at || 'Now'}</div>
+                        <div><strong>ID:</strong> ${body.encounter.id}</div>
+                    </div>
+                `;
+            } else {
+                throw { status, body };
+            }
+        })
+        .catch(({ body }) => {
+            resultCard.className = 'result-card error';
+            updateStatus('Unable to complete check-in', 'danger');
+            resultContent.innerHTML = `
+                <h5 class="text-danger">Check-in Failed</h5>
+                <p class="mb-2">${body?.error || 'Unknown error occurred.'}</p>
+                <button class="btn btn-outline-danger btn-sm" onclick="startCamera()">
+                    <i class="bi bi-arrow-repeat"></i> Retry Scan
+                </button>
+            `;
+        });
+    }
+    
+    startBtn.addEventListener('click', startCamera);
+    stopBtn.addEventListener('click', stopCamera);
+    manualSubmit.addEventListener('click', () => {
+        const text = manualInput.value.trim();
+        if (!text) {
+            updateStatus('Enter QR payload to process manually.', 'warning');
+            return;
+        }
+        processQr(text);
+    });
+    window.addEventListener('beforeunload', stopCamera);
+</script>
+{% endblock %}
+

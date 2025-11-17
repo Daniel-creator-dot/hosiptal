@@ -118,6 +118,8 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'django.template.context_processors.media',
+                'django.template.context_processors.static',
             ],
             # Use CACHED loaders for MUCH better performance
             'loaders': [
@@ -215,6 +217,9 @@ elif db_engine == 'django.db.backends.sqlite3' or 'sqlite' in str(db_engine):
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
 
 
+# Admin forms (e.g., Group permissions) submit thousands of fields
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 20000
+
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.1/topics/i18n/
@@ -226,6 +231,15 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 
 USE_TZ = True
+
+# Location defaults for login tracking / geofencing
+TEST_IP_ADDRESS = config('TEST_IP_ADDRESS', default='102.176.95.4')
+DEFAULT_LOGIN_COUNTRY = config('DEFAULT_LOGIN_COUNTRY', default='Ghana')
+DEFAULT_LOGIN_REGION = config('DEFAULT_LOGIN_REGION', default='Greater Accra')
+DEFAULT_LOGIN_CITY = config('DEFAULT_LOGIN_CITY', default='Accra')
+DEFAULT_LOGIN_LATITUDE = config('DEFAULT_LOGIN_LATITUDE', default=5.6037, cast=float)
+DEFAULT_LOGIN_LONGITUDE = config('DEFAULT_LOGIN_LONGITUDE', default=-0.1870, cast=float)
+DEFAULT_LOGIN_TIMEZONE = config('DEFAULT_LOGIN_TIMEZONE', default='Africa/Accra')
 
 
 # Static files (CSS, JavaScript, Images)
@@ -278,6 +292,8 @@ CORS_ALLOW_CREDENTIALS = True
 # Cache Configuration - Redis for High Performance (with fallback)
 REDIS_URL = config('REDIS_URL', default='redis://127.0.0.1:6379/1')
 USE_REDIS_CACHE = config('USE_REDIS_CACHE', default=False, cast=bool)
+REDIS_MAX_CONNECTIONS = config('REDIS_MAX_CONNECTIONS', default=200, cast=int)
+REDIS_SOCKET_TIMEOUT = config('REDIS_SOCKET_TIMEOUT', default=5, cast=int)
 
 if USE_REDIS_CACHE:
     # Redis Cache (Best Performance)
@@ -287,11 +303,11 @@ if USE_REDIS_CACHE:
             'LOCATION': REDIS_URL,
             'OPTIONS': {
                 'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-                'SOCKET_CONNECT_TIMEOUT': 5,
-                'SOCKET_TIMEOUT': 5,
+                'SOCKET_CONNECT_TIMEOUT': REDIS_SOCKET_TIMEOUT,
+                'SOCKET_TIMEOUT': REDIS_SOCKET_TIMEOUT,
                 'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
                 'CONNECTION_POOL_KWARGS': {
-                    'max_connections': 50,
+                    'max_connections': REDIS_MAX_CONNECTIONS,
                     'retry_on_timeout': True,
                 },
                 'SERIALIZER': 'django_redis.serializers.json.JSONSerializer',
@@ -330,7 +346,8 @@ CELERY_TIMEZONE = TIME_ZONE
 CACHEOPS_REDIS = config('REDIS_URL', default='redis://127.0.0.1:6379/2')
 
 # Authentication settings
-LOGIN_URL = '/admin/login/'
+# Use custom HMS login instead of admin login
+LOGIN_URL = '/hms/login/'
 LOGIN_REDIRECT_URL = '/hms/'
 LOGOUT_REDIRECT_URL = '/hms/'
 
@@ -516,23 +533,8 @@ CSRF_USE_SESSIONS = False
 CSRF_COOKIE_AGE = 31449600  # 1 year
 
 # Password Security
-AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-        'OPTIONS': {
-            'min_length': 12,  # Increased from default 8
-        }
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
-]
+# Relax password rules so admins can pick any password (even short/simple)
+AUTH_PASSWORD_VALIDATORS = []
 
 # Content Security Policy (if django-csp is installed)
 CSP_DEFAULT_SRC = ("'self'",)

@@ -330,11 +330,14 @@ def revenue_by_department_report(request):
     # Sort by total
     dept_data.sort(key=lambda x: x['total'], reverse=True)
     
+    avg_per_department = (total_all / len(dept_data)) if dept_data else Decimal('0.00')
+    
     context = {
         'date_from': date_from,
         'date_to': date_to,
         'dept_data': dept_data,
         'total_revenue': total_all,
+        'average_per_department': avg_per_department,
     }
     
     return render(request, 'hospital/revenue/department_report.html', context)
@@ -345,32 +348,91 @@ def revenue_streams_api(request):
     """
     API endpoint for revenue stream data (for charts)
     """
-    # Get date range
-    days = int(request.GET.get('days', 30))
+    days = max(1, int(request.GET.get('days', 30)))
     end_date = timezone.now().date()
     start_date = end_date - timedelta(days=days)
     
+    service_map = {
+        'lab': 'Laboratory',
+        'laboratory': 'Laboratory',
+        'pharmacy': 'Pharmacy',
+        'pharmacy_prescription': 'Pharmacy Prescription',
+        'pharmacy_walkin': 'Pharmacy (Walk-in)',
+        'medication': 'Medication',
+        'imaging': 'Imaging/Radiology',
+        'imaging_study': 'Imaging Study',
+        'consultation': 'Consultation',
+        'outpatient': 'Outpatient',
+        'admission': 'Admission',
+        'procedure': 'Procedure',
+        'surgery': 'Surgery',
+        'dental': 'Dental',
+        'gynecology': 'Gynecology',
+        'emergency': 'Emergency',
+        'ambulance': 'Ambulance/EMS',
+        'combined': 'Combined Services',
+        'other': 'Other',
+    }
+    
     try:
-        # Revenue by service type
-        service_revenue = Revenue.objects.filter(
-            revenue_date__gte=start_date,
-            revenue_date__lte=end_date,
-            is_deleted=False,
-            service_type__isnull=False
-        ).values('service_type').annotate(
-            total=Sum('amount'),
-            count=Count('id')
-        )
+        from .models_accounting import PaymentReceipt
+    except Exception:
+        PaymentReceipt = None
+    
+    service_data = {}
+    total_service_amount = Decimal('0.00')
+    
+    try:
+        if PaymentReceipt:
+            receipts = PaymentReceipt.objects.filter(
+                receipt_date__date__gte=start_date,
+                receipt_date__date__lte=end_date,
+                is_deleted=False
+            ).values('service_type').annotate(
+                total=Sum('amount_paid'),
+                count=Count('id')
+            )
+            
+            for item in receipts:
+                service_type = item['service_type'] or 'other'
+                amount = item['total'] or Decimal('0.00')
+                total_service_amount += amount
+                service_data[service_type] = {
+                    'label': service_map.get(service_type, service_type.title()),
+                    'total': float(amount),
+                    'count': item['count'] or 0,
+                }
         
-        service_data = {}
-        for item in service_revenue:
-            service_data[item['service_type']] = {
-                'total': float(item['total'] or 0),
-                'count': item['count'] or 0
-            }
+        # Fallback to Revenue table if no PaymentReceipt data
+        if not service_data:
+            revenue_rows = Revenue.objects.filter(
+                revenue_date__gte=start_date,
+                revenue_date__lte=end_date,
+                is_deleted=False,
+                service_type__isnull=False
+            ).values('service_type').annotate(
+                total=Sum('amount'),
+                count=Count('id')
+            )
+            
+            total_service_amount = Decimal('0.00')
+            for item in revenue_rows:
+                service_type = item['service_type'] or 'other'
+                amount = item['total'] or Decimal('0.00')
+                total_service_amount += amount
+                service_data[service_type] = {
+                    'label': service_map.get(service_type, service_type.title()),
+                    'total': float(amount),
+                    'count': item['count'] or 0,
+                }
         
-        # Revenue by department
-        dept_revenue = Revenue.objects.filter(
+        # Append percentage share
+        for key, data in service_data.items():
+            amount = Decimal(str(data['total']))
+            data['percentage'] = float((amount / total_service_amount * Decimal('100')) if total_service_amount > 0 else 0)
+        
+        # Department data (Revenue table has department links)
+        department_rows = Revenue.objects.filter(
             revenue_date__gte=start_date,
             revenue_date__lte=end_date,
             is_deleted=False,
@@ -380,15 +442,32 @@ def revenue_streams_api(request):
             count=Count('id')
         )
         
+        dept_total_amount = Decimal('0.00')
         dept_data = {}
-        for item in dept_revenue:
-            dept_data[item['department__name']] = {
-                'total': float(item['total'] or 0),
-                'count': item['count'] or 0
+        for item in department_rows:
+            dept_name = item['department__name'] or 'Unassigned'
+            amount = item['total'] or Decimal('0.00')
+            dept_total_amount += amount
+            dept_data[dept_name] = {
+                'total': float(amount),
+                'count': item['count'] or 0,
             }
+        
+        for key, data in dept_data.items():
+            amount = Decimal(str(data['total']))
+            data['percentage'] = float((amount / dept_total_amount * Decimal('100')) if dept_total_amount > 0 else 0)
         
         return JsonResponse({
             'success': True,
+            'date_range': {
+                'start': start_date.isoformat(),
+                'end': end_date.isoformat(),
+                'days': days,
+            },
+            'totals': {
+                'service_revenue': float(total_service_amount),
+                'department_revenue': float(dept_total_amount),
+            },
             'service_revenue': service_data,
             'department_revenue': dept_data,
         })
@@ -396,7 +475,7 @@ def revenue_streams_api(request):
     except Exception as e:
         return JsonResponse({
             'success': False,
-            'error': str(e)
-        })
+            'error': str(e),
+        }, status=500)
 
 

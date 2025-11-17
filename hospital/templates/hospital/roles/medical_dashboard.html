@@ -1,113 +1,387 @@
 {% extends 'hospital/base.html' %}
 {% load static humanize %}
 
-{% block title %}Medical Dashboard - HMS{% endblock %}
+{% block title %}Medical Command Center{% endblock %}
+
+{% block extra_css %}
+<style>
+    .doctor-dashboard {padding: 24px 12px 48px;}
+    .card-shell {background: #fff; border-radius: 18px; border: 1px solid rgba(15,23,42,0.08); box-shadow: 0 15px 45px rgba(15,23,42,0.08); padding: 28px;}
+    .doctor-hero {display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; background: linear-gradient(135deg,#0ea5e9,#2563eb,#7c3aed); color: #fff; border-radius: 28px; padding: 36px; position: relative; overflow: hidden;}
+    .doctor-hero::after {content: ""; position: absolute; inset: 0; background: radial-gradient(circle at top right, rgba(255,255,255,0.25), transparent 55%);}
+    .doctor-hero > * {position: relative; z-index: 2;}
+    .hero-title {font-size: 32px; font-weight: 700; margin-bottom: 8px;}
+    .hero-date {font-size: 16px; opacity: 0.85;}
+    .hero-chip {display: inline-flex; align-items: center; gap: 8px; background: rgba(15,23,42,0.15); border-radius: 999px; padding: 8px 16px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;}
+    .radial-wrap {width: 180px; height: 180px; border-radius: 999px; background: rgba(15,23,42,0.25); display: flex; align-items: center; justify-content: center; margin: 0 auto;}
+    .radial-progress {--value: 0; width: 150px; height: 150px; border-radius: 50%; background: conic-gradient(#4ade80 calc(var(--value) * 1%), rgba(15,23,42,0.2) 0); display: flex; align-items: center; justify-content: center; font-size: 36px; font-weight: 700;}
+    .radial-progress span {color: #fff;}
+    .mini-grid {display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin-top: 18px;}
+    .mini-stat {background: rgba(15,23,42,0.25); border-radius: 14px; padding: 12px 14px;}
+    .mini-stat label {display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.65;}
+    .mini-stat strong {font-size: 18px;}
+    .kpi-grid {display: grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: 18px; margin: 28px 0;}
+    .kpi-card {background: #fff; border-radius: 18px; border: 1px solid rgba(100,116,139,0.12); padding: 22px; position: relative; overflow: hidden;}
+    .kpi-card::after {content: ""; position: absolute; inset: 0; background: radial-gradient(circle at top right, rgba(79,70,229,0.08), transparent 55%);}
+    .kpi-card .kpi-label {font-size: 13px; letter-spacing: 0.08em; color: #64748b; text-transform: uppercase;}
+    .kpi-card .kpi-value {font-size: 34px; font-weight: 700; color: #0f172a;}
+    .quick-actions {display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px;}
+    .quick-actions .action-pill {flex: 1 1 140px; min-width: 140px; background: #0f172a; color: #fff; border-radius: 14px; padding: 12px 18px; text-decoration: none; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; transition: transform .2s, box-shadow .2s;}
+    .quick-actions .action-pill:hover {transform: translateY(-2px); box-shadow: 0 8px 25px rgba(15,23,42,0.25);}
+    .grid-2 {display: grid; grid-template-columns: repeat(auto-fit, minmax(320px,1fr)); gap: 24px; margin-bottom: 24px;}
+    .grid-3 {display: grid; grid-template-columns: repeat(auto-fit, minmax(280px,1fr)); gap: 24px; margin-bottom: 24px;}
+    .section-title {font-weight: 600; color: #0f172a; letter-spacing: 0.02em;}
+    .trend-pill {background: #e0f2fe; color: #0369a1; padding: 3px 10px; border-radius: 999px; font-size: 12px;}
+    .ward-row {background: #f8fafc; border-radius: 12px; padding: 16px; margin-bottom: 12px;}
+    .ward-head {display: flex; justify-content: space-between; align-items: baseline;}
+    .ward-progress {height: 8px; border-radius: 999px; background: rgba(15,23,42,0.08); margin: 10px 0;}
+    .ward-progress span {display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg,#34d399,#22d3ee); width: calc(var(--percent) * 1%);}
+    .timeline-item {border-left: 3px solid #0ea5e9; padding-left: 16px; margin-bottom: 18px;}
+    .timeline-item:last-child {margin-bottom: 0;}
+    .timeline-title {font-weight: 600;}
+    .secondary-text {color: #475569; font-size: 13px;}
+    .list-tile {border: 1px solid rgba(15,23,42,0.08); border-radius: 14px; padding: 16px; margin-bottom: 12px; background: #fff;}
+    .list-tile:last-child {margin-bottom: 0;}
+    .status-dot {width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px;}
+    .status-late {background: #f97316;}
+    .status-pending {background: #facc15;}
+    .status-ready {background: #10b981;}
+    .empty-state {text-align: center; color: #94a3b8; padding: 32px 12px; border: 1px dashed rgba(148,163,184,0.6); border-radius: 16px;}
+    .tag {background: rgba(15,23,42,0.07); border-radius: 999px; padding: 2px 10px; font-size: 12px; margin-left: 8px; text-transform: capitalize;}
+    .pill-link {font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;}
+</style>
+{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <!-- Header -->
-    <div style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border-radius: 20px; padding: 40px; margin-bottom: 32px; box-shadow: 0 10px 40px rgba(59, 130, 246, 0.3);">
-        <div class="d-flex justify-content-between align-items-center">
-            <div>
-                <h1 class="mb-2"><i class="bi bi-heart-pulse-fill me-3"></i>Medical Dashboard</h1>
-                <p class="mb-0" style="opacity: 0.95; font-size: 16px;">
-                    {% if staff %}Dr. {{ staff.user.get_full_name }}{% else %}Clinical Management{% endif %}
-                </p>
+<div class="doctor-dashboard">
+    <section class="doctor-hero">
+        <div>
+            <div class="hero-chip"><i class="bi bi-person-badge"></i> {{ role_info.name }}</div>
+            <div class="hero-title">Hi {% if staff %}Dr. {{ staff.user.get_full_name }}{% else %}Clinician{% endif %}</div>
+            <p class="hero-date">{{ today|date:"l, F j, Y" }}</p>
+            <p style="max-width: 420px; font-size: 15px; opacity: .9;">Monitor beds, procedures, and clinical priorities in a single ultra-modern command surface built for rapid rounds.</p>
+            <div class="quick-actions">
+                <a class="action-pill" href="{% url 'hospital:patient_list' %}"><i class="bi bi-people"></i>Patients</a>
+                <a class="action-pill" href="{% url 'hospital:encounter_list' %}"><i class="bi bi-hospital"></i>Encounters</a>
+                <a class="action-pill" href="{% url 'hospital:admission_list' %}"><i class="bi bi-door-open"></i>Admissions</a>
+                <a class="action-pill" href="{% url 'hospital:bed_management_worldclass' %}"><i class="bi bi-columns-gap"></i>Beds</a>
+                <a class="action-pill" href="{% url 'hospital:triage_dashboard' %}"><i class="bi bi-heart-pulse"></i>Triage</a>
+                <a class="action-pill" href="{% url 'hospital:pharmacy_walkin_sales_list' %}"><i class="bi bi-prescription"></i>Prescriptions</a>
+                <a class="action-pill" href="{% url 'hospital:order_create' %}"><i class="bi bi-clipboard-check"></i>New Order</a>
+                <a class="action-pill" href="{% url 'hospital:global_search' %}"><i class="bi bi-search"></i>Global Search</a>
             </div>
-            <div class="text-end">
-                <div class="badge" style="background: rgba(255,255,255,0.2); font-size: 14px; padding: 8px 16px;">
-                    <i class="bi bi-person-badge me-2"></i>{{ role_info.name }}
+        </div>
+        <div class="text-center">
+            <p style="text-transform: uppercase; letter-spacing: 0.2em; font-size: 12px; opacity: .85;">Bed Command</p>
+            <div class="radial-wrap">
+                <div class="radial-progress" style="--value:{{ bed_occupancy_pct|default:0 }}">
+                    <span>{{ bed_occupancy_pct|default:"0" }}%</span>
+                </div>
+            </div>
+            <div class="mini-grid">
+                <div class="mini-stat">
+                    <label>Available</label>
+                    <strong>{{ bed_summary.available|default:"0" }}</strong>
+                </div>
+                <div class="mini-stat">
+                    <label>Occupied / Reserved</label>
+                    <strong>{{ bed_summary.utilization|default:"0" }}</strong>
+                </div>
+                <div class="mini-stat">
+                    <label>Total Beds</label>
+                    <strong>{{ bed_summary.total|default:"0" }}</strong>
+                </div>
+                <div class="mini-stat">
+                    <label>Maintenance</label>
+                    <strong>{{ bed_summary.maintenance|default:"0" }}</strong>
                 </div>
             </div>
         </div>
-    </div>
-    
-    <!-- Quick Stats -->
-    <div class="row g-4 mb-4">
-        <div class="col-md-4">
-            <div style="background: white; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-                <div style="font-size: 42px; font-weight: 800; color: #3b82f6;">{{ active_patients }}</div>
-                <div style="color: #6b7280; font-size: 14px;">My Active Patients</div>
+    </section>
+
+    <section class="kpi-grid">
+        <div class="kpi-card">
+            <div class="kpi-label">My Active Patients</div>
+            <div class="kpi-value">{{ active_patients }}</div>
+            <p class="secondary-text mb-0">Across all locations</p>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Appointments Today</div>
+            <div class="kpi-value">{{ appointments_count }}</div>
+            <p class="secondary-text mb-0">Synced with clinic schedule</p>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Pending Lab Results</div>
+            <div class="kpi-value">{{ pending_labs_count }}</div>
+            <p class="secondary-text mb-0">Awaiting your review</p>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Recent Admissions</div>
+            <div class="kpi-value">{{ recent_admissions|length }}</div>
+            <p class="secondary-text mb-1">Live within last shift</p>
+            <a href="{% url 'hospital:admission_list' %}" class="secondary-text" style="font-size:12px; text-decoration:none;">
+                <i class="bi bi-arrow-right-circle"></i> View all admissions
+            </a>
+        </div>
+    </section>
+
+    <div class="grid-2">
+        <section class="card-shell">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="section-title mb-0"><i class="bi bi-hospital-fill me-2 text-primary"></i>Bed Management Radar</h5>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="trend-pill">{{ bed_occupancy_pct|default:"0" }}% Utilized</span>
+                    <a href="{% url 'hospital:bed_management_worldclass' %}" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-columns-gap"></i> Open Bed Manager
+                    </a>
+                </div>
             </div>
-        </div>
-        <div class="col-md-4">
-            <div style="background: white; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-                <div style="font-size: 42px; font-weight: 800; color: #10b981;">{{ appointments_count }}</div>
-                <div style="color: #6b7280; font-size: 14px;">Appointments Today</div>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div style="background: white; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-                <div style="font-size: 42px; font-weight: 800; color: #f59e0b;">{{ pending_labs_count }}</div>
-                <div style="color: #6b7280; font-size: 14px;">Pending Lab Results</div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Quick Actions -->
-    <div style="background: white; border-radius: 16px; padding: 24px; margin-bottom: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-        <h5 class="mb-3"><i class="bi bi-lightning me-2"></i>Quick Actions</h5>
-        <div class="row g-3">
-            <div class="col-md-2"><a href="{% url 'hospital:patient_list' %}" class="btn btn-primary w-100"><i class="bi bi-person me-2"></i>Patients</a></div>
-            <div class="col-md-2"><a href="{% url 'hospital:encounter_list' %}" class="btn btn-info w-100"><i class="bi bi-hospital me-2"></i>Encounters</a></div>
-            <div class="col-md-2"><a href="{% url 'hospital:triage' %}" class="btn btn-danger w-100"><i class="bi bi-heart-pulse me-2"></i>Triage</a></div>
-            <div class="col-md-2"><a href="{% url 'hospital:prescription_list' %}" class="btn btn-warning w-100"><i class="bi bi-prescription2 me-2"></i>Prescriptions</a></div>
-            <div class="col-md-2"><a href="{% url 'hospital:order_list' %}" class="btn btn-secondary w-100"><i class="bi bi-clipboard-check me-2"></i>Orders</a></div>
-            <div class="col-md-2"><a href="{% url 'hospital:global_search' %}" class="btn btn-outline-primary w-100"><i class="bi bi-search me-2"></i>Search</a></div>
-        </div>
-    </div>
-    
-    <div class="row g-4">
-        <!-- Today's Appointments -->
-        <div class="col-lg-6">
-            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-                <h5 class="mb-4"><i class="bi bi-calendar-event me-2"></i>Today's Appointments</h5>
-                {% for appointment in today_appointments %}
-                <div style="border-left: 4px solid #3b82f6; padding: 16px; margin-bottom: 12px; background: #f8f9fa; border-radius: 8px;">
-                    <div class="d-flex justify-content-between">
+            {% if ward_load %}
+                {% for ward in ward_load %}
+                <div class="ward-row">
+                    <div class="ward-head">
                         <div>
-                            <strong>{{ appointment.patient.full_name }}</strong>
-                            <div style="font-size: 13px; color: #6b7280;">
-                                <i class="bi bi-clock me-1"></i>{{ appointment.appointment_date|date:"g:i A" }}
-                                <i class="bi bi-card-text ms-2 me-1"></i>{{ appointment.reason|truncatewords:5 }}
-                            </div>
+                            <strong>{{ ward.ward_name }}</strong>
+                            <span class="tag">{{ ward.ward_type|default:"general"|capfirst }}</span>
                         </div>
-                        <span class="badge bg-{{ appointment.status }}">{{ appointment.get_status_display }}</span>
+                        <small class="text-muted">{{ ward.occupied }}/{{ ward.total }} occupied</small>
+                    </div>
+                    <div class="ward-progress">
+                        <span style="--percent:{{ ward.utilization_pct }}"></span>
+                    </div>
+                    <div class="d-flex justify-content-between secondary-text">
+                        <span>Available: {{ ward.available }}</span>
+                        <span>Load {{ ward.utilization_pct }}%</span>
                     </div>
                 </div>
-                {% empty %}
-                <p class="text-center text-muted py-4">No appointments today</p>
                 {% endfor %}
+            {% else %}
+                <div class="empty-state">No bed data configured.</div>
+            {% endif %}
+            <hr>
+            <h6 class="text-uppercase text-muted small">Bed Alerts</h6>
+            {% if bed_alerts %}
+                {% for bed in bed_alerts %}
+                <div class="list-tile d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>{{ bed.ward.name }} · Bed {{ bed.bed_number }}</strong>
+                        <div class="secondary-text">Marked {{ bed.get_status_display }}</div>
+                    </div>
+                    <span class="badge bg-warning text-dark text-uppercase">{{ bed.get_status_display }}</span>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state">All beds operational.</div>
+            {% endif %}
+        </section>
+
+    <div class="grid-2">
+        <section class="card-shell">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="section-title mb-0"><i class="bi bi-list-ol me-2 text-secondary"></i>Live Queue Monitor</h5>
+                {% if queue_stats.waiting or queue_stats.in_progress %}
+                <span class="pill-link text-secondary">{{ queue_stats.waiting|default:0 }} waiting</span>
+                {% endif %}
             </div>
-        </div>
-        
-        <!-- My Active Patients -->
-        <div class="col-lg-6">
-            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-                <h5 class="mb-4"><i class="bi bi-clipboard2-pulse me-2"></i>My Active Patients</h5>
-                {% for encounter in my_encounters %}
-                <div style="border-left: 4px solid #10b981; padding: 16px; margin-bottom: 12px; background: #f0fdf4; border-radius: 8px;">
+            {% if queue_entries %}
+                {% for queue in queue_entries %}
+                <div class="list-tile">
                     <div class="d-flex justify-content-between">
                         <div>
-                            <strong>{{ encounter.patient.full_name }}</strong>
-                            <div style="font-size: 13px; color: #6b7280;">
-                                MRN: {{ encounter.patient.mrn }} | {{ encounter.get_encounter_type_display }}
-                            </div>
-                            <div style="font-size: 12px; color: #9ca3af; margin-top: 4px;">
-                                {{ encounter.chief_complaint|truncatewords:8 }}
-                            </div>
+                            <strong>#{{ queue.queue_number }} · {{ queue.encounter.patient.full_name }}</strong>
+                            <div class="secondary-text">{{ queue.department.name }} · {{ queue.location }}</div>
+                            <div class="secondary-text">Priority: {{ queue.get_priority_display }}</div>
                         </div>
-                        <a href="{% url 'hospital:encounter_detail' encounter.pk %}" class="btn btn-sm btn-outline-primary">View</a>
+                        <span class="badge {% if queue.status == 'waiting' %}bg-warning text-dark{% elif queue.status == 'in_progress' %}bg-info text-dark{% else %}bg-secondary{% endif %}">
+                            {{ queue.get_status_display }}
+                        </span>
                     </div>
+                    {% if queue.estimated_wait_time %}
+                    <small class="text-muted">ETA {{ queue.estimated_wait_time }} mins</small>
+                    {% endif %}
                 </div>
-                {% empty %}
-                <p class="text-center text-muted py-4">No active patients</p>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state">Queue is currently clear.</div>
+            {% endif %}
+            <hr>
+            <div class="mini-grid">
+                <div class="mini-stat" style="background: rgba(59,130,246,0.12); color: #0f172a;">
+                    <label>Waiting</label>
+                    <strong>{{ queue_stats.waiting|default:0 }}</strong>
+                </div>
+                <div class="mini-stat" style="background: rgba(16,185,129,0.12); color: #0f172a;">
+                    <label>In Progress</label>
+                    <strong>{{ queue_stats.in_progress|default:0 }}</strong>
+                </div>
+                <div class="mini-stat" style="background: rgba(248,113,113,0.12); color: #0f172a;">
+                    <label>Completed Today</label>
+                    <strong>{{ queue_stats.completed|default:0 }}</strong>
+                </div>
+            </div>
+        </section>
+
+        <section class="card-shell">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="section-title mb-0"><i class="bi bi-activity me-2 text-danger"></i>Admissions & Transfers</h5>
+                <span class="pill-link text-primary">Live Feed</span>
+            </div>
+            {% for admission in recent_admissions %}
+            <div class="timeline-item">
+                <div class="timeline-title">{{ admission.encounter.patient.full_name }}</div>
+                <div class="secondary-text">
+                    {% if admission.ward %}{{ admission.ward.name }}{% else %}Unassigned{% endif %}{% if admission.bed %} · Bed {{ admission.bed.bed_number }}{% endif %}
+                </div>
+                <small class="text-muted">{{ admission.admit_date|naturaltime }}</small>
+            </div>
+            {% empty %}
+            <div class="empty-state">No active admissions.</div>
+            {% endfor %}
+        </section>
+    </div>
+
+    <div class="grid-2">
+        <section class="card-shell">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="section-title mb-0"><i class="bi bi-calendar-week me-2 text-success"></i>Today's Appointments</h5>
+                <span class="pill-link text-success">Schedule</span>
+            </div>
+            {% for appointment in today_appointments %}
+            <div class="list-tile">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <strong>{{ appointment.patient.full_name }}</strong>
+                        <div class="secondary-text"><i class="bi bi-clock me-1"></i>{{ appointment.appointment_date|date:"g:i A" }}</div>
+                    </div>
+                    <span class="badge bg-info text-dark">{{ appointment.get_status_display }}</span>
+                </div>
+                <div class="secondary-text mt-2">{{ appointment.reason|default:"Follow up"|truncatewords:12 }}</div>
+            </div>
+            {% empty %}
+            <div class="empty-state">No appointments booked for today.</div>
+            {% endfor %}
+        </section>
+
+        <section class="card-shell">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="section-title mb-0"><i class="bi bi-clipboard2-pulse me-2 text-warning"></i>My Inpatient Rounds</h5>
+                <span class="pill-link text-warning">Rounds</span>
+            </div>
+            {% for encounter in rounds_patients %}
+            <div class="list-tile d-flex justify-content-between align-items-center">
+                <div>
+                    <strong>{{ encounter.patient.full_name }}</strong>
+                    <div class="secondary-text">Ward {{ encounter.location.name|default:"—" }}</div>
+                    <div class="secondary-text">{{ encounter.chief_complaint|truncatewords:10 }}</div>
+                </div>
+                <a class="btn btn-outline-primary btn-sm" href="{% url 'hospital:encounter_documentation' encounter.pk %}">Open</a>
+            </div>
+            {% empty %}
+            <div class="empty-state">No inpatients assigned.</div>
+            {% endfor %}
+        </section>
+    </div>
+
+    <div class="grid-2">
+        <section class="card-shell">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="section-title mb-0"><i class="bi bi-exclamation-octagon me-2 text-danger"></i>High Priority Orders</h5>
+                <span class="pill-link text-danger">Immediate</span>
+            </div>
+            {% for order in high_priority_orders %}
+            <div class="list-tile">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <strong>{{ order.encounter.patient.full_name }}</strong>
+                        <div class="secondary-text">{{ order.get_order_type_display }} · {{ order.priority|upper }}</div>
+                    </div>
+                    <span class="badge bg-danger">{{ order.get_status_display }}</span>
+                </div>
+                <small class="text-muted">Requested {{ order.requested_at|naturaltime }}</small>
+            </div>
+            {% empty %}
+            <div class="empty-state">No urgent orders pending.</div>
+            {% endfor %}
+        </section>
+
+        <section class="card-shell">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="section-title mb-0"><i class="bi bi-bezier me-2 text-primary"></i>Pending Lab Results</h5>
+                <span class="pill-link text-primary">Review</span>
+            </div>
+            {% for order in pending_labs %}
+            <div class="list-tile d-flex justify-content-between align-items-center">
+                <div>
+                    <strong>{{ order.encounter.patient.full_name }}</strong>
+                    <div class="secondary-text">Order {{ order.pk|slice:":8" }} · {{ order.notes|default:"Awaiting processing"|truncatewords:10 }}</div>
+                </div>
+                <span class="badge bg-warning text-dark">{{ order.get_priority_display }}</span>
+            </div>
+            {% empty %}
+            <div class="empty-state">All labs have been signed off.</div>
+            {% endfor %}
+        </section>
+    </div>
+
+    <section class="grid-2">
+        <div class="card-shell">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="section-title mb-0"><i class="bi bi-people-fill me-2 text-primary"></i>My Active Patients</h5>
+                <span class="pill-link text-primary">Consults</span>
+            </div>
+            {% for encounter in my_encounters %}
+            <div class="list-tile">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <strong>{{ encounter.patient.full_name }}</strong>
+                        <div class="secondary-text">MRN: {{ encounter.patient.mrn }} · {{ encounter.get_encounter_type_display }}</div>
+                        <div class="secondary-text">Chief complaint: {{ encounter.chief_complaint|truncatewords:12 }}</div>
+                    </div>
+                    <a class="btn btn-outline-secondary btn-sm" href="{% url 'hospital:encounter_detail' encounter.pk %}">Chart</a>
+                </div>
+            </div>
+            {% empty %}
+            <div class="empty-state">No active patients assigned.</div>
+            {% endfor %}
+        </div>
+
+        <div class="card-shell">
+            <h5 class="section-title mb-3"><i class="bi bi-stars me-2 text-success"></i>Clinical Tools</h5>
+            <p class="secondary-text mb-1">Jump directly into the subsystems you use most.</p>
+            <div class="quick-actions" style="margin-top: 18px;">
+                <a class="action-pill" href="{% url 'hospital:medical_records_list' %}"><i class="bi bi-folder2-open"></i>Records</a>
+                <a class="action-pill" href="{% url 'hospital:orders_list' %}"><i class="bi bi-kanban"></i>Orders Board</a>
+                {% if my_encounters %}
+                <a class="action-pill" href="{% url 'hospital:patient_timeline' my_encounters.0.patient.id %}"><i class="bi bi-clock-history"></i>Timeline</a>
+                {% else %}
+                <span class="action-pill" style="pointer-events:none;opacity:.35;"><i class="bi bi-clock-history"></i>Timeline</span>
+                {% endif %}
+            </div>
+            {% if specialist_links %}
+            <p class="secondary-text mt-4 mb-2">Specialist Workspaces</p>
+            <div class="quick-actions" style="margin-top: 6px;">
+                {% for link in specialist_links %}
+                <a class="action-pill" href="{{ link.url }}">
+                    <i class="bi {{ link.icon }}"></i>{{ link.label }}
+                </a>
                 {% endfor %}
             </div>
+            {% endif %}
         </div>
-    </div>
+    </section>
 </div>
 {% endblock %}
+
+{% block extra_js %}
+<script>
+// Enable global auto-refresh for the medical dashboard (every 45 seconds)
+window.DASHBOARD_AUTO_REFRESH_INTERVAL = 45000;
+</script>
+{% endblock %}
+
+
+
+
 
 
 

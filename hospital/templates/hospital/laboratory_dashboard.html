@@ -458,7 +458,10 @@
 
 <!-- Tab Content: Pending Results -->
 <div id="pendingContent" class="tab-content">
-    <div class="test-panel">
+<!-- Hidden form to ensure CSRF cookie is set for AJAX calls -->
+<form style="display:none;">{% csrf_token %}</form>
+
+<div class="test-panel">
         <div class="test-panel-header">
             <div class="test-panel-title">
                 <i class="bi bi-clipboard-pulse text-warning"></i>
@@ -517,8 +520,13 @@
                             <div class="action-btn-group">
                                 {% if result.release_record and result.release_record.payment_receipt %}
                                     <span class="badge bg-success"><i class="bi bi-check-circle"></i> Paid</span>
+                                {% elif result.release_record and result.release_record.sent_to_cashier_at %}
+                                    <span class="badge bg-primary"><i class="bi bi-cash-coin"></i> Sent to Cashier</span>
+                                    <a href="{% url 'hospital:lab_cashier_ticket' result.id %}?redirect=cashier" class="action-btn info" title="View ticket">
+                                        <i class="bi bi-ticket"></i> Ticket
+                                    </a>
                                 {% else %}
-                                    <a href="{% url 'hospital:cashier_process_service_payment' 'lab' result.id %}" class="action-btn warning" target="_blank" title="Send patient to cashier for payment">
+                                    <a href="{% url 'hospital:lab_cashier_ticket' result.id %}?redirect=cashier" class="action-btn warning" title="Send to cashier dashboard">
                                         <i class="bi bi-cash-coin"></i> Send to Cashier
                                     </a>
                                 {% endif %}
@@ -688,8 +696,13 @@
                             <div class="action-btn-group">
                                 {% if result.release_record and result.release_record.payment_receipt %}
                                     <span class="badge bg-success"><i class="bi bi-check-circle"></i> Paid</span>
+                                {% elif result.release_record and result.release_record.sent_to_cashier_at %}
+                                    <span class="badge bg-primary"><i class="bi bi-cash-coin"></i> Sent to Cashier</span>
+                                    <a href="{% url 'hospital:lab_cashier_ticket' result.id %}?redirect=cashier" class="action-btn info" title="View ticket">
+                                        <i class="bi bi-ticket"></i> Ticket
+                                    </a>
                                 {% else %}
-                                    <a href="{% url 'hospital:cashier_process_service_payment' 'lab' result.id %}" class="action-btn primary" target="_blank">
+                                    <a href="{% url 'hospital:lab_cashier_ticket' result.id %}?redirect=cashier" class="action-btn primary" title="Send to cashier dashboard">
                                         <i class="bi bi-cash-coin"></i> Send to Cashier
                                     </a>
                                 {% endif %}
@@ -799,13 +812,31 @@ function switchTab(tabName) {
     document.getElementById(tabName + 'Tab').classList.add('active');
 }
 
+// Get CSRF token from cookie (safe for AJAX POST)
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            // Does this cookie string begin with the name we want?
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
 // Start order
 function startOrder(orderId) {
     if (confirm('Start processing this lab order?')) {
         fetch(`/hms/api/order/${orderId}/update-status/`, {
             method: 'POST',
             headers: {
-                'X-CSRFToken': '{{ csrf_token }}',
+                // Use cookie-based token, fall back to template token if needed
+                'X-CSRFToken': getCookie('csrftoken') || '{{ csrf_token }}',
                 'Content-Type': 'application/x-www-form-urlencoded',
             },
             body: 'action=start'
@@ -814,7 +845,7 @@ function startOrder(orderId) {
         .then(data => {
             if (data.success) {
                 showRefreshIndicator();
-                setTimeout(() => location.reload(), 1000);
+                setTimeout(() => location.reload(), 800);
             } else {
                 alert('Error: ' + (data.error || 'Failed to start order'));
             }

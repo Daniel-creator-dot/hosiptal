@@ -15,9 +15,11 @@ from .models_hr import StaffShift, LeaveBalance, Payroll, StaffContract, Perform
 from .models_advanced import LeaveRequest, Attendance
 from .models_hr_enhanced import AttendanceCalendar, StaffEmploymentContract, PublicHoliday, StaffPerformanceGoal
 from .models_contracts import Contract
+from .decorators import role_required
 
 
 @login_required
+@role_required('hr_manager')
 def hr_worldclass_dashboard(request):
     """World-class HR dashboard with comprehensive features"""
     today = timezone.now().date()
@@ -224,6 +226,7 @@ def hr_worldclass_dashboard(request):
 
 
 @login_required
+@role_required('hr_manager')
 def leave_calendar(request):
     """Calendar view of all leaves"""
     year = int(request.GET.get('year', timezone.now().year))
@@ -288,6 +291,7 @@ def leave_calendar(request):
 
 
 @login_required
+@role_required('hr_manager')
 def shift_calendar(request):
     """Calendar view of all shifts"""
     year = int(request.GET.get('year', timezone.now().year))
@@ -340,6 +344,7 @@ def shift_calendar(request):
 
 
 @login_required
+@role_required('hr_manager')
 def attendance_calendar(request):
     """Attendance calendar view"""
     year = int(request.GET.get('year', timezone.now().year))

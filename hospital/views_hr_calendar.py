@@ -1,22 +1,228 @@
 """
 HR Activity Calendar and Events Management Views
 """
-from django.shortcuts import render, get_object_or_404, redirect
-from django.contrib.auth.decorators import login_required
-from django.contrib import messages
-from django.utils import timezone
-from django.db.models import Q, Count, Sum
-from django.http import JsonResponse
+from decimal import Decimal
 from datetime import date, timedelta, datetime
 import calendar as cal
 import json
 
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required
+from django.db import transaction
+from django.db.models import Q, Count, Sum
+from django.http import JsonResponse
+from django.shortcuts import render, get_object_or_404, redirect
+from django.utils import timezone
+
+from .forms_hr import RecruitmentPositionForm, CandidateForm
 from .models import Staff, Department
 from .models_hr_activities import (
-    HospitalActivity, ActivityRSVP, StaffRecognition, 
-    RecruitmentPosition, Candidate, WellnessProgram, 
-    WellnessParticipation, StaffSurvey, SurveyResponse
+    HospitalActivity,
+    ActivityRSVP,
+    StaffRecognition,
+    RecruitmentPosition,
+    Candidate,
+    WellnessProgram,
+    WellnessParticipation,
+    StaffSurvey,
+    SurveyResponse,
 )
+
+
+def seed_recruitment_demo_data():
+    """
+    Auto-populate recruitment tables with showcase data when a fresh database has
+    no requisitions. This keeps the UI from feeling empty and provides a
+    reference pipeline that users can customize or delete.
+    """
+
+    if RecruitmentPosition.objects.filter(is_deleted=False).exists():
+        return
+
+    today = timezone.now().date()
+    departments = list(Department.objects.filter(is_deleted=False).order_by('name'))
+    staff_pool = list(
+        Staff.objects.filter(is_deleted=False)
+        .select_related('user')
+        .order_by('user__first_name', 'user__last_name')
+    )
+
+    def pick_department(keyword: str):
+        keyword_lower = (keyword or '').lower()
+        for dept in departments:
+            if keyword_lower and keyword_lower in (dept.name or '').lower():
+                return dept
+        return departments[0] if departments else None
+
+    def pick_manager(full_name_hint: str):
+        hint = (full_name_hint or '').lower()
+        for staff in staff_pool:
+            if hint and hint in staff.user.get_full_name().lower():
+                return staff
+        return staff_pool[0] if staff_pool else None
+
+    positions_seed = [
+        {
+            'title': 'Senior Registered Nurse',
+            'department_hint': 'Nursing',
+            'employment_type': 'full_time',
+            'slots': 3,
+            'description': 'Lead ward-based nursing care, supervise junior nurses, and coordinate interdisciplinary rounds.',
+            'requirements': 'Active RN license, 5+ years acute care experience, leadership exposure.',
+            'qualifications': 'BSN or higher, BCLS/ACLS certifications.',
+            'salary_min': Decimal('4200.00'),
+            'salary_max': Decimal('5200.00'),
+            'posted_days': 10,
+            'closing_days': 14,
+            'status': 'open',
+            'urgent': True,
+            'manager_hint': 'Nurse',
+        },
+        {
+            'title': 'Radiology Technologist',
+            'department_hint': 'Imaging',
+            'employment_type': 'full_time',
+            'slots': 2,
+            'description': 'Operate diagnostic imaging equipment (CT/MRI), ensure patient comfort, and liaise with radiologists.',
+            'requirements': '3+ years radiology experience, familiarity with PACS workflows.',
+            'qualifications': 'Diploma/degree in Radiologic Technology, ARRT certification preferred.',
+            'salary_min': Decimal('3800.00'),
+            'salary_max': Decimal('4500.00'),
+            'posted_days': 5,
+            'closing_days': 20,
+            'status': 'open',
+            'urgent': False,
+            'manager_hint': 'Imaging',
+        },
+        {
+            'title': 'Pharmacy Procurement Lead',
+            'department_hint': 'Pharmacy',
+            'employment_type': 'full_time',
+            'slots': 1,
+            'description': 'Own formulary sourcing, monitor stock-outs, and negotiate with vendors.',
+            'requirements': 'Experience with hospital pharmacy supply chains and ERP systems.',
+            'qualifications': 'B.Pharm or related degree, membership with professional council.',
+            'salary_min': Decimal('5000.00'),
+            'salary_max': Decimal('6000.00'),
+            'posted_days': 2,
+            'closing_days': 28,
+            'status': 'draft',
+            'urgent': False,
+            'manager_hint': 'Pharmacy',
+        },
+        {
+            'title': 'Human Resource Business Partner',
+            'department_hint': 'Human Resource',
+            'employment_type': 'full_time',
+            'slots': 1,
+            'description': 'Support departmental heads with workforce planning, engagement programs, and policy rollouts.',
+            'requirements': '7+ years HR generalist/HRBP experience, healthcare exposure preferred.',
+            'qualifications': 'BA in HRM or related field, SHRM/CHRM certification advantageous.',
+            'salary_min': Decimal('5500.00'),
+            'salary_max': Decimal('6800.00'),
+            'posted_days': 12,
+            'closing_days': 18,
+            'status': 'open',
+            'urgent': False,
+            'manager_hint': 'HR',
+        },
+    ]
+
+    candidate_seed = [
+        {
+            'position_title': 'Senior Registered Nurse',
+            'first_name': 'Anthony',
+            'last_name': 'Amissah',
+            'email': 'anthony.amissah@example.com',
+            'phone': '+233501234567',
+            'status': 'shortlisted',
+            'applied_days': 6,
+            'interview_in_days': 1,
+            'interview_notes': 'Excellent leadership stories; needs salary alignment.',
+        },
+        {
+            'position_title': 'Senior Registered Nurse',
+            'first_name': 'Miriam',
+            'last_name': 'Boateng',
+            'email': 'miriam.boateng@example.com',
+            'phone': '+233542221199',
+            'status': 'screening',
+            'applied_days': 3,
+        },
+        {
+            'position_title': 'Radiology Technologist',
+            'first_name': 'Samuel',
+            'last_name': 'Owusu',
+            'email': 'samuel.owusu@example.com',
+            'phone': '+233240987654',
+            'status': 'interviewed',
+            'applied_days': 9,
+            'interview_in_days': None,
+            'interview_notes': 'Awaiting second-round review from Dr. Mensah.',
+        },
+        {
+            'position_title': 'Human Resource Business Partner',
+            'first_name': 'Linda',
+            'last_name': 'Yeboah',
+            'email': 'linda.yeboah@example.com',
+            'phone': '+233208889990',
+            'status': 'offered',
+            'applied_days': 15,
+            'offer_in_days': -1,
+            'offer_salary': Decimal('6200.00'),
+        },
+    ]
+
+    with transaction.atomic():
+        created_positions = []
+        for row in positions_seed:
+            department = pick_department(row['department_hint'])
+            manager = pick_manager(row.get('manager_hint'))
+            position = RecruitmentPosition.objects.create(
+                position_title=row['title'],
+                department=department,
+                employment_type=row['employment_type'],
+                number_of_positions=row['slots'],
+                job_description=row['description'],
+                requirements=row['requirements'],
+                qualifications=row['qualifications'],
+                salary_range_min=row['salary_min'],
+                salary_range_max=row['salary_max'],
+                posted_date=today - timedelta(days=row['posted_days']),
+                closing_date=today + timedelta(days=row['closing_days']),
+                status=row['status'],
+                hiring_manager=manager,
+                is_urgent=row['urgent'],
+            )
+            created_positions.append(position)
+
+        for row in candidate_seed:
+            position = next((p for p in created_positions if p.position_title == row['position_title']), None)
+            if not position:
+                continue
+
+            candidate_kwargs = {
+                'position': position,
+                'first_name': row['first_name'],
+                'last_name': row['last_name'],
+                'email': row['email'],
+                'phone': row['phone'],
+                'application_date': today - timedelta(days=row.get('applied_days', 0)),
+                'status': row.get('status', 'applied'),
+                'interview_notes': row.get('interview_notes', ''),
+                'notes': row.get('notes', ''),
+                'offer_salary': row.get('offer_salary'),
+            }
+
+            interview_in_days = row.get('interview_in_days')
+            if interview_in_days is not None:
+                candidate_kwargs['interview_date'] = timezone.now() + timedelta(days=interview_in_days)
+
+            offer_in_days = row.get('offer_in_days')
+            if offer_in_days is not None:
+                candidate_kwargs['offer_date'] = today + timedelta(days=offer_in_days)
+
+            Candidate.objects.create(**candidate_kwargs)
 
 
 @login_required
@@ -196,24 +402,74 @@ def staff_recognition_board(request):
 @login_required
 def recruitment_pipeline(request):
     """Recruitment pipeline dashboard"""
+    today = timezone.now().date()
+    seed_recruitment_demo_data()
+    action = request.POST.get('action') if request.method == 'POST' else None
+    candidate_status_filter = request.GET.get('candidate_status')
+    position_filter = request.GET.get('position')
     
-    # Active positions
-    open_positions = RecruitmentPosition.objects.filter(
-        is_deleted=False,
-        status__in=['open', 'draft']
-    ).select_related('department', 'hiring_manager__user').annotate(
-        applicant_count=Count('candidates')
-    ).order_by('-posted_date')
+    # Forms default
+    position_form = RecruitmentPositionForm()
+    candidate_form_initial = {}
+    if position_filter:
+        candidate_form_initial['position'] = position_filter
+    candidate_form = CandidateForm(initial=candidate_form_initial)
     
-    # Recent candidates
-    recent_candidates = Candidate.objects.filter(
+    if request.method == 'POST':
+        if action == 'create_position':
+            position_form = RecruitmentPositionForm(request.POST)
+            if position_form.is_valid():
+                position = position_form.save()
+                messages.success(request, f"{position.position_title} has been added to the requisition list.")
+                return redirect('hospital:recruitment_pipeline')
+            else:
+                messages.error(request, "Please correct the errors in the position form.")
+        elif action == 'create_candidate':
+            candidate_form = CandidateForm(request.POST, request.FILES)
+            if candidate_form.is_valid():
+                candidate = candidate_form.save()
+                messages.success(request, f"{candidate.first_name} {candidate.last_name} has been added to {candidate.position.position_title}.")
+                return redirect('hospital:recruitment_pipeline')
+            else:
+                messages.error(request, "Please correct the errors in the candidate form.")
+        elif action == 'update_candidate_status':
+            candidate_id = request.POST.get('candidate_id')
+            new_status = request.POST.get('status')
+            valid_statuses = dict(Candidate.STATUS_CHOICES)
+            if new_status not in valid_statuses:
+                messages.error(request, "Select a valid status before updating.")
+            else:
+                try:
+                    candidate = Candidate.objects.get(id=candidate_id, is_deleted=False)
+                    candidate.status = new_status
+                    candidate.save(update_fields=['status', 'modified'])
+                    messages.success(request, f"{candidate.first_name} {candidate.last_name} moved to {candidate.get_status_display()}.")
+                    return redirect('hospital:recruitment_pipeline')
+                except Candidate.DoesNotExist:
+                    messages.error(request, "Candidate could not be found.")
+        else:
+            messages.error(request, "Unknown action requested.")
+    
+    # Positions (annotated with applicant counts)
+    positions_qs = RecruitmentPosition.objects.filter(
         is_deleted=False
-    ).select_related('position__department').order_by('-application_date')[:20]
+    ).select_related('department', 'hiring_manager__user').annotate(
+        applicant_count=Count('candidates', distinct=True)
+    )
+    open_positions = positions_qs.filter(status__in=['open', 'draft']).order_by('closing_date', '-posted_date')
+    
+    # Candidate list with filters
+    candidate_qs = Candidate.objects.filter(is_deleted=False).select_related('position__department')
+    if candidate_status_filter in dict(Candidate.STATUS_CHOICES):
+        candidate_qs = candidate_qs.filter(status=candidate_status_filter)
+    if position_filter:
+        candidate_qs = candidate_qs.filter(position_id=position_filter)
+    recent_candidates = candidate_qs.order_by('-application_date')[:20]
     
     # Statistics
-    total_positions = RecruitmentPosition.objects.filter(is_deleted=False).count()
+    total_positions = positions_qs.count()
     open_count = open_positions.filter(status='open').count()
-    filled_count = RecruitmentPosition.objects.filter(is_deleted=False, status='filled').count()
+    filled_count = positions_qs.filter(status='filled').count()
     
     total_candidates = Candidate.objects.filter(is_deleted=False).count()
     interviewed_count = Candidate.objects.filter(
@@ -221,14 +477,34 @@ def recruitment_pipeline(request):
         status__in=['interviewed', 'offered', 'accepted']
     ).count()
     
-    # Pipeline stages
-    pipeline_stats = {
+    # Pipeline breakdown for visual display
+    pipeline_raw = {
         'applied': Candidate.objects.filter(is_deleted=False, status='applied').count(),
         'screening': Candidate.objects.filter(is_deleted=False, status='screening').count(),
         'shortlisted': Candidate.objects.filter(is_deleted=False, status='shortlisted').count(),
         'interviewed': Candidate.objects.filter(is_deleted=False, status='interviewed').count(),
         'offered': Candidate.objects.filter(is_deleted=False, status='offered').count(),
+        'accepted': Candidate.objects.filter(is_deleted=False, status='accepted').count(),
     }
+    pipeline_order = [
+        ('applied', 'Applied', 'primary'),
+        ('screening', 'Screening', 'info'),
+        ('shortlisted', 'Shortlisted', 'warning'),
+        ('interviewed', 'Interviewed', 'secondary'),
+        ('offered', 'Offered', 'success'),
+        ('accepted', 'Accepted', 'dark'),
+    ]
+    pipeline_stats = []
+    for key, label, color in pipeline_order:
+        count = pipeline_raw.get(key, 0)
+        percent = round((count / total_candidates) * 100, 1) if total_candidates else 0
+        pipeline_stats.append({
+            'key': key,
+            'label': label,
+            'count': count,
+            'percent': percent,
+            'color': color,
+        })
     
     context = {
         'title': 'Recruitment Pipeline',
@@ -240,6 +516,13 @@ def recruitment_pipeline(request):
         'total_candidates': total_candidates,
         'interviewed_count': interviewed_count,
         'pipeline_stats': pipeline_stats,
+        'position_form': position_form,
+        'candidate_form': candidate_form,
+        'candidate_status_choices': Candidate.STATUS_CHOICES,
+        'candidate_status_filter': candidate_status_filter,
+        'candidate_position_filter': position_filter,
+        'positions_all': positions_qs.order_by('position_title'),
+        'today': today,
     }
     
     return render(request, 'hospital/hr/recruitment_pipeline.html', context)

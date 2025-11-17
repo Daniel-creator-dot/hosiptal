@@ -13,6 +13,79 @@
         </a>
     </div>
     
+    <!-- Receipt Search -->
+    <div class="card shadow mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3 align-items-center">
+                {% if status_filter %}
+                    <input type="hidden" name="status" value="{{ status_filter }}">
+                {% endif %}
+                <div class="col-md-8">
+                    <label for="receiptSearch" class="form-label fw-semibold">Receipt Code Verification</label>
+                    <div class="input-group">
+                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                        <input type="text" class="form-control" id="receiptSearch" name="receipt_query"
+                               placeholder="Enter receipt number (e.g. RCP2025111511254544169565)"
+                               value="{{ receipt_query }}">
+                    </div>
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-search"></i> Search
+                    </button>
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <a href="{% url 'hospital:pharmacy_dispensing_workflow' %}" class="btn btn-outline-secondary w-100">
+                        Reset
+                    </a>
+                </div>
+            </form>
+
+            {% if receipt_query %}
+                <div class="mt-3">
+                    {% if receipt_search_error %}
+                        <div class="alert alert-danger">
+                            <i class="bi bi-x-circle"></i> {{ receipt_search_error }}
+                        </div>
+                    {% elif receipt_search_result %}
+                        {% with result=receipt_search_result %}
+                        <div class="alert alert-success">
+                            <div class="d-flex justify-content-between flex-wrap">
+                                <div>
+                                    <h5 class="mb-1">Receipt {{ result.receipt.receipt_number }}</h5>
+                                    <p class="mb-1">Patient: <strong>{{ result.patient.full_name }}</strong> (MRN {{ result.patient.mrn }})</p>
+                                    <p class="mb-1">Amount: <strong>GHS {{ result.amount|floatformat:2 }}</strong> • Method: {{ result.method }}</p>
+                                    <p class="mb-0 text-muted">Service Type: {{ result.service_type|capfirst }}</p>
+                                </div>
+                                <div class="text-end">
+                                    <p class="mb-1"><small>Issued {{ result.receipt.receipt_date|date:"M d, Y H:i" }}</small></p>
+                                    <a href="{% url 'hospital:payment_receipt' result.receipt.id %}" class="btn btn-sm btn-outline-light" target="_blank">
+                                        View Receipt
+                                    </a>
+                                </div>
+                            </div>
+                            <hr>
+                            {% if result.dispensing_record %}
+                                <p class="mb-1"><strong>Prescription:</strong> {{ result.dispensing_record.prescription.drug.name }} ({{ result.dispensing_record.dispensing_status|capfirst }})</p>
+                                <a href="{% url 'hospital:pharmacy_dispense_enforced' result.dispensing_record.prescription.id %}" class="btn btn-success btn-sm">
+                                    Open Prescription
+                                </a>
+                            {% elif result.walkin_sale %}
+                                <p class="mb-1"><strong>Walk-in Sale:</strong> {{ result.walkin_sale.customer_name }} • GHS {{ result.walkin_sale.total_amount|floatformat:2 }}</p>
+                                <a href="{% url 'hospital:pharmacy_walkin_dispense' result.walkin_sale.id %}" class="btn btn-success btn-sm">
+                                    Dispense Walk-in Sale
+                                </a>
+                            {% else %}
+                                <p class="text-muted mb-0">No linked pharmacy record found yet. Use manual verification if needed.</p>
+                            {% endif %}
+                        </div>
+                        {% endwith %}
+                    {% endif %}
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
     <!-- Statistics -->
     <div class="row mb-4">
         <div class="col-md-4">
@@ -41,6 +114,36 @@
                     <h6 class="text-muted">Dispensed</h6>
                     <h2 class="text-info">{{ stats.dispensed|default:"0" }}</h2>
                     <small>Already dispensed</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card border-left-warning shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Walk-in Pending Payment</h6>
+                    <h2 class="text-warning">{{ walkin_stats.pending|default:"0" }}</h2>
+                    <small>Waiting for cashier payment</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card border-left-success shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Walk-in Ready to Dispense</h6>
+                    <h2 class="text-success">{{ walkin_stats.ready|default:"0" }}</h2>
+                    <small>Paid at cashier • Awaiting pickup</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card border-left-info shadow">
+                <div class="card-body">
+                    <h6 class="text-muted">Walk-in Dispensed</h6>
+                    <h2 class="text-info">{{ walkin_stats.dispensed|default:"0" }}</h2>
+                    <small>OTC sales already completed</small>
                 </div>
             </div>
         </div>
@@ -123,6 +226,117 @@
             {% endif %}
         </div>
     </div>
+
+    <!-- Walk-in Sales -->
+    <div class="row mt-4">
+        <div class="col-lg-6">
+            <div class="card shadow h-100">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0">🛒 Walk-in Pending Payment ({{ walkin_stats.pending|default:"0" }})</h5>
+                </div>
+                <div class="card-body" style="max-height: 420px; overflow-y:auto;">
+                    {% if walkin_pending %}
+                        {% for sale in walkin_pending %}
+                        <div class="card mb-2 border-start border-3 border-warning">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <h6 class="mb-1">{{ sale.customer_name }}</h6>
+                                        <p class="mb-1"><strong>Sale #:</strong> {{ sale.sale_number }}</p>
+                                        <p class="mb-1">Total: <strong>GHS {{ sale.total_amount|floatformat:2 }}</strong></p>
+                                        <p class="mb-0 text-danger">Amount Due: GHS {{ sale.amount_due|floatformat:2 }}</p>
+                                    </div>
+                                    <div class="text-end">
+                                        <a href="{% url 'hospital:pharmacy_walkin_sale_detail' sale.id %}" class="btn btn-sm btn-outline-warning mb-2">
+                                            Details
+                                        </a>
+                                        <a href="{% url 'hospital:pharmacy_walkin_record_payment' sale.id %}" class="btn btn-sm btn-danger">
+                                            Collect Payment
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-center text-muted my-3">No walk-in sales awaiting payment.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="card shadow h-100">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">✅ Walk-in Ready to Dispense ({{ walkin_stats.ready|default:"0" }})</h5>
+                </div>
+                <div class="card-body" style="max-height: 420px; overflow-y:auto;">
+                    {% if walkin_ready %}
+                        {% for sale in walkin_ready %}
+                        <div class="card mb-2 border-start border-3 border-success">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <h6 class="mb-1">{{ sale.customer_name }}</h6>
+                                        <p class="mb-1"><strong>Sale #:</strong> {{ sale.sale_number }}</p>
+                                        <p class="mb-1">Paid: <strong>GHS {{ sale.amount_paid|floatformat:2 }}</strong></p>
+                                        <p class="mb-0 text-muted">Receipt synced to cashier</p>
+                                    </div>
+                                    <div>
+                                        <a href="{% url 'hospital:pharmacy_walkin_dispense' sale.id %}" class="btn btn-sm btn-success">
+                                            Dispense Sale
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-center text-muted my-3">No paid walk-in sales awaiting dispensing.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if walkin_recently_dispensed %}
+    <div class="card shadow mt-4">
+        <div class="card-header bg-info text-white">
+            <h5 class="mb-0">🧾 Walk-in Dispensing History (Latest {{ walkin_recently_dispensed|length }})</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover table-sm align-middle">
+                    <thead>
+                        <tr>
+                            <th>Sale #</th>
+                            <th>Customer</th>
+                            <th>Total</th>
+                            <th>Dispensed</th>
+                            <th>Dispensed At</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for sale in walkin_recently_dispensed %}
+                        <tr>
+                            <td>{{ sale.sale_number }}</td>
+                            <td>{{ sale.customer_name }}</td>
+                            <td>GHS {{ sale.total_amount|floatformat:2 }}</td>
+                            <td>
+                                {% if sale.is_dispensed %}
+                                    <span class="badge bg-success">Yes</span>
+                                {% else %}
+                                    <span class="badge bg-warning text-dark">Pending</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ sale.dispensed_at|default:"—" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
     
     <!-- Instructions -->
     <div class="alert alert-info mt-4">
@@ -135,6 +349,9 @@
     </div>
 </div>
 {% endblock %}
+
+
+
 
 
 

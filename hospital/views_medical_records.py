@@ -9,7 +9,7 @@ from django.utils import timezone
 from django.db.models import Q, Prefetch
 from datetime import timedelta
 
-from .models import Patient, Encounter, Staff, VitalSign, LabTest
+from .models import Patient, Encounter, Staff, VitalSign, LabResult
 from .models_advanced import Triage, ClinicalNote, Diagnosis, Procedure, CarePlan, ProblemList, ImagingStudy
 
 
@@ -26,8 +26,8 @@ def comprehensive_medical_record(request, patient_id):
         patient=patient,
         is_deleted=False
     ).select_related(
-        'attending_physician__user',
-        'department'
+        'provider__user',
+        'location'
     ).prefetch_related(
         'clinical_notes',
         'diagnoses',
@@ -37,7 +37,7 @@ def comprehensive_medical_record(request, patient_id):
     
     # Get all vital signs
     vital_signs = VitalSign.objects.filter(
-        patient=patient,
+        encounter__patient=patient,
         is_deleted=False
     ).order_by('-recorded_at')[:50]
     
@@ -48,8 +48,14 @@ def comprehensive_medical_record(request, patient_id):
     ).select_related('encounter', 'triaged_by__user').order_by('-triage_time')
     
     # Get allergies and medications
-    allergies = patient.allergies.split(',') if patient.allergies else []
-    current_medications = patient.current_medications.split(',') if patient.current_medications else []
+    allergies = patient.allergies.split(',') if hasattr(patient, 'allergies') and patient.allergies else []
+    current_medications = patient.current_medications.split(',') if hasattr(patient, 'current_medications') and patient.current_medications else []
+    
+    # Recent imaging studies with assets
+    imaging_studies = ImagingStudy.objects.filter(
+        patient=patient,
+        is_deleted=False
+    ).prefetch_related('images').order_by('-performed_at', '-created')[:6]
     
     # Calculate statistics
     total_encounters = encounters.count()
@@ -66,10 +72,11 @@ def comprehensive_medical_record(request, patient_id):
         'total_encounters': total_encounters,
         'total_admissions': total_admissions,
         'last_visit': last_visit,
-        'medical_history': patient.medical_history,
-        'surgical_history': patient.surgical_history,
-        'family_history': patient.family_history,
-        'social_history': patient.social_history,
+        'medical_history': getattr(patient, 'medical_history', ''),
+        'surgical_history': getattr(patient, 'surgical_history', ''),
+        'family_history': getattr(patient, 'family_history', ''),
+        'social_history': getattr(patient, 'social_history', ''),
+        'recent_imaging': imaging_studies,
     }
     
     return render(request, 'hospital/medical_records/comprehensive_record.html', context)
@@ -110,15 +117,15 @@ def encounter_documentation(request, encounter_id):
     ).order_by('-procedure_date')
     
     # Get lab tests and imaging
-    lab_tests = LabTest.objects.filter(
-        encounter=encounter,
+    lab_tests = LabResult.objects.filter(
+        order__encounter=encounter,
         is_deleted=False
-    ).order_by('-created')
+    ).select_related('test').order_by('-created')
     
     imaging_studies = ImagingStudy.objects.filter(
         encounter=encounter,
         is_deleted=False
-    ).order_by('-created')
+    ).prefetch_related('images').order_by('-created')
     
     # Get vital signs
     vital_signs = VitalSign.objects.filter(

@@ -157,6 +157,8 @@ class LabResultRelease(BaseModel):
     ], default='in_person')
     
     release_notes = models.TextField(blank=True)
+    sent_to_cashier_at = models.DateTimeField(null=True, blank=True)
+    sent_to_cashier_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='lab_cashier_tickets_sent')
     
     class Meta:
         ordering = ['-created']
@@ -225,19 +227,97 @@ class PharmacyDispensing(BaseModel):
         """Check if drugs can be dispensed"""
         return self.payment_receipt is not None and self.payment_verified_at is not None
     
+    @property
+    def is_dispensed(self):
+        """Return True if medication has been dispensed (fully or partially)"""
+        return self.dispensing_status in ['partially_dispensed', 'fully_dispensed']
+    
     def mark_dispensed(self, user, quantity, instructions='', notes=''):
         """Mark prescription as dispensed"""
         self.quantity_dispensed += quantity
-        if self.quantity_dispensed >= self.quantity_ordered:
-            self.dispensing_status = 'fully_dispensed'
-        else:
-            self.dispensing_status = 'partially_dispensed'
+        self._sync_status_from_numbers()
         
         self.dispensed_by = user.staff if hasattr(user, 'staff') else None
         self.dispensed_at = timezone.now()
         self.dispensing_instructions = instructions
         self.dispensing_notes = notes
         self.save()
+
+    def _sync_status_from_numbers(self):
+        """Ensure dispensing_status matches quantities/payment."""
+        ordered = self.quantity_ordered or 0
+        dispensed = self.quantity_dispensed or 0
+
+        if dispensed >= ordered and ordered > 0:
+            self.dispensing_status = 'fully_dispensed'
+        elif dispensed > 0:
+            self.dispensing_status = 'partially_dispensed'
+        elif self.payment_receipt and self.dispensing_status == 'pending_payment':
+            self.dispensing_status = 'ready_to_dispense'
+
+    def save(self, *args, **kwargs):
+        self._sync_status_from_numbers()
+        super().save(*args, **kwargs)
+
+
+class PharmacyDispenseHistory(BaseModel):
+    """
+    Immutable audit log for every dispensing action
+    """
+    dispensing_record = models.ForeignKey(
+        PharmacyDispensing,
+        on_delete=models.CASCADE,
+        related_name='history_entries'
+    )
+    prescription = models.ForeignKey(
+        'hospital.Prescription',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='dispense_history'
+    )
+    patient = models.ForeignKey(
+        Patient,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pharmacy_dispense_history_records'
+    )
+    patient_name = models.CharField(max_length=255, blank=True)
+    drug = models.ForeignKey(
+        'hospital.Drug',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pharmacy_dispense_history_records'
+    )
+    drug_name = models.CharField(max_length=255)
+    quantity_dispensed = models.PositiveIntegerField()
+    instructions = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+    counselling_given = models.BooleanField(default=False)
+    dispensed_by = models.ForeignKey(
+        'hospital.Staff',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pharmacy_dispense_actions'
+    )
+    dispensed_by_name = models.CharField(max_length=255, blank=True)
+    payment_receipt = models.ForeignKey(
+        'hospital.PaymentReceipt',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pharmacy_dispense_history_entries'
+    )
+    dispensed_at = models.DateTimeField()
+    
+    class Meta:
+        ordering = ['-dispensed_at', '-created']
+    
+    def __str__(self):
+        return f"{self.drug_name} - {self.patient_name or 'Unknown Patient'} ({self.quantity_dispensed})"
 
 
 class ReceiptQRCode(BaseModel):

@@ -1,0 +1,98 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Lab Tests Catalog{% endblock %}
+
+{% block extra_css %}
+<style>
+    .catalog-card {background:#fff;border-radius:18px;box-shadow:0 15px 40px rgba(15,23,42,.1);padding:28px;margin-bottom:28px;}
+    .filters .form-select,.filters .form-control {border-radius:12px;}
+    .test-row {border-bottom:1px solid #e2e8f0;padding:18px 0;display:flex;justify-content:space-between;align-items:flex-start;gap:18px;}
+    .test-row:last-child {border-bottom:none;}
+    .test-name {font-size:1.1rem;font-weight:600;color:#0f172a;margin-bottom:4px;}
+    .specimen-pill {display:inline-flex;align-items:center;background:#eef2ff;color:#3730a3;padding:4px 12px;border-radius:999px;font-size:.85rem;font-weight:600;}
+    .status-chip {padding:4px 10px;border-radius:999px;font-size:.8rem;font-weight:600;}
+    .status-active {background:#dcfce7;color:#166534;}
+    .status-inactive {background:#fee2e2;color:#991b1b;}
+    .actions .btn {border-radius:999px;padding:6px 16px;font-size:.85rem;}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-3">
+        <div>
+            <h1 class="mb-1"><i class="bi bi-flask me-2 text-primary"></i>Lab Tests Catalog</h1>
+            <p class="text-muted mb-0">Total tests: {{ total_tests }}</p>
+        </div>
+        <a href="{% url 'hospital:lab_test_create' %}" class="btn btn-primary">
+            <i class="bi bi-plus-circle me-2"></i>New Lab Test
+        </a>
+    </div>
+
+    <form method="get" class="catalog-card filters mb-4">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label">Search</label>
+                <input type="text" class="form-control" name="q" placeholder="Name, code, specimen..." value="{{ search_query }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Specimen Type</label>
+                <select class="form-select" name="specimen">
+                    <option value="">All</option>
+                    {% for specimen in specimen_types %}
+                    <option value="{{ specimen }}" {% if specimen == specimen_filter %}selected{% endif %}>{{ specimen|default:"Not specified" }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Status</label>
+                <select class="form-select" name="status">
+                    <option value="">All</option>
+                    <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Active</option>
+                    <option value="inactive" {% if status_filter == 'inactive' %}selected{% endif %}>Inactive</option>
+                </select>
+            </div>
+            <div class="col-md-2 text-end">
+                <button class="btn btn-outline-secondary w-100">Apply</button>
+            </div>
+        </div>
+    </form>
+
+    <div class="catalog-card">
+        {% if tests %}
+            {% for test in tests %}
+            <div class="test-row">
+                <div>
+                    <div class="test-name">
+                        <a href="{% url 'hospital:lab_test_detail' test.pk %}">{{ test.name }}</a>
+                    </div>
+                    <div class="text-muted small mb-2">Code: {{ test.code }} · Specimen: <span class="specimen-pill">{{ test.specimen_type|default:"Not specified" }}</span></div>
+                    <div class="text-muted small">Turnaround: {{ test.tat_minutes|default:"N/A" }} min</div>
+                </div>
+                <div class="text-end">
+                    <div class="fw-bold mb-2">GHS {{ test.price|default:"0.00" }}</div>
+                    <div class="status-chip {% if test.is_active %}status-active{% else %}status-inactive{% endif %}">
+                        {{ test.is_active|yesno:"Active,Inactive" }}
+                    </div>
+                    <div class="actions mt-3">
+                        <a href="{% url 'hospital:lab_test_detail' test.pk %}" class="btn btn-outline-primary btn-sm">Details</a>
+                        <a href="{% url 'hospital:lab_test_edit' test.pk %}" class="btn btn-outline-secondary btn-sm">Edit</a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="text-center py-5 text-muted">
+                <i class="bi bi-inbox" style="font-size:3rem;"></i>
+                <p class="mt-2">No lab tests found. Try adjusting filters or add a new test.</p>
+            </div>
+        {% endif %}
+    </div>
+
+    {% include 'hospital/includes/pagination.html' with page_obj=tests %}
+</div>
+{% endblock %}
+
+
+

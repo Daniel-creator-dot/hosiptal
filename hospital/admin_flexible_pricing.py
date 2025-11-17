@@ -251,3 +251,9 @@ class BulkPriceUpdateAdmin(admin.ModelAdmin):
 
 
 
+
+
+
+
+
+

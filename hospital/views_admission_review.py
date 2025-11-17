@@ -76,7 +76,7 @@ def admitted_patients_list(request):
         # Patients not reviewed in last 6 hours
         six_hours_ago = timezone.now() - timedelta(hours=6)
         admitted_encounters = admitted_encounters.filter(
-            Q(updated__lt=six_hours_ago) | Q(updated__isnull=True)
+            Q(modified__lt=six_hours_ago) | Q(modified__isnull=True)
         )
     
     context = {
@@ -148,8 +148,8 @@ def admission_review(request, encounter_id):
                 )
                 
                 # Update encounter timestamp
-                encounter.updated = timezone.now()
-                encounter.save(update_fields=['updated'])
+                encounter.modified = timezone.now()
+                encounter.save(update_fields=['modified'])
                 
                 messages.success(request, '✅ Progress note added successfully. Next shift can now review.')
                 
@@ -220,7 +220,6 @@ def admission_review(request, encounter_id):
                 else:
                     encounter.notes = f"[Status Update - {timezone.now().strftime('%Y-%m-%d %H:%M')}]\n{new_notes}"
             
-            encounter.updated = timezone.now()
             encounter.save()
             
             messages.success(request, '✅ Patient status updated.')

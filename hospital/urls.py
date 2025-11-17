@@ -41,7 +41,7 @@ from . import views_specialists
 from . import views_role_dashboards
 from . import views_role_redirect
 from . import views_telemedicine
-# from . import views_legacy_patients  # DISABLED: Legacy patients removed for performance
+from . import views_legacy_patients  # Legacy patient utilities (needed for admin tools)
 from . import views_pricing
 from . import views_staff_portal
 from . import views_triage
@@ -56,8 +56,9 @@ from . import views_centralized_cashier
 from . import views_service_pricing
 from . import views_lab_results_enforced
 from . import views_pharmacy_dispensing_enforced
-# from . import views_pharmacy_walkin  # Temporarily disabled
+from . import views_pharmacy_walkin
 from . import views_notifications
+from .views_auth import HMSLoginView
 from . import views_biometric
 from . import views_biometric_rebuilt
 from . import views_patient_export
@@ -82,6 +83,8 @@ urlpatterns = [
     # Frontend views - Role-based routing
     path('', views.dashboard, name='dashboard'),
     path('dashboard/', views.dashboard, name='dashboard'),
+    path('login/', HMSLoginView.as_view(), name='login'),
+    path('logout/', views.end_session, name='logout'),
     
     # Role-Specific Dashboards
     path('accountant-dashboard/', views_role_specific.accountant_dashboard, name='accountant_dashboard'),
@@ -94,9 +97,14 @@ urlpatterns = [
     # Patient views
     path('patients/', views.patient_list, name='patient_list'),
     path('patients/new/', views.patient_create, name='patient_create'),
+    path('patient-registration/', views.patient_create, name='patient_registration'),
     path('patients/<uuid:pk>/', views.patient_detail, name='patient_detail'),
     path('patients/<uuid:pk>/edit/', views.patient_edit, name='patient_edit'),
     path('patients/<uuid:patient_pk>/quick-visit/', views.patient_quick_visit_create, name='patient_quick_visit_create'),
+    path('patients/<uuid:patient_pk>/qr-card/', views.patient_qr_card, name='patient_qr_card'),
+    path('patient-checkin/qr/', views.patient_qr_checkin, name='patient_qr_checkin'),
+    path('patient-checkin/qr/scan/', views.patient_qr_checkin_api, name='patient_qr_checkin_api'),
+    path('consultations/', lambda request: redirect('/hms/my-consultations/'), name='consultations_redirect'),
     
     # Patient export
     path('patients/export/csv/', views_patient_export.export_patients_csv, name='export_patients_csv'),
@@ -121,6 +129,7 @@ urlpatterns = [
     path('invoices/', views.invoice_list, name='invoice_list'),
     path('invoices/<uuid:pk>/', views.invoice_detail, name='invoice_detail'),
     path('invoices/<uuid:pk>/print/', views.invoice_print, name='invoice_print'),
+    path('payments/', lambda request: redirect('hospital:invoice_list'), name='payments_redirect'),
     
     # Bed Management (World-Class)
     path('beds/', views_admission.bed_management_worldclass, name='bed_availability'),
@@ -130,6 +139,8 @@ urlpatterns = [
     # Reports
     path('reports/daily/', views.daily_report, name='daily_report'),
     path('reports/financial/', views.financial_report_view, name='financial_report'),
+    path('reports/financial/export/excel/', views.financial_report_export_excel, name='financial_report_export_excel'),
+    path('reports/financial/export/pdf/', views.financial_report_export_pdf, name='financial_report_export_pdf'),
     path('reports/patients/', views.patient_statistics_report_view, name='patient_statistics_report'),
     path('reports/encounters/', views.encounter_report_view, name='encounter_report'),
     path('reports/admissions/', views.admission_report_view, name='admission_report'),
@@ -143,11 +154,13 @@ urlpatterns = [
     
     # Department Dashboards
     path('pharmacy/', views_departments.pharmacy_dashboard, name='pharmacy_dashboard'),
+    path('pharmacy-dashboard/', views_departments.pharmacy_dashboard, name='pharmacy_dashboard_alt'),  # Alias for compatibility
     path('pharmacy/stock/', views_departments.pharmacy_stock_list, name='pharmacy_stock_list'),
     path('pharmacy/requests/', views_procurement.procurement_requests_list, name='pharmacy_requests_list'),
     path('pharmacy/requests/new/', views_procurement.procurement_request_create, name='pharmacy_request_create'),
     path('api/pharmacy/order/<uuid:order_id>/prescriptions/', views_departments.get_pharmacy_order_prescriptions, name='get_pharmacy_order_prescriptions'),
     path('api/pharmacy/order/<uuid:order_id>/payment-status/', views_departments.check_pharmacy_order_payment_status, name='check_pharmacy_order_payment_status'),
+    path('api/pharmacy/order/<uuid:order_id>/send-to-cashier/', views_departments.send_pharmacy_order_to_cashier, name='send_pharmacy_order_to_cashier'),
     path('api/pharmacy/order/<uuid:order_id>/dispense/', views_departments.dispense_pharmacy_order, name='dispense_pharmacy_order'),
     
     # 🔒 Pharmacy Dispensing - Payment Enforced (NEW)
@@ -155,18 +168,19 @@ urlpatterns = [
     path('pharmacy/dispense/<uuid:prescription_id>/', views_pharmacy_dispensing_enforced.pharmacy_dispense_enforced, name='pharmacy_dispense_enforced'),
     path('api/pharmacy/payment-check/<uuid:prescription_id>/', views_pharmacy_dispensing_enforced.check_pharmacy_payment_required, name='check_pharmacy_payment_required'),
     
-    # 💊 Walk-in Pharmacy Sales (Direct OTC Sales) - TEMPORARILY DISABLED
-    # Uncomment after running migrations for walk-in pharmacy models
-    # path('pharmacy/walkin-sales/', views_pharmacy_walkin.pharmacy_walkin_sales_list, name='pharmacy_walkin_sales_list'),
-    # path('pharmacy/walkin-sales/new/', views_pharmacy_walkin.pharmacy_walkin_sale_create, name='pharmacy_walkin_sale_create'),
-    # path('pharmacy/walkin-sales/<uuid:sale_id>/', views_pharmacy_walkin.pharmacy_walkin_sale_detail, name='pharmacy_walkin_sale_detail'),
-    # path('pharmacy/walkin-sales/<uuid:sale_id>/dispense/', views_pharmacy_walkin.pharmacy_walkin_dispense, name='pharmacy_walkin_dispense'),
-    # path('pharmacy/walkin-sales/<uuid:sale_id>/payment/', views_pharmacy_walkin.pharmacy_walkin_record_payment, name='pharmacy_walkin_record_payment'),
-    # path('api/pharmacy/search-drugs/', views_pharmacy_walkin.api_search_drugs, name='api_search_drugs'),
-    # path('api/pharmacy/search-patients/', views_pharmacy_walkin.api_patient_search, name='api_patient_search'),
+    # 💊 Walk-in Pharmacy Sales (Direct OTC Sales)
+    path('pharmacy/walkin-sales/', views_pharmacy_walkin.pharmacy_walkin_sales_list, name='pharmacy_walkin_sales_list'),
+    path('pharmacy/walkin-sales/new/', views_pharmacy_walkin.pharmacy_walkin_sale_create, name='pharmacy_walkin_sale_create'),
+    path('pharmacy/walkin-sales/<uuid:sale_id>/', views_pharmacy_walkin.pharmacy_walkin_sale_detail, name='pharmacy_walkin_sale_detail'),
+    path('pharmacy/walkin-sales/<uuid:sale_id>/dispense/', views_pharmacy_walkin.pharmacy_walkin_dispense, name='pharmacy_walkin_dispense'),
+    path('pharmacy/walkin-sales/<uuid:sale_id>/payment/', views_pharmacy_walkin.pharmacy_walkin_record_payment, name='pharmacy_walkin_record_payment'),
+    path('api/pharmacy/search-drugs/', views_pharmacy_walkin.api_search_drugs, name='api_search_drugs'),
+    path('api/pharmacy/search-patients/', views_pharmacy_walkin.api_patient_search, name='api_patient_search'),
     
     path('laboratory/', views_departments.laboratory_dashboard, name='laboratory_dashboard'),
     path('laboratory/results/', views_departments.lab_results_list, name='lab_results_list'),
+    path('lab-results/', views_departments.lab_results_list, name='lab_results_list_legacy'),
+    path('lab-orders/', views_departments.laboratory_dashboard, name='lab_orders_list_legacy'),
     path('laboratory/result/<uuid:result_id>/edit/', views_departments.edit_lab_result, name='edit_lab_result'),
     path('laboratory/result/<uuid:result_id>/tabular/', views.tabular_lab_report, name='tabular_lab_report'),
     
@@ -309,9 +323,11 @@ urlpatterns = [
     
     # Legacy URL redirects (for cached links)
     path('lab/', lambda request: redirect('/hms/laboratory/'), name='lab_redirect'),
+    path('lab-dashboard/', views_role_dashboards.lab_technician_dashboard, name='lab_dashboard_legacy'),
     
     # 🔒 Lab Payment Verification System
     path('lab/payment-verification/', views_lab_payment_verification.lab_payment_verification_dashboard, name='lab_payment_verification_dashboard'),
+    path('lab/cashier-ticket/<uuid:lab_result_id>/', views_lab_payment_verification.lab_cashier_ticket, name='lab_cashier_ticket'),
     path('lab/verify-payment/<uuid:lab_result_id>/', views_lab_payment_verification.lab_verify_payment_by_receipt, name='lab_verify_payment'),
     path('lab/release-result/<uuid:lab_result_id>/', views_lab_payment_verification.lab_release_result, name='lab_release_result'),
     path('lab/api/search-receipt/', views_lab_payment_verification.lab_search_receipt_api, name='lab_search_receipt_api'),
@@ -383,6 +399,9 @@ urlpatterns = [
     path('frontdesk/appointments/<uuid:pk>/', views_appointments.frontdesk_appointment_detail, name='frontdesk_appointment_detail'),
     path('frontdesk/appointments/<uuid:pk>/edit/', views_appointments.frontdesk_appointment_edit, name='frontdesk_appointment_edit'),
     
+    # Legacy shortcut
+    path('appointments/', views_appointments.frontdesk_appointment_dashboard, name='appointments_redirect'),
+    
     # State-of-the-Art Appointment System
     path('appointments/calendar/', views_appointments_advanced.appointment_calendar_view, name='appointment_calendar_view'),
     path('appointments/smart-booking/', views_appointments_advanced.smart_appointment_booking, name='smart_appointment_booking'),
@@ -432,9 +451,12 @@ urlpatterns = [
     path('flow/stage/<uuid:stage_id>/complete/', views_workflow.complete_flow_stage, name='complete_flow_stage'),
     path('flow/<uuid:encounter_id>/vitals/', views_workflow.record_vitals, name='record_vitals'),
     path('flow/<uuid:encounter_id>/bill/', views_workflow.create_bill, name='create_bill'),
+    # Legacy convenience route for vitals dashboard
+    path('vitals/', views_workflow.flow_dashboard, name='vitals_dashboard_legacy'),
     
     # Cashier Module (Original)
     path('cashier/', views_cashier.cashier_dashboard, name='cashier_dashboard'),
+    path('cashier/dashboard/', views_cashier.cashier_dashboard, name='cashier_dashboard_legacy'),
     
     # 💰 Centralized Cashier System (All payments through here)
     path('cashier/central/', views_centralized_cashier.centralized_cashier_dashboard, name='centralized_cashier_dashboard'),
@@ -457,6 +479,7 @@ urlpatterns = [
     path('cashier/payments/process-bill/<uuid:bill_id>/', views_cashier.process_payment, name='process_payment_bill'),
     path('cashier/payments/process-invoice/<uuid:invoice_id>/', views_cashier.process_payment, name='process_payment_invoice'),
     path('cashier/receipt/<uuid:receipt_id>/', views_cashier.payment_receipt, name='payment_receipt'),
+    path('cashier/session/', views_cashier.cashier_session_detail, name='cashier_session_detail'),
     path('cashier/session/<uuid:session_id>/close/', views_cashier.close_session, name='close_session'),
     path('cashier/bills/', views_cashier.cashier_bills, name='cashier_bills'),
     path('cashier/invoices/', views_cashier.cashier_invoices, name='cashier_invoices'),
@@ -517,6 +540,8 @@ urlpatterns = [
     path('hr/reports/staff/', views_hr_reports.staff_list_report, name='staff_list_report'),
     path('hr/reports/leave/', views_hr_reports.leave_report, name='leave_report'),
     path('hr/reports/attendance/', views_hr_reports.attendance_report, name='attendance_report'),
+    path('hr/attendance/login-sessions/', views_hr_reports.login_attendance_dashboard, name='login_attendance_dashboard'),
+    path('hr/live-sessions/', views_hr_reports.live_session_monitor, name='live_session_monitor'),
     path('hr/reports/payroll/', views_hr_reports.payroll_report, name='payroll_report'),
     path('hr/reports/training/', views_hr_reports.training_report, name='training_report'),
     path('hr/reports/performance/', views_hr_reports.performance_report, name='performance_report'),
@@ -579,7 +604,7 @@ urlpatterns = [
     
     # ==================== WORLD-CLASS INVENTORY MANAGEMENT SYSTEM ====================
     # State-of-the-art supply chain management with complete accountability
-    path('inventory/', include('hospital.urls_inventory')),
+    path('inventory/', include('hospital.urls_inventory', namespace='inventory')),
     
     # Birthday Reminders & SMS
     path('reminders/birthdays/', views_reminders.birthday_reminders, name='birthday_reminders'),
@@ -628,12 +653,12 @@ urlpatterns = [
     path('dashboard/cashier-role/', views_role_dashboards.cashier_dashboard_role, name='cashier_dashboard_role'),
     path('dashboard/admin/', views_role_dashboards.admin_dashboard_role, name='admin_dashboard_role'),
     
-    # Legacy Patient Management - DISABLED FOR PERFORMANCE
-    # path('legacy-patients/', views_legacy_patients.legacy_patient_list, name='legacy_patient_list'),
-    # path('legacy-patients/<int:pid>/', views_legacy_patients.legacy_patient_detail, name='legacy_patient_detail'),
-    # path('legacy-patients/<int:pid>/migrate/', views_legacy_patients.migrate_legacy_patient, name='migrate_legacy_patient'),
-    # path('migration/dashboard/', views_legacy_patients.migration_dashboard, name='migration_dashboard'),
-    # path('migration/bulk-migrate/', views_legacy_patients.bulk_migrate_patients, name='bulk_migrate_patients'),
+    # Legacy Patient Management (needed for migration dashboard + admin links)
+    path('legacy-patients/', views_legacy_patients.legacy_patient_list, name='legacy_patient_list'),
+    path('legacy-patients/<int:pid>/', views_legacy_patients.legacy_patient_detail, name='legacy_patient_detail'),
+    path('legacy-patients/<int:pid>/migrate/', views_legacy_patients.migrate_legacy_patient, name='migrate_legacy_patient'),
+    path('migration/dashboard/', views_legacy_patients.migration_dashboard, name='migration_dashboard'),
+    path('migration/bulk-migrate/', views_legacy_patients.bulk_migrate_patients, name='bulk_migrate_patients'),
     
     # Pricing Management
     path('pricing/', views_pricing.pricing_dashboard, name='pricing_dashboard'),
@@ -683,6 +708,8 @@ urlpatterns = [
     
     # 📊 Advanced Accounting & Financial Reports
     path('accounting/', views_accounting_advanced.accounting_dashboard, name='accounting_dashboard'),
+    path('accounting-dashboard/', views_accounting_advanced.accounting_dashboard, name='accounting_dashboard_legacy'),
+    path('accounting/reports/', views_accounting_advanced.accounting_reports_hub, name='accounting_reports_hub'),
     path('accounting/profit-loss/', views_accounting_advanced.profit_loss_statement, name='profit_loss_statement'),
     path('accounting/balance-sheet/', views_accounting_advanced.balance_sheet, name='balance_sheet'),
     path('accounting/trial-balance/', views_accounting_advanced.trial_balance, name='trial_balance'),

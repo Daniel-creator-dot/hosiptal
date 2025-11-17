@@ -470,3 +470,9 @@ class BloodCompatibilityMatrix(models.Model):
 
 
 
+
+
+
+
+
+

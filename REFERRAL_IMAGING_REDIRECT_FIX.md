@@ -122,3 +122,9 @@ return redirect('hospital:encounter_detail', pk=encounter_id)
 
 
 
+
+
+
+
+
+

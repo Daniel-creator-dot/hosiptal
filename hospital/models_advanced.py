@@ -2,6 +2,7 @@
 Advanced Hospital Management System Models
 Extends base models with comprehensive clinical and operational features
 """
+import os
 import uuid
 from django.db import models
 from django.contrib.auth.models import User
@@ -426,6 +427,19 @@ class ImagingImage(BaseModel):
     
     def __str__(self):
         return f"Image {self.sequence_number} - {self.imaging_study}"
+
+    @property
+    def filename(self):
+        if not self.image:
+            return ""
+        return os.path.basename(self.image.name)
+
+    @property
+    def is_previewable(self):
+        if not self.image:
+            return False
+        _, ext = os.path.splitext(self.image.name.lower())
+        return ext in {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
 
 
 # ==================== THEATRE/PROCEDURES ====================

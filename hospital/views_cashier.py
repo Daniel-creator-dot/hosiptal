@@ -13,11 +13,16 @@ from decimal import Decimal
 from .models import Patient, Invoice, Admission
 from .models_workflow import Bill, PaymentRequest, CashierSession
 from .models_accounting import Transaction, PaymentReceipt
+from .models_payment_verification import LabResultRelease, PharmacyDispensing
+from .services.auto_billing_service import AutoBillingService
+from .utils_roles import user_has_cashier_access
+from .models_pharmacy_walkin import WalkInPharmacySale
+from .services.pharmacy_walkin_service import WalkInPharmacyService
 
 
 def is_cashier(user):
-    """Check if user is a cashier"""
-    return user.groups.filter(name='Cashier').exists() or user.is_staff
+    """Only allow Administrators and Accounting to access cashier views."""
+    return user_has_cashier_access(user)
 
 
 @login_required
@@ -45,27 +50,33 @@ def cashier_dashboard(request):
     
     # 🧪 PENDING LAB TESTS (not paid)
     from .models import LabResult, Prescription
-    from .models_payment_verification import LabResultRelease, PharmacyDispensing
-    from .services.auto_billing_service import AutoBillingService
     
+    # Include tests that are either verified OR explicitly sent to cashier
     all_labs = LabResult.objects.filter(
-        is_deleted=False,
-        verified_by__isnull=False
-    ).select_related('test', 'order__encounter__patient').order_by('-created')
+        is_deleted=False
+    ).filter(
+        Q(verified_by__isnull=False) | Q(release_record__sent_to_cashier_at__isnull=False)
+    ).select_related(
+        'test',
+        'order__encounter__patient',
+        'release_record'
+    ).order_by('-created')
     
     pending_labs = []
     for lab in all_labs:
+        release_record = getattr(lab, 'release_record', None)
+
+        # Skip if already paid
+        if release_record and release_record.payment_receipt_id:
+            continue
+
+        # Ensure a bill exists for this lab
         try:
-            if hasattr(lab, 'release_record') and lab.release_record.payment_receipt:
-                continue  # Already paid
-        except:
+            AutoBillingService.create_lab_bill(lab)
+        except Exception:
+            # Don't block the dashboard if billing fails; lab should still be visible
             pass
-        # Ensure bill exists
-        try:
-            if not hasattr(lab, 'release_record'):
-                AutoBillingService.create_lab_bill(lab)
-        except:
-            pass
+
         pending_labs.append(lab)
     
     # 💊 PENDING PRESCRIPTIONS (not paid)
@@ -90,6 +101,21 @@ def cashier_dashboard(request):
         unit_price = getattr(rx.drug, 'unit_price', Decimal('0.00'))
         rx.total_price = unit_price * rx.quantity
         pending_pharmacy.append(rx)
+    
+    # 💼 Walk-in sales awaiting payment
+    walkin_qs = WalkInPharmacySale.objects.filter(
+        is_deleted=False,
+        payment_status__in=['pending', 'partial']
+    ).select_related('patient').order_by('-sale_date')
+    
+    pending_walkin_sales = []
+    for sale in walkin_qs:
+        patient = WalkInPharmacyService.ensure_sale_patient(sale)
+        sale.patient = patient
+        sale.pending_amount = sale.amount_due or (sale.total_amount - sale.amount_paid)
+        if sale.pending_amount and sale.pending_amount < 0:
+            sale.pending_amount = Decimal('0.00')
+        pending_walkin_sales.append(sale)
     
     # Get pending payment requests (existing system)
     pending_payments = PaymentRequest.objects.filter(
@@ -133,18 +159,23 @@ def cashier_dashboard(request):
         is_deleted=False
     ).distinct().count()
     
+    total_pending_payments = pending_payments.count() + len(pending_labs) + len(pending_pharmacy) + len(pending_walkin_sales)
+
     context = {
         'session': session,
         'pending_payments': pending_payments,
         'unpaid_bills': unpaid_bills,
         'pending_labs': pending_labs[:20],  # NEW: Lab tests
         'pending_pharmacy': pending_pharmacy[:20],  # NEW: Pharmacy
+        'pending_walkin_sales': pending_walkin_sales[:20],
         'today_total': today_total,
         'today_count': today_count,
         'outstanding_debt': outstanding_debt,
         'patients_with_debt_count': patients_with_debt_count,
         'total_pending_labs': len(pending_labs),
         'total_pending_pharmacy': len(pending_pharmacy),
+        'total_pending_walkin': len(pending_walkin_sales),
+        'total_pending_payments': total_pending_payments,
     }
     return render(request, 'hospital/cashier_dashboard.html', context)
 
@@ -361,6 +392,48 @@ def close_session(request, session_id):
         'session': session,
     }
     return render(request, 'hospital/close_session.html', context)
+
+
+@login_required
+@user_passes_test(is_cashier, login_url='/admin/login/')
+def cashier_session_detail(request):
+    """
+    Show the cashier's active session (or open a new one) with quick stats.
+    """
+    session = CashierSession.objects.filter(
+        cashier=request.user,
+        status='open',
+        is_deleted=False
+    ).first()
+
+    if not session:
+        session = CashierSession.objects.create(
+            cashier=request.user,
+            opening_cash=Decimal('0.00'),
+        )
+
+    session.calculate_totals()
+
+    today = timezone.now().date()
+    recent_transactions = Transaction.objects.filter(
+        processed_by=request.user,
+        transaction_date__date=today,
+        is_deleted=False
+    ).order_by('-transaction_date')[:15]
+
+    recent_receipts = PaymentReceipt.objects.filter(
+        received_by=request.user,
+        receipt_date__date=today,
+        is_deleted=False
+    ).select_related('patient').order_by('-receipt_date')[:15]
+
+    context = {
+        'session': session,
+        'recent_transactions': recent_transactions,
+        'recent_receipts': recent_receipts,
+        'today': today,
+    }
+    return render(request, 'hospital/cashier_session_detail.html', context)
 
 
 @login_required

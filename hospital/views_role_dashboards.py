@@ -2,7 +2,7 @@
 Role-specific Dashboard Views
 Specialized dashboards for different staff roles
 """
-from django.shortcuts import render, get_object_or_404
+from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.db.models import Q, Count, Sum, Avg
@@ -14,9 +14,10 @@ from .models import Patient, Encounter, Staff, Department, Ward, Bed, Admission
 from .models_workflow import Bill, PaymentRequest
 from .models_accounting import Transaction
 from .models import Order, LabResult, Prescription
-from .models_advanced import ImagingStudy
+from .models_advanced import ImagingStudy, MedicationAdministrationRecord
 from .models_legacy_patients import LegacyPatient
 from .models_legacy_mapping import LegacyIDMapping
+from .decorators import role_required
 
 
 def get_staff_profile(user):
@@ -27,14 +28,30 @@ def get_staff_profile(user):
         return None
 
 
+def ensure_staff_profile(request, role_label, expected_profession=None):
+    """
+    Ensure the requesting user has a Staff profile (and optionally the expected profession).
+    Returns tuple (staff, error_response)
+    """
+    staff = get_staff_profile(request.user)
+
+    if not staff or (expected_profession and staff.profession != expected_profession):
+        message = f"Access denied. {role_label} role required."
+        response = render(request, 'hospital/access_denied.html', {
+            'message': message
+        }, status=403)
+        return None, response
+
+    return staff, None
+
+
 @login_required
+@role_required('doctor')
 def doctor_dashboard(request):
     """Doctor's specialized dashboard with legacy patient support"""
-    staff = get_staff_profile(request.user)
-    if not staff or staff.profession != 'doctor':
-        return render(request, 'hospital/access_denied.html', {
-            'message': 'Access denied. Doctor role required.'
-        })
+    staff, error_response = ensure_staff_profile(request, 'Doctor', expected_profession='doctor')
+    if error_response:
+        return error_response
     
     today = timezone.now().date()
     
@@ -109,28 +126,36 @@ def doctor_dashboard(request):
 
 
 @login_required
+@role_required('nurse')
 def nurse_dashboard(request):
     """Nurse's specialized dashboard"""
-    staff = get_staff_profile(request.user)
-    if not staff or staff.profession != 'nurse':
-        return render(request, 'hospital/access_denied.html', {
-            'message': 'Access denied. Nurse role required.'
-        })
+    staff, error_response = ensure_staff_profile(request, 'Nurse', expected_profession='nurse')
+    if error_response:
+        return error_response
     
     today = timezone.now().date()
     
-    # Ward assignments
+    # Ward assignments - first try explicit assignments, then fall back to nurse's department, then all active wards
     assigned_wards = Ward.objects.filter(
         staff=staff,
         is_active=True
-    ).distinct()
+    ).distinct() if hasattr(Ward, 'staff') else Ward.objects.none()
+
+    if not assigned_wards.exists():
+        if staff.department_id:
+            assigned_wards = Ward.objects.filter(
+                department=staff.department,
+                is_active=True
+            ).distinct()
+        else:
+            assigned_wards = Ward.objects.filter(is_active=True).distinct()
     
     # Patients in assigned wards
     ward_patients = Patient.objects.filter(
         encounters__admission__ward__in=assigned_wards,
         encounters__status='active',
         encounters__is_deleted=False
-    ).distinct().select_related('encounters__admission__ward')
+    ).distinct()
     
     # Pending vital signs
     pending_vitals = Encounter.objects.filter(
@@ -142,11 +167,11 @@ def nurse_dashboard(request):
     ).select_related('patient', 'admission__ward')[:20]
     
     # Medication administration records
-    pending_medications = MedicationOrder.objects.filter(
+    pending_medications = MedicationAdministrationRecord.objects.filter(
         encounter__admission__ward__in=assigned_wards,
-        status='active',
+        status__in=['scheduled', 'held'],
         is_deleted=False
-    ).select_related('encounter', 'patient', 'medication')[:20]
+    ).select_related('encounter', 'patient', 'prescription')[:20]
     
     # Bed status in assigned wards
     bed_status = Bed.objects.filter(
@@ -179,35 +204,39 @@ def nurse_dashboard(request):
 
 
 @login_required
+@role_required('lab_technician')
 def lab_technician_dashboard(request):
     """Lab Technician's specialized dashboard"""
-    staff = get_staff_profile(request.user)
-    if not staff or staff.profession != 'lab_technician':
-        return render(request, 'hospital/access_denied.html', {
-            'message': 'Access denied. Lab Technician role required.'
-        })
+    staff, error_response = ensure_staff_profile(request, 'Lab Technician', expected_profession='lab_technician')
+    if error_response:
+        return error_response
     
     today = timezone.now().date()
     
-    # Pending lab orders
+    # Pending lab orders - only those with no in-progress/completed/cancelled results
     pending_orders = Order.objects.filter(
         order_type='lab',
         status='pending',
         is_deleted=False
-    ).select_related('encounter', 'patient').order_by('-created')[:20]
+    ).exclude(
+        lab_results__status__in=['in_progress', 'completed', 'cancelled']
+    ).select_related(
+        'encounter',
+        'encounter__patient'
+    ).order_by('-created').distinct()[:20]
     
     # In progress tests
     in_progress_tests = Order.objects.filter(
         order_type='lab',
         status='in_progress',
         is_deleted=False
-    ).select_related('encounter', 'patient').order_by('-updated')[:20]
+    ).select_related('encounter', 'encounter__patient').order_by('-modified')[:20]
     
     # Completed results (recent)
     completed_results = LabResult.objects.filter(
         status='completed',
         is_deleted=False
-    ).select_related('encounter', 'patient', 'test').order_by('-completed_at')[:20]
+    ).select_related('order__encounter', 'order__encounter__patient', 'test').order_by('-modified')[:20]
     
     # Equipment status (if available)
     equipment_status = []  # Placeholder for equipment monitoring
@@ -217,7 +246,8 @@ def lab_technician_dashboard(request):
         'pending_orders': pending_orders.count(),
         'in_progress_tests': in_progress_tests.count(),
         'completed_today': LabResult.objects.filter(
-            completed_at__date=today,
+            status='completed',
+            modified__date=today,
             is_deleted=False
         ).count(),
         'total_tests_today': Order.objects.filter(
@@ -241,62 +271,19 @@ def lab_technician_dashboard(request):
 
 
 @login_required
+@role_required('pharmacist')
 def pharmacist_dashboard(request):
-    """Pharmacist's specialized dashboard"""
-    staff = get_staff_profile(request.user)
-    if not staff or staff.profession != 'pharmacist':
-        return render(request, 'hospital/access_denied.html', {
-            'message': 'Access denied. Pharmacist role required.'
-        })
-    
-    today = timezone.now().date()
-    
-    # Pending prescriptions
-    pending_prescriptions = Prescription.objects.filter(
-        status='pending',
-        is_deleted=False
-    ).select_related('order__encounter', 'order__patient', 'drug').order_by('-created')[:20]
-    
-    # Dispensed prescriptions (today)
-    dispensed_today = Prescription.objects.filter(
-        status='dispensed',
-        dispensed_at__date=today,
-        is_deleted=False
-    ).select_related('order__encounter', 'order__patient', 'drug').order_by('-dispensed_at')
-    
-    # Low stock medications
-    low_stock_medications = []  # Placeholder for inventory system
-    
-    # Statistics
-    stats = {
-        'pending_prescriptions': pending_prescriptions.count(),
-        'dispensed_today': dispensed_today.count(),
-        'total_prescriptions_today': Prescription.objects.filter(
-            created__date=today,
-            is_deleted=False
-        ).count(),
-    }
-    
-    context = {
-        'staff': staff,
-        'pending_prescriptions': pending_prescriptions,
-        'dispensed_today': dispensed_today,
-        'low_stock_medications': low_stock_medications,
-        'stats': stats,
-        'today': today,
-    }
-    
-    return render(request, 'hospital/role_dashboards/pharmacist_dashboard.html', context)
+    """Pharmacists work exclusively inside the dispensing/payment workflow."""
+    return redirect('hospital:pharmacy_pending_dispensing')
 
 
 @login_required
+@role_required('radiologist')
 def radiologist_dashboard(request):
     """Radiologist's specialized dashboard"""
-    staff = get_staff_profile(request.user)
-    if not staff or staff.profession != 'radiologist':
-        return render(request, 'hospital/access_denied.html', {
-            'message': 'Access denied. Radiologist role required.'
-        })
+    staff, error_response = ensure_staff_profile(request, 'Radiologist', expected_profession='radiologist')
+    if error_response:
+        return error_response
     
     today = timezone.now().date()
     
@@ -351,13 +338,12 @@ def radiologist_dashboard(request):
 
 
 @login_required
+@role_required('receptionist')
 def receptionist_dashboard(request):
     """Receptionist's specialized dashboard"""
-    staff = get_staff_profile(request.user)
-    if not staff or staff.profession != 'receptionist':
-        return render(request, 'hospital/access_denied.html', {
-            'message': 'Access denied. Receptionist role required.'
-        })
+    staff, error_response = ensure_staff_profile(request, 'Receptionist', expected_profession='receptionist')
+    if error_response:
+        return error_response
     
     today = timezone.now().date()
     
@@ -404,13 +390,12 @@ def receptionist_dashboard(request):
 
 
 @login_required
+@role_required('cashier')
 def cashier_dashboard_role(request):
     """Cashier's specialized dashboard (role-based)"""
-    staff = get_staff_profile(request.user)
-    if not staff or staff.profession != 'cashier':
-        return render(request, 'hospital/access_denied.html', {
-            'message': 'Access denied. Cashier role required.'
-        })
+    staff, error_response = ensure_staff_profile(request, 'Cashier', expected_profession='cashier')
+    if error_response:
+        return error_response
     
     today = timezone.now().date()
     
@@ -457,13 +442,12 @@ def cashier_dashboard_role(request):
 
 
 @login_required
+@role_required('admin')
 def admin_dashboard_role(request):
     """Administrator's specialized dashboard"""
-    staff = get_staff_profile(request.user)
-    if not staff or staff.profession != 'admin':
-        return render(request, 'hospital/access_denied.html', {
-            'message': 'Access denied. Administrator role required.'
-        })
+    staff, error_response = ensure_staff_profile(request, 'Administrator', expected_profession='admin')
+    if error_response:
+        return error_response
     
     today = timezone.now().date()
     

@@ -1,0 +1,200 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Financial Reports Center{% endblock %}
+{% block page_title %}Financial Reports Center{% endblock %}
+{% block page_subtitle %}One launchpad for every accounting insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    .reports-hero {
+        background: linear-gradient(135deg, #1f6feb, #764ba2);
+        border-radius: 18px;
+        padding: 32px;
+        color: white;
+        margin-bottom: 24px;
+    }
+    .reports-hero h2 {
+        font-weight: 700;
+        margin-bottom: 12px;
+    }
+    .report-stat {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        border: 1px solid var(--border);
+        box-shadow: 0 4px 20px rgba(15, 23, 42, 0.08);
+    }
+    .report-stat small {
+        color: #6c757d;
+        text-transform: uppercase;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+    }
+    .report-stat h3 {
+        margin: 4px 0 0 0;
+        font-weight: 700;
+        font-size: 26px;
+    }
+    .section-card {
+        background: white;
+        border-radius: 18px;
+        padding: 24px;
+        border: 1px solid var(--border);
+        margin-bottom: 24px;
+    }
+    .section-card h4 {
+        font-weight: 600;
+        margin-bottom: 6px;
+    }
+    .report-link {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 18px;
+        border-radius: 12px;
+        text-decoration: none;
+        color: var(--dark);
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        margin-bottom: 12px;
+        transition: all 0.25s ease;
+        background: #f8fafc;
+    }
+    .report-link:hover {
+        background: var(--primary);
+        color: white;
+        border-color: var(--primary);
+        transform: translateY(-2px);
+    }
+    .report-link i {
+        margin-right: 12px;
+        font-size: 20px;
+    }
+    .report-link span {
+        flex: 1;
+        font-weight: 600;
+    }
+    .report-badge {
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.2);
+        color: inherit;
+        margin-left: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="reports-hero">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-3">
+        <div>
+            <h2><i class="bi bi-graph-up-arrow me-2"></i>Launch every accounting report from one hub</h2>
+            <p class="mb-0">MTD closes since {{ start_of_month|date:"M j" }} · Fiscal year performance since {{ start_of_year|date:"M j" }}</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:accounting_dashboard' %}" class="btn btn-light btn-lg">
+                <i class="bi bi-speedometer2 me-2"></i>Back to Dashboard
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <a href="{% url 'hospital:financial_report' %}?period=month" class="btn btn-outline-light w-100 shadow-sm" style="background: linear-gradient(135deg, #0ea5e9, #2563eb); color: white;">
+            <i class="bi bi-bar-chart-fill me-2"></i>View Detailed Financial Report
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a href="{% url 'hospital:financial_report_export_excel' %}?period=month" class="btn btn-outline-success w-100">
+            <i class="bi bi-file-earmark-excel-fill me-2"></i>Download Excel (This Month)
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a href="{% url 'hospital:financial_report_export_pdf' %}?period=month" class="btn btn-outline-secondary w-100">
+            <i class="bi bi-file-earmark-pdf-fill me-2"></i>Download PDF (This Month)
+        </a>
+    </div>
+</div>
+
+{% if not tables_exist %}
+<div class="alert alert-warning shadow-sm">
+    <h5 class="mb-1"><i class="bi bi-cone-striped me-2"></i>Advanced accounting tables not initialized</h5>
+    <p class="mb-2">Run the advanced accounting migrations to unlock live data:</p>
+    <ol class="mb-2">
+        <li>Uncomment <code>from .admin_accounting_advanced import *</code> in <code>hospital/admin.py</code></li>
+        <li>Run <code>python manage.py makemigrations && python manage.py migrate</code></li>
+        <li>Execute <code>python setup_accounting_system.py</code></li>
+    </ol>
+    <p class="mb-0"><strong>Reference:</strong> <code>SETUP_ACCOUNTING_SYSTEM_INSTRUCTIONS.txt</code></p>
+</div>
+{% endif %}
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="report-stat">
+            <small>Revenue (MTD)</small>
+            <h3>GHS {{ kpis.revenue_mtd|floatformat:2|intcomma }}</h3>
+            <p class="mb-0 text-muted">YTD: GHS {{ kpis.revenue_ytd|floatformat:2|intcomma }}</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="report-stat">
+            <small>Expenses (MTD)</small>
+            <h3>GHS {{ kpis.expense_mtd|floatformat:2|intcomma }}</h3>
+            <p class="mb-0 text-muted">YTD: GHS {{ kpis.expense_ytd|floatformat:2|intcomma }}</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="report-stat">
+            <small>Net Income (MTD)</small>
+            <h3 class="{% if kpis.net_income_mtd >= 0 %}text-success{% else %}text-danger{% endif %}">
+                GHS {{ kpis.net_income_mtd|floatformat:2|intcomma }}
+            </h3>
+            <p class="mb-0 text-muted">Receivable: GHS {{ kpis.receivable_total|floatformat:2|intcomma }}</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="report-stat">
+            <small>Payables & Vouchers</small>
+            <h3>GHS {{ kpis.payable_total|floatformat:2|intcomma }}</h3>
+            <p class="mb-0 text-muted">
+                {{ kpis.pending_vouchers }} pending · {{ kpis.approved_vouchers }} ready
+            </p>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    {% for section in report_sections %}
+    <div class="col-lg-6">
+        <div class="section-card">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <div>
+                    <h4>{{ section.title }}</h4>
+                    <p class="text-muted mb-0">{{ section.description }}</p>
+                </div>
+            </div>
+            {% for report in section.reports %}
+            <a href="{% url report.url_name %}" class="report-link">
+                <div class="d-flex align-items-center">
+                    <i class="{{ report.icon }}"></i>
+                    <span>{{ report.name }}</span>
+                </div>
+                {% if report.badge %}
+                <span class="report-badge">{{ report.badge }}</span>
+                {% endif %}
+                <i class="bi bi-arrow-up-right-circle-fill ms-3"></i>
+            </a>
+            {% empty %}
+            <p class="text-muted mb-0">No report links configured yet.</p>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}
+

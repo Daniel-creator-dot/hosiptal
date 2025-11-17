@@ -35,6 +35,13 @@
 </style>
 {% endblock %}
 
+{% block extra_js %}
+<script>
+// Tell the global auto-refresh utility this is a live dashboard (5s interval for near real-time updates)
+window.DASHBOARD_AUTO_REFRESH_INTERVAL = 5000;
+</script>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid">
     <!-- Header -->
@@ -100,7 +107,7 @@
     </div>
     
     <!-- Additional Stats Row -->
-    {% if stats.pending_imaging or stats.pending_admissions %}
+    {% if stats.pending_imaging or stats.pending_admissions or stats.pending_walkin %}
     <div class="row mb-4">
         {% if stats.pending_imaging %}
         <div class="col-md-3">
@@ -114,6 +121,18 @@
         </div>
         {% endif %}
         
+        {% if stats.pending_walkin %}
+        <div class="col-md-3">
+            <div class="card stat-card" style="border-left-color: #10b981;">
+                <div class="card-body">
+                    <h6 class="text-muted">Walk-in Sales Pending</h6>
+                    <h2 class="mb-0">{{ stats.pending_walkin }}</h2>
+                    <small class="text-muted">Awaiting cashier</small>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         {% if stats.pending_admissions %}
         <div class="col-md-3">
             <div class="card stat-card" style="border-left-color: #F59E0B;">
@@ -178,7 +197,18 @@
                             <div class="card-body">
                                 <div class="d-flex justify-content-between align-items-start">
                                     <div>
-                                        <h6 class="mb-1">{{ lab.test.name }}</h6>
+                                        <h6 class="mb-1">
+                                            {{ lab.test.name }}
+                                            <span class="badge bg-warning text-dark ms-2">
+                                                {% if lab.release_record and lab.release_record.payment_receipt %}
+                                                    Paid
+                                                {% elif lab.release_record and lab.release_record.sent_to_cashier_at %}
+                                                    Pending Payment
+                                                {% else %}
+                                                    Pending Payment
+                                                {% endif %}
+                                            </span>
+                                        </h6>
                                         <p class="mb-1"><strong>Patient:</strong> {{ lab.order.encounter.patient.full_name }}</p>
                                         <p class="mb-1"><small class="text-muted">MRN: {{ lab.order.encounter.patient.mrn }}</small></p>
                                         <p class="mb-0"><small class="text-muted">Ordered: {{ lab.created|date:"M d, Y - h:i A" }}</small></p>
@@ -243,10 +273,37 @@
                     {% else %}
                         <p class="text-muted text-center py-4">No pending prescriptions</p>
                     {% endif %}
+
+                    {% if pending_walkin_sales %}
+                        <hr>
+                        <h6 class="mb-3 text-success">🛒 Walk-in Sales Awaiting Payment ({{ stats.pending_walkin }})</h6>
+                        {% for sale in pending_walkin_sales %}
+                        <div class="pending-item card mb-2" style="border-left-color: #10b981;">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <h6 class="mb-1">{{ sale.customer_name }}</h6>
+                                        <p class="mb-1"><strong>Sale #:</strong> {{ sale.sale_number }}</p>
+                                        <p class="mb-1"><small class="text-muted">Phone: {{ sale.customer_phone|default:"N/A" }}</small></p>
+                                        <p class="mb-0"><small class="text-muted">Created: {{ sale.sale_date|date:"M d, Y - h:i A" }}</small></p>
+                                    </div>
+                                    <div class="text-end">
+                                        <h5 class="text-success mb-1">Due: GHS {{ sale.amount_due|floatformat:2 }}</h5>
+                                        <small class="d-block text-muted mb-2">Total: GHS {{ sale.total_amount|floatformat:2 }}</small>
+                                        <a href="{% url 'hospital:cashier_process_service_payment' 'pharmacy_walkin' sale.id %}" 
+                                           class="btn btn-success btn-sm">
+                                            <i class="bi bi-credit-card"></i> Process Payment
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% endif %}
                 </div>
             </div>
         </div>
-        
+
         <!-- Pending Imaging Studies -->
         {% if pending_imaging %}
         <div class="col-md-12 mt-4">

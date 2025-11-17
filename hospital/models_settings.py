@@ -98,3 +98,9 @@ class HospitalSettings(models.Model):
 
 
 
+
+
+
+
+
+

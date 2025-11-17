@@ -110,9 +110,11 @@
     <div class="col-md-3">
         <div class="stat-mini">
             <div style="font-size: 32px; font-weight: 800; color: var(--warning);">
-                {{ pending_payments.count }}
+                {{ total_pending_payments }}
             </div>
-            <div style="font-size: 12px; color: var(--gray);">Pending Payments</div>
+            <div style="font-size: 12px; color: var(--gray);">
+                Pending Payments (Requests + Lab + Pharmacy + Walk-in)
+            </div>
         </div>
     </div>
     <div class="col-md-3">
@@ -172,7 +174,18 @@
                 <div class="payment-card" style="border-left-color: #ffc107;">
                     <div class="row align-items-center">
                         <div class="col-md-7">
-                            <h6 style="margin: 0 0 4px 0; font-weight: 600;">{{ lab.test.name }}</h6>
+                            <h6 style="margin: 0 0 4px 0; font-weight: 600;">
+                                {{ lab.test.name }}
+                                <span class="badge bg-warning text-dark ms-1" style="font-size: 10px;">
+                                    {% if lab.release_record and lab.release_record.payment_receipt %}
+                                        Paid
+                                    {% elif lab.release_record and lab.release_record.sent_to_cashier_at %}
+                                        Pending Payment
+                                    {% else %}
+                                        Pending Payment
+                                    {% endif %}
+                                </span>
+                            </h6>
                             <div style="font-size: 12px; color: var(--gray);">
                                 Patient: {{ lab.order.encounter.patient.full_name }} ({{ lab.order.encounter.patient.mrn }})
                             </div>
@@ -233,6 +246,44 @@
                 {% endfor %}
             {% else %}
                 <p class="text-muted text-center py-3">No pending prescriptions</p>
+            {% endif %}
+
+            {% if pending_walkin_sales %}
+                <hr>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h6 class="mb-0">🛒 Walk-in Sales Awaiting Payment ({{ total_pending_walkin|default:"0" }})</h6>
+                    {% if total_pending_walkin > 20 %}
+                    <a href="{% url 'hospital:cashier_all_pending_bills' %}?service_type=pharmacy_walkin" class="btn btn-sm btn-outline-success">
+                        View All {{ total_pending_walkin }} →
+                    </a>
+                    {% endif %}
+                </div>
+                {% for sale in pending_walkin_sales %}
+                    <div class="payment-card" style="border-left-color: #10b981;">
+                        <div class="row align-items-center">
+                            <div class="col-md-7">
+                                <h6 class="mb-1">{{ sale.customer_name }}</h6>
+                                <div style="font-size: 12px; color: var(--gray);">
+                                    Sale #: {{ sale.sale_number }} | Phone: {{ sale.customer_phone|default:"N/A" }}
+                                </div>
+                                <div style="font-size: 11px; color: var(--gray);">
+                                    Created: {{ sale.sale_date|date:"M d, Y - H:i" }}
+                                </div>
+                            </div>
+                            <div class="col-md-3 text-end">
+                                <div style="font-size: 18px; font-weight: 700; color: var(--success);">
+                                    GHS {{ sale.pending_amount|default:sale.amount_due|floatformat:2 }}
+                                </div>
+                                <small class="text-muted d-block">Due</small>
+                            </div>
+                            <div class="col-md-2 text-end">
+                                <a href="{% url 'hospital:cashier_process_service_payment' 'pharmacy_walkin' sale.id %}" class="btn btn-sm btn-success">
+                                    Pay
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                {% endfor %}
             {% endif %}
         </div>
     </div>
@@ -340,5 +391,24 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    const REFRESH_INTERVAL_MS = 30000;  // 30 seconds
+    setInterval(function() {
+        const active = document.activeElement;
+        const typing = active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName);
+        const modalOpen = document.querySelector('.modal.show');
+        if (typing || modalOpen) {
+            return;
+        }
+        if (document.visibilityState === 'visible') {
+            window.location.reload();
+        }
+    }, REFRESH_INTERVAL_MS);
+})();
+</script>
 {% endblock %}
 

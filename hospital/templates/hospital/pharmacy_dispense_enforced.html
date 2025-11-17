@@ -77,6 +77,19 @@
                 </div>
                 <div class="card-body">
                     {% if payment_status.paid %}
+                        {% if is_already_dispensed %}
+                        <div class="alert alert-info">
+                            <h5><i class="bi bi-check2-all"></i> Medication Already Dispensed</h5>
+                            <p class="mb-1"><strong>Status:</strong> {{ dispensing_record.get_dispensing_status_display }}</p>
+                            <p class="mb-1"><strong>Quantity Dispensed:</strong> {{ dispensing_record.quantity_dispensed }} / {{ dispensing_record.quantity_ordered }}</p>
+                            <p class="mb-1"><strong>Dispensed At:</strong> {{ dispensing_record.dispensed_at|date:"M d, Y H:i" }}</p>
+                            <p class="mb-1"><strong>Dispensed By:</strong> {{ dispensing_record.dispensed_by.user.get_full_name|default:"—" }}</p>
+                            <p class="mb-0 text-muted"><small>The record has been saved and moved to the Dispensed Records table. No further action is required.</small></p>
+                        </div>
+                        <a href="{% url 'hospital:pharmacy_pending_dispensing' %}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Back to Dispensing Queue
+                        </a>
+                        {% else %}
                         <div class="alert alert-success">
                             <h5><i class="bi bi-check-circle"></i> Payment Verified</h5>
                             <p class="mb-1"><strong>Receipt:</strong> {{ payment_status.receipt.receipt_number }}</p>
@@ -93,14 +106,24 @@
                             <h6 class="mt-4 mb-3">Dispense Medication</h6>
                             
                             <div class="mb-3">
-                                <label class="form-label">Quantity to Dispense</label>
-                                <input type="number" class="form-control" name="quantity" 
-                                       value="{{ prescription.quantity }}" min="1" max="{{ prescription.quantity }}" required>
+                                <label class="form-label w-100" for="dispense-quantity">
+                                    Quantity to Dispense
+                                    <input type="number" class="form-control mt-1" id="dispense-quantity" name="quantity" 
+                                           value="{{ prescription.quantity }}" min="1" max="{{ prescription.quantity }}" required
+                                           placeholder="Enter quantity to dispense"
+                                           title="Quantity to dispense"
+                                           aria-label="Quantity to dispense">
+                                </label>
                             </div>
                             
                             <div class="mb-3">
-                                <label class="form-label">Instructions for Patient</label>
-                                <textarea class="form-control" name="instructions" rows="3" required>{{ prescription.dose }}, {{ prescription.frequency }}, {{ prescription.duration }}</textarea>
+                                <label class="form-label w-100" for="dispense-instructions">
+                                    Instructions for Patient
+                                    <textarea class="form-control mt-1" id="dispense-instructions" name="instructions" rows="3" required
+                                              placeholder="Enter instructions for the patient"
+                                              title="Instructions for patient"
+                                              aria-label="Instructions for patient">{{ prescription.dose }}, {{ prescription.frequency }}, {{ prescription.duration }}</textarea>
+                                </label>
                             </div>
                             
                             <div class="mb-3 form-check">
@@ -119,6 +142,7 @@
                                 <i class="bi bi-capsule"></i> Dispense Medication
                             </button>
                         </form>
+                        {% endif %}
                     {% else %}
                         <div class="alert alert-danger">
                             <h5><i class="bi bi-exclamation-triangle-fill"></i> 🔒 PAYMENT REQUIRED AT CASHIER</h5>
@@ -225,7 +249,7 @@
                         </div>
                         
                         <div class="d-flex align-items-center">
-                            {% if dispensing_record.is_dispensed %}
+                            {% if dispensing_record and dispensing_record.is_dispensed %}
                                 <i class="bi bi-check-circle-fill text-success me-2"></i>
                             {% else %}
                                 <i class="bi bi-circle me-2"></i>

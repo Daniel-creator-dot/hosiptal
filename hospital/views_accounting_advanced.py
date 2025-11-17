@@ -11,9 +11,10 @@ from django.db.models import Sum, Q, F, Count
 from django.utils import timezone
 from datetime import datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 import json
 
-from .models_accounting import Account, CostCenter
+from .models_accounting import Account, CostCenter, PaymentReceipt
 from .models_accounting_advanced import (
     FiscalYear, AccountingPeriod, Journal, AdvancedJournalEntry, AdvancedJournalEntryLine,
     AdvancedGeneralLedger, PaymentVoucher, ReceiptVoucher,
@@ -189,6 +190,137 @@ def accounting_dashboard(request):
 
 @login_required
 @user_passes_test(is_accountant)
+def accounting_reports_hub(request):
+    """Central landing page for all accounting and finance reports"""
+    today = timezone.now().date()
+    start_of_month = today.replace(day=1)
+    start_of_year = today.replace(month=1, day=1)
+
+    def safe_sum(queryset, field_name):
+        try:
+            return queryset.aggregate(total=Sum(field_name))['total'] or Decimal('0.00')
+        except Exception:
+            return Decimal('0.00')
+
+    def safe_count(queryset):
+        try:
+            return queryset.count()
+        except Exception:
+            return 0
+
+    # Check if advanced accounting tables exist
+    from django.db import connection
+    tables_exist = True
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='hospital_revenue'")
+            if not cursor.fetchone():
+                tables_exist = False
+    except Exception:
+        tables_exist = False
+
+    revenue_mtd = safe_sum(
+        Revenue.objects.filter(revenue_date__gte=start_of_month, revenue_date__lte=today),
+        'amount'
+    )
+    revenue_ytd = safe_sum(
+        Revenue.objects.filter(revenue_date__gte=start_of_year, revenue_date__lte=today),
+        'amount'
+    )
+    expense_mtd = safe_sum(
+        Expense.objects.filter(expense_date__gte=start_of_month, expense_date__lte=today, status='paid'),
+        'amount'
+    )
+    expense_ytd = safe_sum(
+        Expense.objects.filter(expense_date__gte=start_of_year, expense_date__lte=today, status='paid'),
+        'amount'
+    )
+    net_income_mtd = revenue_mtd - expense_mtd
+
+    receivable_total = safe_sum(
+        AdvancedAccountsReceivable.objects.filter(balance_due__gt=0),
+        'balance_due'
+    )
+    receivable_overdue = safe_sum(
+        AdvancedAccountsReceivable.objects.filter(is_overdue=True),
+        'balance_due'
+    )
+    payable_total = safe_sum(
+        AccountsPayable.objects.filter(balance_due__gt=0),
+        'balance_due'
+    )
+    pending_vouchers = safe_count(PaymentVoucher.objects.filter(status='pending_approval'))
+    approved_vouchers = safe_count(PaymentVoucher.objects.filter(status='approved'))
+
+    report_sections = [
+        {
+            'title': 'Core Financial Statements',
+            'description': 'Run the big three statements plus supporting schedules.',
+            'reports': [
+                {'name': 'Profit & Loss Statement', 'url_name': 'hospital:profit_loss_statement', 'icon': 'bi bi-file-earmark-bar-graph', 'badge': 'MTD/YTD'},
+                {'name': 'Balance Sheet', 'url_name': 'hospital:balance_sheet', 'icon': 'bi bi-bank'},
+                {'name': 'Cash Flow Statement', 'url_name': 'hospital:cash_flow_statement', 'icon': 'bi bi-cash-stack'},
+                {'name': 'Trial Balance', 'url_name': 'hospital:trial_balance', 'icon': 'bi bi-calculator'},
+                {'name': 'General Ledger', 'url_name': 'hospital:general_ledger_report', 'icon': 'bi bi-journal-text'},
+            ],
+        },
+        {
+            'title': 'Receivables & Payables',
+            'description': 'Track aging buckets and settlement pipelines.',
+            'reports': [
+                {'name': 'Accounts Receivable Aging', 'url_name': 'hospital:ar_aging_report', 'icon': 'bi bi-receipt'},
+                {'name': 'Accounts Payable Report', 'url_name': 'hospital:ap_report', 'icon': 'bi bi-journal-check'},
+                {'name': 'Payment Voucher Queue', 'url_name': 'hospital:payment_voucher_list', 'icon': 'bi bi-file-earmark-check'},
+                {'name': 'Receipt Vouchers', 'url_name': 'hospital:receipt_voucher_list', 'icon': 'bi bi-receipt-cutoff'},
+            ],
+        },
+        {
+            'title': 'Revenue Intelligence',
+            'description': 'Drill into department revenue trends and KPIs.',
+            'reports': [
+                {'name': 'Revenue Streams Dashboard', 'url_name': 'hospital:revenue_streams_dashboard', 'icon': 'bi bi-bar-chart-line'},
+                {'name': 'Revenue Report', 'url_name': 'hospital:revenue_report', 'icon': 'bi bi-graph-up'},
+                {'name': 'Expense Report', 'url_name': 'hospital:expense_report', 'icon': 'bi bi-graph-down'},
+                {'name': 'Budget vs Actual', 'url_name': 'hospital:budget_vs_actual_report', 'icon': 'bi bi-target'},
+            ],
+        },
+        {
+            'title': 'Operational Controls',
+            'description': 'Close the loop with procurement and budgeting.',
+            'reports': [
+                {'name': 'Procurement Accounts Approval', 'url_name': 'hospital:accounts_approval_list', 'icon': 'bi bi-clipboard-check'},
+                {'name': 'Budget Dashboard', 'url_name': 'hospital:budget_dashboard', 'icon': 'bi bi-pie-chart'},
+                {'name': 'Payment Processing Center', 'url_name': 'hospital:centralized_cashier_dashboard', 'icon': 'bi bi-columns-gap'},
+            ],
+        },
+    ]
+
+    context = {
+        'tables_exist': tables_exist,
+        'today': today,
+        'start_of_month': start_of_month,
+        'start_of_year': start_of_year,
+        'kpis': {
+            'revenue_mtd': revenue_mtd,
+            'revenue_ytd': revenue_ytd,
+            'expense_mtd': expense_mtd,
+            'expense_ytd': expense_ytd,
+            'net_income_mtd': net_income_mtd,
+            'receivable_total': receivable_total,
+            'receivable_overdue': receivable_overdue,
+            'payable_total': payable_total,
+            'pending_vouchers': pending_vouchers,
+            'approved_vouchers': approved_vouchers,
+        },
+        'report_sections': report_sections,
+    }
+
+    template = 'hospital/accounting_reports_hub.html'
+    return render(request, template, context)
+
+
+@login_required
+@user_passes_test(is_accountant)
 def profit_loss_statement(request):
     """Profit & Loss Statement (Income Statement)"""
     
@@ -249,16 +381,77 @@ def profit_loss_statement(request):
             })
             total_expenses += balance
     
-    # Net Income
+    # Cost of Services (COGS) breakdown
+    cost_of_services = {
+        'supplies': Decimal('0.00'),
+        'salaries': Decimal('0.00'),
+        'lab': Decimal('0.00'),
+    }
+    
+    cost_filters = {
+        'supplies': ['supply', 'consumable', 'direct medical'],
+        'salaries': ['salary', 'staff', 'payroll'],
+        'lab': ['lab', 'laboratory'],
+    }
+    
+    try:
+        expense_queryset = Expense.objects.filter(
+            expense_date__gte=start_date,
+            expense_date__lte=end_date,
+            status__in=['approved', 'paid'],
+            is_deleted=False
+        )
+        
+        for key, keywords in cost_filters.items():
+            keyword_filter = Q()
+            for term in keywords:
+                keyword_filter |= Q(category__name__icontains=term) | Q(description__icontains=term)
+            if keyword_filter:
+                cost_of_services[key] = (
+                    expense_queryset.filter(keyword_filter).aggregate(total=Sum('amount'))['total']
+                    or Decimal('0.00')
+                )
+    except Exception:
+        # If expense tables aren't available yet, keep defaults
+        pass
+    
+    total_cost_of_services = sum(cost_of_services.values())
+    
+    # Gross Profit & Net Income
+    gross_profit = total_revenue - total_cost_of_services
     net_income = total_revenue - total_expenses
+    
+    revenue_by_category = [
+        {
+            'category__name': item['account'].account_name if isinstance(item['account'], Account) else str(item['account']),
+            'total': item['amount'],
+        }
+        for item in revenue_data
+    ]
+    
+    expense_by_category = [
+        {
+            'category__name': item['account'].account_name if isinstance(item['account'], Account) else str(item['account']),
+            'total': item['amount'],
+        }
+        for item in expense_data
+    ]
     
     context = {
         'start_date': start_date,
         'end_date': end_date,
+        'date_from': start_date,
+        'date_to': end_date,
+        'today': timezone.now(),
         'revenue_data': revenue_data,
         'expense_data': expense_data,
+        'revenue_by_category': revenue_by_category,
+        'expense_by_category': expense_by_category,
         'total_revenue': total_revenue,
         'total_expenses': total_expenses,
+        'cost_of_services': cost_of_services,
+        'total_cost_of_services': total_cost_of_services,
+        'gross_profit': gross_profit,
         'net_income': net_income,
         'report_title': f'Profit & Loss Statement - {start_date} to {end_date}',
     }
@@ -399,6 +592,7 @@ def trial_balance(request):
     accounts = Account.objects.filter(is_active=True).order_by('account_code')
     
     trial_balance_data = []
+    accounts_with_balances = []
     total_debits = Decimal('0.00')
     total_credits = Decimal('0.00')
     
@@ -416,6 +610,10 @@ def trial_balance(request):
         debits = ledger_sum['debits'] or Decimal('0.00')
         credits = ledger_sum['credits'] or Decimal('0.00')
         balance = debits - credits
+        
+        if balance != 0:
+            setattr(account, 'balance', balance)
+            accounts_with_balances.append(account)
         
         if balance != 0:
             if balance > 0:
@@ -437,13 +635,17 @@ def trial_balance(request):
     
     # Check if balanced
     is_balanced = abs(total_debits - total_credits) < 0.01
+    balance_difference = total_debits - total_credits
     
     context = {
         'as_of_date': as_of_date,
+        'accounts': accounts_with_balances,
         'trial_balance_data': trial_balance_data,
         'total_debits': total_debits,
         'total_credits': total_credits,
         'is_balanced': is_balanced,
+        'balance_difference': balance_difference,
+        'today': timezone.now(),
         'report_title': f'Trial Balance as of {as_of_date}',
     }
     
@@ -784,17 +986,25 @@ def budget_variance_report(request):
 def revenue_report(request):
     """Detailed Revenue Report"""
     
-    start_date = request.GET.get('start_date')
-    end_date = request.GET.get('end_date')
-    category_id = request.GET.get('category')
+    # Accept both legacy (start_date/end_date) and new (date_from/date_to) params
+    start_date_param = request.GET.get('date_from') or request.GET.get('start_date')
+    end_date_param = request.GET.get('date_to') or request.GET.get('end_date')
     
-    if not start_date or not end_date:
+    category_id = request.GET.get('category') or request.GET.get('category_id')
+    service_type = request.GET.get('service_type') or request.GET.get('service')
+    
+    if not start_date_param or not end_date_param:
         today = timezone.now().date()
         start_date = today.replace(day=1)
         end_date = today
     else:
-        start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
-        end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+        try:
+            start_date = datetime.strptime(start_date_param, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_param, '%Y-%m-%d').date()
+        except ValueError:
+            today = timezone.now().date()
+            start_date = today.replace(day=1)
+            end_date = today
     
     # Get revenues
     revenues = Revenue.objects.filter(
@@ -805,28 +1015,209 @@ def revenue_report(request):
     if category_id:
         revenues = revenues.filter(category_id=category_id)
     
-    # Summary by category
-    revenue_by_category = revenues.values('category__name').annotate(
+    if service_type:
+        service_type_normalized = service_type.lower()
+        
+        service_filter = Q(service_type__iexact=service_type_normalized)
+        service_type_keywords = {
+            'pharmacy': ['pharmacy', 'drug', 'dispensary', 'medication', 'medicine', 'rx'],
+            'laboratory': ['laboratory', 'lab', 'test'],
+            'imaging': ['imaging', 'radiology', 'scan', 'x-ray', 'mri', 'ct'],
+            'consultation': ['consultation', 'clinic', 'visit', 'outpatient'],
+            'dental': ['dental', 'dentist', 'tooth'],
+            'gynecology': ['gyne', 'obstetric', 'maternity', 'antenatal'],
+            'surgery': ['surgery', 'procedure', 'theatre', 'operation'],
+            'emergency': ['emergency', 'casualty', 'er'],
+            'ambulance': ['ambulance', 'ems', 'transport'],
+            'admission': ['admission', 'ward', 'inpatient', 'bed'],
+            'other': [],
+        }
+        keywords = service_type_keywords.get(service_type_normalized, [])
+        if service_type_normalized not in keywords:
+            keywords.append(service_type_normalized)
+        if keywords:
+            keyword_query = Q()
+            for kw in keywords:
+                keyword_query |= (
+                    Q(category__name__icontains=kw) |
+                    Q(category__code__icontains=kw) |
+                    Q(description__icontains=kw) |
+                    Q(revenue_stream__name__icontains=kw) |
+                    Q(revenue_stream__code__icontains=kw)
+                )
+            service_filter |= keyword_query
+        
+        # Match payment receipts linked to the revenue's invoice/patient
+        receipt_match = Q(invoice__receipts__service_type__iexact=service_type_normalized) | Q(
+            invoice__receipts__service_type__in=[
+                f"{service_type_normalized}_{suffix}" for suffix in ['prescription', 'walkin', 'sale']
+            ]
+        )
+        service_filter |= receipt_match
+        
+        revenues = revenues.filter(service_filter).distinct()
+        service_type = service_type_normalized
+    
+    # Base summaries from Revenue entries
+    category_summary = {}
+    service_summary = {}
+    method_summary = {}
+    
+    revenue_by_category_qs = revenues.values('category__name').annotate(
         total=Sum('amount'),
         count=Count('id')
     ).order_by('-total')
     
-    # Summary by payment method
-    revenue_by_method = revenues.values('payment_method').annotate(
+    revenue_by_service_type_qs = revenues.values('service_type').annotate(
+        total=Sum('amount'),
+        count=Count('id')
+    ).order_by('-total')
+    
+    revenue_by_method_qs = revenues.values('payment_method').annotate(
         total=Sum('amount'),
         count=Count('id')
     ).order_by('-total')
     
     total_revenue = revenues.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+    entry_count = revenues.count()
+    
+    for item in revenue_by_category_qs:
+        name = item['category__name'] or 'Uncategorized'
+        data = category_summary.setdefault(name, {'total': Decimal('0.00'), 'count': 0})
+        data['total'] += item['total'] or Decimal('0.00')
+        data['count'] += item['count'] or 0
+    
+    for item in revenue_by_service_type_qs:
+        key = item['service_type'] or 'other'
+        data = service_summary.setdefault(key, {'total': Decimal('0.00'), 'count': 0})
+        data['total'] += item['total'] or Decimal('0.00')
+        data['count'] += item['count'] or 0
+    
+    for item in revenue_by_method_qs:
+        method = item['payment_method'] or 'unknown'
+        data = method_summary.setdefault(method, {'total': Decimal('0.00'), 'count': 0})
+        data['total'] += item['total'] or Decimal('0.00')
+        data['count'] += item['count'] or 0
+    
+    service_type_label_map = dict(Revenue.SERVICE_TYPES)
+    
+    # Fallback / Augment with PaymentReceipt data (ensures Pharmacy/Lab filters show real revenue)
+    receipt_entries = []
+    receipts = PaymentReceipt.objects.filter(
+        receipt_date__date__gte=start_date,
+        receipt_date__date__lte=end_date,
+        is_deleted=False
+    ).select_related('patient', 'invoice').prefetch_related('invoice__lines__service_code')
+    
+    if service_type:
+        receipt_filter = Q(service_type__iexact=service_type_normalized)
+        for kw in keywords:
+            receipt_filter |= Q(service_type__icontains=kw)
+        receipts = receipts.filter(receipt_filter)
+    
+    receipt_total = Decimal('0.00')
+    for receipt in receipts:
+        invoice_lines = list(receipt.invoice.lines.all()) if receipt.invoice else []
+        service_code = invoice_lines[0].service_code if invoice_lines else None
+        category_name = ''
+        if service_code:
+            if hasattr(service_code, 'name') and service_code.name:
+                category_name = service_code.name
+            elif hasattr(service_code, 'description') and service_code.description:
+                category_name = service_code.description
+            elif hasattr(service_code, 'service_name') and service_code.service_name:
+                category_name = service_code.service_name
+            elif hasattr(service_code, 'category') and service_code.category:
+                category_name = getattr(service_code.category, 'name', '') or getattr(service_code.category, 'description', '')
+            else:
+                category_name = getattr(service_code, 'code', '') or 'Service'
+        
+        entry = SimpleNamespace(
+            revenue_date=receipt.receipt_date.date(),
+            revenue_number=receipt.receipt_number,
+            category=None,
+            category_name=category_name,
+            service_type=receipt.service_type or 'other',
+            service_label=service_type_label_map.get(receipt.service_type, receipt.service_type.title() if receipt.service_type else 'Other'),
+            description=receipt.notes or f"Receipt {receipt.receipt_number}",
+            patient=receipt.patient,
+            payment_method=receipt.payment_method,
+            amount=receipt.amount_paid,
+            notes=receipt.notes,
+            is_receipt=True,
+        )
+        receipt_entries.append(entry)
+        receipt_total += receipt.amount_paid or Decimal('0.00')
+        
+        name = category_name or 'Uncategorized'
+        cat_data = category_summary.setdefault(name, {'total': Decimal('0.00'), 'count': 0})
+        cat_data['total'] += receipt.amount_paid or Decimal('0.00')
+        cat_data['count'] += 1
+        
+        svc_key = entry.service_type or 'other'
+        svc_data = service_summary.setdefault(svc_key, {'total': Decimal('0.00'), 'count': 0})
+        svc_data['total'] += receipt.amount_paid or Decimal('0.00')
+        svc_data['count'] += 1
+        
+        method_key = receipt.payment_method or 'unknown'
+        meth_data = method_summary.setdefault(method_key, {'total': Decimal('0.00'), 'count': 0})
+        meth_data['total'] += receipt.amount_paid or Decimal('0.00')
+        meth_data['count'] += 1
+    
+    report_entries = list(revenues) + receipt_entries
+    total_revenue = (total_revenue or Decimal('0.00')) + receipt_total
+    entry_count += len(receipt_entries)
+    average_revenue = (total_revenue / entry_count) if entry_count else Decimal('0.00')
+    
+    # Convert summaries to list with percentages
+    revenue_by_category = []
+    for name, data in category_summary.items():
+        percentage = (data['total'] / total_revenue * 100) if total_revenue else Decimal('0.00')
+        revenue_by_category.append({
+            'category__name': name,
+            'total': data['total'],
+            'count': data['count'],
+            'percentage': percentage
+        })
+    
+    revenue_by_service_type = []
+    for key, data in service_summary.items():
+        percentage = (data['total'] / total_revenue * 100) if total_revenue else Decimal('0.00')
+        revenue_by_service_type.append({
+            'service_type': key,
+            'label': service_type_label_map.get(key, key.title() if key else 'Other'),
+            'total': data['total'],
+            'count': data['count'],
+            'percentage': percentage
+        })
+    
+    revenue_by_method = []
+    for key, data in method_summary.items():
+        percentage = (data['total'] / total_revenue * 100) if total_revenue else Decimal('0.00')
+        revenue_by_method.append({
+            'method': key,
+            'total': data['total'],
+            'count': data['count'],
+            'percentage': percentage
+        })
     
     context = {
         'start_date': start_date,
         'end_date': end_date,
-        'revenues': revenues,
+        'date_from': start_date,
+        'date_to': end_date,
+        'revenues': report_entries,
+        'revenue_entries': report_entries,
+        'selected_category': str(category_id) if category_id else '',
+        'selected_service_type': service_type or '',
         'revenue_by_category': revenue_by_category,
+        'revenue_by_service_type': revenue_by_service_type,
         'revenue_by_method': revenue_by_method,
         'total_revenue': total_revenue,
+        'average_revenue': average_revenue,
+        'entry_count': entry_count,
         'categories': RevenueCategory.objects.filter(is_active=True),
+        'service_types': Revenue.SERVICE_TYPES,
         'report_title': f'Revenue Report - {start_date} to {end_date}',
     }
     
@@ -1157,16 +1548,52 @@ def export_vouchers_pdf(request):
 def receipt_voucher_list(request):
     """Receipt Voucher Management"""
     
-    receipts = ReceiptVoucher.objects.all().select_related(
+    search_query = request.GET.get('q', '').strip()
+    status_filter = request.GET.get('status', '').strip()
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+    
+    receipts = ReceiptVoucher.objects.filter(is_deleted=False).select_related(
         'patient', 'revenue_account', 'received_by'
     ).order_by('-receipt_date')
     
-    # Statistics
-    total_amount = receipts.filter(status='issued').aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+    if status_filter:
+        receipts = receipts.filter(status=status_filter)
+    
+    if start_date:
+        try:
+            start_date_parsed = datetime.strptime(start_date, '%Y-%m-%d').date()
+            receipts = receipts.filter(receipt_date__date__gte=start_date_parsed)
+        except ValueError:
+            pass
+    
+    if end_date:
+        try:
+            end_date_parsed = datetime.strptime(end_date, '%Y-%m-%d').date()
+            receipts = receipts.filter(receipt_date__date__lte=end_date_parsed)
+        except ValueError:
+            pass
+    
+    if search_query:
+        receipts = receipts.filter(
+            Q(receipt_number__icontains=search_query) |
+            Q(description__icontains=search_query) |
+            Q(patient__first_name__icontains=search_query) |
+            Q(patient__last_name__icontains=search_query) |
+            Q(received_from__icontains=search_query)
+        )
+    
+    total_amount = receipts.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+    status_counts = ReceiptVoucher.objects.filter(is_deleted=False).values('status').annotate(count=Count('id'))
     
     context = {
         'receipts': receipts,
         'total_amount': total_amount,
+        'status_counts': status_counts,
+        'selected_status': status_filter,
+        'search_query': search_query,
+        'start_date': start_date,
+        'end_date': end_date,
     }
     
     return render(request, 'hospital/receipt_voucher_list.html', context)

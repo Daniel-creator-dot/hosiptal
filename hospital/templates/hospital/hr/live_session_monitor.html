@@ -1,0 +1,181 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Live System Sessions{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-4">
+        <div>
+            <h1 class="h3 mb-1">Enterprise Session Radar</h1>
+            <p class="text-muted mb-0">
+                Track every critical unit in real-time. Red means nobody is on the system, green means active staff are online.
+            </p>
+        </div>
+        <div class="mt-3 mt-md-0">
+            <a href="{% url 'hospital:login_attendance_dashboard' %}" class="btn btn-outline-primary">
+                <i class="bi bi-clock-history me-2"></i>Login Attendance
+            </a>
+        </div>
+    </div>
+
+    <form class="card shadow-sm mb-4" method="get">
+        <div class="card-body row g-3 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label text-muted">Online Window (minutes)</label>
+                <input type="number" class="form-control" name="window" min="5" max="180" value="{{ window_minutes }}">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label text-muted">Lookback (hours)</label>
+                <input type="number" class="form-control" name="lookback" min="2" max="24" value="{{ lookback_hours }}">
+            </div>
+            <div class="col-md-4 text-md-end">
+                <button class="btn btn-primary w-100">
+                    <i class="bi bi-broadcast-pin me-2"></i>Refresh Monitor
+                </button>
+            </div>
+        </div>
+    </form>
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card shadow-sm h-100 border-0 bg-success-subtle">
+                <div class="card-body">
+                    <p class="text-muted text-uppercase small mb-1">Units Online</p>
+                    <h2 class="mb-0 text-success">{{ stats.units_online }}</h2>
+                    <small class="text-muted">Showing active staff</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card shadow-sm h-100 border-0 bg-warning-subtle">
+                <div class="card-body">
+                    <p class="text-muted text-uppercase small mb-1">Units Idle</p>
+                    <h2 class="mb-0 text-warning">{{ stats.units_idle }}</h2>
+                    <small class="text-muted">Recently active but no current sessions</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card shadow-sm h-100 border-0 bg-danger-subtle">
+                <div class="card-body">
+                    <p class="text-muted text-uppercase small mb-1">Units Offline</p>
+                    <h2 class="mb-0 text-danger">{{ stats.units_offline }}</h2>
+                    <small class="text-muted">No logins in the selected window</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card shadow-sm h-100 border-0 bg-primary-subtle">
+                <div class="card-body">
+                    <p class="text-muted text-uppercase small mb-1">Staff Online</p>
+                    <h2 class="mb-0 text-primary">{{ stats.staff_online }}</h2>
+                    <small class="text-muted">Unique staff with active sessions</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-4">
+        {% for unit in unit_cards %}
+        <div class="col-xl-3 col-lg-4 col-md-6">
+            <div class="card shadow-sm h-100 border-0 {% if unit.status == 'online' %}border-success-subtle{% elif unit.status == 'idle' %}border-warning-subtle{% else %}border-danger-subtle{% endif %}">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h5 class="mb-0">
+                                {% if unit.is_priority %}
+                                    <i class="bi bi-lightning-charge text-warning me-1"></i>
+                                {% endif %}
+                                {{ unit.name }}
+                            </h5>
+                            <small class="text-muted">
+                                {% if unit.department %}
+                                    {{ unit.department.code|default:unit.department.name }}
+                                {% else %}
+                                    Cross-unit
+                                {% endif %}
+                            </small>
+                        </div>
+                        <span class="badge
+                            {% if unit.status == 'online' %}bg-success-subtle text-success
+                            {% elif unit.status == 'idle' %}bg-warning-subtle text-warning
+                            {% else %}bg-danger-subtle text-danger{% endif %}">
+                            {% if unit.status == 'online' %}Online{% elif unit.status == 'idle' %}Idle{% else %}Offline{% endif %}
+                        </span>
+                    </div>
+                    <div class="display-6 mb-0">{{ unit.online_count }}</div>
+                    <p class="text-muted small mb-2">active users</p>
+                    <p class="mb-1">
+                        <strong>Latest:</strong>
+                        {% if unit.recent_names %}
+                            {{ unit.recent_names|join:", " }}
+                            {% if unit.total_sessions > unit.recent_names|length %}
+                                +{{ unit.total_sessions|add:"-"|add:unit.recent_names|length }} more
+                            {% endif %}
+                        {% else %}
+                            <span class="text-muted">No recent sessions</span>
+                        {% endif %}
+                    </p>
+                    <p class="mb-1"><strong>Locations:</strong> {{ unit.locations_display }}</p>
+                    <p class="text-muted small mb-0">
+                        <strong>Last seen:</strong>
+                        {% if unit.last_seen %}
+                            {{ unit.last_seen|naturaltime }}
+                        {% else %}
+                            Never
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-people me-2 text-primary"></i>Live Sessions</h5>
+            <span class="text-muted small">{{ live_sessions|length }} active</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Staff</th>
+                        <th>Department</th>
+                        <th>Login Time</th>
+                        <th>Device</th>
+                        <th>Location</th>
+                        <th>IP</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if live_sessions %}
+                        {% for session in live_sessions %}
+                        <tr>
+                            <td>{{ session.staff }}</td>
+                            <td>{{ session.department }}</td>
+                            <td>{{ session.login_time|date:"M d, H:i" }}</td>
+                            <td>{{ session.device }}</td>
+                            <td>{{ session.location|default:"—" }}</td>
+                            <td>{{ session.ip_address }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="6" class="text-center text-muted py-5">
+                                <i class="bi bi-emoji-frown mb-2" style="font-size: 2rem;"></i>
+                                <p class="mb-0">No one is currently online in the selected window.</p>
+                            </td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+

@@ -232,9 +232,87 @@ True
 
 ---
 
+### 18. REDIS_MAX_CONNECTIONS
+**LEFT FIELD (Name):**
+```
+REDIS_MAX_CONNECTIONS
+```
+**RIGHT FIELD (Value):**
+```
+200
+```
+ℹ️ Supports roughly 500 active sessions without exhausting Redis.
+
+---
+
+### 19. REDIS_SOCKET_TIMEOUT
+**LEFT FIELD (Name):**
+```
+REDIS_SOCKET_TIMEOUT
+```
+**RIGHT FIELD (Value):**
+```
+5
+```
+✅ Timeout (in seconds) for Redis connect/read.
+
+---
+
+### 20. GUNICORN_WORKERS
+**LEFT FIELD (Name):**
+```
+GUNICORN_WORKERS
+```
+**RIGHT FIELD (Value):**
+```
+6
+```
+⚙️ Handles ~500 concurrent web requests (adjust if you scale up/down servers).
+
+---
+
+### 21. GUNICORN_THREADS
+**LEFT FIELD (Name):**
+```
+GUNICORN_THREADS
+```
+**RIGHT FIELD (Value):**
+```
+4
+```
+✅ Multi-threaded workers reduce latency for IO-bound pages.
+
+---
+
+### 22. GUNICORN_MAX_REQUESTS
+**LEFT FIELD (Name):**
+```
+GUNICORN_MAX_REQUESTS
+```
+**RIGHT FIELD (Value):**
+```
+1000
+```
+🔁 Recycles workers periodically to prevent memory leaks.
+
+---
+
+### 23. GUNICORN_MAX_REQUESTS_JITTER
+**LEFT FIELD (Name):**
+```
+GUNICORN_MAX_REQUESTS_JITTER
+```
+**RIGHT FIELD (Value):**
+```
+100
+```
+⚖️ Stagger worker restarts so they don't recycle at the same time.
+
+---
+
 ## 🔵 OPTIONAL - Can Add Later
 
-### 18. CORS_ALLOWED_ORIGINS (Only if you have a separate frontend)
+### 24. CORS_ALLOWED_ORIGINS (Only if you have a separate frontend)
 **LEFT FIELD (Name):**
 ```
 CORS_ALLOWED_ORIGINS
@@ -247,7 +325,7 @@ https://your-frontend-domain.com
 
 ---
 
-### 19. HOSPITAL_LOGO_URL (Optional)
+### 25. HOSPITAL_LOGO_URL (Optional)
 **LEFT FIELD (Name):**
 ```
 HOSPITAL_LOGO_URL
@@ -260,7 +338,7 @@ https://yourdomain.com/logo.png
 
 ---
 
-### 20. SENTRY_DSN (Optional - for error tracking)
+### 26. SENTRY_DSN (Optional - for error tracking)
 **LEFT FIELD (Name):**
 ```
 SENTRY_DSN
@@ -325,4 +403,5 @@ Everything else can stay as shown (or customize later).
 ---
 
 **🎉 That's it! After saving, your HMS will be live on Render!**
+
 

@@ -1,0 +1,213 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Encounter Documentation - {{ encounter.patient.full_name }}{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+        <div>
+            <h2 class="mb-1">{{ encounter.get_encounter_type_display|default:"Encounter" }} Documentation</h2>
+            <p class="text-muted mb-0">
+                {{ encounter.patient.full_name }} · {{ encounter.started_at|date:"M d, Y H:i" }}
+            </p>
+        </div>
+        <a href="{% url 'hospital:comprehensive_medical_record' encounter.patient.id %}" class="btn btn-outline-primary">
+            <i class="bi bi-arrow-left"></i> Back to Patient Folder
+        </a>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-8">
+            <div class="card mb-4">
+                <div class="card-header bg-light">
+                    <strong>Clinical Notes</strong>
+                </div>
+                <div class="card-body">
+                    {% if clinical_notes %}
+                        {% for note in clinical_notes %}
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between">
+                                <strong>{{ note.get_note_type_display|default:"Note" }}</strong>
+                                <small class="text-muted">{{ note.created|naturaltime }}</small>
+                            </div>
+                            <p class="mb-0">{{ note.notes|default:note.subjective|linebreaks }}</p>
+                        </div>
+                        {% if not forloop.last %}
+                        <hr>
+                        {% endif %}
+                        {% endfor %}
+                    {% else %}
+                        <em class="text-muted">No notes recorded yet.</em>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-header bg-light">
+                    <strong>Diagnoses & Procedures</strong>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>Diagnoses</h6>
+                            <ul class="list-unstyled">
+                                {% for diagnosis in diagnoses %}
+                                <li>{{ diagnosis.diagnosis_name }} <small class="text-muted">{{ diagnosis.diagnosis_code }}</small></li>
+                                {% empty %}
+                                <li><em class="text-muted">No diagnoses recorded.</em></li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Procedures</h6>
+                            <ul class="list-unstyled">
+                                {% for procedure in procedures %}
+                                <li>{{ procedure.procedure_name }} <small class="text-muted">{{ procedure.procedure_date|date:"M d, Y" }}</small></li>
+                                {% empty %}
+                                <li><em class="text-muted">No procedures recorded.</em></li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header bg-light">
+                    <strong>Lab & Imaging</strong>
+                </div>
+                <div class="card-body">
+                    <h6>Lab Results</h6>
+                    <ul class="list-group mb-3">
+                        {% for lab in lab_tests %}
+                        <li class="list-group-item">
+                            <div class="d-flex justify-content-between">
+                                <span>{{ lab.test.name }}</span>
+                                <small class="text-muted">{{ lab.created|date:"M d, Y H:i" }}</small>
+                            </div>
+                            <div>Result: <strong>{{ lab.value }}</strong> {{ lab.units }}</div>
+                            <small>Status: {{ lab.get_status_display }}</small>
+                        </li>
+                        {% empty %}
+                        <li class="list-group-item text-muted">No lab results recorded.</li>
+                        {% endfor %}
+                    </ul>
+
+                    <h6>Imaging Studies</h6>
+                    {% if imaging_studies %}
+                        {% for study in imaging_studies %}
+                        <div class="border rounded p-3 mb-3">
+                            <div class="d-flex justify-content-between flex-wrap gap-2">
+                                <div>
+                                    <strong>{{ study.get_modality_display }} · {{ study.body_part }}</strong><br>
+                                    <small class="text-muted">{{ study.study_type|default:"Imaging study" }}</small>
+                                </div>
+                                <div class="text-end small text-muted">
+                                    {{ study.performed_at|default:study.created|date:"M d, Y H:i" }}<br>
+                                    Status: {{ study.get_status_display }}
+                                </div>
+                            </div>
+                            {% if study.findings or study.impression or study.report_text %}
+                            <div class="mt-3">
+                                {% if study.findings %}
+                                <p class="mb-2">
+                                    <span class="text-uppercase text-muted small">Findings</span><br>
+                                    {{ study.findings|linebreaks }}
+                                </p>
+                                {% endif %}
+                                {% if study.impression %}
+                                <p class="mb-2">
+                                    <span class="text-uppercase text-muted small">Impression</span><br>
+                                    {{ study.impression|linebreaks }}
+                                </p>
+                                {% endif %}
+                                {% if study.report_text %}
+                                <p class="mb-0">
+                                    <span class="text-uppercase text-muted small">Report</span><br>
+                                    {{ study.report_text|linebreaks }}
+                                </p>
+                                {% endif %}
+                            </div>
+                            {% endif %}
+                            
+                            {% if study.images.all %}
+                            <div class="row g-3 mt-3">
+                                {% for image in study.images.all %}
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="card h-100 shadow-sm">
+                                        {% if image.is_previewable %}
+                                        <img src="{{ image.image.url }}" class="card-img-top" alt="{{ image.description|default:'Imaging image' }}">
+                                        {% else %}
+                                        <div class="d-flex flex-column align-items-center justify-content-center bg-light border-bottom" style="height: 180px;">
+                                            <i class="bi bi-file-earmark-text" style="font-size: 36px; color: #6b7280;"></i>
+                                            <small class="text-muted mt-2">{{ image.filename|default:"Attachment" }}</small>
+                                        </div>
+                                        {% endif %}
+                                        <div class="card-body p-3">
+                                            <p class="small mb-1">{{ image.description|default:image.filename|default:"Image" }} · Seq {{ image.sequence_number }}</p>
+                                            <a href="{{ image.image.url }}" target="_blank" class="btn btn-sm btn-outline-primary w-100">View / Download</a>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% else %}
+                            <p class="text-muted small mb-0">No imaging files uploaded yet.</p>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="text-muted">No imaging studies recorded.</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card mb-4">
+                <div class="card-header bg-light">
+                    <strong>Vitals</strong>
+                </div>
+                <div class="card-body">
+                    {% if vital_signs %}
+                    <ul class="list-group">
+                        {% for vital in vital_signs %}
+                        <li class="list-group-item">
+                            <div class="d-flex justify-content-between">
+                                <strong>{{ vital.recorded_at|date:"M d, Y H:i" }}</strong>
+                                <small class="text-muted">{{ vital.recorded_by.get_full_name|default:vital.recorded_by.user.get_full_name }}</small>
+                            </div>
+                            <div class="small text-muted">
+                                BP {{ vital.systolic_bp }}/{{ vital.diastolic_bp }} · Pulse {{ vital.pulse }} · Temp {{ vital.temperature }}°C
+                            </div>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                        <em class="text-muted">No vitals recorded.</em>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header bg-light">
+                    <strong>Actions</strong>
+                </div>
+                <div class="card-body">
+                    <form method="post">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="clinical_note">
+                        <div class="mb-3">
+                            <label class="form-label">Add Quick Note</label>
+                            <textarea class="form-control" name="notes" rows="3" placeholder="SOAP note..."></textarea>
+                        </div>
+                        <button class="btn btn-primary w-100">Save Note</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

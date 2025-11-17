@@ -6,10 +6,11 @@ from django.contrib.auth.decorators import login_required, user_passes_test
 from django.http import HttpResponse, JsonResponse
 from django.db.models import Count, Q, Sum, Avg
 from django.utils import timezone
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 import csv
 from io import BytesIO
+from collections import defaultdict
 
 from .models import Staff, Department
 from .models_hr import (
@@ -17,6 +18,7 @@ from .models_hr import (
     TrainingRecord, StaffContract, PayGrade
 )
 from .models_advanced import LeaveRequest, Attendance
+from .models_login_tracking import LoginHistory, SecurityAlert
 
 try:
     from openpyxl import Workbook
@@ -326,6 +328,254 @@ def attendance_report(request):
     }
     
     return render(request, 'hospital/reports/attendance_report.html', context)
+
+
+@login_required
+@user_passes_test(is_hr_or_admin)
+def login_attendance_dashboard(request):
+    """Real-time attendance derived from staff login sessions"""
+    date_param = request.GET.get('date', '')
+    department_filter = request.GET.get('department', '')
+    suspicious_only = request.GET.get('suspicious', '') == 'yes'
+    
+    try:
+        selected_date = date.fromisoformat(date_param) if date_param else date.today()
+    except ValueError:
+        selected_date = date.today()
+    
+    tz = timezone.get_current_timezone()
+    start_dt = timezone.make_aware(datetime.combine(selected_date, time.min), tz)
+    end_dt = timezone.make_aware(datetime.combine(selected_date, time.max), tz)
+    
+    login_qs = LoginHistory.objects.filter(
+        login_time__gte=start_dt,
+        login_time__lte=end_dt,
+        status='success',
+        is_deleted=False
+    ).select_related('user', 'staff__department')
+    
+    if department_filter:
+        login_qs = login_qs.filter(staff__department_id=department_filter)
+    
+    if suspicious_only:
+        login_qs = login_qs.filter(is_suspicious=True)
+    
+    attendance_map = {}
+    for record in login_qs:
+        staff = record.staff
+        if not staff:
+            continue
+        
+        key = staff.pk
+        session_end = record.logout_time or record.login_time
+        entry = attendance_map.get(key)
+        
+        if not entry:
+            attendance_map[key] = {
+                'staff': staff,
+                'department': staff.department,
+                'first_login': record.login_time,
+                'last_activity': session_end,
+                'total_sessions': 1,
+                'open_sessions': 0 if record.logout_time else 1,
+                'locations': {record.location_display},
+                'device_types': {record.device_type or 'Unknown'},
+                'latest_ip': record.ip_address,
+                'suspicious': record.is_suspicious,
+            }
+        else:
+            entry['first_login'] = min(entry['first_login'], record.login_time)
+            entry['last_activity'] = max(entry['last_activity'], session_end)
+            entry['total_sessions'] += 1
+            entry['locations'].add(record.location_display)
+            entry['device_types'].add(record.device_type or 'Unknown')
+            entry['latest_ip'] = record.ip_address or entry['latest_ip']
+            entry['suspicious'] = entry['suspicious'] or record.is_suspicious
+            if not record.logout_time:
+                entry['open_sessions'] += 1
+    
+    attendance_rows = sorted(
+        attendance_map.values(),
+        key=lambda item: (
+            item['department'].name if item['department'] else '',
+            item['staff'].user.last_name,
+            item['staff'].user.first_name,
+        )
+    )
+    
+    total_logged_in = len(attendance_rows)
+    currently_online = sum(1 for row in attendance_rows if row['open_sessions'] > 0)
+    suspicious_staff = sum(1 for row in attendance_rows if row['suspicious'])
+    
+    avg_first_login = None
+    if attendance_rows:
+        total_minutes = sum(row['first_login'].hour * 60 + row['first_login'].minute for row in attendance_rows)
+        avg_minutes = total_minutes // len(attendance_rows)
+        avg_hour = avg_minutes // 60
+        avg_minute = avg_minutes % 60
+        avg_first_login = f"{avg_hour:02d}:{avg_minute:02d}"
+    
+    recent_alerts = SecurityAlert.objects.filter(
+        alert_time__date=selected_date,
+        is_deleted=False
+    ).select_related('user').order_by('-alert_time')[:8]
+    
+    recent_logins = login_qs.order_by('-login_time')[:10]
+    departments = Department.objects.filter(is_deleted=False).order_by('name')
+    
+    for row in attendance_rows:
+        row['locations_display'] = ', '.join(sorted(filter(None, row['locations'])))
+        row['devices_display'] = ', '.join(sorted(filter(None, row['device_types'])))
+        row['first_login_time'] = timezone.localtime(row['first_login'])
+        row['last_activity_time'] = timezone.localtime(row['last_activity'])
+    
+    context = {
+        'title': 'Login Attendance Monitor',
+        'attendance_rows': attendance_rows,
+        'selected_date': selected_date,
+        'date_param': selected_date.isoformat(),
+        'departments': departments,
+        'department_filter': department_filter,
+        'suspicious_only': suspicious_only,
+        'stats': {
+            'total_logged_in': total_logged_in,
+            'currently_online': currently_online,
+            'suspicious_staff': suspicious_staff,
+            'avg_first_login': avg_first_login,
+        },
+        'recent_alerts': recent_alerts,
+        'recent_logins': recent_logins,
+        'has_data': bool(attendance_rows),
+    }
+    
+    return render(request, 'hospital/hr/login_attendance_dashboard.html', context)
+
+
+@login_required
+@user_passes_test(is_hr_or_admin)
+def live_session_monitor(request):
+    """
+    Real-time unit session monitor derived from login history
+    """
+    now = timezone.now()
+    window_minutes = int(request.GET.get('window', 15) or 15)
+    window_minutes = max(5, min(window_minutes, 180))
+    window_delta = timedelta(minutes=window_minutes)
+    idle_delta = timedelta(minutes=window_minutes * 2)
+    
+    lookback_hours = int(request.GET.get('lookback', 8) or 8)
+    lookback_hours = max(2, min(lookback_hours, 24))
+    lookback_start = now - timedelta(hours=lookback_hours)
+    
+    departments = Department.objects.filter(is_deleted=False).order_by('name')
+    priority_units = {'pharmacy', 'laboratory', 'cashier', 'inventory', 'front desk', 'reception', 'radiology'}
+    
+    def init_unit(dept=None, label=None):
+        name = label or (dept.name if dept else 'General / Cross-Department')
+        return {
+            'department': dept,
+            'name': name,
+            'is_priority': name.lower() in priority_units,
+            'online_users': set(),
+            'recent_users': [],
+            'locations': set(),
+            'last_seen': None,
+            'total_sessions': 0,
+        }
+    
+    unit_map = {}
+    for dept in departments:
+        unit_map[dept.pk] = init_unit(dept)
+    unit_map['unassigned'] = init_unit(None)
+    
+    recent_logins = LoginHistory.objects.filter(
+        login_time__gte=lookback_start,
+        status='success',
+        is_deleted=False
+    ).select_related('staff__user', 'staff__department').order_by('-login_time')
+    
+    live_sessions = []
+    
+    for login in recent_logins:
+        staff = login.staff
+        dept_id = staff.department_id if staff and staff.department else 'unassigned'
+        unit = unit_map.get(dept_id)
+        if unit is None:
+            unit = init_unit(label=f"Dept #{dept_id}")
+            unit_map[dept_id] = unit
+        
+        staff_user = staff.user if staff and staff.user else login.user
+        staff_name = staff_user.get_full_name() or staff_user.username
+        
+        last_activity = login.logout_time or login.login_time
+        is_online = (login.logout_time is None) or (login.logout_time >= now - window_delta)
+        
+        unit['total_sessions'] += 1
+        if last_activity and (unit['last_seen'] is None or last_activity > unit['last_seen']):
+            unit['last_seen'] = last_activity
+        if login.location_display:
+            unit['locations'].add(login.location_display)
+        
+        if staff_name:
+            unit['recent_users'].append({
+                'name': staff_name,
+                'time': login.login_time,
+                'is_online': is_online,
+            })
+            if is_online:
+                unit['online_users'].add(staff_name)
+                live_sessions.append({
+                    'staff': staff_name,
+                    'department': staff.department.name if staff and staff.department else 'General / Cross-Department',
+                    'login_time': login.login_time,
+                    'device': login.device_type or 'Unknown',
+                    'location': login.location_display or 'Unknown',
+                    'ip_address': login.ip_address or '—',
+                })
+    
+    unit_cards = []
+    for unit in unit_map.values():
+        online_count = len(unit['online_users'])
+        if online_count > 0:
+            status = 'online'
+        elif unit['last_seen'] and unit['last_seen'] >= now - idle_delta:
+            status = 'idle'
+        else:
+            status = 'offline'
+        
+        unit_cards.append({
+            'name': unit['name'],
+            'department': unit['department'],
+            'is_priority': unit['is_priority'],
+            'online_count': online_count,
+            'recent_names': [u['name'] for u in unit['recent_users'][:3]],
+            'total_sessions': unit['total_sessions'],
+            'last_seen': unit['last_seen'],
+            'status': status,
+            'locations_display': ', '.join(sorted(unit['locations'])) if unit['locations'] else '—',
+        })
+    
+    unit_cards.sort(key=lambda card: (0 if card['is_priority'] else 1, card['name']))
+    
+    stats = {
+        'units_online': sum(1 for card in unit_cards if card['status'] == 'online'),
+        'units_idle': sum(1 for card in unit_cards if card['status'] == 'idle'),
+        'units_offline': sum(1 for card in unit_cards if card['status'] == 'offline'),
+        'staff_online': sum(card['online_count'] for card in unit_cards),
+    }
+    
+    live_sessions = sorted(live_sessions, key=lambda item: item['login_time'], reverse=True)[:25]
+    
+    context = {
+        'title': 'Live System Sessions',
+        'unit_cards': unit_cards,
+        'stats': stats,
+        'window_minutes': window_minutes,
+        'lookback_hours': lookback_hours,
+        'live_sessions': live_sessions,
+        'now': now,
+    }
+    return render(request, 'hospital/hr/live_session_monitor.html', context)
 
 
 @login_required

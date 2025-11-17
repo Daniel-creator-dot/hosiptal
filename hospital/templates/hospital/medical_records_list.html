@@ -1,0 +1,146 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Medical Records - HMS{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+        <div>
+            <h2 class="mb-1"><i class="bi bi-journal-medical"></i> Medical Records</h2>
+            <p class="text-muted mb-0">Browse and manage patient documentation</p>
+        </div>
+        <a href="{% url 'hospital:medical_record_create' %}" class="btn btn-primary">
+            <i class="bi bi-plus-circle"></i> New Record
+        </a>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Search</label>
+                    <input type="text" class="form-control" name="q" placeholder="Patient, title, MRN"
+                           value="{{ search_query }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Record Type</label>
+                    <select class="form-select" name="type">
+                        <option value="">All Types</option>
+                        <option value="note" {% if type_filter == 'note' %}selected{% endif %}>Progress Note</option>
+                        <option value="lab" {% if type_filter == 'lab' %}selected{% endif %}>Lab Result</option>
+                        <option value="imaging" {% if type_filter == 'imaging' %}selected{% endif %}>Imaging Report</option>
+                        <option value="consultation" {% if type_filter == 'consultation' %}selected{% endif %}>Consultation</option>
+                        <option value="other" {% if type_filter == 'other' %}selected{% endif %}>Other</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Patient ID</label>
+                    <input type="text" class="form-control" name="patient" value="{{ patient_filter }}"
+                           placeholder="UUID">
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-secondary w-100">
+                        <i class="bi bi-filter"></i> Apply
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {% if patient_records %}
+    <div class="accordion" id="patientRecordsAccordion">
+        {% for folder in patient_records %}
+        <div class="accordion-item mb-3">
+            <h2 class="accordion-header" id="heading{{ forloop.counter }}">
+                <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#collapse{{ forloop.counter }}"
+                        aria-expanded="{% if forloop.first %}true{% else %}false{% endif %}"
+                        aria-controls="collapse{{ forloop.counter }}">
+                    <div class="w-100 d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="mb-0">{{ folder.patient.full_name }}</h5>
+                            <small class="text-muted">{{ folder.patient.mrn }} · Last updated {{ folder.last_created|naturaltime }}</small>
+                        </div>
+                        <div>
+                            <span class="badge bg-primary me-2">{{ folder.record_count }} records</span>
+                            {% for record_type,count in folder.service_counts %}
+                                <span class="badge bg-light text-dark me-1">{{ record_type|title }}: {{ count }}</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </button>
+            </h2>
+            <div id="collapse{{ forloop.counter }}" class="accordion-collapse collapse {% if forloop.first %}show{% endif %}"
+                 aria-labelledby="heading{{ forloop.counter }}" data-bs-parent="#patientRecordsAccordion">
+                <div class="accordion-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                        <div>
+                            <strong>Patient:</strong> {{ folder.patient.full_name }} · {{ folder.patient.mrn }}
+                        </div>
+                        <div>
+                            <a href="{% url 'hospital:comprehensive_medical_record' folder.patient.id %}" class="btn btn-outline-primary btn-sm">
+                                Open Full Folder
+                            </a>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Title</th>
+                                    <th>Type</th>
+                                    <th>Encounter</th>
+                                    <th>Created</th>
+                                    <th>Created By</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for record in folder.records %}
+                                <tr>
+                                    <td>
+                                        <strong>{{ record.title }}</strong>
+                                        <p class="text-muted small mb-0">{{ record.content|truncatewords:16 }}</p>
+                                    </td>
+                                    <td><span class="badge bg-info">{{ record.record_type|title }}</span></td>
+                                    <td>
+                                        {% if record.encounter %}
+                                            {{ record.encounter.encounter_type|default:"-"|title }}
+                                        {% else %}
+                                            <em class="text-muted">N/A</em>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ record.created|date:"M d, Y H:i" }}</td>
+                                    <td>
+                                        {% if record.created_by %}
+                                            {{ record.created_by.get_full_name|default:record.created_by.user.get_full_name }}
+                                        {% else %}
+                                            <em class="text-muted">System</em>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-end">
+                                        <a href="{% url 'hospital:medical_record_detail' record.pk %}" class="btn btn-sm btn-outline-secondary">
+                                            View
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="card">
+        <div class="card-body text-center text-muted py-5">
+            No medical records found for the selected filters.
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
