@@ -3,11 +3,15 @@ Department-specific dashboard views for Pharmacy, Laboratory, and Imaging
 """
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.csrf import csrf_exempt
 from django.contrib import messages
 from django.db.models import Q, Count, Sum, Avg, F
+from django.db.models.functions import TruncDay
+from django.db.utils import OperationalError
 from django.utils import timezone
 from datetime import date, timedelta
 from decimal import Decimal
+from django.urls import reverse
 from .models import (
     Order, LabTest, LabResult, Drug, PharmacyStock, Prescription,
     Encounter, Patient, Staff, Department
@@ -17,6 +21,10 @@ from django.http import JsonResponse, Http404
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 import json
+from .services.auto_billing_service import AutoBillingService
+from .models_payment_verification import PharmacyDispensing
+from .models_accounting import PaymentReceipt
+from .models_pharmacy_walkin import WalkInPharmacySale
 
 
 @login_required
@@ -72,6 +80,138 @@ def pharmacy_dashboard(request):
         total_value=Sum(F('quantity_on_hand') * F('unit_cost'))
     )['total_value'] or Decimal('0')
     
+    # Real-time pharmacy revenue + accountability
+    pharmacy_receipt_types = ['pharmacy', 'pharmacy_prescription', 'pharmacy_walkin', 'medication']
+    today = timezone.now().date()
+    month_start = today.replace(day=1)
+    seven_day_window = today - timedelta(days=6)
+    recent_window = timezone.now() - timedelta(days=2)
+    
+    my_receipts_today_qs = PaymentReceipt.objects.filter(
+        service_type__in=pharmacy_receipt_types,
+        receipt_date__date=today,
+        is_deleted=False,
+        received_by=request.user
+    ).select_related('patient').order_by('-receipt_date')
+    
+    my_sales_total = my_receipts_today_qs.aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+    my_sales_count = my_receipts_today_qs.count()
+    my_sales_avg_ticket = (my_sales_total / my_sales_count) if my_sales_count else Decimal('0.00')
+    
+    pharmacy_receipts_today_qs = PaymentReceipt.objects.filter(
+        service_type__in=pharmacy_receipt_types,
+        receipt_date__date=today,
+        is_deleted=False
+    )
+    pharmacy_revenue_today = pharmacy_receipts_today_qs.aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+    pharmacy_receipt_count_today = pharmacy_receipts_today_qs.count()
+    
+    pharmacy_revenue_month = PaymentReceipt.objects.filter(
+        service_type__in=pharmacy_receipt_types,
+        receipt_date__date__gte=month_start,
+        receipt_date__date__lte=today,
+        is_deleted=False
+    ).aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+    
+    my_sales_share_percentage = 0
+    if pharmacy_revenue_today and pharmacy_revenue_today > 0:
+        try:
+            share = (my_sales_total / pharmacy_revenue_today) * 100
+            my_sales_share_percentage = float(round(share, 2))
+        except Exception:
+            my_sales_share_percentage = 0
+    
+    pharmacy_daily_trend_qs = PaymentReceipt.objects.filter(
+        service_type__in=pharmacy_receipt_types,
+        receipt_date__date__gte=seven_day_window,
+        receipt_date__date__lte=today,
+        is_deleted=False
+    ).annotate(day=TruncDay('receipt_date')).values('day').annotate(
+        total=Sum('amount_paid'),
+        count=Count('id')
+    ).order_by('-day')[:7]
+    pharmacy_daily_trend = [
+        {
+            'date': entry['day'].date() if entry['day'] else today,
+            'total': entry['total'] or Decimal('0.00'),
+            'count': entry['count']
+        }
+        for entry in reversed(list(pharmacy_daily_trend_qs))
+    ]
+    
+    top_staff_raw = PaymentReceipt.objects.filter(
+        service_type__in=pharmacy_receipt_types,
+        receipt_date__date=today,
+        is_deleted=False,
+        received_by__isnull=False
+    ).values(
+        'received_by__first_name',
+        'received_by__last_name',
+        'received_by__username'
+    ).annotate(
+        total=Sum('amount_paid'),
+        count=Count('id')
+    ).order_by('-total')[:5]
+    pharmacy_top_staff = []
+    for entry in top_staff_raw:
+        first = entry.get('received_by__first_name') or ''
+        last = entry.get('received_by__last_name') or ''
+        name = f"{first} {last}".strip()
+        if not name:
+            name = entry.get('received_by__username') or 'Unassigned'
+        pharmacy_top_staff.append({
+            'name': name,
+            'total': entry['total'] or Decimal('0.00'),
+            'count': entry['count']
+        })
+    
+    pharmacy_recent_sales = list(
+        PaymentReceipt.objects.filter(
+            service_type__in=pharmacy_receipt_types,
+            receipt_date__gte=recent_window,
+            is_deleted=False
+        ).select_related('patient', 'received_by').order_by('-receipt_date')[:20]
+    )
+    
+    # Walk-in pharmacy sales (OTC) visibility
+    try:
+        walkin_sales_today_qs = WalkInPharmacySale.objects.filter(
+            sale_date__date=today,
+            is_deleted=False
+        ).select_related('served_by__user').order_by('-sale_date')
+        
+        my_walkin_sales_qs = walkin_sales_today_qs.filter(
+            served_by__user=request.user,
+            payment_status='paid'
+        )
+        
+        my_walkin_sales_total = my_walkin_sales_qs.aggregate(total=Sum('total_amount'))['total'] or Decimal('0.00')
+        my_walkin_sales_count = my_walkin_sales_qs.count()
+        
+        walkin_sales_total_today = walkin_sales_today_qs.filter(payment_status='paid').aggregate(total=Sum('total_amount'))['total'] or Decimal('0.00')
+        walkin_sales_count_today = walkin_sales_today_qs.count()
+        
+        walkin_sales_recent = list(
+            walkin_sales_today_qs[:10]
+        )
+    except OperationalError:
+        my_walkin_sales_total = Decimal('0.00')
+        my_walkin_sales_count = 0
+        walkin_sales_total_today = Decimal('0.00')
+        walkin_sales_count_today = 0
+        walkin_sales_recent = []
+    
+    combined_total_revenue = (pharmacy_revenue_today or Decimal('0.00')) + (walkin_sales_total_today or Decimal('0.00'))
+    my_total_sales = (my_sales_total or Decimal('0.00')) + (my_walkin_sales_total or Decimal('0.00'))
+    my_total_transactions = (my_sales_count or 0) + (my_walkin_sales_count or 0)
+    my_combined_avg_ticket = (my_total_sales / my_total_transactions) if my_total_transactions else Decimal('0.00')
+    my_combined_share = 0
+    if combined_total_revenue and combined_total_revenue > 0:
+        try:
+            my_combined_share = float(round((my_total_sales / combined_total_revenue) * 100, 2))
+        except Exception:
+            my_combined_share = 0
+    
     context = {
         'pending_orders': pending_orders,
         'today_prescriptions': today_prescriptions,
@@ -82,6 +222,26 @@ def pharmacy_dashboard(request):
         'pending_prescriptions': pending_prescriptions,
         'stock_value': stock_value,
         'now': timezone.now(),
+        'my_sales_total': my_sales_total,
+        'my_sales_count': my_sales_count,
+        'my_sales_avg_ticket': my_sales_avg_ticket,
+        'my_sales_share_percentage': my_sales_share_percentage,
+        'my_recent_pharmacy_receipts': list(my_receipts_today_qs[:8]),
+        'my_total_sales': my_total_sales,
+        'my_total_transactions': my_total_transactions,
+        'my_combined_avg_ticket': my_combined_avg_ticket,
+        'my_combined_share_percentage': my_combined_share,
+        'pharmacy_revenue_today': pharmacy_revenue_today,
+        'pharmacy_receipt_count_today': pharmacy_receipt_count_today,
+        'pharmacy_revenue_month': pharmacy_revenue_month,
+        'pharmacy_daily_trend': pharmacy_daily_trend,
+        'pharmacy_top_staff': pharmacy_top_staff,
+        'pharmacy_recent_sales': pharmacy_recent_sales,
+        'my_walkin_sales_total': my_walkin_sales_total,
+        'my_walkin_sales_count': my_walkin_sales_count,
+        'walkin_sales_total_today': walkin_sales_total_today,
+        'walkin_sales_count_today': walkin_sales_count_today,
+        'walkin_sales_recent': walkin_sales_recent,
     }
     return render(request, 'hospital/pharmacy_dashboard_worldclass.html', context)
 
@@ -95,7 +255,12 @@ def laboratory_dashboard(request):
         order_type='lab',
         status='pending',
         is_deleted=False
-    ).select_related('encounter__patient', 'requested_by')
+    ).exclude(
+        lab_results__status__in=['in_progress', 'completed', 'cancelled']
+    ).select_related(
+        'encounter__patient',
+        'requested_by'
+    ).distinct()
     
     # Sort by priority, then by creation time
     pending_orders = sorted(
@@ -675,6 +840,7 @@ def edit_lab_result(request, result_id):
 # ==================== REAL-TIME AJAX ENDPOINTS ====================
 
 @login_required
+@csrf_exempt
 @require_http_methods(["POST"])
 def update_order_status(request, order_id):
     """AJAX endpoint to update order status"""
@@ -742,9 +908,18 @@ def update_lab_result_status(request, result_id):
     except:
         pass
     
+    order = result.order if hasattr(result, 'order') else None
+    
     if action == 'start':
+        # Mark lab result as in-progress
         result.status = 'in_progress'
         result.save(update_fields=['status', 'modified'])
+
+        # Move the parent order out of "pending" so it disappears from Pending Lab Orders
+        if order and order.status != 'in_progress':
+            order.status = 'in_progress'
+            order.save(update_fields=['status', 'modified'])
+
         return JsonResponse({
             'success': True,
             'message': 'Test started',
@@ -752,6 +927,7 @@ def update_lab_result_status(request, result_id):
         })
     
     elif action == 'complete':
+        # Mark lab result as completed + verified
         result.status = 'completed'
         if value:
             result.value = value
@@ -761,6 +937,12 @@ def update_lab_result_status(request, result_id):
             result.verified_by = current_staff
             result.verified_at = timezone.now()
         result.save()
+
+        # Also mark the parent order as completed so it no longer shows with a Start button
+        if order and order.status != 'completed':
+            order.status = 'completed'
+            order.save(update_fields=['status', 'modified'])
+
         return JsonResponse({
             'success': True,
             'message': 'Test completed',
@@ -906,9 +1088,8 @@ def upload_multiple_imaging_images(request):
         record_exists = MedicalRecord.objects.filter(
             patient=study.patient,
             record_type='imaging',
-            is_deleted=False
-        ).filter(
-            notes__contains=f'Study ID: {study.id}'
+            is_deleted=False,
+            content__contains=f'Study ID: {study.id}'
         ).exists()
         
         if not record_exists:
@@ -916,9 +1097,8 @@ def upload_multiple_imaging_images(request):
                 patient=study.patient,
                 encounter=study.encounter,
                 record_type='imaging',
-                record_date=timezone.now().date(),
                 title=f'{study.get_modality_display()} - {study.body_part}',
-                notes=f'''Imaging Study Completed
+                content=f'''Imaging Study Completed
 
 Study Type: {study.get_modality_display()}
 Body Part: {study.body_part}
@@ -927,11 +1107,11 @@ Study ID: {study.id}
 Status: Completed
 Performed: {timezone.now().strftime('%Y-%m-%d %H:%M')}
 
-{study.clinical_indication if study.clinical_indication else 'Clinical indication not specified'}
+{study.clinical_indication if getattr(study, 'clinical_indication', '') else 'Clinical indication not specified'}
 
 Report pending radiologist review.
 ''',
-                recorded_by=current_staff
+                created_by=current_staff
             )
         
         return JsonResponse({
@@ -1087,6 +1267,85 @@ def check_pharmacy_order_payment_status(request, order_id):
         
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)})
+
+
+@csrf_exempt
+@login_required
+@require_http_methods(["POST"])
+def send_pharmacy_order_to_cashier(request, order_id):
+    """Ensure pharmacy order is queued for cashier without redirecting pharmacist."""
+    try:
+        order = get_object_or_404(Order, pk=order_id, order_type='medication', is_deleted=False)
+        prescriptions = order.prescriptions.filter(is_deleted=False)
+        
+        if not prescriptions.exists():
+            return JsonResponse({'success': False, 'error': 'No prescriptions found for this order'}, status=400)
+        
+        patient = order.encounter.patient if order.encounter else None
+        if not patient:
+            return JsonResponse({'success': False, 'error': 'Patient information missing for this order'}, status=400)
+        
+        total_amount = Decimal('0.00')
+        created_records = 0
+        already_pending = 0
+        already_paid = 0
+        warnings = []
+        
+        for prescription in prescriptions:
+            unit_price = getattr(prescription.drug, 'unit_price', Decimal('0.00')) or Decimal('0.00')
+            quantity = Decimal(str(prescription.quantity or 0))
+            total_amount += (unit_price * quantity)
+            
+            dispensing_record = PharmacyDispensing.objects.filter(
+                prescription=prescription,
+                is_deleted=False
+            ).first()
+            
+            if dispensing_record:
+                if dispensing_record.payment_receipt:
+                    already_paid += 1
+                    continue
+                
+                if dispensing_record.dispensing_status != 'pending_payment':
+                    dispensing_record.dispensing_status = 'pending_payment'
+                    dispensing_record.save(update_fields=['dispensing_status'])
+                already_pending += 1
+                continue
+            
+            billing_result = AutoBillingService.create_pharmacy_bill(prescription)
+            if billing_result.get('success'):
+                created_records += 1
+            else:
+                warnings.append(billing_result.get('message') or 'Unable to auto-create bill.')
+        
+        if created_records == 0 and already_pending == 0 and already_paid == len(prescriptions):
+            return JsonResponse({
+                'success': False,
+                'error': 'All prescriptions for this order are already paid. Proceed to dispensing.'
+            }, status=400)
+        
+        cashier_url = reverse('hospital:cashier_patient_bills')
+        if patient.mrn:
+            cashier_url = f"{cashier_url}?search={patient.mrn}"
+        
+        response_data = {
+            'success': True,
+            'created': created_records,
+            'already_pending': already_pending,
+            'already_paid': already_paid,
+            'amount': str(total_amount),
+            'patient_name': patient.full_name,
+            'patient_mrn': patient.mrn,
+            'cashier_url': cashier_url,
+        }
+        
+        if warnings:
+            response_data['warnings'] = warnings
+        
+        return JsonResponse(response_data)
+    
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
 @csrf_exempt

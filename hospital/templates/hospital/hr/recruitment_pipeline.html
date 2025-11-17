@@ -1,67 +1,269 @@
 {% extends 'hospital/base.html' %}
+{% load crispy_forms_tags %}
 
 {% block title %}Recruitment Pipeline - HMS{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
-    <div style="background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); color: white; border-radius: 16px; padding: 32px; margin-bottom: 24px;">
-        <h1><i class="bi bi-person-plus me-3"></i>Recruitment Pipeline</h1>
-        <p class="mb-0" style="opacity: 0.9;">Track hiring progress and manage candidates</p>
-    </div>
-    
-    <div class="row g-4 mb-4">
-        <div class="col-md-3">
-            <div style="background: white; border-radius: 12px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-                <div style="font-size: 36px; font-weight: 700; color: #6366f1;">{{ open_count }}</div>
-                <div style="color: #6b7280;">Open Positions</div>
+    <div class="rounded-4 p-4 mb-4 text-white" style="background: linear-gradient(135deg, #4f46e5 0%, #312e81 100%);">
+        <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3">
+            <div>
+                <h1 class="mb-1"><i class="bi bi-person-plus me-2"></i>Recruitment Pipeline</h1>
+                <p class="mb-0 text-white-50">Standardized workflow for requisitions, candidates, and hiring momentum.</p>
             </div>
-        </div>
-        <div class="col-md-3">
-            <div style="background: white; border-radius: 12px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-                <div style="font-size: 36px; font-weight: 700; color: #10b981;">{{ total_candidates }}</div>
-                <div style="color: #6b7280;">Total Candidates</div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div style="background: white; border-radius: 12px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-                <div style="font-size: 36px; font-weight: 700; color: #f59e0b;">{{ interviewed_count }}</div>
-                <div style="color: #6b7280;">Interviewed</div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div style="background: white; border-radius: 12px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-                <div style="font-size: 36px; font-weight: 700; color: #ef4444;">{{ filled_count }}</div>
-                <div style="color: #6b7280;">Positions Filled</div>
+            <div class="text-white-50 small">
+                <div>Today: {{ today|date:"D, M j" }}</div>
             </div>
         </div>
     </div>
     
-    <div style="background: white; border-radius: 16px; padding: 32px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-        <h4 class="mb-4">Open Positions</h4>
-        {% for position in open_positions %}
-            <div style="border: 1px solid #e5e7eb; padding: 20px; margin-bottom: 16px; border-radius: 12px;">
-                <div class="d-flex justify-content-between">
-                    <div>
-                        <h5>{{ position.position_title }}</h5>
-                        <p class="text-muted">{{ position.department.name }} • {{ position.get_employment_type_display }}</p>
-                        <span class="badge bg-info">{{ position.applicant_count }} applicants</span>
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body text-center">
+                    <div class="display-6 fw-bold text-primary">{{ open_count }}</div>
+                    <div class="text-muted small text-uppercase">Open Positions</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body text-center">
+                    <div class="display-6 fw-bold text-success">{{ total_candidates }}</div>
+                    <div class="text-muted small text-uppercase">Total Candidates</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body text-center">
+                    <div class="display-6 fw-bold text-warning">{{ interviewed_count }}</div>
+                    <div class="text-muted small text-uppercase">Interviewed / Offer</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body text-center">
+                    <div class="display-6 fw-bold text-danger">{{ filled_count }}</div>
+                    <div class="text-muted small text-uppercase">Positions Filled</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row g-4">
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <h4 class="mb-0">Pipeline Health</h4>
+                            <small class="text-muted">Stage-by-stage conversion ({{ total_candidates }} candidates)</small>
+                        </div>
                     </div>
-                    <div>
-                        <span class="badge bg-success">{{ position.number_of_positions }} position{{ position.number_of_positions|pluralize }}</span>
+                    <div class="row g-3">
+                        {% for stat in pipeline_stats %}
+                            <div class="col-md-6">
+                                <div class="border rounded-3 p-3 h-100">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <div class="fw-semibold">{{ stat.label }}</div>
+                                            <small class="text-muted">{{ stat.count }} candidate{{ stat.count|pluralize }}</small>
+                                        </div>
+                                        <span class="badge bg-{{ stat.color }}">{{ stat.percent }}%</span>
+                                    </div>
+                                    <div class="progress mt-3" style="height: 6px;">
+                                        <div class="progress-bar bg-{{ stat.color }}" role="progressbar" style="width: {{ stat.percent }}%;" aria-valuenow="{{ stat.percent }}" aria-valuemin="0" aria-valuemax="100"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
                     </div>
                 </div>
             </div>
-        {% empty %}
-            <p class="text-center text-muted py-5">No open positions</p>
-        {% endfor %}
+            
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <h4 class="mb-0">Open Positions</h4>
+                            <small class="text-muted">Active requisitions with applicant load</small>
+                        </div>
+                        <a href="#create-position" class="btn btn-sm btn-outline-primary">Create role</a>
+                    </div>
+                    {% for position in open_positions %}
+                        <div class="border rounded-3 p-3 mb-3">
+                            <div class="d-flex flex-column flex-md-row justify-content-between gap-3">
+                                <div>
+                                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                                        <h5 class="mb-0">{{ position.position_title }}</h5>
+                                        {% if position.is_urgent %}
+                                            <span class="badge bg-danger-subtle text-danger"><i class="bi bi-lightning me-1"></i>Urgent</span>
+                                        {% endif %}
+                                        <span class="badge bg-secondary-subtle text-secondary">{{ position.get_employment_type_display }}</span>
+                                    </div>
+                                    <div class="text-muted small mt-1">
+                                        {{ position.department.name|default:"No department" }}
+                                        {% if position.hiring_manager %}
+                                            • Hiring Manager: {{ position.hiring_manager.user.get_full_name }}
+                                        {% endif %}
+                                    </div>
+                                    <div class="d-flex flex-wrap gap-3 text-muted small mt-2">
+                                        <span><i class="bi bi-calendar-event me-1"></i>Posted {{ position.posted_date|date:"M j, Y" }}</span>
+                                        {% if position.closing_date %}
+                                            <span><i class="bi bi-hourglass-split me-1"></i>Closes {{ position.closing_date|date:"M j" }}</span>
+                                        {% else %}
+                                            <span><i class="bi bi-infinity me-1"></i>No closing date</span>
+                                        {% endif %}
+                                        <span><i class="bi bi-people me-1"></i>{{ position.applicant_count }} applicant{{ position.applicant_count|pluralize }}</span>
+                                    </div>
+                                </div>
+                                <div class="text-md-end">
+                                    <div class="fw-semibold">{{ position.number_of_positions }} slot{{ position.number_of_positions|pluralize }}</div>
+                                    <small class="text-muted">Status: {{ position.get_status_display }}</small>
+                                </div>
+                            </div>
+                        </div>
+                    {% empty %}
+                        <div class="text-center text-muted py-5">
+                            <i class="bi bi-folder-x display-5 d-block mb-2"></i>
+                            No open positions at the moment.
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+            
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center mb-3">
+                        <div>
+                            <h4 class="mb-0">Candidate Board</h4>
+                            <small class="text-muted">Latest 20 updates</small>
+                        </div>
+                        <form method="get" class="d-flex flex-wrap gap-2">
+                            <select name="candidate_status" class="form-select form-select-sm">
+                                <option value="">All stages</option>
+                                {% for value, label in candidate_status_choices %}
+                                    <option value="{{ value }}" {% if candidate_status_filter == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                            <select name="position" class="form-select form-select-sm">
+                                <option value="">All positions</option>
+                                {% for position in positions_all %}
+                                    <option value="{{ position.id }}" {% if candidate_position_filter == position.id|stringformat:"s" %}selected{% endif %}>{{ position.position_title }}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="submit" class="btn btn-sm btn-outline-secondary">Filter</button>
+                        </form>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Candidate</th>
+                                    <th>Position</th>
+                                    <th>Stage</th>
+                                    <th>Applied</th>
+                                    <th class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for candidate in recent_candidates %}
+                                    <tr>
+                                        <td>
+                                            <div class="fw-semibold">{{ candidate.first_name }} {{ candidate.last_name }}</div>
+                                            <div class="text-muted small">{{ candidate.email }} • {{ candidate.phone }}</div>
+                                        </td>
+                                        <td>
+                                            <div class="fw-semibold">{{ candidate.position.position_title }}</div>
+                                            <small class="text-muted">{{ candidate.position.department.name|default:"-" }}</small>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-primary-subtle text-primary">{{ candidate.get_status_display }}</span>
+                                            {% if candidate.interview_date %}
+                                                <div class="small text-muted mt-1"><i class="bi bi-calendar2-week me-1"></i>{{ candidate.interview_date|date:"M j, H:i" }}</div>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <div>{{ candidate.application_date|date:"M j, Y" }}</div>
+                                            {% if candidate.offer_salary %}
+                                                <small class="text-success">Offer: {{ candidate.offer_salary }}</small>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-end">
+                                            <form method="post" class="d-flex gap-2 justify-content-end">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="action" value="update_candidate_status">
+                                                <input type="hidden" name="candidate_id" value="{{ candidate.id }}">
+                                                <select name="status" class="form-select form-select-sm" style="max-width: 180px;">
+                                                    {% for value, label in candidate_status_choices %}
+                                                        <option value="{{ value }}" {% if candidate.status == value %}selected{% endif %}>{{ label }}</option>
+                                                    {% endfor %}
+                                                </select>
+                                                <button type="submit" class="btn btn-sm btn-outline-primary">Update</button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                {% empty %}
+                                    <tr>
+                                        <td colspan="5" class="text-center text-muted py-4">
+                                            <i class="bi bi-inboxes display-6 d-block mb-2"></i>
+                                            No candidates in this view yet.
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-4">
+            <div class="sticky-top" style="top: 90px;">
+                <div id="create-position" class="card border-0 shadow-sm mb-4">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center gap-2 mb-3">
+                            <div class="avatar bg-primary-subtle text-primary rounded-circle d-flex align-items-center justify-content-center" style="width: 42px; height: 42px;">
+                                <i class="bi bi-briefcase"></i>
+                            </div>
+                            <div>
+                                <h5 class="mb-0">New Position</h5>
+                                <small class="text-muted">Kick off a requisition</small>
+                            </div>
+                        </div>
+                        <form method="post">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="create_position">
+                            {{ position_form|crispy }}
+                        </form>
+                    </div>
+                </div>
+                
+                <div class="card border-0 shadow-sm">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center gap-2 mb-3">
+                            <div class="avatar bg-success-subtle text-success rounded-circle d-flex align-items-center justify-content-center" style="width: 42px; height: 42px;">
+                                <i class="bi bi-person-lines-fill"></i>
+                            </div>
+                            <div>
+                                <h5 class="mb-0">Add Candidate</h5>
+                                <small class="text-muted">Log applicants & resumes</small>
+                            </div>
+                        </div>
+                        <form method="post" enctype="multipart/form-data">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="create_candidate">
+                            {{ candidate_form|crispy }}
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
-
-
-
-
-
 
 
 

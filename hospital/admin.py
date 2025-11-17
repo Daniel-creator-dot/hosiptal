@@ -48,11 +48,13 @@ from django.urls import path
 from django.db.models import Count, Sum
 from django.utils import timezone
 from datetime import timedelta
+from .services.auto_billing_service import AutoBillingService
+from .models_payment_verification import PharmacyDispensing
 from .models import (
     Patient, Encounter, VitalSign, Department, Staff, Ward, Bed, Admission,
     Order, LabTest, LabResult, Drug, PharmacyStock, Prescription,
     Payer, ServiceCode, PriceBook, Invoice, InvoiceLine,
-    Appointment, MedicalRecord, Notification
+    Appointment, MedicalRecord, Notification, PatientQRCode
 )
 from .models_advanced import (
     ClinicalNote, CarePlan, ProblemList, ProviderSchedule, Queue, Triage,
@@ -153,6 +155,30 @@ class PatientAdmin(admin.ModelAdmin):
             )
         return format_html('<span style="color: #48bb78;">Total: GHS {:.2f}</span>', float(total))
     financial_summary.short_description = 'Financial Summary'
+
+
+@admin.register(PatientQRCode)
+class PatientQRCodeAdmin(admin.ModelAdmin):
+    list_display = ['patient', 'mrn', 'scan_count', 'last_generated_at', 'last_scanned_at', 'is_active']
+    search_fields = ['patient__first_name', 'patient__last_name', 'patient__mrn', 'qr_token']
+    list_filter = ['is_active', 'last_scanned_at']
+    readonly_fields = ['qr_code_data', 'qr_code_image_preview', 'scan_count', 'last_generated_at',
+                       'last_scanned_at', 'created', 'modified']
+    fields = (
+        'patient', 'qr_token', 'qr_code_data', 'qr_code_image', 'qr_code_image_preview',
+        'scan_count', 'last_generated_at', 'last_scanned_at', 'last_scanned_by',
+        'is_active', 'created', 'modified'
+    )
+    
+    def mrn(self, obj):
+        return obj.patient.mrn
+    mrn.short_description = 'MRN'
+    
+    def qr_code_image_preview(self, obj):
+        if obj.qr_code_image:
+            return format_html('<img src="{}" style="width: 140px; height: 140px; object-fit: contain;" />', obj.qr_code_image.url)
+        return "—"
+    qr_code_image_preview.short_description = 'QR Preview'
 
 
 @admin.register(Encounter)
@@ -984,6 +1010,7 @@ class PrescriptionAdmin(admin.ModelAdmin):
     list_filter = ['prescribed_by__department', 'created']
     search_fields = ['order__encounter__patient__first_name', 'order__encounter__patient__last_name', 'drug__name']
     ordering = ['-created']
+    actions = ['send_to_cashier']
     
     def patient_link(self, obj):
         patient = obj.order.encounter.patient
@@ -995,6 +1022,53 @@ class PrescriptionAdmin(admin.ModelAdmin):
         url = reverse('admin:hospital_drug_change', args=[obj.drug.pk])
         return format_html('<a href="{}">{}</a>', url, obj.drug.name)
     drug_link.short_description = 'Drug'
+
+    def send_to_cashier(self, request, queryset):
+        """Create cashier bills for selected prescriptions without leaving admin."""
+        queued = 0
+        already_pending = 0
+        already_paid = 0
+        errors = 0
+        
+        for prescription in queryset:
+            try:
+                dispensing_record = prescription.dispensing_record
+            except (PharmacyDispensing.DoesNotExist, AttributeError):
+                dispensing_record = None
+            
+            if dispensing_record:
+                if dispensing_record.payment_receipt:
+                    already_paid += 1
+                    continue
+                if dispensing_record.dispensing_status != 'pending_payment':
+                    dispensing_record.dispensing_status = 'pending_payment'
+                    dispensing_record.save(update_fields=['dispensing_status'])
+                already_pending += 1
+                continue
+            
+            result = AutoBillingService.create_pharmacy_bill(prescription)
+            if result.get('success'):
+                queued += 1
+            else:
+                errors += 1
+        
+        cashier_url = reverse('hospital:cashier_patient_bills')
+        message_parts = []
+        if queued:
+            message_parts.append(f'✅ {queued} item(s) queued for cashier')
+        if already_pending:
+            message_parts.append(f'🕒 {already_pending} already pending payment')
+        if already_paid:
+            message_parts.append(f'💰 {already_paid} already paid')
+        if errors:
+            message_parts.append(f'⚠️ {errors} failed to queue')
+        
+        summary = ' | '.join(message_parts) or 'No prescriptions processed.'
+        self.message_user(
+            request,
+            format_html('{} – <a href="{}" target="_blank">Open cashier dashboard</a>', summary, cashier_url)
+        )
+    send_to_cashier.short_description = 'Send selected prescriptions to cashier'
 
 
 @admin.register(Payer)

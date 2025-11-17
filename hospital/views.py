@@ -3,31 +3,86 @@ Views for Hospital Management System frontend
 """
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth import logout as auth_logout
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.db.models import Q, Sum, F
-from django.db import models
+from django.db import models, transaction
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
+from django.urls import reverse
 from datetime import timedelta
+from uuid import UUID
 import csv
+from collections import OrderedDict, Counter
+from io import BytesIO
 import logging
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_QUICK_ACTIONS = [
+    {'title': 'New Patient', 'icon': 'person-plus', 'gradient': 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)', 'url_name': 'hospital:patient_create'},
+    {'title': 'Accounting', 'icon': 'graph-up-arrow', 'gradient': 'linear-gradient(135deg, #10b981 0%, #059669 100%)', 'url_name': 'hospital:accounting_dashboard'},
+    {'title': 'Procurement', 'icon': 'clipboard-check', 'gradient': 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', 'url_name': 'hospital:admin_approval_list'},
+    {'title': 'HOD Scheduling', 'icon': 'calendar-week', 'gradient': 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)', 'url_name': 'hospital:hod_scheduling_dashboard'},
+    {'title': 'My Schedule', 'icon': 'clock-history', 'gradient': 'linear-gradient(135deg, #ec4899 0%, #db2777 100%)', 'url_name': 'hospital:staff_schedule_dashboard'},
+    {'title': 'Backups', 'icon': 'shield-check', 'gradient': 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)', 'url_name': 'hospital:backup_dashboard'},
+    {'title': 'Book Appointment', 'icon': 'calendar-plus', 'gradient': 'linear-gradient(135deg, #10b981 0%, #059669 100%)', 'url_name': 'hospital:frontdesk_appointment_create'},
+    {'title': 'Patient Billing', 'icon': 'credit-card', 'gradient': 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', 'url_name': 'hospital:cashier_patient_bills'},
+    {'title': 'Pharmacy', 'icon': 'capsule', 'gradient': 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)', 'url_name': 'hospital:pharmacy_dashboard'},
+    {'title': 'Laboratory', 'icon': 'flask', 'gradient': 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)', 'url_name': 'hospital:laboratory_dashboard'},
+    {'title': 'Imaging', 'icon': 'camera', 'gradient': 'linear-gradient(135deg, #ec4899 0%, #db2777 100%)', 'url_name': 'hospital:imaging_dashboard'},
+    {'title': 'Pricing', 'icon': 'tags', 'gradient': 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)', 'url_name': 'hospital:pricing_dashboard'},
+    {'title': 'Insurance', 'icon': 'shield-check', 'gradient': 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', 'url_name': 'hospital:insurance_management_dashboard'},
+    {'title': 'HR Management', 'icon': 'people-fill', 'gradient': 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)', 'url_name': 'hospital:hr_worldclass_dashboard'},
+    {'title': 'Beds', 'icon': 'hospital', 'gradient': 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)', 'url_name': 'hospital:bed_availability'},
+    {'title': 'KPIs', 'icon': 'graph-up-arrow', 'gradient': 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)', 'url_name': 'hospital:kpi_dashboard'},
+    {'title': 'Search', 'icon': 'search', 'gradient': 'linear-gradient(135deg, #4b5563 0%, #374151 100%)', 'url_name': 'hospital:global_search'},
+]
+
+ROLE_SPECIFIC_QUICK_ACTIONS = {
+    'accountant': [
+        {'title': 'Accounting Hub', 'icon': 'calculator', 'gradient': 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)', 'url_name': 'hospital:accountant_dashboard'},
+        {'title': 'Invoices', 'icon': 'receipt', 'gradient': 'linear-gradient(135deg, #10b981 0%, #059669 100%)', 'url_name': 'hospital:invoice_list'},
+        {'title': 'Cashier Hub', 'icon': 'cash-stack', 'gradient': 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)', 'url_name': 'hospital:centralized_cashier_dashboard'},
+        {'title': 'Revenue Streams', 'icon': 'graph-up-arrow', 'gradient': 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)', 'url_name': 'hospital:revenue_streams_dashboard'},
+        {'title': 'Accounts Approval', 'icon': 'clipboard-check', 'gradient': 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', 'url_name': 'hospital:accounts_approval_list'},
+        {'title': 'Financial Reports', 'icon': 'bar-chart-line', 'gradient': 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)', 'url_name': 'hospital:revenue_report'},
+    ]
+}
+
+
+def build_quick_actions(role):
+    actions = ROLE_SPECIFIC_QUICK_ACTIONS.get(role, DEFAULT_QUICK_ACTIONS)
+    resolved = []
+    for action in actions:
+        url = action.get('url')
+        if not url:
+            url_name = action.get('url_name')
+            if url_name:
+                try:
+                    url = reverse(url_name)
+                except Exception:
+                    url = action.get('fallback_url', '#')
+        resolved.append({**action, 'url': url})
+    return resolved
 from .models import (
     Patient, Encounter, Admission, Invoice, InvoiceLine, Bed,
-    Appointment, LabResult, PharmacyStock, VitalSign, Order, Prescription, Staff, Drug, LabTest
+    Appointment, LabResult, PharmacyStock, VitalSign, Order, Prescription, Staff, Drug, LabTest,
+    Department, PatientQRCode
 )
 from .models_settings import HospitalSettings
 from .forms import PatientForm, EncounterForm, TabularLabReportForm
 from .utils import get_dashboard_stats, get_patient_demographics, get_encounter_statistics
+from .utils_roles import get_user_role, get_user_dashboard_url, user_has_role_access
 try:
     from .models_advanced import Queue
 except ImportError:
     Queue = None
 from .models_workflow import PatientFlowStage
-# Reports are imported in individual view functions
+# Reports
+from .reports import generate_financial_report
 
 
 @login_required
@@ -36,32 +91,29 @@ def dashboard(request):
     from decimal import Decimal
     from .models_accounting import Transaction, PaymentReceipt
     from .models_advanced import ImagingStudy
-    from .utils_roles import get_user_role, get_user_dashboard_url
     
     # Role-based dashboard routing
+    user_role = get_user_role(request.user) if request.user.is_authenticated else 'staff'
     if request.user.is_authenticated:
-        user_role = get_user_role(request.user)
         
         # Redirect to role-specific dashboard
-        if user_role == 'accountant':
-            return redirect('hospital:accountant_dashboard')
-        elif user_role == 'hr_manager':
+        if user_role == 'hr_manager':
             return redirect('hospital:hr_worldclass_dashboard')
         elif user_role == 'doctor':
             return redirect('hospital:medical_dashboard')
         elif user_role == 'nurse':
-            return redirect('hospital:triage')
+            return redirect('hospital:nurse_dashboard')
         elif user_role == 'pharmacist':
             return redirect('hospital:pharmacy_dashboard')
         elif user_role == 'lab_technician':
-            return redirect('hospital:lab_dashboard')
+            return redirect('hospital:lab_technician_dashboard')
         elif user_role == 'receptionist':
             return redirect('hospital:reception_dashboard')
         elif user_role == 'cashier':
             return redirect('hospital:cashier_dashboard')
         elif user_role == 'admin':
             return redirect('hospital:admin_dashboard')
-        # If no specific role, show general dashboard
+        # Accountants stay on general dashboard with trimmed actions
     
     stats = get_dashboard_stats()
     demographics = get_patient_demographics()
@@ -397,6 +449,8 @@ def dashboard(request):
         # Alerts
         'alerts': alerts,
         'staff_on_duty': staff_on_duty,
+        'user_role': user_role,
+        'quick_actions': build_quick_actions(user_role),
     }
     
     # Procurement Approval Notifications
@@ -423,6 +477,18 @@ def dashboard(request):
         pass
     
     return render(request, 'hospital/dashboard.html', context)
+
+
+@login_required
+def end_session(request):
+    """
+    Explicit 'End Session' action for any user.
+    Logs the user out and ends their active UserSession record via signals.
+    """
+    # Default to main HMS dashboard (which will enforce login as needed)
+    next_url = request.GET.get('next') or '/hms/'
+    auth_logout(request)
+    return redirect(next_url)
 
 
 @login_required
@@ -653,6 +719,12 @@ def patient_create(request):
             if not patient.mrn:
                 patient.mrn = Patient.generate_mrn()
                 patient.save(update_fields=['mrn'])
+            
+            # Generate QR code credentials for ID card printing
+            try:
+                patient.ensure_qr_profile()
+            except Exception as qr_error:
+                logger.warning(f"Failed to provision patient QR card: {qr_error}", exc_info=True)
             
             # Handle insurance enrollment if selected
             selected_insurance_company = form.cleaned_data.get('selected_insurance_company')
@@ -895,6 +967,8 @@ def patient_detail(request, pk):
     encounters = all_encounters[:ENCOUNTER_LIMIT]
     active_encounters = all_encounters.filter(status='active')[:5]
     completed_encounters = all_encounters.filter(status='completed')[:5]
+    last_encounter = all_encounters.first()
+    last_visit_date = last_encounter.started_at if last_encounter else None
     
     # Get vital signs (limited)
     all_vitals = VitalSign.objects.filter(
@@ -954,6 +1028,10 @@ def patient_detail(request, pk):
     total_paid = sum([invoice.amount_paid or Decimal('0.00') for invoice in all_invoices])
     total_outstanding = total_billed - total_paid
     
+    hospital_settings = HospitalSettings.get_settings()
+    prepared_by = request.user.get_full_name() or request.user.username
+    qr_profile = getattr(patient, 'qr_profile', None)
+    
     context = {
         'patient': patient,
         'encounters': encounters,
@@ -974,8 +1052,206 @@ def patient_detail(request, pk):
         'total_paid': total_paid,
         'total_outstanding': total_outstanding,
         'now': timezone.now(),
+        'last_visit_date': last_visit_date,
+        'hospital_settings': hospital_settings,
+        'prepared_by': prepared_by,
+        'qr_profile': qr_profile,
+        'qr_card_url': reverse('hospital:patient_qr_card', args=[patient.pk]) if qr_profile else None,
+        'qr_checkin_url': reverse('hospital:patient_qr_checkin'),
     }
     return render(request, 'hospital/patient_medical_record_sheet.html', context)
+
+
+@login_required
+def patient_qr_card(request, patient_pk):
+    """Printable patient ID card with QR code"""
+    patient = get_object_or_404(Patient, pk=patient_pk, is_deleted=False)
+    try:
+        qr_profile = patient.ensure_qr_profile()
+    except Exception as exc:
+        logger.error(f"Failed to refresh QR card for patient {patient_pk}: {exc}", exc_info=True)
+        qr_profile = getattr(patient, 'qr_profile', None)
+    
+    context = {
+        'patient': patient,
+        'qr_profile': qr_profile,
+        'hospital_settings': HospitalSettings.get_settings(),
+        'generated_at': timezone.now(),
+    }
+    return render(request, 'hospital/patient_qr_card.html', context)
+
+
+@login_required
+def patient_qr_checkin(request):
+    """Receptionist QR scanning console for instant visit creation"""
+    departments = Department.objects.filter(is_deleted=False).order_by('name')
+    default_department = departments.filter(name__icontains='outpatient').first() or departments.first()
+    
+    context = {
+        'departments': departments,
+        'default_department': default_department,
+        'hospital_settings': HospitalSettings.get_settings(),
+    }
+    return render(request, 'hospital/patient_qr_checkin.html', context)
+
+
+@login_required
+def patient_qr_checkin_api(request):
+    """AJAX endpoint triggered by QR scanner to auto-create visits"""
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'Invalid request method.'}, status=405)
+    
+    qr_data = request.POST.get('qr_data', '').strip()
+    if not qr_data:
+        return JsonResponse({'success': False, 'error': 'QR code data is required.'}, status=400)
+    
+    try:
+        patient_uuid, qr_token = PatientQRCode.parse_payload(qr_data)
+    except ValueError as exc:
+        return JsonResponse({'success': False, 'error': str(exc)}, status=400)
+    
+    patient = Patient.objects.filter(pk=patient_uuid, is_deleted=False).select_related('primary_insurance').first()
+    if not patient:
+        return JsonResponse({'success': False, 'error': 'Patient record not found.'}, status=404)
+    
+    qr_profile = getattr(patient, 'qr_profile', None)
+    if not qr_profile or qr_profile.qr_token != qr_token:
+        return JsonResponse({'success': False, 'error': 'QR code does not match this patient.'}, status=400)
+    
+    encounter_type = request.POST.get('encounter_type', 'outpatient')
+    chief_complaint = request.POST.get('chief_complaint', '').strip() or 'QR check-in at reception'
+    department_id = request.POST.get('department_id')
+    
+    department = None
+    if department_id:
+        try:
+            department = Department.objects.get(pk=department_id, is_deleted=False)
+        except (Department.DoesNotExist, ValueError):
+            department = None
+    
+    if not department:
+        department = Department.objects.filter(name__icontains='outpatient', is_deleted=False).first()
+    if not department:
+        department = Department.objects.filter(is_deleted=False).first()
+    if not department:
+        return JsonResponse({'success': False, 'error': 'No active departments configured.'}, status=400)
+    
+    from .models_queue import QueueEntry
+    today = timezone.now().date()
+    active_queue = QueueEntry.objects.filter(
+        patient=patient,
+        queue_date=today,
+        status__in=['checked_in', 'called', 'in_progress'],
+        is_deleted=False
+    ).select_related('department', 'encounter').order_by('-created').first()
+    
+    if active_queue:
+        queue_position = None
+        try:
+            from .services.queue_service import queue_service
+            queue_position = queue_service.get_position_in_queue(active_queue)
+        except Exception:
+            queue_position = None
+        qr_profile.mark_scan(request.user)
+        return JsonResponse({
+            'success': True,
+            'already_checked_in': True,
+            'message': f'{patient.full_name} is already in queue {active_queue.queue_number}.',
+            'patient': {
+                'name': patient.full_name,
+                'mrn': patient.mrn,
+            },
+            'queue': {
+                'number': active_queue.queue_number,
+                'status': active_queue.get_status_display(),
+                'position': queue_position,
+                'department': active_queue.department.name if active_queue.department else '',
+            },
+            'encounter': {
+                'id': str(active_queue.encounter_id) if active_queue.encounter_id else None,
+                'type': active_queue.encounter.get_encounter_type_display() if active_queue.encounter else encounter_type,
+            }
+        })
+    
+    current_staff = getattr(request.user, 'staff', None)
+    encounter = None
+    encounter_created = False
+    
+    try:
+        with transaction.atomic():
+            existing_encounter = Encounter.objects.filter(
+                patient=patient,
+                status='active',
+                is_deleted=False
+            ).order_by('-started_at').first()
+            
+            if existing_encounter and existing_encounter.started_at.date() == today:
+                encounter = existing_encounter
+            else:
+                encounter = Encounter.objects.create(
+                    patient=patient,
+                    encounter_type=encounter_type,
+                    status='active',
+                    started_at=timezone.now(),
+                    provider=current_staff,
+                    chief_complaint=chief_complaint,
+                    notes=f'QR check-in by {request.user.get_full_name() or request.user.username}'
+                )
+                encounter_created = True
+                # Initialize patient flow stage
+                try:
+                    PatientFlowStage.objects.create(
+                        encounter=encounter,
+                        stage_type='vitals',
+                        status='pending'
+                    )
+                except Exception:
+                    pass
+            
+            from .services.queue_service import queue_service
+            from .services.queue_notification_service import queue_notification_service
+            
+            queue_entry = queue_service.create_queue_entry(
+                patient=patient,
+                encounter=encounter,
+                department=department,
+                assigned_doctor=current_staff.user if current_staff else None,
+                priority=1 if encounter_type == 'emergency' else 3,
+                notes=chief_complaint
+            )
+            queue_position = queue_service.get_position_in_queue(queue_entry)
+            try:
+                queue_notification_service.send_check_in_notification(queue_entry)
+            except Exception as notify_error:
+                logger.warning(f"QR check-in notification failed: {notify_error}")
+    except Exception as exc:
+        logger.error(f"QR check-in failed for patient {patient.pk}: {exc}", exc_info=True)
+        return JsonResponse({'success': False, 'error': 'Unable to complete QR check-in. Please process manually.'}, status=500)
+    
+    qr_profile.mark_scan(request.user)
+    
+    return JsonResponse({
+        'success': True,
+        'message': f'{patient.full_name} checked in successfully.',
+        'already_checked_in': False,
+        'patient': {
+            'name': patient.full_name,
+            'mrn': patient.mrn,
+        },
+        'encounter': {
+            'id': str(encounter.id),
+            'type': encounter.get_encounter_type_display(),
+            'created': encounter_created,
+            'started_at': timezone.localtime(encounter.started_at).strftime('%Y-%m-%d %H:%M'),
+        },
+        'queue': {
+            'number': queue_entry.queue_number,
+            'position': queue_position,
+            'status': queue_entry.get_status_display(),
+            'estimated_wait': queue_entry.estimated_wait_minutes,
+            'department': department.name if department else '',
+        }
+    })
 
 
 @login_required
@@ -1609,14 +1885,183 @@ def export_encounters_csv(request):
 
 @login_required
 def financial_report_view(request):
-    """Financial report view"""
-    from .reports_advanced import get_financial_kpis
-    start_date = request.GET.get('start_date')
-    end_date = request.GET.get('end_date')
-    
-    report = get_financial_kpis(start_date, end_date)
-    context = {'report': report}
+    """Interactive financial report with export options"""
+    period = request.GET.get('period', 'month') or 'month'
+    report = generate_financial_report(period)
+    context = {
+        'report': report,
+        'period': period,
+    }
     return render(request, 'hospital/financial_report.html', context)
+
+
+@login_required
+def financial_report_export_excel(request):
+    """Export financial report to Excel"""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment
+    except ImportError:
+        return HttpResponse(
+            'openpyxl is required for Excel export. Please install it and try again.',
+            status=500
+        )
+    
+    period = request.GET.get('period', 'month') or 'month'
+    report = generate_financial_report(period)
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Financial Report'
+    
+    ws.merge_cells('A1:D1')
+    title_cell = ws['A1']
+    title_cell.value = f'Financial Report ({period.title()})'
+    title_cell.font = Font(size=16, bold=True)
+    title_cell.alignment = Alignment(horizontal='center')
+    
+    current_row = 2
+    ws.cell(row=current_row, column=1, value='Metric').font = Font(bold=True)
+    ws.cell(row=current_row, column=2, value='Value').font = Font(bold=True)
+    current_row += 1
+    
+    metrics = [
+        ('Date Range', f"{report['date_from']} to {report['date_to']}"),
+        ('Total Invoiced', float(report['total_invoiced'])),
+        ('Total Collected', float(report['total_collected'])),
+        ('Outstanding', float(report['outstanding'])),
+        ('Collection Rate (%)', float(report['collection_rate'])),
+        ('Invoice Count', report['invoice_count']),
+    ]
+    for label, value in metrics:
+        ws.cell(row=current_row, column=1, value=label)
+        ws.cell(row=current_row, column=2, value=value)
+        current_row += 1
+    
+    current_row += 1
+    ws.cell(row=current_row, column=1, value='Breakdown by Status').font = Font(bold=True)
+    current_row += 1
+    ws.cell(row=current_row, column=1, value='Status').font = Font(bold=True)
+    ws.cell(row=current_row, column=2, value='Count').font = Font(bold=True)
+    ws.cell(row=current_row, column=3, value='Total Amount').font = Font(bold=True)
+    current_row += 1
+    for item in report['by_status']:
+        ws.cell(row=current_row, column=1, value=item['status'])
+        ws.cell(row=current_row, column=2, value=item['count'])
+        ws.cell(row=current_row, column=3, value=float(item['total'] or 0))
+        current_row += 1
+    
+    current_row += 1
+    ws.cell(row=current_row, column=1, value='Breakdown by Payer').font = Font(bold=True)
+    current_row += 1
+    ws.cell(row=current_row, column=1, value='Payer').font = Font(bold=True)
+    ws.cell(row=current_row, column=2, value='Count').font = Font(bold=True)
+    ws.cell(row=current_row, column=3, value='Total Amount').font = Font(bold=True)
+    current_row += 1
+    for item in report['by_payer']:
+        ws.cell(row=current_row, column=1, value=item['payer__name'] or 'Unknown')
+        ws.cell(row=current_row, column=2, value=item['count'])
+        ws.cell(row=current_row, column=3, value=float(item['total'] or 0))
+        current_row += 1
+    
+    for column_cells in ws.columns:
+        length = max(len(str(cell.value)) if cell.value is not None else 0 for cell in column_cells)
+        column_letter = column_cells[0].column_letter
+        ws.column_dimensions[column_letter].width = max(15, length + 2)
+    
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    
+    response = HttpResponse(
+        buffer.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = f'attachment; filename="financial_report_{period}.xlsx"'
+    return response
+
+
+@login_required
+def financial_report_export_pdf(request):
+    """Export financial report to PDF"""
+    try:
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import inch
+    except ImportError:
+        return HttpResponse(
+            'ReportLab is required for PDF export. Please install it and try again.',
+            status=500
+        )
+    
+    period = request.GET.get('period', 'month') or 'month'
+    report = generate_financial_report(period)
+    
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    
+    pdf.setFont('Helvetica-Bold', 16)
+    pdf.drawString(1 * inch, height - 1 * inch, f'Financial Report ({period.title()})')
+    
+    pdf.setFont('Helvetica', 11)
+    y = height - 1.5 * inch
+    lines = [
+        f"Date Range: {report['date_from']} to {report['date_to']}",
+        f"Total Invoiced: GHS {report['total_invoiced']}",
+        f"Total Collected: GHS {report['total_collected']}",
+        f"Outstanding: GHS {report['outstanding']}",
+        f"Collection Rate: {report['collection_rate']:.2f}%",
+        f"Invoice Count: {report['invoice_count']}",
+    ]
+    for line in lines:
+        pdf.drawString(1 * inch, y, line)
+        y -= 0.25 * inch
+    
+    y -= 0.25 * inch
+    pdf.setFont('Helvetica-Bold', 12)
+    pdf.drawString(1 * inch, y, 'Breakdown by Status')
+    y -= 0.3 * inch
+    pdf.setFont('Helvetica', 10)
+    pdf.drawString(1 * inch, y, 'Status')
+    pdf.drawString(3 * inch, y, 'Count')
+    pdf.drawString(4 * inch, y, 'Total (GHS)')
+    y -= 0.2 * inch
+    for item in report['by_status']:
+        pdf.drawString(1 * inch, y, str(item['status']))
+        pdf.drawString(3 * inch, y, str(item['count']))
+        pdf.drawString(4 * inch, y, f"{item['total'] or 0:.2f}")
+        y -= 0.2 * inch
+        if y < 1 * inch:
+            pdf.showPage()
+            y = height - 1 * inch
+    
+    y -= 0.2 * inch
+    pdf.setFont('Helvetica-Bold', 12)
+    pdf.drawString(1 * inch, y, 'Breakdown by Payer')
+    y -= 0.3 * inch
+    pdf.setFont('Helvetica', 10)
+    pdf.drawString(1 * inch, y, 'Payer')
+    pdf.drawString(3 * inch, y, 'Count')
+    pdf.drawString(4 * inch, y, 'Total (GHS)')
+    y -= 0.2 * inch
+    for item in report['by_payer']:
+        payer = item['payer__name'] or 'Unknown'
+        pdf.drawString(1 * inch, y, payer[:30])
+        pdf.drawString(3 * inch, y, str(item['count']))
+        pdf.drawString(4 * inch, y, f"{item['total'] or 0:.2f}")
+        y -= 0.2 * inch
+        if y < 1 * inch:
+            pdf.showPage()
+            y = height - 1 * inch
+    
+    pdf.showPage()
+    pdf.save()
+    buffer.seek(0)
+    
+    response = HttpResponse(buffer.getvalue(), content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="financial_report_{period}.pdf"'
+    return response
 
 
 @login_required
@@ -2299,6 +2744,16 @@ def tabular_lab_report(request, result_id):
                 pass
             
             lab_result.save()
+
+            # Also update the parent order status so it no longer shows as pending
+            try:
+                order = lab_result.order
+                if order and order.status != 'completed':
+                    order.status = 'completed'
+                    order.save(update_fields=['status', 'modified'])
+            except Exception:
+                # Don't break the flow if order update fails; result is still saved
+                pass
             
             messages.success(request, f'Lab result for {test.name} saved successfully.')
             return redirect('hospital:laboratory_dashboard')
@@ -2356,6 +2811,10 @@ def print_lab_report(request, result_id):
 @login_required
 def hospital_settings_view(request):
     """Hospital settings configuration page"""
+    if not user_has_role_access(request.user, 'admin'):
+        messages.error(request, 'You do not have permission to manage hospital settings.')
+        return redirect('hospital:dashboard')
+    
     settings = HospitalSettings.get_settings()
     
     if request.method == 'POST':
@@ -2915,6 +3374,39 @@ from .models import MedicalRecord
 @login_required
 def medical_records_list(request):
     """List all medical records"""
+    # Auto-generate records for encounters that don't have documentation yet
+    missing_encounters = Encounter.objects.filter(
+        is_deleted=False,
+        medical_records__isnull=True
+    ).select_related('patient', 'provider').distinct()[:50]  # limit to avoid heavy load
+    
+    for encounter in missing_encounters:
+        if not encounter.patient:
+            continue
+        
+        record_type_map = {
+            'lab': 'lab_result',
+            'imaging': 'imaging',
+            'admission': 'discharge_summary',
+            'surgery': 'surgical_report',
+            'consultation': 'consultation_note',
+        }
+        record_type = record_type_map.get(encounter.encounter_type, 'consultation_note')
+        title = f"{encounter.patient.full_name} - {encounter.encounter_type.title()} Note" if encounter.encounter_type else f"Encounter Note - {encounter.patient.full_name}"
+        content = encounter.diagnosis or encounter.chief_complaint or getattr(encounter, 'summary', '') or ''
+        
+        try:
+            MedicalRecord.objects.create(
+                patient=encounter.patient,
+                encounter=encounter,
+                record_type=record_type,
+                title=title,
+                content=content,
+                created_by=encounter.provider,
+            )
+        except Exception:
+            continue
+    
     records = MedicalRecord.objects.filter(is_deleted=False).select_related(
         'patient', 'encounter', 'created_by__user'
     ).order_by('-created')
@@ -2940,13 +3432,34 @@ def medical_records_list(request):
     if patient_filter:
         records = records.filter(patient_id=patient_filter)
     
-    # Pagination
-    paginator = Paginator(records, 20)
-    page = request.GET.get('page')
-    records_page = paginator.get_page(page)
+    # Group records by patient (folder view)
+    patient_map = OrderedDict()
+    for record in records:
+        if not record.patient:
+            continue
+        pid = record.patient_id
+        if pid not in patient_map:
+            patient_map[pid] = {
+                'patient': record.patient,
+                'records': [],
+                'record_count': 0,
+                'last_created': record.created,
+            }
+        folder = patient_map[pid]
+        folder['record_count'] += 1
+        if record.created > folder['last_created']:
+            folder['last_created'] = record.created
+        folder['records'].append(record)
+    patient_records = sorted(
+        patient_map.values(),
+        key=lambda item: item['last_created'],
+        reverse=True
+    )
+    for folder in patient_records:
+        folder['service_counts'] = Counter(r.record_type for r in folder['records']).most_common(3)
     
     context = {
-        'records': records_page,
+        'patient_records': patient_records,
         'search_query': search_query,
         'type_filter': type_filter,
         'patient_filter': patient_filter,
@@ -3062,16 +3575,39 @@ def order_detail(request, pk):
     # Get related items based on order type
     lab_results = None
     prescriptions = None
+    imaging_studies = []
     
     if order.order_type == 'lab':
         lab_results = LabResult.objects.filter(order=order, is_deleted=False)
     elif order.order_type == 'medication':
         prescriptions = Prescription.objects.filter(order=order, is_deleted=False)
     
+    try:
+        from .models_advanced import ImagingStudy
+    except ImportError:
+        ImagingStudy = None
+    
+    if ImagingStudy:
+        imaging_queryset = ImagingStudy.objects.filter(
+            is_deleted=False
+        ).prefetch_related('images')
+        
+        imaging_studies = imaging_queryset.filter(
+            order=order
+        ).order_by('-performed_at', '-created')
+        
+        if not imaging_studies.exists():
+            imaging_studies = imaging_queryset.filter(
+                encounter=order.encounter
+            ).order_by('-performed_at', '-created')
+    else:
+        imaging_studies = []
+    
     context = {
         'order': order,
         'lab_results': lab_results,
         'prescriptions': prescriptions,
+        'imaging_studies': imaging_studies,
     }
     return render(request, 'hospital/order_detail.html', context)
 

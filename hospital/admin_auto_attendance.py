@@ -245,3 +245,9 @@ class AttendanceSummaryAdmin(admin.ModelAdmin):
 
 
 
+
+
+
+
+
+

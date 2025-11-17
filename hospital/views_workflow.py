@@ -483,7 +483,7 @@ def flow_dashboard(request):
     completed_today = Encounter.objects.filter(
         status='completed',
         is_deleted=False,
-        completed_at__date=timezone.now().date()
+        ended_at__date=timezone.now().date()
     ).count()
     
     # Calculate average wait time

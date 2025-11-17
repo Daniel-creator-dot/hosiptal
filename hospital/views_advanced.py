@@ -689,7 +689,7 @@ def appointment_create(request):
         if form.is_valid():
             appointment = form.save()
             messages.success(request, 'Appointment created successfully.')
-            return redirect('hospital:provider_calendar')
+            return redirect('hospital:frontdesk_appointment_dashboard')
     else:
         form = AppointmentForm()
         # Pre-select provider if user has staff profile

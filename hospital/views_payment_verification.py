@@ -20,6 +20,7 @@ from .models_payment_verification import (
     ServicePaymentRequirement, PaymentVerification,
     LabResultRelease, PharmacyDispensing, ReceiptQRCode
 )
+from .models_pharmacy_walkin import WalkInPharmacySale
 
 logger = logging.getLogger(__name__)
 
@@ -320,7 +321,7 @@ def pharmacy_dispensing_workflow(request):
             'payment_verified': payment_verified,
         })
     
-    # Filter
+    # Filter by status (optional)
     status_filter = request.GET.get('status', '')
     if status_filter:
         prescriptions_with_status = [
@@ -328,15 +329,106 @@ def pharmacy_dispensing_workflow(request):
             if item['status'] == status_filter
         ]
     
-    # Pagination
-    paginator = Paginator(prescriptions_with_status, 20)
+    # Build statistics
+    from collections import Counter
+    status_counts = Counter(item['status'] for item in prescriptions_with_status)
+    stats = {
+        'pending_payment': status_counts.get('pending_payment', 0),
+        'ready_to_dispense': status_counts.get('ready_to_dispense', 0),
+        'dispensed': (
+            status_counts.get('fully_dispensed', 0)
+            + status_counts.get('partially_dispensed', 0)
+            + status_counts.get('dispensed', 0)
+        ),
+    }
+    
+    # Pagination (so huge lists don't freeze the page)
+    paginator = Paginator(prescriptions_with_status, 40)
     page_number = request.GET.get('page')
     page_obj = paginator.get_page(page_number)
-    
+    page_items = page_obj.object_list
+
+    # Walk-in sales (live payment verification for OTC)
+    walkin_pending_qs = WalkInPharmacySale.objects.filter(
+        is_deleted=False,
+        payment_status__in=['pending', 'partial']
+    ).order_by('-sale_date')
+
+    walkin_ready_qs = WalkInPharmacySale.objects.filter(
+        is_deleted=False,
+        payment_status='paid',
+        is_dispensed=False
+    ).order_by('-sale_date')
+
+    walkin_dispensed_qs = WalkInPharmacySale.objects.filter(
+        is_deleted=False,
+        is_dispensed=True
+    ).order_by('-dispensed_at')
+
+    walkin_stats = {
+        'pending': walkin_pending_qs.count(),
+        'ready': walkin_ready_qs.count(),
+        'dispensed': walkin_dispensed_qs.count(),
+    }
+
+    # Receipt search (manual verification by receipt number)
+    receipt_query = request.GET.get('receipt_query', '').strip()
+    receipt_search_result = None
+    receipt_search_error = None
+
+    if receipt_query:
+        try:
+            receipt = PaymentReceipt.objects.select_related('patient', 'invoice').get(
+                receipt_number__iexact=receipt_query,
+                is_deleted=False
+            )
+
+            dispensing_record = (
+                PharmacyDispensing.objects.select_related(
+                    'prescription__drug',
+                    'prescription__order__encounter__patient'
+                )
+                .filter(payment_receipt=receipt)
+                .first()
+            )
+
+            walkin_sale = None
+            details = receipt.service_details if isinstance(receipt.service_details, dict) else {}
+            sale_id = details.get('sale_id')
+            if sale_id:
+                try:
+                    walkin_sale = WalkInPharmacySale.objects.get(id=sale_id, is_deleted=False)
+                except WalkInPharmacySale.DoesNotExist:
+                    walkin_sale = None
+
+            receipt_search_result = {
+                'receipt': receipt,
+                'dispensing_record': dispensing_record,
+                'walkin_sale': walkin_sale,
+                'service_type': receipt.service_type,
+                'patient': receipt.patient,
+                'amount': receipt.amount_paid,
+                'method': receipt.get_payment_method_display(),
+            }
+        except PaymentReceipt.DoesNotExist:
+            receipt_search_error = f"Receipt {receipt_query} not found. Please confirm the code and try again."
+        except Exception as exc:
+            logger.error("Error searching receipt %s: %s", receipt_query, exc, exc_info=True)
+            receipt_search_error = f"Error searching receipt: {exc}"
+
     context = {
         'title': 'Pharmacy Dispensing - Payment Verification',
-        'page_obj': page_obj,
         'status_filter': status_filter,
+        'stats': stats,
+        'page_obj': page_obj,
+        'prescriptions_with_status': page_items,
+        'walkin_pending': list(walkin_pending_qs[:25]),
+        'walkin_ready': list(walkin_ready_qs[:25]),
+        'walkin_recently_dispensed': list(walkin_dispensed_qs[:25]),
+        'walkin_stats': walkin_stats,
+        'receipt_query': receipt_query,
+        'receipt_search_result': receipt_search_result,
+        'receipt_search_error': receipt_search_error,
     }
     return render(request, 'hospital/pharmacy_dispensing_workflow.html', context)
 

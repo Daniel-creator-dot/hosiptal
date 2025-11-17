@@ -15,6 +15,7 @@ ROLE_FEATURES = {
         'features': 'all',  # Access to everything
         'dashboards': [
             'patient_management',
+            'encounters',
             'accounting',
             'hr',
             'medical',
@@ -138,9 +139,8 @@ ROLE_FEATURES = {
         'color': '#f59e0b',
         'icon': 'capsule-pill',
         'dashboards': [
-            'pharmacy',
-            'prescriptions',
-            'inventory_drugs',
+            'pharmacy_dispensing',
+            'payment_verification',
         ],
         'features': [
             'view_prescription',
@@ -235,12 +235,36 @@ ROLE_FEATURES = {
 }
 
 
+def _ensure_staff_flag(user, ensure_superuser=False):
+    """Make sure authenticated users retain staff flag so they can log in."""
+    if not user or not hasattr(user, 'is_staff'):
+        return
+    
+    updated = False
+    if not user.is_staff:
+        user.is_staff = True
+        updated = True
+    
+    if ensure_superuser and not user.is_superuser:
+        user.is_superuser = True
+        updated = True
+    elif not ensure_superuser and user.is_superuser and not user.is_superuser:
+        pass  # no-op
+    
+    if updated:
+        user.save(update_fields=['is_staff', 'is_superuser'] if ensure_superuser else ['is_staff'])
+
+
 def get_user_role(user):
     """
     Detect user's primary role based on groups and staff profession
     Returns role slug (e.g., 'accountant', 'hr_manager', etc.)
     """
+    if not user or not getattr(user, 'is_authenticated', False):
+        return 'staff'
+    
     if user.is_superuser:
+        _ensure_staff_flag(user, ensure_superuser=True)
         return 'admin'
     
     # Check Django groups first
@@ -249,6 +273,7 @@ def get_user_role(user):
     for group_name in user_groups:
         group_lower = group_name.lower().replace(' ', '_')
         if group_lower in ROLE_FEATURES:
+            _ensure_staff_flag(user)
             return group_lower
     
     # Fall back to staff profession
@@ -266,9 +291,12 @@ def get_user_role(user):
             'store_manager': 'store_manager',
         }
         
-        return profession_role_map.get(staff.profession, 'staff')
+        role = profession_role_map.get(staff.profession, 'staff')
+        _ensure_staff_flag(user)
+        return role
         
     except:
+        _ensure_staff_flag(user)
         return 'staff'  # Default fallback
 
 
@@ -284,7 +312,7 @@ def get_user_dashboard_url(user):
         'hr_manager': '/hms/hr/worldclass/',
         'doctor': '/hms/medical-dashboard/',
         'nurse': '/hms/triage/',
-        'pharmacist': '/hms/pharmacy-dashboard/',
+        'pharmacist': '/hms/pharmacy/pending-dispensing/',
         'store_manager': '/hms/inventory/dashboard/',
         'lab_technician': '/hms/lab-dashboard/',
         'receptionist': '/hms/reception-dashboard/',
@@ -336,11 +364,12 @@ def get_role_navigation(user):
         'admin': [
             {'title': 'Dashboard', 'url': '/hms/admin-dashboard/', 'icon': 'speedometer2'},
             {'title': 'Patients', 'url': '/hms/patients/', 'icon': 'person'},
+            {'title': 'Encounters', 'url': '/hms/encounters/', 'icon': 'card-list'},
             {'title': 'Inventory Management', 'url': '/hms/inventory/dashboard/', 'icon': 'box-seam'},
             {'title': 'Procurement Approvals', 'url': '/hms/procurement/admin/pending/', 'icon': 'clipboard-check'},
             {'title': 'Accounting', 'url': '/hms/accounting-dashboard/', 'icon': 'calculator'},
             {'title': 'HR Management', 'url': '/hms/hr/worldclass/', 'icon': 'people'},
-            {'title': 'Pharmacy', 'url': '/hms/pharmacy-dashboard/', 'icon': 'capsule'},
+            {'title': 'Pharmacy', 'url': '/hms/pharmacy/', 'icon': 'capsule'},
             {'title': 'Laboratory', 'url': '/hms/lab-dashboard/', 'icon': 'clipboard2-pulse'},
             {'title': 'Reports', 'url': '/hms/reports/', 'icon': 'graph-up'},
             {'title': 'Settings', 'url': '/hms/settings/', 'icon': 'gear'},
@@ -361,6 +390,8 @@ def get_role_navigation(user):
             {'title': 'Activity Calendar', 'url': '/hms/hr/activities/', 'icon': 'calendar-event'},
             {'title': 'Leave Management', 'url': '/hms/hr/leave-calendar/', 'icon': 'calendar3'},
             {'title': 'Attendance', 'url': '/hms/hr/attendance-calendar/', 'icon': 'calendar-check'},
+            {'title': 'Login Attendance', 'url': '/hms/hr/attendance/login-sessions/', 'icon': 'fingerprint'},
+            {'title': 'Live Sessions', 'url': '/hms/hr/live-sessions/', 'icon': 'broadcast-pin'},
             {'title': 'Payroll', 'url': '/hms/payroll/', 'icon': 'cash'},
             {'title': 'Performance', 'url': '/hms/performance-reviews/', 'icon': 'star'},
             {'title': 'Recruitment', 'url': '/hms/hr/recruitment/', 'icon': 'person-plus'},
@@ -370,10 +401,10 @@ def get_role_navigation(user):
         'doctor': [
             {'title': 'Medical Dashboard', 'url': '/hms/medical-dashboard/', 'icon': 'speedometer2'},
             {'title': 'My Patients', 'url': '/hms/patients/', 'icon': 'person'},
-            {'title': 'Consultations', 'url': '/hms/consultations/', 'icon': 'clipboard-pulse'},
-            {'title': 'Triage', 'url': '/hms/triage/', 'icon': 'heartbeat'},
+            {'title': 'Consultations', 'url': '/hms/my-consultations/', 'icon': 'clipboard-pulse'},
+            {'title': 'Triage', 'url': '/hms/triage/dashboard/', 'icon': 'heartbeat'},
             {'title': 'Medical Records', 'url': '/hms/medical-records/', 'icon': 'file-medical'},
-            {'title': 'Prescriptions', 'url': '/hms/prescriptions/', 'icon': 'prescription2'},
+            {'title': 'Prescriptions', 'url': '/hms/pharmacy/walkin-sales/', 'icon': 'prescription2'},
             {'title': 'Lab Orders', 'url': '/hms/orders/', 'icon': 'clipboard-check'},
         ],
         'nurse': [
@@ -384,10 +415,8 @@ def get_role_navigation(user):
             {'title': 'Orders', 'url': '/hms/orders/', 'icon': 'clipboard-check'},
         ],
         'pharmacist': [
-            {'title': 'Pharmacy Dashboard', 'url': '/hms/pharmacy-dashboard/', 'icon': 'speedometer2'},
-            {'title': 'Prescriptions', 'url': '/hms/prescriptions/', 'icon': 'prescription2'},
-            {'title': 'Drug Inventory', 'url': '/hms/drugs/', 'icon': 'capsule'},
-            {'title': 'Dispensing', 'url': '/hms/dispensing/', 'icon': 'bag-check'},
+            {'title': 'Dispensing Queue', 'url': '/hms/pharmacy/pending-dispensing/', 'icon': 'bag-check'},
+            {'title': 'Payment Verification', 'url': '/hms/payment/pharmacy/dispensing/', 'icon': 'lock'},
         ],
         'store_manager': [
             {'title': 'Inventory Dashboard', 'url': '/hms/inventory/dashboard/', 'icon': 'speedometer2'},
@@ -474,7 +503,8 @@ def assign_user_to_role(user, role_slug):
         group, created = Group.objects.get_or_create(name=role_config['name'])
         user.groups.add(group)
         user.is_staff = True
-        user.save()
+        user.is_superuser = False
+        user.save(update_fields=['is_staff', 'is_superuser'])
     
     return True
 
@@ -497,6 +527,24 @@ def get_role_display_info(user):
         'icon': role_config.get('icon', 'person'),
         'dashboards': role_config.get('dashboards', []),
     }
+
+
+# ----------------------------------------------------------------------
+# Access helpers for sensitive modules (e.g., cashier)
+# ----------------------------------------------------------------------
+CASHIER_ACCESS_ROLES = {'admin', 'accountant', 'cashier'}
+
+
+def user_has_cashier_access(user):
+    """
+    Only Administrators and Accounting can access cashier features.
+    """
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if user.is_superuser:
+        return True
+    user_role = get_user_role(user)
+    return user_role in CASHIER_ACCESS_ROLES
 
 
 

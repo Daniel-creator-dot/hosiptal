@@ -1,0 +1,112 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Orders - HMS{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+        <div>
+            <h2 class="mb-1"><i class="bi bi-clipboard-check"></i> Orders</h2>
+            <p class="text-muted mb-0">Track all investigations and medication orders</p>
+        </div>
+        <a href="{% url 'hospital:order_create' %}" class="btn btn-primary">
+            <i class="bi bi-plus-circle"></i> New Order
+        </a>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label">Search</label>
+                    <input type="text" class="form-control" name="q" placeholder="Patient, MRN, notes"
+                           value="{{ search_query }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Type</label>
+                    <select class="form-select" name="type">
+                        <option value="">All Types</option>
+                        <option value="lab" {% if type_filter == 'lab' %}selected{% endif %}>Laboratory</option>
+                        <option value="imaging" {% if type_filter == 'imaging' %}selected{% endif %}>Imaging</option>
+                        <option value="medication" {% if type_filter == 'medication' %}selected{% endif %}>Medication</option>
+                        <option value="procedure" {% if type_filter == 'procedure' %}selected{% endif %}>Procedure</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Status</label>
+                    <select class="form-select" name="status">
+                        <option value="">All</option>
+                        <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
+                        <option value="in_progress" {% if status_filter == 'in_progress' %}selected{% endif %}>In Progress</option>
+                        <option value="completed" {% if status_filter == 'completed' %}selected{% endif %}>Completed</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Priority</label>
+                    <select class="form-select" name="priority">
+                        <option value="">All</option>
+                        <option value="routine" {% if priority_filter == 'routine' %}selected{% endif %}>Routine</option>
+                        <option value="urgent" {% if priority_filter == 'urgent' %}selected{% endif %}>Urgent</option>
+                        <option value="stat" {% if priority_filter == 'stat' %}selected{% endif %}>STAT</option>
+                    </select>
+                </div>
+                <div class="col-md-1 text-end">
+                    <button type="submit" class="btn btn-secondary w-100">
+                        <i class="bi bi-filter"></i> Apply
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Patient</th>
+                            <th>Order Type</th>
+                            <th>Requested By</th>
+                            <th>Status</th>
+                            <th>Priority</th>
+                            <th>Requested</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for order in orders %}
+                        <tr>
+                            <td>
+                                <strong>{{ order.encounter.patient.full_name }}</strong><br>
+                                <small class="text-muted">{{ order.encounter.patient.mrn }}</small>
+                            </td>
+                            <td>{{ order.get_order_type_display }}</td>
+                            <td>{{ order.requested_by.get_full_name|default:order.requested_by.user.get_full_name }}</td>
+                            <td><span class="badge bg-info">{{ order.get_status_display }}</span></td>
+                            <td><span class="badge bg-warning text-dark">{{ order.get_priority_display }}</span></td>
+                            <td>{{ order.requested_at|naturaltime }}</td>
+                            <td class="text-end">
+                                <a href="{% url 'hospital:order_detail' order.pk %}" class="btn btn-sm btn-outline-primary">
+                                    View
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="7" class="text-center text-muted py-5">
+                                No orders found for the selected filters.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+

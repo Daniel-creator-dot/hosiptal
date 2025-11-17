@@ -208,7 +208,7 @@ class Candidate(BaseModel):
     email = models.EmailField()
     phone = models.CharField(max_length=17)
     
-    resume = models.FileField(upload_to='candidate_resumes/')
+    resume = models.FileField(upload_to='candidate_resumes/', blank=True)
     cover_letter = models.TextField(blank=True)
     
     application_date = models.DateField(default=timezone.now)

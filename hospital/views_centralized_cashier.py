@@ -14,6 +14,7 @@ import logging
 
 from .models import Patient, Encounter, LabResult, Prescription, Admission
 from .models_accounting import PaymentReceipt, Transaction
+from .models_payment_verification import LabResultRelease, PharmacyDispensing
 from .services.unified_receipt_service import (
     UnifiedReceiptService,
     LabPaymentService,
@@ -22,13 +23,17 @@ from .services.unified_receipt_service import (
     ConsultationPaymentService,
     BedPaymentService
 )
+from .services.auto_billing_service import AutoBillingService
+from .utils_roles import user_has_cashier_access
+from .models_pharmacy_walkin import WalkInPharmacySale
+from .services.pharmacy_walkin_service import WalkInPharmacyService
 
 logger = logging.getLogger(__name__)
 
 
 def is_cashier(user):
-    """Check if user is cashier"""
-    return user.is_staff or user.is_superuser  # TODO: Add proper role check
+    """Only Administrators and Accountants can access cashier tools."""
+    return user_has_cashier_access(user)
 
 
 @login_required
@@ -41,32 +46,29 @@ def centralized_cashier_dashboard(request):
     today = timezone.now().date()
     
     # Get ALL lab tests and prescriptions (paid and unpaid)
-    from .models_payment_verification import LabResultRelease, PharmacyDispensing
-    from .services.auto_billing_service import AutoBillingService
-    
     # Get all lab results
     all_labs = LabResult.objects.filter(
-        is_deleted=False,
-        verified_by__isnull=False  # Results ready
+        is_deleted=False
+    ).filter(
+        Q(verified_by__isnull=False) | Q(release_record__sent_to_cashier_at__isnull=False)
     ).select_related(
-        'test', 'order__encounter__patient'
+        'test', 'order__encounter__patient', 'release_record'
     ).order_by('-created')
     
     # Filter for unpaid
     pending_labs = []
     for lab in all_labs:
-        try:
-            # Check if has release record with payment
-            if hasattr(lab, 'release_record'):
-                if not lab.release_record.payment_receipt:
-                    pending_labs.append(lab)
-            else:
-                # No release record - create bill and add to pending
-                AutoBillingService.create_lab_bill(lab)
+        release_record = getattr(lab, 'release_record', None)
+        if release_record:
+            if release_record.payment_receipt_id:
+                continue
+            if release_record.sent_to_cashier_at or lab.verified_by_id:
                 pending_labs.append(lab)
-        except:
-            # No release record - create bill
-            AutoBillingService.create_lab_bill(lab)
+        else:
+            try:
+                AutoBillingService.create_lab_bill(lab)
+            except Exception:
+                pass
             pending_labs.append(lab)
     
     # Get all prescriptions
@@ -110,6 +112,14 @@ def centralized_cashier_dashboard(request):
         except Exception as e:
             logger.error(f"Error calculating bed charges for admission {admission.pk}: {str(e)}")
     
+    # Walk-in pharmacy sales pending payment
+    walkin_sales_qs = WalkInPharmacySale.objects.filter(
+        is_deleted=False,
+        payment_status__in=['pending', 'partial']
+    ).select_related('patient').order_by('-sale_date')
+    pending_walkin_sales = list(walkin_sales_qs[:20])
+    total_pending_walkin = walkin_sales_qs.count()
+
     # Get all imaging studies (completed ones ready for payment)
     from .models_advanced import ImagingStudy
     from .models_accounting import PaymentReceipt
@@ -169,6 +179,7 @@ def centralized_cashier_dashboard(request):
         'pending_admissions': len(pending_admissions),
         'todays_receipts': todays_receipts_base.count(),
         'todays_revenue': todays_receipts_base.aggregate(Sum('amount_paid'))['amount_paid__sum'] or Decimal('0.00'),
+        'pending_walkin': total_pending_walkin,
     }
     
     # Revenue by payment method
@@ -186,6 +197,8 @@ def centralized_cashier_dashboard(request):
         'pending_pharmacy': pending_pharmacy[:20],  # Show more
         'pending_imaging': pending_imaging[:20],  # Show imaging studies
         'pending_admissions': pending_admissions[:20],  # Show bed charges
+        'pending_walkin_sales': pending_walkin_sales,
+        'total_pending_walkin': total_pending_walkin,
         'todays_receipts': todays_receipts_display,
         'stats': stats,
         'total_pending_labs': len(pending_labs),
@@ -205,7 +218,6 @@ def cashier_patient_bills(request):
     """
     from .models_advanced import ImagingStudy
     from .models_accounting import PaymentReceipt
-    from .models_payment_verification import LabResultRelease, PharmacyDispensing
     
     search = request.GET.get('search', '')
     
@@ -306,6 +318,44 @@ def cashier_patient_bills(request):
             'encounter': rx.order.encounter,
         })
         patients_bills[patient_id]['total'] += total
+    
+    # Walk-in pharmacy sales
+    walkin_query = WalkInPharmacySale.objects.filter(
+        is_deleted=False,
+        payment_status__in=['pending', 'partial']
+    ).select_related('patient')
+    
+    if search:
+        walkin_query = walkin_query.filter(
+            Q(customer_name__icontains=search) |
+            Q(sale_number__icontains=search) |
+            Q(patient__mrn__icontains=search)
+        )
+    
+    for sale in walkin_query:
+        patient = WalkInPharmacyService.ensure_sale_patient(sale)
+        patient_id = str(patient.id)
+        
+        if patient_id not in patients_bills:
+            patients_bills[patient_id] = {
+                'patient': patient,
+                'services': [],
+                'total': Decimal('0.00')
+            }
+        
+        amount_due = sale.amount_due or (sale.total_amount - sale.amount_paid)
+        if amount_due < 0:
+            amount_due = Decimal('0.00')
+        
+        patients_bills[patient_id]['services'].append({
+            'type': 'pharmacy_walkin',
+            'id': str(sale.id),
+            'name': f"Walk-in Sale {sale.sale_number}",
+            'price': amount_due,
+            'date': sale.sale_date,
+            'obj': sale,
+        })
+        patients_bills[patient_id]['total'] += amount_due
     
     # Get all imaging studies
     imaging_query = ImagingStudy.objects.filter(
@@ -485,9 +535,6 @@ def cashier_all_pending_bills(request):
     Show ALL pending bills - comprehensive view
     Search by patient name, MRN, or service
     """
-    from .models_payment_verification import LabResultRelease, PharmacyDispensing
-    from .services.auto_billing_service import AutoBillingService
-    
     search = request.GET.get('search', '')
     service_filter = request.GET.get('service_type', 'all')
     
@@ -563,6 +610,38 @@ def cashier_all_pending_bills(request):
                 'price': total,
                 'date': rx.created,
                 'encounter': rx.order.encounter,
+            })
+    
+    # Walk-in pharmacy sales
+    walkin_sales = WalkInPharmacySale.objects.filter(
+        is_deleted=False,
+        payment_status__in=['pending', 'partial']
+    ).select_related('patient')
+    
+    if search:
+        walkin_sales = walkin_sales.filter(
+            Q(customer_name__icontains=search) |
+            Q(sale_number__icontains=search) |
+            Q(patient__mrn__icontains=search)
+        )
+    
+    if service_filter in ['all', 'pharmacy', 'pharmacy_walkin']:
+        for sale in walkin_sales:
+            patient = WalkInPharmacyService.ensure_sale_patient(sale)
+            amount_due = sale.amount_due or (sale.total_amount - sale.amount_paid)
+            if amount_due < 0:
+                amount_due = Decimal('0.00')
+            
+            pending_items.append({
+                'type': 'pharmacy_walkin',
+                'id': str(sale.id),
+                'patient': patient,
+                'patient_name': patient.full_name,
+                'patient_mrn': patient.mrn,
+                'service': f"Walk-in Sale {sale.sale_number}",
+                'price': amount_due,
+                'date': sale.sale_date,
+                'sale': sale,
             })
     
     # Get all imaging studies (completed ones ready for payment)
@@ -716,6 +795,27 @@ def cashier_process_service_payment(request, service_type, service_id):
         drug_price = service_obj.drug.unit_price if hasattr(service_obj.drug, 'unit_price') else Decimal('0.00')
         service_price = drug_price * service_obj.quantity
         
+        dispensing_record = getattr(service_obj, 'dispensing_record', None)
+        if not dispensing_record:
+            AutoBillingService.create_pharmacy_bill(service_obj)
+            dispensing_record = getattr(service_obj, 'dispensing_record', None)
+        if not dispensing_record:
+            messages.error(request, '❌ Pharmacy has not sent this medication to the cashier yet.')
+            return redirect('hospital:centralized_cashier_dashboard')
+        if dispensing_record.payment_receipt_id:
+            messages.error(request, '✅ Payment for this medication has already been recorded.')
+            return redirect('hospital:centralized_cashier_dashboard')
+    elif service_type == 'pharmacy_walkin':
+        service_obj = get_object_or_404(WalkInPharmacySale, id=service_id, is_deleted=False)
+        if service_obj.payment_status == 'paid':
+            messages.error(request, '✅ Payment for this walk-in sale has already been recorded.')
+            return redirect('hospital:centralized_cashier_dashboard')
+        patient = WalkInPharmacyService.ensure_sale_patient(service_obj)
+        service_name = f"Walk-in Sale {service_obj.sale_number}"
+        service_price = service_obj.amount_due or (service_obj.total_amount - service_obj.amount_paid)
+        if service_price < 0:
+            service_price = Decimal('0.00')
+        
     elif service_type == 'imaging':
         from .models_advanced import ImagingStudy
         service_obj = get_object_or_404(ImagingStudy, id=service_id, is_deleted=False)
@@ -743,6 +843,18 @@ def cashier_process_service_payment(request, service_type, service_id):
             service_price = Decimal('120.00')
             service_name = f"Bed Charges - {service_obj.ward.name} - Bed {service_obj.bed.bed_number}"
     
+    if service_type == 'lab':
+        release_record = getattr(service_obj, 'release_record', None)
+        if not release_record:
+            AutoBillingService.create_lab_bill(service_obj)
+            release_record = getattr(service_obj, 'release_record', None)
+        if not release_record:
+            messages.error(request, '❌ Lab result has not been sent to the cashier yet.')
+            return redirect('hospital:centralized_cashier_dashboard')
+        if release_record.payment_receipt_id:
+            messages.error(request, '✅ Payment for this lab test has already been recorded.')
+            return redirect('hospital:centralized_cashier_dashboard')
+
     if request.method == 'POST':
         amount = Decimal(request.POST.get('amount', service_price))
         payment_method = request.POST.get('payment_method', 'cash')
@@ -767,6 +879,14 @@ def cashier_process_service_payment(request, service_type, service_id):
                 payment_method=payment_method,
                 received_by_user=request.user,
                 notes=notes
+            )
+        elif service_type == 'pharmacy_walkin':
+            result = WalkInPharmacyService.create_payment_receipt(
+                sale=service_obj,
+                amount=amount,
+                payment_method=payment_method,
+                received_by_user=request.user,
+                notes=notes or f"Walk-in sale {service_obj.sale_number}"
             )
         elif service_type == 'imaging':
             result = ImagingPaymentService.create_imaging_payment_receipt(
@@ -837,8 +957,6 @@ def cashier_process_patient_combined_payment(request, patient_id):
     """
     from .models_advanced import ImagingStudy
     from .models_accounting import PaymentReceipt
-    from .models_payment_verification import LabResultRelease, PharmacyDispensing
-    
     patient = get_object_or_404(Patient, id=patient_id, is_deleted=False)
     
     # Get all pending services for this patient (same logic as patient_bills view)
@@ -1040,6 +1158,14 @@ def cashier_process_patient_combined_payment(request, patient_id):
                     elif service['type'] == 'bed':
                         service_result = BedPaymentService.create_bed_payment_receipt(
                             admission=service['obj'],
+                            amount=service['price'],
+                            payment_method=payment_method,
+                            received_by_user=request.user,
+                            notes=f"Part of combined bill {receipt.receipt_number}"
+                        )
+                    elif service['type'] == 'pharmacy_walkin':
+                        service_result = WalkInPharmacyService.create_payment_receipt(
+                            sale=service['obj'],
                             amount=service['price'],
                             payment_method=payment_method,
                             received_by_user=request.user,

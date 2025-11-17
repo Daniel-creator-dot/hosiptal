@@ -38,6 +38,11 @@ ENV PYTHONPATH=/app
 ENV DJANGO_SETTINGS_MODULE=hms.settings
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8000
+ENV GUNICORN_WORKERS=6
+ENV GUNICORN_THREADS=4
+ENV GUNICORN_MAX_REQUESTS=1000
+ENV GUNICORN_MAX_REQUESTS_JITTER=100
+ENV GUNICORN_TIMEOUT=120
 
 # Collect static files
 RUN python manage.py collectstatic --no-input --clear || true
@@ -50,11 +55,14 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:${PORT}/health/ || exit 1
 
 # Use gunicorn for production (not Django runserver)
-CMD gunicorn hms.wsgi:application \
+CMD ["/bin/sh", "-c", "gunicorn hms.wsgi:application \
     --bind 0.0.0.0:${PORT} \
-    --workers 4 \
-    --threads 2 \
-    --timeout 120 \
+    --worker-class gthread \
+    --workers ${GUNICORN_WORKERS:-6} \
+    --threads ${GUNICORN_THREADS:-4} \
+    --max-requests ${GUNICORN_MAX_REQUESTS:-1000} \
+    --max-requests-jitter ${GUNICORN_MAX_REQUESTS_JITTER:-100} \
+    --timeout ${GUNICORN_TIMEOUT:-120} \
     --access-logfile - \
     --error-logfile - \
-    --log-level info
+    --log-level info"]

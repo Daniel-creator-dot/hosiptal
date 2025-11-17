@@ -1,0 +1,126 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{% url 'hospital:pharmacy_walkin_sales_list' %}">Walk-in Sales</a></li>
+                    <li class="breadcrumb-item"><a href="{% url 'hospital:pharmacy_walkin_sale_detail' sale.id %}">{{ sale.sale_number }}</a></li>
+                    <li class="breadcrumb-item active">Record Payment</li>
+                </ol>
+            </nav>
+            <h2 class="fw-bold mb-1">💰 Record Walk-in Payment</h2>
+            <p class="text-muted mb-0">Send this walk-in customer to cashier. Cashier records payment here and receipt is auto-generated.</p>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-7">
+            <div class="card shadow-sm">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">Cashier Payment Form</h5>
+                </div>
+                <div class="card-body">
+                    <form method="post">
+                        {% csrf_token %}
+                        <div class="mb-3">
+                            <label class="form-label">Amount Received (GHS)</label>
+                            <input type="number" step="0.01" min="0" class="form-control form-control-lg" name="amount_paid" value="{{ sale.amount_due|default:sale.total_amount }}">
+                            <div class="form-text text-muted">
+                                Amount due: <strong>GHS {{ sale.amount_due|floatformat:2 }}</strong>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Payment Method</label>
+                            <select name="payment_method" class="form-select form-select-lg">
+                                <option value="cash">Cash</option>
+                                <option value="card">Card</option>
+                                <option value="mobile_money">Mobile Money</option>
+                                <option value="bank_transfer">Bank Transfer</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="form-label">Notes (optional)</label>
+                            <textarea name="notes" class="form-control" rows="3" placeholder="e.g., Cash collected by John at Main Cashier Desk"></textarea>
+                        </div>
+
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            After you click <strong>Record Payment</strong>, a unified receipt with QR code will be generated automatically and synced to accounting.
+                        </div>
+
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-success btn-lg" type="submit">
+                                <i class="bi bi-receipt"></i> Record Payment & Generate Receipt
+                            </button>
+                            <a href="{% url 'hospital:pharmacy_walkin_sale_detail' sale.id %}" class="btn btn-outline-secondary btn-lg">
+                                Cancel
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-5">
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-light">
+                    <h6 class="mb-0">Sale Summary</h6>
+                </div>
+                <div class="card-body">
+                    <p class="mb-1"><strong>Sale #:</strong> {{ sale.sale_number }}</p>
+                    <p class="mb-1"><strong>Date:</strong> {{ sale.sale_date|date:"d M Y H:i" }}</p>
+                    <p class="mb-1"><strong>Customer:</strong> {{ sale.customer_name }}</p>
+                    <p class="mb-1"><strong>Phone:</strong> {{ sale.customer_phone|default:"—" }}</p>
+                    <hr>
+                    <div class="d-flex justify-content-between">
+                        <span>Total Amount:</span>
+                        <strong>GHS {{ sale.total_amount|floatformat:2 }}</strong>
+                    </div>
+                    <div class="d-flex justify-content-between text-success mt-2">
+                        <span>Amount Paid:</span>
+                        <strong>GHS {{ sale.amount_paid|floatformat:2 }}</strong>
+                    </div>
+                    <div class="d-flex justify-content-between text-danger mt-2">
+                        <span>Amount Due:</span>
+                        <strong>GHS {{ sale.amount_due|floatformat:2 }}</strong>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card shadow-sm">
+                <div class="card-header bg-light">
+                    <h6 class="mb-0">Items</h6>
+                </div>
+                <div class="card-body">
+                    {% for item in items %}
+                        <div class="d-flex justify-content-between border-bottom py-2">
+                            <div>
+                                <strong>{{ item.drug.name }}</strong>
+                                <div class="text-muted small">{{ item.drug.strength }} {{ item.drug.form }}</div>
+                                {% if item.dosage_instructions %}
+                                    <div class="small text-info">{{ item.dosage_instructions }}</div>
+                                {% endif %}
+                            </div>
+                            <div class="text-end">
+                                <div>Qty {{ item.quantity }}</div>
+                                <div class="fw-bold">GHS {{ item.line_total|floatformat:2 }}</div>
+                            </div>
+                        </div>
+                    {% empty %}
+                        <p class="text-muted mb-0">No items found.</p>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

@@ -84,6 +84,13 @@
 </style>
 {% endblock %}
 
+{% block extra_js %}
+<script>
+// Enable global auto-refresh for the lab technician dashboard (every 30 seconds)
+window.DASHBOARD_AUTO_REFRESH_INTERVAL = 30000;
+</script>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid">
     <!-- Header -->
@@ -152,13 +159,17 @@
                         <div class="d-flex justify-content-between align-items-start">
                             <div>
                                 <h6 class="mb-1">
-                                    <a href="{% url 'hospital:patient_detail' order.patient.pk %}" class="text-decoration-none">
-                                        {{ order.patient.full_name }}
-                                    </a>
+                                    {% if order.encounter and order.encounter.patient %}
+                                        <a href="{% url 'hospital:patient_detail' order.encounter.patient.pk %}" class="text-decoration-none">
+                                            {{ order.encounter.patient.full_name }}
+                                        </a>
+                                    {% else %}
+                                        <span class="text-muted">Unassigned patient</span>
+                                    {% endif %}
                                 </h6>
                                 <p class="text-muted mb-1">
                                     <i class="bi bi-flask me-1"></i>
-                                    {{ order.description }}
+                                    {{ order.notes|default:"Lab request"|truncatewords:12 }}
                                 </p>
                                 <small class="text-muted">
                                     Ordered: {{ order.created|date:"M d, Y g:i A" }}
@@ -167,7 +178,7 @@
                             <div>
                                 <span class="status-badge status-pending">Pending</span>
                                 <br>
-                                <a href="#" class="action-btn btn-warning mt-2">
+                                <a href="{% url 'hospital:order_detail' order.pk %}" class="action-btn btn-warning mt-2">
                                     <i class="bi bi-play-circle me-1"></i>Start
                                 </a>
                             </div>
@@ -196,22 +207,26 @@
                         <div class="d-flex justify-content-between align-items-start">
                             <div>
                                 <h6 class="mb-1">
-                                    <a href="{% url 'hospital:patient_detail' test.patient.pk %}" class="text-decoration-none">
-                                        {{ test.patient.full_name }}
-                                    </a>
+                                    {% if test.encounter and test.encounter.patient %}
+                                        <a href="{% url 'hospital:patient_detail' test.encounter.patient.pk %}" class="text-decoration-none">
+                                            {{ test.encounter.patient.full_name }}
+                                        </a>
+                                    {% else %}
+                                        <span class="text-muted">Unassigned patient</span>
+                                    {% endif %}
                                 </h6>
                                 <p class="text-muted mb-1">
                                     <i class="bi bi-flask me-1"></i>
-                                    {{ test.description }}
+                                    {{ test.notes|default:"Processing sample"|truncatewords:12 }}
                                 </p>
                                 <small class="text-muted">
-                                    Started: {{ test.updated|date:"M d, Y g:i A" }}
+                                    Updated: {{ test.modified|date:"M d, Y g:i A" }}
                                 </small>
                             </div>
                             <div>
                                 <span class="status-badge status-in-progress">In Progress</span>
                                 <br>
-                                <a href="#" class="action-btn btn-primary mt-2">
+                                <a href="{% url 'hospital:order_detail' test.pk %}" class="action-btn btn-primary mt-2">
                                     <i class="bi bi-pencil me-1"></i>Update
                                 </a>
                             </div>
@@ -242,23 +257,27 @@
                         <div class="d-flex justify-content-between align-items-start">
                             <div>
                                 <h6 class="mb-1">
-                                    <a href="{% url 'hospital:patient_detail' result.patient.pk %}" class="text-decoration-none">
-                                        {{ result.patient.full_name }}
-                                    </a>
+                                    {% if result.order and result.order.encounter and result.order.encounter.patient %}
+                                        <a href="{% url 'hospital:patient_detail' result.order.encounter.patient.pk %}" class="text-decoration-none">
+                                            {{ result.order.encounter.patient.full_name }}
+                                        </a>
+                                    {% else %}
+                                        <span class="text-muted">Unassigned patient</span>
+                                    {% endif %}
                                 </h6>
                                 <p class="text-muted mb-1">
                                     <i class="bi bi-flask me-1"></i>
                                     {{ result.test.name }}
                                 </p>
                                 <small class="text-muted">
-                                    Completed: {{ result.completed_at|date:"M d, Y g:i A" }}
+                                    Updated: {{ result.modified|date:"M d, Y g:i A" }}
                                 </small>
                             </div>
                             <div>
                                 <span class="status-badge status-completed">Completed</span>
                                 <br>
                                 <div class="mt-2">
-                                    <a href="#" class="action-btn btn-success me-2">
+                                    <a href="{% url 'hospital:tabular_lab_report' result.pk %}" class="action-btn btn-success me-2">
                                         <i class="bi bi-eye me-1"></i>View
                                     </a>
                                     <a href="{% url 'hospital:send_lab_result_sms' result.pk %}" class="action-btn btn-info" title="Send SMS to Patient">
@@ -313,16 +332,16 @@
                     Quick Actions
                 </h5>
                 <div class="d-flex flex-wrap gap-2">
-                    <a href="#" class="action-btn">
+                    <a href="{% url 'hospital:order_create' %}" class="action-btn">
                         <i class="bi bi-plus-circle me-1"></i>New Test
                     </a>
-                    <a href="#" class="action-btn btn-warning">
+                    <a href="{% url 'hospital:lab_results_pending_release' %}" class="action-btn btn-warning">
                         <i class="bi bi-flask me-1"></i>Process Sample
                     </a>
-                    <a href="#" class="action-btn btn-success">
+                    <a href="{% url 'hospital:lab_results_list' %}" class="action-btn btn-success">
                         <i class="bi bi-clipboard-check me-1"></i>Enter Results
                     </a>
-                    <a href="#" class="action-btn btn-primary">
+                    <a href="{% url 'hospital:lab_results_list' %}" class="action-btn btn-primary">
                         <i class="bi bi-printer me-1"></i>Print Report
                     </a>
                     <a href="{% url 'hospital:global_search' %}" class="action-btn">

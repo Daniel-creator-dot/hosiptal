@@ -1,0 +1,131 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{% url 'hospital:pharmacy_walkin_sales_list' %}">Walk-in Sales</a></li>
+                    <li class="breadcrumb-item"><a href="{% url 'hospital:pharmacy_walkin_sale_detail' sale.id %}">{{ sale.sale_number }}</a></li>
+                    <li class="breadcrumb-item active">Dispense</li>
+                </ol>
+            </nav>
+            <h2 class="fw-bold mb-1">🩺 Dispense Walk-in Sale</h2>
+            <p class="text-muted mb-0">Verify cashier payment before releasing medications. Stock will reduce automatically.</p>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-7">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Dispensing Checklist</h5>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <strong>Status:</strong>
+                        {% if sale.payment_status == 'paid' %}
+                            <span class="badge bg-success">Payment Verified</span>
+                        {% elif sale.payment_status == 'partial' %}
+                            <span class="badge bg-warning text-dark">Partial Payment</span>
+                        {% else %}
+                            <span class="badge bg-danger">Payment Pending</span>
+                        {% endif %}
+                        <br>
+                        <small>Cashier receipt required before dispensing.</small>
+                    </div>
+
+                    {% if sale.payment_status != 'paid' %}
+                        <div class="alert alert-danger">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            Payment is not complete. Ask the customer to pay at cashier with sale number
+                            <strong>{{ sale.sale_number }}</strong> before dispensing.
+                        </div>
+                    {% else %}
+                        <form method="post">
+                            {% csrf_token %}
+                            <div class="mb-3">
+                                <label class="form-label">Counselling Notes</label>
+                                <textarea class="form-control" name="counselling_notes" rows="3" placeholder="Document counselling provided"></textarea>
+                            </div>
+
+                            <div class="alert alert-warning">
+                                <i class="bi bi-info-circle"></i>
+                                Confirm quantities below match what will be dispensed. Stock will reduce automatically.
+                            </div>
+
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="bi bi-capsule"></i> Dispense Medication
+                            </button>
+                            <a href="{% url 'hospital:pharmacy_walkin_sale_detail' sale.id %}" class="btn btn-outline-secondary btn-lg">
+                                Cancel
+                            </a>
+                        </form>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-5">
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-light">
+                    <h6 class="mb-0">Sale Summary</h6>
+                </div>
+                <div class="card-body">
+                    <p class="mb-1"><strong>Sale #:</strong> {{ sale.sale_number }}</p>
+                    <p class="mb-1"><strong>Date:</strong> {{ sale.sale_date|date:"d M Y H:i" }}</p>
+                    <p class="mb-1"><strong>Customer:</strong> {{ sale.customer_name }}</p>
+                    <p class="mb-1"><strong>Phone:</strong> {{ sale.customer_phone|default:"—" }}</p>
+                    <hr>
+                    <div class="d-flex justify-content-between">
+                        <span>Total Amount:</span>
+                        <strong>GHS {{ sale.total_amount|floatformat:2 }}</strong>
+                    </div>
+                    <div class="d-flex justify-content-between text-success mt-2">
+                        <span>Amount Paid:</span>
+                        <strong>GHS {{ sale.amount_paid|floatformat:2 }}</strong>
+                    </div>
+                    <div class="d-flex justify-content-between text-danger mt-2">
+                        <span>Amount Due:</span>
+                        <strong>GHS {{ sale.amount_due|floatformat:2 }}</strong>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card shadow-sm">
+                <div class="card-header bg-light">
+                    <h6 class="mb-0">Items to Dispense</h6>
+                </div>
+                <div class="card-body">
+                    {% for item in items %}
+                        <div class="border-bottom pb-2 mb-3">
+                            <strong>{{ item.drug.name }}</strong>
+                            <div class="text-muted small">{{ item.drug.strength }} {{ item.drug.form }}</div>
+                            <div class="d-flex justify-content-between mt-1">
+                                <span>Quantity:</span>
+                                <strong>{{ item.quantity }}</strong>
+                            </div>
+                            <div class="text-muted mt-1"><small>Unit Price: GHS {{ item.unit_price|floatformat:2 }}</small></div>
+                            {% if item.dosage_instructions %}
+                                <div class="small text-info mt-1">
+                                    <i class="bi bi-info-circle"></i> {{ item.dosage_instructions }}
+                                </div>
+                            {% endif %}
+                        </div>
+                    {% empty %}
+                        <p class="text-muted mb-0">No items found.</p>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+

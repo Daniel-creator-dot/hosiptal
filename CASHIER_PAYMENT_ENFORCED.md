@@ -297,3 +297,9 @@ NEW: Alert box explaining cashier-first workflow
 
 
 
+
+
+
+
+
+

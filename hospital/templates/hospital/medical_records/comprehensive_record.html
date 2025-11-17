@@ -1,4 +1,4 @@
-{% extends 'hospital/base_modern.html' %}
+{% extends 'hospital/base.html' %}
 {% load static %}
 
 {% block title %}Complete Medical Record - {{ patient.full_name }}{% endblock %}
@@ -372,7 +372,7 @@
                     {% if allergies %}
                         {% for allergy in allergies %}
                             <span class="allergy-badge">
-                                <i class="bi bi-exclamation-circle me-2"></i>{{ allergy|strip }}
+                                <i class="bi bi-exclamation-circle me-2"></i>{{ allergy|default_if_none:""|slugify|cut:"-" }}
                             </span>
                         {% endfor %}
                     {% else %}
@@ -389,7 +389,7 @@
                     {% if current_medications %}
                         {% for medication in current_medications %}
                             <span class="medication-badge">
-                                <i class="bi bi-capsule me-2"></i>{{ medication|strip }}
+                                <i class="bi bi-capsule me-2"></i>{{ medication|default_if_none:""|slugify|cut:"-" }}
                             </span>
                         {% endfor %}
                     {% else %}
@@ -437,6 +437,80 @@
                     {% endwith %}
                 </div>
                 {% endif %}
+
+                <!-- Imaging & Radiology -->
+                <div class="section-card">
+                    <div class="section-title">
+                        <div class="section-icon"><i class="bi bi-image"></i></div>
+                        <span>Imaging & Radiology</span>
+                    </div>
+                    {% if recent_imaging %}
+                        {% for study in recent_imaging %}
+                        <div class="border rounded p-3 mb-3">
+                            <div class="d-flex justify-content-between flex-wrap gap-2">
+                                <div>
+                                    <strong>{{ study.get_modality_display }} · {{ study.body_part }}</strong><br>
+                                    <small class="text-muted">{{ study.study_type|default:"Imaging study" }}</small>
+                                </div>
+                                <div class="text-end small text-muted">
+                                    {{ study.performed_at|default:study.created|date:"M d, Y H:i" }}<br>
+                                    Status: {{ study.get_status_display }}
+                                </div>
+                            </div>
+                            {% if study.impression %}
+                            <p class="mt-3 mb-2">
+                                <span class="text-uppercase text-muted small">Impression</span><br>
+                                {{ study.impression|truncatechars:160 }}
+                            </p>
+                            {% elif study.findings %}
+                            <p class="mt-3 mb-2">
+                                <span class="text-uppercase text-muted small">Findings</span><br>
+                                {{ study.findings|truncatechars:160 }}
+                            </p>
+                            {% endif %}
+                            {% if study.images.all %}
+                            <div class="row g-2 mt-2">
+                                {% for image in study.images.all|slice:":3" %}
+                                <div class="col-4">
+                                    <div class="card shadow-sm">
+                                        {% if image.is_previewable %}
+                                        <img src="{{ image.image.url }}" class="card-img-top" alt="{{ image.description|default:'Imaging image' }}">
+                                        {% else %}
+                                        <div class="d-flex flex-column align-items-center justify-content-center bg-light" style="height: 90px;">
+                                            <i class="bi bi-file-earmark-text" style="color: #6b7280;"></i>
+                                            <small class="text-muted">{{ image.filename|default:"File" }}</small>
+                                        </div>
+                                        {% endif %}
+                                        <div class="card-body p-2">
+                                            <a href="{{ image.image.url }}" target="_blank" class="btn btn-sm btn-outline-primary w-100">
+                                                View
+                                            </a>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% else %}
+                            <p class="text-muted small mb-0">No imaging files uploaded.</p>
+                            {% endif %}
+                            <div class="d-flex justify-content-end gap-2 mt-3">
+                                {% if study.order_id %}
+                                <a href="{% url 'hospital:order_detail' study.order_id %}" class="btn btn-sm btn-outline-secondary">
+                                    Order Detail
+                                </a>
+                                {% endif %}
+                                {% if study.encounter_id %}
+                                <a href="{% url 'hospital:encounter_documentation' study.encounter_id %}" class="btn btn-sm btn-outline-primary">
+                                    Encounter Docs
+                                </a>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted mb-0">No imaging studies recorded for this patient.</p>
+                    {% endif %}
+                </div>
 
                 <!-- Medical History -->
                 {% if medical_history %}
@@ -559,6 +633,10 @@
     </div>
 </div>
 {% endblock %}
+
+
+
+
 
 
 

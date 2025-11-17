@@ -219,3 +219,9 @@ When viewing an occupied bed, the modal now shows:
 
 
 
+
+
+
+
+
+

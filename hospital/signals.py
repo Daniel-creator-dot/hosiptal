@@ -9,7 +9,7 @@ from django.utils import timezone
 from datetime import timedelta
 from .models import (
     Admission, InvoiceLine, Appointment, LabResult, Invoice, Prescription, Encounter, VitalSign, Order,
-    PharmacyStock
+    PharmacyStock, UserSession, Patient, PatientQRCode
 )
 from .models_advanced import SMSLog
 from .services.sms_service import sms_service
@@ -86,6 +86,20 @@ def handle_invoice_overdue(sender, instance, **kwargs):
                 sms_service.send_payment_reminder(instance)
             except Exception as e:
                 print(f"Failed to send payment reminder SMS: {e}")
+
+
+@receiver(post_save, sender=Patient)
+def ensure_patient_qr_profile(sender, instance, created, **kwargs):
+    """Automatically provision patient QR credentials"""
+    if instance.is_deleted:
+        return
+    
+    qr_profile, _ = PatientQRCode.objects.get_or_create(patient=instance)
+    needs_refresh = created or not qr_profile.qr_token or not qr_profile.qr_code_image
+    if needs_refresh:
+        qr_profile.refresh_qr(force_token=True)
+    else:
+        qr_profile.save(update_fields=['modified'])
 
 
 @receiver(post_save, sender=Prescription)

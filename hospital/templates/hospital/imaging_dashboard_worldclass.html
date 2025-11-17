@@ -205,7 +205,7 @@
                 <h5 style="font-weight: 700; margin: 0; color: var(--imaging-primary);">
                     <i class="bi bi-list-check me-2"></i>Imaging Queue
                 </h5>
-                <button class="btn btn-sm btn-primary action-btn" onclick="refreshStats()" style="padding: 6px 12px;">
+                <button class="btn btn-sm btn-primary action-btn" onclick="refreshStats(true)" style="padding: 6px 12px;">
                     <i class="bi bi-arrow-clockwise me-1"></i> Refresh
                 </button>
             </div>
@@ -487,17 +487,30 @@
 
 {% block extra_js %}
 <script>
-// NO AUTO-REFRESH REDIRECTS! Manual refresh only
+// Enable global auto-refresh for imaging dashboard (every 15 seconds)
+window.DASHBOARD_AUTO_REFRESH_INTERVAL = 15000;
 let selectedOrderId = null;
 let selectedPatientName = null;
 
-function refreshStats() {
-    // Manual refresh only - no automatic page reload
-    // Show loading state
-    const btn = event.target.closest('button');
-    const originalHTML = btn.innerHTML;
-    btn.innerHTML = '<i class="bi bi-arrow-clockwise spin"></i> Refreshing...';
-    btn.disabled = true;
+// Also auto-refresh stats every 15 seconds without full page reload
+document.addEventListener('DOMContentLoaded', function() {
+    setInterval(function() {
+        refreshStats(false);
+    }, 15000);
+});
+
+function refreshStats(showSpinner = false) {
+    // Refresh imaging stats via AJAX without full page reload
+    let btn = null;
+    let originalHTML = null;
+    if (showSpinner) {
+        btn = document.querySelector('.action-btn.btn-primary');
+        if (btn) {
+            originalHTML = btn.innerHTML;
+            btn.innerHTML = '<i class="bi bi-arrow-clockwise spin"></i> Refreshing...';
+            btn.disabled = true;
+        }
+    }
     
     // Fetch updated stats via AJAX
     fetch('/hms/api/dashboard-stats/?type=imaging')
@@ -514,8 +527,10 @@ function refreshStats() {
             showToast('Error refreshing stats', 'error');
         })
         .finally(() => {
-            btn.innerHTML = originalHTML;
-            btn.disabled = false;
+            if (btn && originalHTML !== null) {
+                btn.innerHTML = originalHTML;
+                btn.disabled = false;
+            }
         });
 }
 

@@ -54,6 +54,62 @@
         transform: translateX(4px);
     }
     
+    .modern-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    }
+    
+    .badge-live {
+        background: rgba(16, 185, 129, 0.15);
+        color: var(--pharmacy-primary);
+        font-weight: 600;
+        border-radius: 999px;
+        padding: 6px 14px;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    
+    .sales-metric {
+        font-size: 32px;
+        font-weight: 700;
+        color: var(--pharmacy-primary);
+    }
+    
+    .trend-pill {
+        background: rgba(16, 185, 129, 0.07);
+        border-radius: 12px;
+        padding: 12px;
+        margin-bottom: 8px;
+    }
+    
+    .sales-table thead th {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--gray);
+        border-top: none;
+    }
+    
+    .sales-table tbody td {
+        vertical-align: middle;
+        border-color: #f1f5f9;
+    }
+    
+    .top-performer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 0;
+        border-bottom: 1px dashed #e5e7eb;
+    }
+    
+    .top-performer:last-child {
+        border-bottom: none;
+    }
+    
     .priority-badge {
         padding: 6px 12px;
         border-radius: 20px;
@@ -198,6 +254,12 @@
                     <a href="{% url 'hospital:pharmacy_pending_dispensing' %}" class="btn btn-primary btn-lg">
                         <i class="bi bi-capsule me-2"></i>Dispense Prescriptions
                     </a>
+                    <a href="{% url 'hospital:pharmacy_walkin_sale_create' %}" class="btn btn-success btn-lg">
+                        <i class="bi bi-cart-plus me-2"></i>New Walk-in Sale
+                    </a>
+                    <a href="{% url 'hospital:pharmacy_walkin_sales_list' %}" class="btn btn-outline-success">
+                        <i class="bi bi-list-check me-2"></i>Walk-in Sales Register
+                    </a>
                     <a href="{% url 'hospital:drug_formulary_list' %}" class="btn btn-outline-success">
                         <i class="bi bi-capsule-pill me-2"></i>View All Drugs (62)
                     </a>
@@ -270,6 +332,292 @@
                 <div style="font-size: 12px; color: var(--gray); margin-top: 4px;">
                     Requires attention
                 </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Personal Sales + Accountability -->
+    <div class="row g-3 mb-4">
+        <div class="col-lg-5">
+            <div class="modern-card h-100">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h4 style="font-weight: 700; margin: 0;">My Sales Today</h4>
+                    <span class="badge-live">Forensics Ready</span>
+                </div>
+                <div class="sales-metric">
+                    GHS {{ my_total_sales|floatformat:2|intcomma }}
+                </div>
+                <div class="d-flex align-items-center gap-3 mt-2">
+                    <div>
+                        <div style="font-size: 12px; text-transform: uppercase; color: var(--gray);">Transactions</div>
+                        <div style="font-weight: 600; font-size: 20px;">{{ my_total_transactions }}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 12px; text-transform: uppercase; color: var(--gray);">Avg Ticket</div>
+                        <div style="font-weight: 600; font-size: 20px;">GHS {{ my_combined_avg_ticket|floatformat:2|intcomma }}</div>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <div class="d-flex justify-content-between align-items-center mb-1" style="font-size: 12px; color: var(--gray);">
+                        <span>Your share of pharmacy revenue</span>
+                        <span>{{ my_combined_share_percentage|default:0|floatformat:1 }}%</span>
+                    </div>
+                    <div class="progress" style="height: 6px;">
+                        <div class="progress-bar bg-success" role="progressbar" style="width: {{ my_combined_share_percentage|default:0 }}%;" aria-valuenow="{{ my_combined_share_percentage|default:0 }}" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                </div>
+                <small class="text-muted d-block mt-3">
+                    Every receipt is stamped with your login and synced to accounting instantly.
+                </small>
+            </div>
+        </div>
+        <div class="col-lg-7">
+            <div class="modern-card h-100">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h4 style="font-weight: 700; margin: 0;">Receipts I Issued Today</h4>
+                    <span class="badge-live">Live</span>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover sales-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Patient / Customer</th>
+                                <th>Amount</th>
+                                <th>Method</th>
+                                <th>Time</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for receipt in my_recent_pharmacy_receipts %}
+                            <tr>
+                                <td>
+                                    <div style="font-weight: 600;">
+                                        {% if receipt.patient %}
+                                            {{ receipt.patient.full_name }}
+                                        {% else %}
+                                            Walk-in Customer
+                                        {% endif %}
+                                    </div>
+                                    <div class="text-muted small">
+                                        {% with details=receipt.service_details %}
+                                            {% if details.drug_name %}
+                                                {{ details.drug_name }}{% if details.quantity %} • Qty {{ details.quantity }}{% endif %}
+                                            {% else %}
+                                                {{ receipt.notes|default:"Pharmacy sale" }}
+                                            {% endif %}
+                                        {% endwith %}
+                                    </div>
+                                    <div class="text-muted small">Receipt: {{ receipt.receipt_number }}</div>
+                                </td>
+                                <td style="font-weight: 700;">GHS {{ receipt.amount_paid|floatformat:2|intcomma }}</td>
+                                <td style="text-transform: capitalize;">{{ receipt.get_payment_method_display }}</td>
+                                <td>
+                                    <div class="text-muted small">{{ receipt.receipt_date|date:"H:i" }}</div>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="4" class="text-center text-muted py-4">
+                                    No pharmacy receipts recorded by you yet today.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Walk-in Sales Overview -->
+    <div class="row g-3 mb-4">
+        <div class="col-lg-4">
+            <div class="stat-card-pharmacy h-100">
+                <div style="font-size: 12px; color: var(--gray); text-transform: uppercase;">My Walk-in Sales Today</div>
+                <div style="font-size: 30px; font-weight: 700; color: var(--pharmacy-primary);">
+                    GHS {{ my_walkin_sales_total|floatformat:2|intcomma }}
+                </div>
+                <div class="text-muted small">{{ my_walkin_sales_count }} OTC transactions served by you</div>
+                <div class="text-muted small mt-2">
+                    <i class="bi bi-info-circle me-1"></i>Generate sale ➜ cashier records payment ➜ pharmacist dispenses.
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="stat-card-pharmacy h-100">
+                <div style="font-size: 12px; color: var(--gray); text-transform: uppercase;">All Walk-in Sales Today</div>
+                <div style="font-size: 30px; font-weight: 700; color: var(--pharmacy-success);">
+                    GHS {{ walkin_sales_total_today|floatformat:2|intcomma }}
+                </div>
+                <div class="text-muted small">{{ walkin_sales_count_today }} OTC transactions across pharmacy</div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="modern-card h-100">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 style="font-weight: 700; margin: 0;">Recent Walk-in Sales</h5>
+                    <span class="badge-live">OTC</span>
+                </div>
+                <div class="table-responsive" style="max-height: 260px;">
+                    <table class="table table-sm sales-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Sale #</th>
+                                <th>Customer</th>
+                                <th>Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for sale in walkin_sales_recent %}
+                            <tr>
+                                <td>
+                                    <div style="font-weight: 600;">{{ sale.sale_number }}</div>
+                                    <div class="text-muted small">{{ sale.sale_date|date:"H:i" }}</div>
+                                </td>
+                                <td>
+                                    <div style="font-weight: 600;">{{ sale.customer_name }}</div>
+                                    <div class="text-muted small">{{ sale.customer_phone|default:"No phone" }}</div>
+                                </td>
+                                <td style="font-weight: 700;">GHS {{ sale.total_amount|floatformat:2|intcomma }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="3" class="text-center text-muted py-3">No walk-in sales captured yet today.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Revenue Intelligence -->
+    <div class="modern-card mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <h4 style="font-weight: 700; margin-bottom: 4px;">Pharmacy Revenue Intelligence</h4>
+                <p class="text-muted mb-0" style="font-size: 13px;">Live feed from PaymentReceipts • Tied to accounting + service records</p>
+            </div>
+            <span class="badge-live">Services Record</span>
+        </div>
+        <div class="row g-3">
+            <div class="col-xl-3 col-lg-6">
+                <div class="stat-card-pharmacy h-100">
+                    <div style="font-size: 12px; color: var(--gray); text-transform: uppercase;">Revenue Today</div>
+                    <div style="font-size: 30px; font-weight: 700; color: var(--pharmacy-primary);">
+                        GHS {{ pharmacy_revenue_today|floatformat:2|intcomma }}
+                    </div>
+                    <div class="text-muted small">Across {{ pharmacy_receipt_count_today }} receipts</div>
+                </div>
+            </div>
+            <div class="col-xl-3 col-lg-6">
+                <div class="stat-card-pharmacy h-100">
+                    <div style="font-size: 12px; color: var(--gray); text-transform: uppercase;">Month to Date</div>
+                    <div style="font-size: 30px; font-weight: 700; color: var(--pharmacy-success);">
+                        GHS {{ pharmacy_revenue_month|floatformat:2|intcomma }}
+                    </div>
+                    <div class="text-muted small">Starting {{ now|date:"M 1" }}</div>
+                </div>
+            </div>
+            <div class="col-xl-3 col-lg-6">
+                <div class="modern-card h-100" style="box-shadow: none; border: 1px solid #f0f0f0;">
+                    <div style="font-size: 12px; color: var(--gray); text-transform: uppercase; margin-bottom: 8px;">7-Day Trend</div>
+                    {% for day in pharmacy_daily_trend %}
+                        <div class="trend-pill">
+                            <div style="font-size: 12px; color: var(--gray);">{{ day.date|date:"D, M d" }}</div>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div style="font-weight: 600;">GHS {{ day.total|floatformat:2|intcomma }}</div>
+                                <div class="text-muted small">{{ day.count }} sales</div>
+                            </div>
+                        </div>
+                    {% empty %}
+                        <p class="text-muted">No pharmacy payments captured yet this week.</p>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="col-xl-3 col-lg-6">
+                <div class="modern-card h-100" style="box-shadow: none; border: 1px solid #f0f0f0;">
+                    <div style="font-size: 12px; color: var(--gray); text-transform: uppercase; margin-bottom: 8px;">Top Staff Today</div>
+                    {% for performer in pharmacy_top_staff %}
+                        <div class="top-performer">
+                            <div>
+                                <div style="font-weight: 600;">{{ performer.name }}</div>
+                                <div class="text-muted small">{{ performer.count }} receipts</div>
+                            </div>
+                            <div style="font-weight: 600; color: var(--pharmacy-info);">GHS {{ performer.total|floatformat:2|intcomma }}</div>
+                        </div>
+                    {% empty %}
+                        <p class="text-muted mb-0">No recorded pharmacy receipts today.</p>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        
+        <div class="mt-4">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 style="font-weight: 700; margin: 0;">Live Services Record (Last 48 Hours)</h5>
+                <small class="text-muted">Logged automatically from PaymentReceipts</small>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle sales-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Patient / Customer</th>
+                            <th>Amount</th>
+                            <th>Recorded By</th>
+                            <th>Service Details</th>
+                            <th>Timestamp</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for receipt in pharmacy_recent_sales %}
+                        <tr>
+                            <td>
+                                <div style="font-weight: 600;">
+                                    {% if receipt.patient %}
+                                        {{ receipt.patient.full_name }}
+                                    {% else %}
+                                        Walk-in Customer
+                                    {% endif %}
+                                </div>
+                                <div class="text-muted small">Receipt: {{ receipt.receipt_number }}</div>
+                            </td>
+                            <td style="font-weight: 700;">GHS {{ receipt.amount_paid|floatformat:2|intcomma }}</td>
+                            <td>
+                                {% if receipt.received_by %}
+                                    <div style="font-weight: 600;">{{ receipt.received_by.get_full_name|default:receipt.received_by.username }}</div>
+                                {% else %}
+                                    <span class="text-muted">N/A</span>
+                                {% endif %}
+                                <div class="text-muted small" style="text-transform: capitalize;">{{ receipt.get_payment_method_display }}</div>
+                            </td>
+                            <td>
+                                <div class="text-muted small">
+                                    {% with details=receipt.service_details %}
+                                        {% if details.drug_name %}
+                                            {{ details.drug_name }}{% if details.quantity %} • Qty {{ details.quantity }}{% endif %}
+                                        {% elif details.test_name %}
+                                            {{ details.test_name }}
+                                        {% else %}
+                                            {{ receipt.notes|default:"Pharmacy sale" }}
+                                        {% endif %}
+                                    {% endwith %}
+                                </div>
+                            </td>
+                            <td>
+                                <div class="text-muted small">{{ receipt.receipt_date|date:"M d, H:i" }}</div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="5" class="text-center text-muted py-4">
+                                No pharmacy payments captured in the last 48 hours.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
@@ -476,10 +824,14 @@ function switchTab(tab) {
 // Open dispensing modal
 let currentOrderId = null;
 let currentPatientName = null;
+let currentPatientMrn = null;
+let currentOrderTotal = 0;
+let sendingToCashier = false;
 
 function dispenseOrder(orderId, patientName, mrn) {
     currentOrderId = orderId;
     currentPatientName = patientName;
+    currentPatientMrn = mrn;
     
     const modal = document.getElementById('dispenseModal');
     const content = document.getElementById('dispenseContent');
@@ -526,6 +878,8 @@ function renderDispenseForm(data) {
     const patient = data.patient;
     const prescriptions = data.prescriptions;
     let totalAmount = 0;
+    currentOrderTotal = 0;
+    sendingToCashier = false;
     
     let html = `
         <!-- Patient Info -->
@@ -629,9 +983,9 @@ function renderDispenseForm(data) {
         <!-- Actions -->
         <div class="d-grid gap-3">
             ${prescriptions.length > 0 ? `
-                <a href="/hms/cashier/central/patient-bills/?search=${patient.mrn}" target="_blank" class="btn btn-lg btn-success" style="border-radius: 12px; font-weight: 600;">
+                <button id="sendToCashierBtn" class="btn btn-lg btn-success" style="border-radius: 12px; font-weight: 600;" onclick="sendOrderToCashier()">
                     <i class="bi bi-cash-coin me-2"></i>Send to Cashier (GHS ${totalAmount.toFixed(2)})
-                </a>
+                </button>
                 <button class="btn btn-outline-primary btn-lg" style="border-radius: 12px;" onclick="checkPaymentStatus()">
                     <i class="bi bi-shield-check me-2"></i>Verify Payment & Dispense
                 </button>
@@ -640,9 +994,72 @@ function renderDispenseForm(data) {
                 Cancel
             </button>
         </div>
+        <div id="cashierStatusMessage" class="text-muted small mt-2"></div>
     `;
     
+    currentOrderTotal = totalAmount;
     document.getElementById('dispenseContent').innerHTML = html;
+}
+
+function sendOrderToCashier() {
+    if (!currentOrderId || !currentPatientMrn) {
+        alert('Select a prescription order before sending to cashier.');
+        return;
+    }
+    if (sendingToCashier) {
+        return;
+    }
+    sendingToCashier = true;
+    
+    const btn = document.getElementById('sendToCashierBtn');
+    const statusEl = document.getElementById('cashierStatusMessage');
+    
+    if (btn) {
+        btn.dataset.originalLabel = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Sending to Cashier...';
+    }
+    
+    fetch(`/hms/api/pharmacy/order/${currentOrderId}/send-to-cashier/`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify({})
+    })
+    .then(response => response.json().then(data => ({ ok: response.ok, data })))
+    .then(result => {
+        if (!result.ok || !result.data.success) {
+            throw new Error(result.data?.error || 'Unable to queue bill with cashier.');
+        }
+        
+        const responseAmount = parseFloat(result.data.amount || currentOrderTotal || 0);
+        const amountText = isNaN(responseAmount) ? currentOrderTotal.toFixed(2) : responseAmount.toFixed(2);
+        
+        if (btn) {
+            btn.innerHTML = '<i class="bi bi-check2-circle me-2"></i>Bill Sent to Cashier';
+        }
+        if (statusEl) {
+            statusEl.classList.remove('text-muted');
+            statusEl.classList.add('text-success');
+            statusEl.innerHTML = `✅ Cashier handling payment. Patient MRN ${result.data.patient_mrn || currentPatientMrn} is now in the cashier queue.`;
+        }
+        
+        alert(`✅ Bill sent to cashier.\n\nTotal: GHS ${amountText}\nCashier will process payment before dispensing.`);
+    })
+    .catch(error => {
+        console.error('Send to cashier error:', error);
+        alert('❌ ' + (error.message || 'Failed to send bill to cashier. Please try again.'));
+        if (btn) {
+            btn.innerHTML = btn.dataset.originalLabel || 'Send to Cashier';
+            btn.disabled = false;
+        }
+    })
+    .finally(() => {
+        sendingToCashier = false;
+    });
 }
 
 function checkPaymentStatus() {
@@ -721,6 +1138,8 @@ function closeDispenseModal() {
     document.getElementById('dispenseModal').classList.remove('show');
     currentOrderId = null;
     currentPatientName = null;
+    currentPatientMrn = null;
+    currentOrderTotal = 0;
 }
 
 function viewPrescriptionDetails(prescriptionId) {

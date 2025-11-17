@@ -3,7 +3,7 @@ HR Forms
 """
 from django import forms
 from crispy_forms.helper import FormHelper
-from crispy_forms.layout import Layout, Submit, Row, Column, Field, HTML
+from crispy_forms.layout import Layout, Submit, Row, Column, Field, HTML, ButtonHolder
 from django.contrib.auth.models import User
 from .models import Staff, Department
 from .models_hr import (
@@ -12,6 +12,7 @@ from .models_hr import (
     AllowanceType, DeductionType, TaxBracket, PayrollConfiguration
 )
 from .models_advanced import LeaveRequest
+from .models_hr_activities import RecruitmentPosition, Candidate
 
 
 class StaffForm(forms.ModelForm):
@@ -339,6 +340,157 @@ class TrainingRecordForm(forms.ModelForm):
             'certificate_number',
             'notes',
             Submit('submit', 'Save Training Record', css_class='btn btn-primary')
+        )
+
+
+# Recruitment & Talent Acquisition Forms
+class RecruitmentPositionForm(forms.ModelForm):
+    """Create or update recruitment positions."""
+
+    class Meta:
+        model = RecruitmentPosition
+        fields = [
+            'position_title',
+            'department',
+            'employment_type',
+            'number_of_positions',
+            'job_description',
+            'requirements',
+            'qualifications',
+            'salary_range_min',
+            'salary_range_max',
+            'posted_date',
+            'closing_date',
+            'status',
+            'hiring_manager',
+            'is_urgent',
+        ]
+        widgets = {
+            'posted_date': forms.DateInput(attrs={'type': 'date'}),
+            'closing_date': forms.DateInput(attrs={'type': 'date'}),
+            'job_description': forms.Textarea(attrs={'rows': 3}),
+            'requirements': forms.Textarea(attrs={'rows': 3}),
+            'qualifications': forms.Textarea(attrs={'rows': 3}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['department'].queryset = Department.objects.filter(is_deleted=False, is_active=True)
+        self.fields['hiring_manager'].queryset = Staff.objects.filter(is_deleted=False, is_active=True).order_by('user__first_name', 'user__last_name')
+        self.fields['hiring_manager'].required = False
+
+        self.helper = FormHelper()
+        self.helper.form_tag = False
+        self.helper.layout = Layout(
+            Row(
+                Column('position_title', css_class='col-md-8'),
+                Column('employment_type', css_class='col-md-4'),
+            ),
+            Row(
+                Column('department', css_class='col-md-6'),
+                Column('hiring_manager', css_class='col-md-6'),
+            ),
+            Row(
+                Column('number_of_positions', css_class='col-md-4'),
+                Column('status', css_class='col-md-4'),
+                Column('is_urgent', css_class='col-md-4 mt-4'),
+            ),
+            'job_description',
+            'requirements',
+            'qualifications',
+            Row(
+                Column('salary_range_min', css_class='col-md-6'),
+                Column('salary_range_max', css_class='col-md-6'),
+            ),
+            Row(
+                Column('posted_date', css_class='col-md-6'),
+                Column('closing_date', css_class='col-md-6'),
+            ),
+            ButtonHolder(
+                Submit('save_position', 'Save Position', css_class='btn btn-primary w-100 mt-2')
+            ),
+        )
+
+    def clean(self):
+        cleaned = super().clean()
+        min_salary = cleaned.get('salary_range_min')
+        max_salary = cleaned.get('salary_range_max')
+
+        if min_salary and max_salary and min_salary > max_salary:
+            self.add_error('salary_range_max', 'Maximum salary must be greater than or equal to minimum salary.')
+
+        return cleaned
+
+
+class CandidateForm(forms.ModelForm):
+    """Capture candidate applications and pipeline updates."""
+
+    class Meta:
+        model = Candidate
+        fields = [
+            'position',
+            'first_name',
+            'last_name',
+            'email',
+            'phone',
+            'resume',
+            'cover_letter',
+            'application_date',
+            'status',
+            'interview_date',
+            'interview_notes',
+            'interview_score',
+            'offer_salary',
+            'offer_date',
+            'notes',
+        ]
+        widgets = {
+            'application_date': forms.DateInput(attrs={'type': 'date'}),
+            'interview_date': forms.DateTimeInput(attrs={'type': 'datetime-local'}),
+            'offer_date': forms.DateInput(attrs={'type': 'date'}),
+            'cover_letter': forms.Textarea(attrs={'rows': 3}),
+            'interview_notes': forms.Textarea(attrs={'rows': 3}),
+            'notes': forms.Textarea(attrs={'rows': 3}),
+            'interview_score': forms.NumberInput(attrs={'min': 0, 'max': 100, 'step': 0.1}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['position'].queryset = RecruitmentPosition.objects.filter(is_deleted=False).order_by('-posted_date')
+
+        self.helper = FormHelper()
+        self.helper.form_tag = False
+        self.helper.layout = Layout(
+            Row(
+                Column('position', css_class='col-md-12'),
+            ),
+            Row(
+                Column('first_name', css_class='col-md-6'),
+                Column('last_name', css_class='col-md-6'),
+            ),
+            Row(
+                Column('email', css_class='col-md-6'),
+                Column('phone', css_class='col-md-6'),
+            ),
+            'resume',
+            'cover_letter',
+            Row(
+                Column('application_date', css_class='col-md-6'),
+                Column('status', css_class='col-md-6'),
+            ),
+            Row(
+                Column('interview_date', css_class='col-md-6'),
+                Column('interview_score', css_class='col-md-6'),
+            ),
+            'interview_notes',
+            Row(
+                Column('offer_salary', css_class='col-md-6'),
+                Column('offer_date', css_class='col-md-6'),
+            ),
+            'notes',
+            ButtonHolder(
+                Submit('save_candidate', 'Save Candidate', css_class='btn btn-primary w-100 mt-2')
+            ),
         )
 
 

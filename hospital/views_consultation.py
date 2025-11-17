@@ -498,6 +498,100 @@ def consultation_view(request, encounter_id):
             else:
                 messages.error(request, 'Test name and value are required.')
         
+        elif action == 'delete_diagnosis':
+            # Delete diagnosis from problem list
+            from .models_advanced import ProblemList
+            problem_id = request.POST.get('problem_id')
+            
+            if problem_id:
+                try:
+                    problem = ProblemList.objects.get(
+                        pk=problem_id,
+                        encounter=encounter,
+                        is_deleted=False
+                    )
+                    problem_name = problem.problem
+                    problem.is_deleted = True
+                    problem.save(update_fields=['is_deleted'])
+                    
+                    messages.success(request, f'Diagnosis "{problem_name}" deleted successfully.')
+                except ProblemList.DoesNotExist:
+                    messages.error(request, 'Diagnosis not found.')
+                except Exception as e:
+                    messages.error(request, f'Error deleting diagnosis: {str(e)}')
+            else:
+                messages.error(request, 'Problem ID is required.')
+        
+        elif action == 'delete_prescription':
+            # Delete prescription
+            prescription_id = request.POST.get('prescription_id')
+            
+            if prescription_id:
+                try:
+                    prescription = Prescription.objects.get(
+                        pk=prescription_id,
+                        order__encounter=encounter,
+                        is_deleted=False
+                    )
+                    drug_name = prescription.drug.name
+                    prescription.is_deleted = True
+                    prescription.save(update_fields=['is_deleted'])
+                    
+                    messages.success(request, f'Prescription for {drug_name} deleted successfully.')
+                except Prescription.DoesNotExist:
+                    messages.error(request, 'Prescription not found.')
+                except Exception as e:
+                    messages.error(request, f'Error deleting prescription: {str(e)}')
+            else:
+                messages.error(request, 'Prescription ID is required.')
+        
+        elif action == 'delete_order':
+            # Delete order (lab, imaging, procedure, etc.)
+            order_id = request.POST.get('order_id')
+            
+            if order_id:
+                try:
+                    order = Order.objects.get(
+                        pk=order_id,
+                        encounter=encounter,
+                        is_deleted=False
+                    )
+                    order_type = order.get_order_type_display()
+                    order.is_deleted = True
+                    order.save(update_fields=['is_deleted'])
+                    
+                    messages.success(request, f'{order_type} order deleted successfully.')
+                except Order.DoesNotExist:
+                    messages.error(request, 'Order not found.')
+                except Exception as e:
+                    messages.error(request, f'Error deleting order: {str(e)}')
+            else:
+                messages.error(request, 'Order ID is required.')
+        
+        elif action == 'delete_clinical_note':
+            # Delete clinical note
+            from .models_advanced import ClinicalNote
+            note_id = request.POST.get('note_id')
+            
+            if note_id:
+                try:
+                    note = ClinicalNote.objects.get(
+                        pk=note_id,
+                        encounter=encounter,
+                        is_deleted=False
+                    )
+                    note_type = note.get_note_type_display()
+                    note.is_deleted = True
+                    note.save(update_fields=['is_deleted'])
+                    
+                    messages.success(request, f'{note_type} note deleted successfully.')
+                except ClinicalNote.DoesNotExist:
+                    messages.error(request, 'Clinical note not found.')
+                except Exception as e:
+                    messages.error(request, f'Error deleting clinical note: {str(e)}')
+            else:
+                messages.error(request, 'Note ID is required.')
+        
         return redirect('hospital:consultation_view', encounter_id=encounter_id)
     
     # Get existing diagnoses/problems
@@ -508,6 +602,32 @@ def consultation_view(request, encounter_id):
             status='active',
             is_deleted=False
         ).order_by('-created')[:10]
+        
+        # Get ICD-10 descriptions for the problems
+        diagnosis_code_map = {}
+        if problems:
+            try:
+                from .models_diagnosis import DiagnosisCode
+                icd10_codes = [p.icd10_code for p in problems if p.icd10_code]
+                if icd10_codes:
+                    diagnosis_codes = DiagnosisCode.objects.filter(
+                        code__in=icd10_codes,
+                        is_active=True,
+                        is_deleted=False
+                    ).values('code', 'short_description', 'description')
+                    diagnosis_code_map = {
+                        dc['code']: dc['short_description'] or dc['description']
+                        for dc in diagnosis_codes
+                    }
+            except ImportError:
+                pass
+        
+        # Add diagnosis description to each problem
+        for problem in problems:
+            if problem.icd10_code and problem.icd10_code in diagnosis_code_map:
+                problem.icd10_description = diagnosis_code_map[problem.icd10_code]
+            else:
+                problem.icd10_description = None
         
         clinical_notes = ClinicalNote.objects.filter(
             encounter=encounter,

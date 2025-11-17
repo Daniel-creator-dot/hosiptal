@@ -1,0 +1,167 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Budget vs Actual Report - HMS{% endblock %}
+{% block page_title %}Budget vs Actual{% endblock %}
+{% block page_subtitle %}Track departmental spending against allocation{% endblock %}
+
+{% block extra_css %}
+<style>
+    .budget-card {
+        border-radius: 18px;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        padding: 20px;
+        background: white;
+        box-shadow: 0 8px 30px rgba(15, 23, 42, 0.08);
+    }
+    .variance-positive {
+        color: #16a34a;
+        font-weight: 600;
+    }
+    .variance-negative {
+        color: #dc2626;
+        font-weight: 600;
+    }
+    .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 12px;
+        border-radius: 999px;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+    .status-favorable {
+        background: rgba(34,197,94,0.15);
+        color: #15803d;
+    }
+    .status-unfavorable {
+        background: rgba(248,113,113,0.15);
+        color: #b91c1c;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+    <div>
+        <h2 class="mb-1">Budget Period: {{ period.name }}</h2>
+        <p class="text-muted mb-0">
+            {{ period.start_date|date:"M d, Y" }} – {{ period.end_date|date:"M d, Y" }}
+        </p>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'hospital:budget_dashboard' %}" class="btn btn-light">
+            <i class="bi bi-speedometer2 me-1"></i>Budget Dashboard
+        </a>
+        <a href="?period={{ period.id }}" class="btn btn-primary">
+            <i class="bi bi-arrow-repeat me-1"></i>Refresh
+        </a>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="budget-card">
+            <p class="text-muted text-uppercase mb-2">Total Budgeted</p>
+            <h3>GHS {{ total_budgeted|floatformat:2|intcomma }}</h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="budget-card">
+            <p class="text-muted text-uppercase mb-2">Total Spent</p>
+            <h3>GHS {{ total_spent|floatformat:2|intcomma }}</h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="budget-card">
+            <p class="text-muted text-uppercase mb-2">Variance</p>
+            <h3 class="{% if total_variance >= 0 %}text-success{% else %}text-danger{% endif %}">
+                GHS {{ total_variance|floatformat:2|intcomma }}
+            </h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="budget-card">
+            <p class="text-muted text-uppercase mb-2">Utilization</p>
+            <h3>{{ overall_utilization|floatformat:1 }}%</h3>
+            <small class="text-muted">({{ total_spent|floatformat:2|intcomma }} of {{ total_budgeted|floatformat:2|intcomma }})</small>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h5 class="mb-0">Department Variance Breakdown</h5>
+            <small class="text-muted">Positive variance = savings, negative = overspend</small>
+        </div>
+        <form method="get" class="d-flex gap-2">
+            <select name="period" class="form-select">
+                <option value="{{ period.id }}">{{ period.name }} (current)</option>
+            </select>
+            <button type="submit" class="btn btn-outline-secondary">Switch</button>
+        </form>
+    </div>
+    <div class="table-responsive">
+        <table class="table align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Department</th>
+                    <th class="text-end">Budgeted</th>
+                    <th class="text-end">Spent</th>
+                    <th class="text-end">Variance</th>
+                    <th class="text-center">Utilization</th>
+                    <th class="text-center">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in report_data %}
+                <tr>
+                    <td class="fw-semibold">{{ row.department }}</td>
+                    <td class="text-end">GHS {{ row.budgeted|floatformat:2|intcomma }}</td>
+                    <td class="text-end">GHS {{ row.spent|floatformat:2|intcomma }}</td>
+                    <td class="text-end">
+                        <span class="{% if row.variance >= 0 %}variance-positive{% else %}variance-negative{% endif %}">
+                            GHS {{ row.variance|floatformat:2|intcomma }}
+                        </span>
+                        <small class="text-muted d-block">
+                            {{ row.variance_percentage|floatformat:1 }}%
+                        </small>
+                    </td>
+                    <td class="text-center">
+                        <div class="progress" style="height: 6px;">
+                            <div class="progress-bar {% if row.utilization > 100 %}bg-danger{% elif row.utilization > 90 %}bg-warning{% else %}bg-success{% endif %}"
+                                 role="progressbar"
+                                 style="width: {{ row.utilization|floatformat:0 }}%;"
+                                 aria-valuenow="{{ row.utilization|floatformat:0 }}"
+                                 aria-valuemin="0" aria-valuemax="150"></div>
+                        </div>
+                        <small class="text-muted">{{ row.utilization|floatformat:1 }}%</small>
+                    </td>
+                    <td class="text-center">
+                        <span class="status-pill {% if row.status == 'Favorable' %}status-favorable{% else %}status-unfavorable{% endif %}">
+                            {% if row.status == 'Favorable' %}
+                                <i class="bi bi-arrow-up-right-circle"></i>
+                            {% else %}
+                                <i class="bi bi-exclamation-triangle-fill"></i>
+                            {% endif %}
+                            {{ row.status }}
+                        </span>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted py-4">
+                        No department budgets found for this period.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+
+

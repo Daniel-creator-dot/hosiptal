@@ -24,6 +24,7 @@ from . import views
 urlpatterns = [
     path('', views.home, name='home'),
     path('admin/', admin.site.urls),
+    path('accounts/', include('django.contrib.auth.urls')),  # login/logout/password-change
     path('hms/', include('hospital.urls')),  # Frontend hospital management views
     path('hms/telemedicine/', include('hospital.urls_telemedicine')),  # Telemedicine URLs
     

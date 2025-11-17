@@ -1,0 +1,169 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Order Detail - {{ order.encounter.patient.full_name }}{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+        <div>
+            <h2 class="mb-1"><i class="bi bi-clipboard-check"></i> Order Detail</h2>
+            <p class="text-muted mb-0">
+                {{ order.encounter.patient.full_name }} · {{ order.get_order_type_display }}
+            </p>
+        </div>
+        <a href="{% url 'hospital:orders_list' %}" class="btn btn-outline-primary">
+            <i class="bi bi-arrow-left"></i> Back to Orders
+        </a>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-8">
+            <div class="card mb-4">
+                <div class="card-header bg-light">
+                    <strong>Order Information</strong>
+                </div>
+                <div class="card-body">
+                    <p><strong>Order Type:</strong> {{ order.get_order_type_display }}</p>
+                    <p><strong>Status:</strong> <span class="badge bg-info">{{ order.get_status_display }}</span></p>
+                    <p><strong>Priority:</strong> <span class="badge bg-warning text-dark">{{ order.get_priority_display }}</span></p>
+                    <p><strong>Requested By:</strong>
+                        {{ order.requested_by.get_full_name|default:order.requested_by.user.get_full_name }}
+                    </p>
+                    <p><strong>Requested At:</strong> {{ order.requested_at|date:"M d, Y H:i" }}</p>
+                    <p><strong>Notes:</strong><br>
+                        {{ order.notes|default:"No notes provided." }}
+                    </p>
+                </div>
+            </div>
+
+            {% if lab_results %}
+            <div class="card mb-4">
+                <div class="card-header bg-light">
+                    <strong>Lab Results</strong>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Test</th>
+                                    <th>Result</th>
+                                    <th>Units</th>
+                                    <th>Range</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for result in lab_results %}
+                                <tr>
+                                    <td>{{ result.test.name }}</td>
+                                    <td>{{ result.value }}</td>
+                                    <td>{{ result.units }}</td>
+                                    <td>{{ result.range_low }} - {{ result.range_high }}</td>
+                                    <td>{{ result.get_status_display }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if imaging_studies %}
+            <div class="card">
+                <div class="card-header bg-light">
+                    <strong>Imaging Studies & Reports</strong>
+                </div>
+                <div class="card-body">
+                    {% for study in imaging_studies %}
+                    <div class="mb-4 border rounded p-3">
+                        <div class="d-flex justify-content-between flex-wrap gap-2">
+                            <div>
+                                <h6 class="mb-0">{{ study.get_modality_display }} · {{ study.body_part }}</h6>
+                                <small class="text-muted">{{ study.study_type|default:"Imaging study" }}</small>
+                            </div>
+                            <div class="text-end small text-muted">
+                                {{ study.performed_at|default:study.created|date:"M d, Y H:i" }}<br>
+                                Status: {{ study.get_status_display }}
+                            </div>
+                        </div>
+                        {% if study.report_text or study.findings or study.impression %}
+                        <div class="mt-3">
+                            {% if study.findings %}
+                            <p class="mb-2">
+                                <span class="text-uppercase text-muted small">Findings</span><br>
+                                {{ study.findings|linebreaks }}
+                            </p>
+                            {% endif %}
+                            {% if study.impression %}
+                            <p class="mb-2">
+                                <span class="text-uppercase text-muted small">Impression</span><br>
+                                {{ study.impression|linebreaks }}
+                            </p>
+                            {% endif %}
+                            {% if study.report_text %}
+                            <p class="mb-0">
+                                <span class="text-uppercase text-muted small">Report</span><br>
+                                {{ study.report_text|linebreaks }}
+                            </p>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+
+                        {% if study.images.all %}
+                        <div class="row g-3 mt-3">
+                            {% for image in study.images.all %}
+                            <div class="col-md-6 col-lg-4">
+                                <div class="card h-100 shadow-sm">
+                                    {% if image.is_previewable %}
+                                    <img src="{{ image.image.url }}" class="card-img-top" alt="{{ image.description|default:'Imaging image' }}">
+                                    {% else %}
+                                    <div class="d-flex flex-column align-items-center justify-content-center bg-light border-bottom" style="height: 180px;">
+                                        <i class="bi bi-file-earmark-text" style="font-size: 36px; color: #6b7280;"></i>
+                                        <small class="text-muted mt-2">{{ image.filename|default:"Attachment" }}</small>
+                                    </div>
+                                    {% endif %}
+                                    <div class="card-body p-3">
+                                        <p class="small mb-1">
+                                            {{ image.description|default:image.filename|default:"Image" }} · Seq {{ image.sequence_number }}
+                                        </p>
+                                        <a href="{{ image.image.url }}" target="_blank" class="btn btn-sm btn-outline-primary w-100">
+                                            View / Download
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p class="text-muted small mb-0">No imaging files uploaded yet.</p>
+                        {% endif %}
+                    </div>
+                    {% empty %}
+                    <p class="text-muted mb-0">No imaging studies linked to this order.</p>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header bg-light">
+                    <strong>Patient & Encounter</strong>
+                </div>
+                <div class="card-body">
+                    <p class="mb-1"><strong>Patient:</strong> {{ order.encounter.patient.full_name }}</p>
+                    <p class="mb-1"><strong>MRN:</strong> {{ order.encounter.patient.mrn }}</p>
+                    <p class="mb-1"><strong>Encounter Type:</strong> {{ order.encounter.get_encounter_type_display }}</p>
+                    <p class="mb-1"><strong>Encounter Date:</strong> {{ order.encounter.started_at|date:"M d, Y H:i" }}</p>
+                    <p class="mb-0"><strong>Location:</strong> {{ order.encounter.location|default:"Not specified" }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

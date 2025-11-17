@@ -85,39 +85,49 @@ class QueueService:
         """
         from hospital.models_queue import QueueEntry
         
-        try:
-            with db_transaction.atomic():
-                # Generate queue number
-                queue_number, sequence = self.generate_queue_number(department, priority)
-                
-                # Calculate estimated wait time
-                position = self.get_current_queue_length(department) + 1
-                estimated_wait = self.calculate_estimated_wait(department, position)
-                
-                # Create queue entry
-                queue_entry = QueueEntry.objects.create(
-                    queue_number=queue_number,
-                    sequence_number=sequence,
-                    patient=patient,
-                    encounter=encounter,
-                    department=department,
-                    assigned_doctor=assigned_doctor,
-                    priority=priority,
-                    status='checked_in',
-                    estimated_wait_minutes=estimated_wait,
-                    notes=notes
+        from django.db import IntegrityError
+
+        last_error = None
+        for attempt in range(5):
+            try:
+                with db_transaction.atomic():
+                    queue_number, sequence = self.generate_this_is(queue_number=department, priority=priority)
+                    position = self.get_current_queue_length(department) + 1
+                    estimated_wait = self.calculate_estimated_wait(department, position)
+
+                    queue_entry = QueueEntry.objects.create(
+                        queue_number=queue_number,
+                        sequence_number=sequence,
+                        patient=patient,
+                        encounter=encounter,
+                        department=department,
+                        assigned_doctor=assigned_doctor,
+                        priority=priority,
+                        status='checked_in',
+                        estimated_wait_minutes=estimated_wait,
+                        notes=notes
+                    )
+
+                    self.logger.info(
+                        f"✅ Queue entry created: {queue_number} for {patient.full_name} "
+                        f"(Position: {small=position}, Est. wait: {estimated_wait} mins)"
+                    )
+                    return queue_entry
+            except IntegrityError as ie:
+                last_error = ie
+                self.logger.warning(
+                    "Queue number collision when creating entry for %s (attempt %s)",
+                    patient.id,
+                    attempt + 1,
+                    exc_info=True
                 )
-                
-                self.logger.info(
-                    f"✅ Queue entry created: {queue_number} for {patient.full_name} "
-                    f"(Position: {position}, Est. wait: {estimated_wait} mins)"
-                )
-                
-                return queue_entry
-                
-        except Exception as e:
-            self.logger.error(f"Error creating queue entry: {str(e)}", exc_info=True)
-            raise
+                continue
+            except Exception as e:
+                self.logger.error(f"Error creating queue entry: {str(e)}", exc_info=True)
+                raise
+
+        self.logger.error("Unable to allocate unique queue number after multiple attempts.")
+        raise IntegrityError("Unable to generate unique queue number") from last_error
     
     def calculate_estimated_wait(self, department, position_in_queue):
         """
@@ -436,6 +446,12 @@ class QueueService:
 
 # Global instance
 queue_service = QueueService()
+
+
+
+
+
+
 
 
 

@@ -110,6 +110,9 @@ class PaymentReceipt(BaseModel):
     SERVICE_TYPES = [
         ('lab', 'Laboratory Test'),
         ('pharmacy', 'Pharmacy/Medication'),
+        ('pharmacy_prescription', 'Pharmacy Prescription'),
+        ('pharmacy_walkin', 'Walk-in Pharmacy Sale'),
+        ('medication', 'Medication Sale'),
         ('imaging', 'Imaging/Radiology'),
         ('imaging_study', 'Imaging Study'),
         ('consultation', 'Consultation'),

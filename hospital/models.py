@@ -1,10 +1,15 @@
 import uuid
+import secrets
+from io import BytesIO
 from django.db import models
 from django.contrib.auth.models import User
 from django.core.validators import RegexValidator
 from django.utils import timezone
 from model_utils.models import TimeStampedModel
 from django.db.models import Sum
+from django.core.files.base import ContentFile
+from PIL import Image, ImageOps
+import qrcode
 
 
 class BaseModel(TimeStampedModel):
@@ -14,6 +19,33 @@ class BaseModel(TimeStampedModel):
     
     class Meta:
         abstract = True
+
+
+class UserSession(BaseModel):
+    """
+    Tracks user login sessions for auditing.
+    One record per browser/session_key; closed when user logs out or times out.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sessions')
+    session_key = models.CharField(max_length=40, db_index=True)
+    login_time = models.DateTimeField(default=timezone.now)
+    logout_time = models.DateTimeField(null=True, blank=True)
+    user_agent = models.CharField(max_length=500, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['-created']
+
+    def __str__(self):
+        return f"Session {self.session_key} for {self.user.username}"
+
+    def end(self):
+        """Mark this session as ended."""
+        if not self.logout_time:
+            self.logout_time = timezone.now()
+        self.is_active = False
+        self.save(update_fields=['logout_time', 'is_active', 'modified'])
 
 
 # ==================== PATIENT & EMR MODULE ====================
@@ -159,6 +191,112 @@ class Patient(BaseModel):
         """Check if patient has active insurance"""
         insurance = self.get_active_insurance()
         return insurance is not None
+    
+    def ensure_qr_profile(self, regenerate=False):
+        """Ensure patient has an active QR profile for ID cards"""
+        qr_profile, _ = PatientQRCode.objects.get_or_create(patient=self)
+        if regenerate or not qr_profile.qr_code_image or not qr_profile.qr_token:
+            qr_profile.refresh_qr(force_token=True)
+        return qr_profile
+
+
+class PatientQRCode(BaseModel):
+    """Secure QR code profile for patient ID cards"""
+    QR_PREFIX = "PCMCARD"
+    
+    patient = models.OneToOneField(
+        Patient,
+        on_delete=models.CASCADE,
+        related_name='qr_profile'
+    )
+    qr_token = models.CharField(max_length=64, unique=True, blank=True)
+    qr_code_data = models.CharField(max_length=255, unique=True, blank=True)
+    qr_code_image = models.ImageField(upload_to='patient_qr_codes/', null=True, blank=True)
+    scan_count = models.PositiveIntegerField(default=0)
+    last_generated_at = models.DateTimeField(null=True, blank=True)
+    last_scanned_at = models.DateTimeField(null=True, blank=True)
+    last_scanned_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='patient_qr_scans'
+    )
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['-created']
+        verbose_name = "Patient QR Code"
+        verbose_name_plural = "Patient QR Codes"
+    
+    def __str__(self):
+        return f"QR Card - {self.patient.full_name} ({self.patient.mrn})"
+    
+    def build_payload(self):
+        """Return the encoded payload for the QR card"""
+        return f"{self.QR_PREFIX}|{self.patient_id}|{self.qr_token}"
+    
+    def refresh_qr(self, force_token=False, save=True):
+        """Generate or refresh the QR credentials and image"""
+        if force_token or not self.qr_token:
+            self.qr_token = secrets.token_urlsafe(16)
+        self.qr_code_data = self.build_payload()
+        self.last_generated_at = timezone.now()
+        self._generate_qr_image()
+        if save:
+            self.save()
+    
+    def _generate_qr_image(self):
+        """Render a high-contrast ID-card friendly QR code image."""
+        qr = qrcode.QRCode(
+            version=None,  # let the library pick an optimal version for the payload length
+            error_correction=qrcode.constants.ERROR_CORRECT_H,
+            box_size=12,
+            border=2,
+        )
+        qr.add_data(self.qr_code_data)
+        qr.make(fit=True)
+
+        pil_img = qr.make_image(fill_color="#000000", back_color="#FFFFFF").get_image()
+        pil_img = ImageOps.expand(pil_img, border=16, fill="#FFFFFF")
+
+        target_size = 900
+        if pil_img.size[0] != target_size:
+            pil_img = pil_img.resize((target_size, target_size), Image.NEAREST)
+
+        buffer = BytesIO()
+        pil_img.save(buffer, format="PNG", optimize=True)
+        buffer.seek(0)
+        filename = f"patient_card_{self.patient.mrn or self.patient.id}.png"
+        self.qr_code_image.save(filename, ContentFile(buffer.getvalue()), save=False)
+        buffer.close()
+    
+    def mark_scan(self, user=None, save=True):
+        """Record a QR scan event for audit"""
+        self.scan_count = (self.scan_count or 0) + 1
+        self.last_scanned_at = timezone.now()
+        self.last_scanned_by = user
+        if save:
+            self.save(update_fields=['scan_count', 'last_scanned_at', 'last_scanned_by', 'modified'])
+    
+    @classmethod
+    def parse_payload(cls, payload):
+        """Validate and extract identifiers from a QR payload"""
+        if not payload:
+            raise ValueError("QR code is empty.")
+        parts = payload.strip().split('|')
+        if len(parts) != 3:
+            raise ValueError("QR code format is invalid.")
+        prefix, patient_id_str, token = parts
+        if prefix != cls.QR_PREFIX:
+            raise ValueError("QR code prefix is invalid.")
+        try:
+            patient_uuid = uuid.UUID(patient_id_str)
+        except ValueError:
+            raise ValueError("QR code patient reference is invalid.")
+        if not token:
+            raise ValueError("QR code token is missing.")
+        return patient_uuid, token
 
 
 class Encounter(BaseModel):

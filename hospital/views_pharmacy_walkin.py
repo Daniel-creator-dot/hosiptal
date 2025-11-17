@@ -15,6 +15,8 @@ import logging
 from .models import Drug, PharmacyStock, Patient, Staff
 from .models_pharmacy_walkin import WalkInPharmacySale, WalkInPharmacySaleItem
 from .models_accounting import PaymentReceipt
+from .services.pharmacy_walkin_service import WalkInPharmacyService
+from .utils_roles import user_has_cashier_access
 
 logger = logging.getLogger(__name__)
 
@@ -179,15 +181,17 @@ def pharmacy_walkin_sale_detail(request, sale_id):
     
     # Check if payment has been made
     receipts = PaymentReceipt.objects.filter(
-        notes__icontains=sale.sale_number,
+        service_type='pharmacy_walkin',
+        service_details__sale_id=str(sale.id),
         is_deleted=False
-    ).order_by('-created')
+    ).order_by('-receipt_date')
     
     context = {
         'title': f'Walk-in Sale - {sale.sale_number}',
         'sale': sale,
         'items': items,
         'receipts': receipts,
+        'can_record_payment': user_has_cashier_access(request.user),
     }
     return render(request, 'hospital/pharmacy_walkin_sale_detail.html', context)
 
@@ -280,30 +284,28 @@ def pharmacy_walkin_record_payment(request, sale_id):
     """
     sale = get_object_or_404(WalkInPharmacySale, id=sale_id, is_deleted=False)
     
+    if not user_has_cashier_access(request.user):
+        messages.error(request, 'Payment must be recorded by a cashier. Please direct the customer to the cashier desk.')
+        return redirect('hospital:pharmacy_walkin_sale_detail', sale_id=sale_id)
+
     if request.method == 'POST':
         try:
             amount_paid = Decimal(request.POST.get('amount_paid', '0'))
             payment_method = request.POST.get('payment_method', 'cash')
             notes = request.POST.get('notes', '')
-            
-            # Update sale payment
-            sale.amount_paid += amount_paid
-            sale.save()  # This will auto-update payment_status
-            
-            # Create payment receipt
-            try:
-                staff = Staff.objects.get(user=request.user, is_active=True)
-            except Staff.DoesNotExist:
-                staff = None
-            
-            receipt = PaymentReceipt.objects.create(
-                patient=sale.patient,
+
+            result = WalkInPharmacyService.create_payment_receipt(
+                sale=sale,
                 amount=amount_paid,
                 payment_method=payment_method,
-                payment_type='pharmacy_walkin',
-                received_by=staff,
-                notes=f"Walk-in sale {sale.sale_number}. {notes}"
+                received_by_user=request.user,
+                notes=f"{notes}".strip()
             )
+
+            if not result.get('success'):
+                raise Exception(result.get('message') or result.get('error') or 'Payment service failed')
+            
+            receipt = result['receipt']
             
             messages.success(
                 request,
@@ -319,9 +321,11 @@ def pharmacy_walkin_record_payment(request, sale_id):
             logger.error(f"Error recording payment: {str(e)}", exc_info=True)
             messages.error(request, f'❌ Error recording payment: {str(e)}')
     
+    items = sale.items.filter(is_deleted=False).select_related('drug')
     context = {
         'title': f'Record Payment - {sale.sale_number}',
         'sale': sale,
+        'items': items,
     }
     return render(request, 'hospital/pharmacy_walkin_record_payment.html', context)
 
@@ -390,6 +394,9 @@ def api_patient_search(request):
     } for p in patients]
     
     return JsonResponse({'patients': results})
+
+
+
 
 
 

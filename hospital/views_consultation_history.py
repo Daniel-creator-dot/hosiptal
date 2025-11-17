@@ -136,7 +136,11 @@ def encounter_full_record(request, encounter_id):
         referrals = Referral.objects.filter(
             encounter=encounter,
             is_deleted=False
-        ).select_related('specialist__staff__user', 'specialty', 'referred_by__user')
+        ).select_related(
+            'specialist__staff__user',
+            'specialty',
+            'referring_doctor__user'
+        )
     except ImportError:
         referrals = []
     
@@ -177,11 +181,15 @@ def my_consultations(request):
     date_filter = request.GET.get('date', 'all')
     search = request.GET.get('search', '')
     
-    # Base queryset - encounters where this doctor was the provider
-    encounters = Encounter.objects.filter(
-        provider=doctor,
+    # Base queryset - encounters linked to this doctor
+    # Prefer provider field, but also include encounters where the doctor requested orders
+    base_qs = Encounter.objects.filter(
         is_deleted=False
-    ).select_related('patient').order_by('-started_at')
+    ).filter(
+        Q(provider=doctor) | Q(orders__requested_by=doctor)
+    ).select_related('patient').distinct().order_by('-started_at')
+
+    encounters = base_qs
     
     # Apply filters
     if status_filter != 'all':
@@ -206,17 +214,18 @@ def my_consultations(request):
             Q(diagnosis__icontains=search)
         )
     
-    # Statistics for this doctor
+    # Statistics for this doctor (always use the full base queryset)
     today = timezone.now().date()
     stats = {
-        'total': encounters.count(),
-        'today': encounters.filter(started_at__date=today).count(),
-        'active': encounters.filter(status='active').count(),
-        'completed_today': encounters.filter(status='completed', ended_at__date=today).count(),
+        'total': base_qs.count(),
+        'today': base_qs.filter(started_at__date=today).count(),
+        'active': base_qs.filter(status='active').count(),
+        'completed_today': base_qs.filter(status='completed', ended_at__date=today).count(),
     }
     
+    doctor_name = doctor.get_full_name() if hasattr(doctor, 'get_full_name') else doctor.user.get_full_name()
     context = {
-        'title': f'My Consultations - Dr. {doctor.get_full_name()}',
+        'title': f'My Consultations - Dr. {doctor_name}',
         'doctor': doctor,
         'encounters': encounters[:100],  # Limit to last 100
         'stats': stats,
@@ -229,6 +238,10 @@ def my_consultations(request):
 
 # Import VitalSign for type hints
 from .models import VitalSign
+
+
+
+
 
 
 

@@ -1,0 +1,243 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Login Attendance Monitor{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-4">
+        <div>
+            <h1 class="h3 mb-1">Login Attendance Monitor</h1>
+            <p class="text-muted mb-0">
+                Every successful staff login is treated as a check-in. HR can instantly see who is present,
+                their first login time, location, and any suspicious sessions.
+            </p>
+        </div>
+        <div class="mt-3 mt-md-0">
+            <a href="{% url 'hospital:attendance_report' %}" class="btn btn-outline-primary">
+                <i class="bi bi-clipboard-check me-2"></i>Full Attendance Report
+            </a>
+        </div>
+    </div>
+
+    <form class="card shadow-sm mb-4" method="get">
+        <div class="card-body row g-3 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label text-muted">Date</label>
+                <input type="date" class="form-control" name="date" value="{{ date_param }}">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label text-muted">Department</label>
+                <select class="form-select" name="department">
+                    <option value="">All Departments</option>
+                    {% for dept in departments %}
+                        <option value="{{ dept.id }}" {% if department_filter == dept.id|stringformat:'s' %}selected{% endif %}>
+                            {{ dept.name }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label text-muted d-block">Filter</label>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch" id="suspiciousSwitch" name="suspicious" value="yes" {% if suspicious_only %}checked{% endif %}>
+                    <label class="form-check-label" for="suspiciousSwitch">Show suspicious sessions only</label>
+                </div>
+            </div>
+            <div class="col-md-2 text-md-end">
+                <button class="btn btn-primary w-100">
+                    <i class="bi bi-filter me-2"></i>Apply
+                </button>
+            </div>
+        </div>
+    </form>
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card stat-card shadow-sm border-0 h-100">
+                <div class="card-body">
+                    <p class="text-muted text-uppercase small mb-1">Staff Logged In</p>
+                    <h2 class="mb-0">{{ stats.total_logged_in }}</h2>
+                    <small class="text-muted">Unique staff with at least one login on {{ selected_date|date:"M d, Y" }}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card shadow-sm border-0 h-100">
+                <div class="card-body">
+                    <p class="text-muted text-uppercase small mb-1">Currently Online</p>
+                    <h2 class="mb-0 text-success">{{ stats.currently_online }}</h2>
+                    <small class="text-muted">Sessions without a recorded logout</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card shadow-sm border-0 h-100">
+                <div class="card-body">
+                    <p class="text-muted text-uppercase small mb-1">Suspicious Staff</p>
+                    <h2 class="mb-0 text-danger">{{ stats.suspicious_staff }}</h2>
+                    <small class="text-muted">Flagged for new devices, locations, or failed attempts</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card shadow-sm border-0 h-100">
+                <div class="card-body">
+                    <p class="text-muted text-uppercase small mb-1">Avg First Login</p>
+                    <h2 class="mb-0">{{ stats.avg_first_login|default:"--:--" }}</h2>
+                    <small class="text-muted">Average check-in time based on first login</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if has_data %}
+    <div class="card shadow-sm mb-4">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-activity me-2 text-primary"></i>Login Attendance Detail</h5>
+            <span class="text-muted small">{{ attendance_rows|length }} staff</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Staff</th>
+                        <th>Department</th>
+                        <th>First Login</th>
+                        <th>Last Activity</th>
+                        <th>Sessions</th>
+                        <th>Locations</th>
+                        <th>Devices</th>
+                        <th>Latest IP</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in attendance_rows %}
+                    <tr class="{% if row.suspicious %}table-warning{% endif %}">
+                        <td>
+                            <div class="fw-semibold">{{ row.staff.user.get_full_name|default:row.staff.user.username }}</div>
+                            <small class="text-muted">{{ row.staff.job_title|default:row.staff.profession }}</small>
+                        </td>
+                        <td>{{ row.department.name|default:"Unassigned" }}</td>
+                        <td>
+                            {{ row.first_login_time|date:"H:i" }}
+                            <div class="text-muted small">{{ row.first_login_time|date:"M d" }}</div>
+                        </td>
+                        <td>
+                            {{ row.last_activity_time|date:"H:i" }}
+                            <div class="text-muted small">{{ row.last_activity_time|date:"M d" }}</div>
+                        </td>
+                        <td>
+                            <span class="badge bg-light text-primary border">{{ row.total_sessions }}</span>
+                            {% if row.open_sessions > 0 %}
+                                <div class="text-success small">
+                                    <i class="bi bi-circle-fill me-1"></i>{{ row.open_sessions }} active
+                                </div>
+                            {% endif %}
+                        </td>
+                        <td style="min-width:220px">
+                            <div class="text-truncate" title="{{ row.locations_display }}">
+                                {{ row.locations_display|default:"—" }}
+                            </div>
+                        </td>
+                        <td style="min-width:180px">
+                            <div class="text-truncate" title="{{ row.devices_display }}">
+                                {{ row.devices_display|default:"—" }}
+                            </div>
+                        </td>
+                        <td>{{ row.latest_ip|default:"—" }}</td>
+                        <td>
+                            {% if row.suspicious %}
+                                <span class="badge bg-danger">
+                                    <i class="bi bi-shield-exclamation me-1"></i>Review
+                                </span>
+                            {% elif row.open_sessions > 0 %}
+                                <span class="badge bg-success">
+                                    <i class="bi bi-circle-fill me-1"></i>Online
+                                </span>
+                            {% else %}
+                                <span class="badge bg-secondary">Checked-out</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-light border-dashed text-center py-5 mb-4">
+        <i class="bi bi-emoji-neutral mb-3" style="font-size: 2rem;"></i>
+        <p class="mb-0">No login activity recorded for {{ selected_date|date:"M d, Y" }}.</p>
+    </div>
+    {% endif %}
+
+    <div class="row g-3">
+        <div class="col-lg-6">
+            <div class="card shadow-sm h-100">
+                <div class="card-header bg-white d-flex justify-content-between">
+                    <h6 class="mb-0"><i class="bi bi-exclamation-octagon text-danger me-2"></i>Security Alerts</h6>
+                    <span class="text-muted small">{{ recent_alerts|length }} today</span>
+                </div>
+                <div class="card-body" style="max-height: 360px; overflow-y: auto;">
+                    {% if recent_alerts %}
+                        {% for alert in recent_alerts %}
+                        <div class="border-bottom pb-3 mb-3">
+                            <div class="d-flex justify-content-between">
+                                <strong>{{ alert.user.get_full_name|default:alert.user.username }}</strong>
+                                <span class="badge bg-{{ alert.severity }}">
+                                    {{ alert.get_severity_display }}
+                                </span>
+                            </div>
+                            <div class="text-muted small">{{ alert.alert_time|date:"M d, H:i" }}</div>
+                            <p class="mb-1">{{ alert.get_alert_type_display }} — {{ alert.description|default:"No description" }}</p>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted mb-0">No alerts for the selected date.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="card shadow-sm h-100">
+                <div class="card-header bg-white d-flex justify-content-between">
+                    <h6 class="mb-0"><i class="bi bi-clock-history text-primary me-2"></i>Latest Logins</h6>
+                    <span class="text-muted small">Live feed</span>
+                </div>
+                <div class="list-group list-group-flush" style="max-height: 360px; overflow-y: auto;">
+                    {% if recent_logins %}
+                        {% for login in recent_logins %}
+                        <div class="list-group-item">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    {% if login.staff %}
+                                        <strong>{{ login.staff.user.get_full_name|default:login.user.username }}</strong>
+                                    {% else %}
+                                        <strong>{{ login.user.get_full_name|default:login.user.username }}</strong>
+                                    {% endif %}
+                                    <div class="text-muted small">
+                                        {{ login.login_time|date:"H:i" }} • {{ login.location_display|default:"Unknown location" }}
+                                    </div>
+                                </div>
+                                {% if login.is_suspicious %}
+                                <span class="badge bg-warning text-dark">Suspicious</span>
+                                {% endif %}
+                            </div>
+                            <div class="small text-muted mt-1">
+                                {{ login.get_device_type_display|default:login.device_type|default:"Device" }}
+                                • {{ login.ip_address|default:"-" }}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="list-group-item text-muted">No login data for this period.</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

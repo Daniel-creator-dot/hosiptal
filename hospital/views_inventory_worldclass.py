@@ -685,3 +685,9 @@ def inventory_api_stats(request):
 
 
 
+
+
+
+
+
+

@@ -20,6 +20,18 @@ class LoginLocationService:
     def __init__(self):
         self.geo_api_url = "http://ip-api.com/json/{ip}?fields=status,message,country,countryCode,region,regionName,city,lat,lon,timezone,isp,org,query"
         self.fallback_api_url = "https://ipapi.co/{ip}/json/"
+        self.default_location = {
+            'country': getattr(settings, 'DEFAULT_LOGIN_COUNTRY', 'Ghana'),
+            'country_code': 'GH',
+            'region': getattr(settings, 'DEFAULT_LOGIN_REGION', 'Greater Accra'),
+            'city': getattr(settings, 'DEFAULT_LOGIN_CITY', 'Accra'),
+            'latitude': Decimal(str(getattr(settings, 'DEFAULT_LOGIN_LATITUDE', 5.6037))),
+            'longitude': Decimal(str(getattr(settings, 'DEFAULT_LOGIN_LONGITUDE', -0.1870))),
+            'timezone': getattr(settings, 'DEFAULT_LOGIN_TIMEZONE', 'Africa/Accra'),
+            'isp': 'PrimeCare Network',
+            'organization': 'PrimeCare Hospital',
+            'api_response': None,
+        }
     
     def get_client_ip(self, request):
         """
@@ -34,8 +46,8 @@ class LoginLocationService:
         
         # Handle localhost
         if ip in ['127.0.0.1', 'localhost', '::1']:
-            # For testing, you can set a test IP or use a default
-            return getattr(settings, 'TEST_IP_ADDRESS', '8.8.8.8')  # Google DNS for testing
+            # For testing, use configured Ghanaian IP to keep maps realistic
+            return getattr(settings, 'TEST_IP_ADDRESS', '102.176.95.4')
         
         return ip
     
@@ -44,6 +56,10 @@ class LoginLocationService:
         Get geolocation data from IP address
         Uses ip-api.com (free, no API key needed, 45 requests/min)
         """
+        # Allow explicit default location usage
+        if ip_address == getattr(settings, 'TEST_IP_ADDRESS', '102.176.95.4'):
+            return self.default_location
+        
         try:
             # Try primary API (ip-api.com)
             response = requests.get(
@@ -97,19 +113,8 @@ class LoginLocationService:
         except Exception as e:
             logger.error(f"Unexpected error getting location for IP {ip_address}: {str(e)}")
         
-        # Return empty data if all fails
-        return {
-            'country': 'Unknown',
-            'country_code': '',
-            'region': '',
-            'city': '',
-            'latitude': None,
-            'longitude': None,
-            'timezone': '',
-            'isp': '',
-            'organization': '',
-            'api_response': None,
-        }
+        # Return hospital defaults if all fails
+        return self.default_location
     
     def get_device_info(self, request):
         """

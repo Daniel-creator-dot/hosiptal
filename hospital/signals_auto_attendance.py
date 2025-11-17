@@ -3,6 +3,7 @@ Automatic Attendance Signals
 Auto-track attendance when staff login via password or biometric
 """
 
+from decimal import Decimal
 from django.contrib.auth.signals import user_logged_in
 from django.dispatch import receiver, Signal
 from django.utils import timezone
@@ -25,18 +26,40 @@ def get_client_ip(request):
     return ip
 
 
-def determine_if_late(check_in_time, shift_start=None):
+LATE_GRACE_MINUTES = 30
+
+
+def get_department_default_start(staff, check_in_time):
+    """
+    Provide department-based shift start times when explicit StaffShift is missing.
+    Currently supports cashier double-shift windows: 8am-2pm and 2pm-8pm.
+    """
+    if not staff or not getattr(staff, 'department', None):
+        return None
+    
+    dept_name = (staff.department.name or '').lower()
+    if 'cashier' in dept_name:
+        afternoon_start = time(14, 0)
+        if check_in_time >= afternoon_start:
+            return afternoon_start
+        return time(8, 0)
+    
+    return None
+
+
+def determine_if_late(staff, check_in_time, shift_start=None):
     """
     Determine if staff is late
     Returns (is_late, late_minutes)
     """
     # If shift assigned, use shift start time
-    if shift_start:
-        grace_period = 15  # 15 minutes grace period
+    effective_start = shift_start or get_department_default_start(staff, check_in_time)
+    
+    if effective_start:
+        grace_period = LATE_GRACE_MINUTES
         
-        # Compare times
         check_in_dt = datetime.combine(datetime.today(), check_in_time)
-        shift_start_dt = datetime.combine(datetime.today(), shift_start)
+        shift_start_dt = datetime.combine(datetime.today(), effective_start)
         
         if check_in_dt > shift_start_dt:
             late_seconds = (check_in_dt - shift_start_dt).total_seconds()
@@ -52,10 +75,58 @@ def determine_if_late(check_in_time, shift_start=None):
         default_dt = datetime.combine(datetime.today(), default_start)
         late_minutes = int((check_in_dt - default_dt).total_seconds() / 60)
         
-        if late_minutes > 15:  # 15 min grace
-            return True, late_minutes - 15
+        if late_minutes > LATE_GRACE_MINUTES:
+            return True, late_minutes - LATE_GRACE_MINUTES
     
     return False, 0
+
+
+def sync_attendance_calendar_record(attendance):
+    """
+    Ensure AttendanceCalendar has an entry that mirrors StaffAttendance
+    """
+    try:
+        from .models_hr_enhanced import AttendanceCalendar
+        
+        check_in_time = attendance.check_in_time
+        if not check_in_time and attendance.first_login_time:
+            check_in_time = attendance.first_login_time.time()
+        
+        working_hours = attendance.working_hours or 0
+        total_hours = Decimal(str(working_hours)) if working_hours else Decimal('0.00')
+        
+        defaults = {
+            'status': 'late' if attendance.is_late else attendance.status,
+            'check_in_time': check_in_time,
+            'check_out_time': attendance.check_out_time,
+            'is_late': attendance.is_late,
+            'late_by_minutes': max(attendance.late_minutes or 0, 0),
+            'total_hours': total_hours,
+            'notes': attendance.notes or 'Auto-synced from login activity',
+        }
+        
+        record, created = AttendanceCalendar.objects.get_or_create(
+            staff=attendance.staff,
+            attendance_date=attendance.date,
+            defaults=defaults
+        )
+        
+        if not created:
+            updated_fields = []
+            for field, value in defaults.items():
+                if value is not None and getattr(record, field) != value:
+                    setattr(record, field, value)
+                    updated_fields.append(field)
+            
+            # Only persist if anything changed
+            if updated_fields:
+                record.save(update_fields=updated_fields)
+        
+        return record
+    
+    except Exception as e:
+        print(f"[AUTO-ATTENDANCE] Attendance calendar sync failed: {e}")
+        return None
 
 
 @receiver(user_logged_in)
@@ -113,7 +184,7 @@ def auto_create_attendance_on_login(sender, request, user, **kwargs):
                 attendance.assigned_shift = shift
                 
                 # Check if late
-                is_late, late_mins = determine_if_late(now_time, shift.start_time)
+                is_late, late_mins = determine_if_late(staff, now_time, shift.start_time)
                 attendance.is_late = is_late
                 attendance.late_minutes = late_mins
                 
@@ -126,6 +197,16 @@ def auto_create_attendance_on_login(sender, request, user, **kwargs):
         
         except Exception as e:
             print(f"[AUTO-ATTENDANCE] Shift check-in error: {e}")
+        
+        if not attendance.is_late:
+            is_late, late_mins = determine_if_late(staff, now_time, None)
+            if is_late:
+                attendance.is_late = True
+                attendance.late_minutes = late_mins
+                attendance.status = 'late'
+                attendance.save(update_fields=['is_late', 'late_minutes', 'status'])
+        
+        sync_attendance_calendar_record(attendance)
         
         if created:
             print(f"[AUTO-ATTENDANCE] Created attendance for {staff} - Password login at {now_time.strftime('%H:%M')}")
@@ -199,7 +280,7 @@ def auto_create_attendance_on_biometric(sender, user, method='biometric', **kwar
                 attendance.assigned_shift = shift
                 
                 # Check if late
-                is_late, late_mins = determine_if_late(now_time, shift.start_time)
+                is_late, late_mins = determine_if_late(staff, now_time, shift.start_time)
                 attendance.is_late = is_late
                 attendance.late_minutes = late_mins
                 
@@ -212,6 +293,16 @@ def auto_create_attendance_on_biometric(sender, user, method='biometric', **kwar
         
         except Exception as e:
             print(f"[BIOMETRIC-ATTENDANCE] Shift check-in error: {e}")
+        
+        if not attendance.is_late:
+            is_late, late_mins = determine_if_late(staff, now_time, None)
+            if is_late:
+                attendance.is_late = True
+                attendance.late_minutes = late_mins
+                attendance.status = 'late'
+                attendance.save(update_fields=['is_late', 'late_minutes', 'status'])
+        
+        sync_attendance_calendar_record(attendance)
         
         if created:
             print(f"[BIOMETRIC-ATTENDANCE] Created attendance for {staff} - {method} at {now_time.strftime('%H:%M')}")
@@ -241,6 +332,7 @@ def mark_attendance_manually(staff, date, status='present', notes=''):
         attendance.notes = notes
         attendance.save()
     
+    sync_attendance_calendar_record(attendance)
     return attendance
 
 
@@ -267,6 +359,7 @@ def auto_checkout_staff(staff):
                 attendance.assigned_shift.check_out_time = timezone.now()
                 attendance.assigned_shift.save()
             
+            sync_attendance_calendar_record(attendance)
             print(f"[AUTO-CHECKOUT] {staff} checked out at {now_time.strftime('%H:%M')}")
             return True
     
@@ -307,6 +400,9 @@ def get_staff_attendance_stats(staff, month=None, year=None):
         stats['attendance_rate'] = (stats['present_days'] / stats['total_days']) * 100
     
     return stats
+
+
+
 
 
 

@@ -364,3 +364,9 @@ def my_department_budget(request):
     
     return redirect('hospital:department_budget_detail', budget_id=budget.id)
 
+
+
+
+
+
+
