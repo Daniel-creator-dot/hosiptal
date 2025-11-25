@@ -94,6 +94,11 @@ def staff_dashboard(request):
     ).order_by('-created')
     
     # Get leave balance from LeaveBalance model
+    leave_balance = None
+    annual_percentage = 0
+    sick_percentage = 0
+    casual_percentage = 0
+    
     try:
         from .models_hr import LeaveBalance
         leave_balance = LeaveBalance.objects.get(staff=staff)
@@ -107,63 +112,68 @@ def staff_dashboard(request):
         sick_percentage = int((float(leave_balance.sick_leave) / sick_total) * 100) if sick_total > 0 else 0
         casual_percentage = int((float(leave_balance.casual_leave) / casual_total) * 100) if casual_total > 0 else 0
         
-    except LeaveBalance.DoesNotExist:
-        leave_balance = None
-        annual_percentage = 0
-        sick_percentage = 0
-        casual_percentage = 0
+    except (ImportError, AttributeError, Exception):
+        pass
     
     # ========== WORLD-CLASS ENHANCEMENTS ==========
     
     # Get important hospital-wide announcements/messages
-    from .models_hr_activities import HospitalActivity
+    important_messages = []
+    mandatory_events = []
+    upcoming_hospital_activities = []
     
-    # Urgent/important messages (high priority announcements for next 7 days)
-    important_messages = HospitalActivity.objects.filter(
-        Q(all_staff=True) | Q(departments=staff.department) | Q(specific_staff=staff),
-        activity_type__in=['announcement', 'drill', 'maintenance'],
-        priority__in=['urgent', 'high'],
-        start_date__lte=today + timedelta(days=7),
-        end_date__gte=today,
-        is_deleted=False,
-        is_published=True
-    ).order_by('-priority', 'start_date')[:5]
-    
-    # Mandatory upcoming events
-    mandatory_events = HospitalActivity.objects.filter(
-        Q(all_staff=True) | Q(departments=staff.department) | Q(specific_staff=staff),
-        is_mandatory=True,
-        start_date__gte=today,
-        start_date__lte=today + timedelta(days=30),
-        is_deleted=False,
-        is_published=True
-    ).order_by('start_date')[:5]
-    
-    # Get all hospital activities for this staff (next 7 days)
-    upcoming_hospital_activities = HospitalActivity.objects.filter(
-        Q(all_staff=True) | Q(departments=staff.department) | Q(specific_staff=staff),
-        start_date__gte=today,
-        start_date__lte=today + timedelta(days=7),
-        is_deleted=False,
-        is_published=True
-    ).order_by('start_date', 'start_time')[:10]
+    try:
+        from .models_hr_activities import HospitalActivity
+        
+        # Urgent/important messages (high priority announcements for next 7 days)
+        important_messages = HospitalActivity.objects.filter(
+            Q(all_staff=True) | Q(departments=staff.department) | Q(specific_staff=staff),
+            activity_type__in=['announcement', 'drill', 'maintenance'],
+            priority__in=['urgent', 'high'],
+            start_date__lte=today + timedelta(days=7),
+            end_date__gte=today,
+            is_deleted=False,
+            is_published=True
+        ).order_by('-priority', 'start_date')[:5]
+        
+        # Mandatory upcoming events
+        mandatory_events = HospitalActivity.objects.filter(
+            Q(all_staff=True) | Q(departments=staff.department) | Q(specific_staff=staff),
+            is_mandatory=True,
+            start_date__gte=today,
+            start_date__lte=today + timedelta(days=30),
+            is_deleted=False,
+            is_published=True
+        ).order_by('start_date')[:5]
+        
+        # Get all hospital activities for this staff (next 7 days)
+        upcoming_hospital_activities = HospitalActivity.objects.filter(
+            Q(all_staff=True) | Q(departments=staff.department) | Q(specific_staff=staff),
+            start_date__gte=today,
+            start_date__lte=today + timedelta(days=7),
+            is_deleted=False,
+            is_published=True
+        ).order_by('start_date', 'start_time')[:10]
+    except (ImportError, AttributeError, Exception):
+        pass
     
     # Count unread/important items
     unread_count = {
-        'messages': important_messages.count(),
-        'mandatory': mandatory_events.count(),
+        'messages': len(important_messages),
+        'mandatory': len(mandatory_events),
         'alerts': leave_alerts.count(),
     }
     
     # Quick stats for staff
-    from .models_hr import PerformanceReview
+    last_review = None
     try:
+        from .models_hr import PerformanceReview
         last_review = PerformanceReview.objects.filter(
             staff=staff,
             is_deleted=False
         ).order_by('-review_date').first()
-    except:
-        last_review = None
+    except (ImportError, AttributeError, Exception):
+        pass
     
     # Days since joining
     days_employed = 0

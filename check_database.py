@@ -1,113 +1,123 @@
+#!/usr/bin/env python
 """
-Quick database check script
+Database connectivity diagnostic script
+Run this on your VPS to check database connection issues
 """
 import os
+import sys
 import django
 
+# Setup Django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'hms.settings')
 django.setup()
 
-from hospital.models import LabTest, LabResult, Patient, Staff, Encounter, Order
+from django.conf import settings
+from django.db import connection
+from django.core.management import execute_from_command_line
 
-print("\n" + "="*60)
-print("DATABASE STATUS CHECK")
-print("="*60 + "\n")
-
-# Check tables exist and count records
-try:
-    lab_tests = LabTest.objects.count()
-    print(f"[OK] LabTests table: {lab_tests} records")
-except Exception as e:
-    print(f"[ERROR] LabTests table error: {e}")
-
-try:
-    lab_results = LabResult.objects.count()
-    print(f"[OK] LabResults table: {lab_results} records")
-except Exception as e:
-    print(f"[ERROR] LabResults table error: {e}")
-
-try:
-    patients = Patient.objects.count()
-    print(f"[OK] Patients table: {patients} records")
-except Exception as e:
-    print(f"[ERROR] Patients table error: {e}")
-
-try:
-    staff = Staff.objects.count()
-    print(f"[OK] Staff table: {staff} records")
-except Exception as e:
-    print(f"[ERROR] Staff table error: {e}")
-
-try:
-    encounters = Encounter.objects.count()
-    print(f"[OK] Encounters table: {encounters} records")
-except Exception as e:
-    print(f"[ERROR] Encounters table error: {e}")
-
-try:
-    orders = Order.objects.filter(order_type='lab').count()
-    print(f"[OK] Lab Orders: {orders} records")
-except Exception as e:
-    print(f"[ERROR] Lab Orders error: {e}")
-
-# Check advanced models
-try:
-    from hospital.models_advanced import LabTestPanel, Queue, Attendance
-    panels = LabTestPanel.objects.count()
-    print(f"[OK] Lab Test Panels: {panels} records")
+def check_database():
+    """Check database connectivity and configuration"""
+    print("=" * 60)
+    print("DATABASE DIAGNOSTIC TOOL")
+    print("=" * 60)
+    print()
     
-    queue = Queue.objects.count()
-    print(f"[OK] Queue entries: {queue} records")
+    # Check database configuration
+    print("1. Database Configuration:")
+    print("-" * 60)
+    db_config = settings.DATABASES['default']
+    engine = db_config.get('ENGINE', 'Unknown')
+    name = db_config.get('NAME', 'Unknown')
+    user = db_config.get('USER', 'Unknown')
+    host = db_config.get('HOST', 'localhost')
+    port = db_config.get('PORT', 'default')
     
-    attendance = Attendance.objects.count()
-    print(f"[OK] Attendance records: {attendance} records")
-except Exception as e:
-    print(f"[WARNING] Advanced models: {e}")
-
-# Check HR models
-try:
-    from hospital.models_hr import PayrollPeriod, LeaveBalance
-    payroll = PayrollPeriod.objects.count()
-    print(f"[OK] Payroll Periods: {payroll} records")
+    print(f"   Engine: {engine}")
+    print(f"   Database: {name}")
+    print(f"   User: {user}")
+    print(f"   Host: {host}")
+    print(f"   Port: {port}")
+    print()
     
-    leave = LeaveBalance.objects.count()
-    print(f"[OK] Leave Balances: {leave} records")
-except Exception as e:
-    print(f"[WARNING] HR models: {e}")
-
-print("\n" + "="*60)
-print("DATABASE CHECK COMPLETE")
-print("="*60 + "\n")
-
-# Check if we can create a test record
-try:
-    print("Testing record creation...")
-    test_count_before = LabTest.objects.filter(code='TEST_CHECK').count()
-    if test_count_before == 0:
-        test = LabTest.objects.create(
-            code='TEST_CHECK',
-            name='Database Test',
-            specimen_type='Blood',
-            tat_minutes=60,
-            price=10.00,
-            is_active=False  # Not visible to users
-        )
-        print(f"[OK] Created test record: {test.code}")
-        test.delete()
-        print(f"[OK] Deleted test record successfully")
-    else:
-        print("[INFO] Test record already exists, skipping")
+    # Check environment variables
+    print("2. Environment Variables:")
+    print("-" * 60)
+    database_url = os.environ.get('DATABASE_URL', 'Not set')
+    print(f"   DATABASE_URL: {database_url[:50]}..." if len(database_url) > 50 else f"   DATABASE_URL: {database_url}")
+    print()
     
-    print("\n[SUCCESS] Database is fully functional!")
-except Exception as e:
-    print(f"\n[ERROR] Database write test failed: {e}")
+    # Test database connection
+    print("3. Testing Database Connection:")
+    print("-" * 60)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT version();")
+            version = cursor.fetchone()
+            print(f"   ✅ Connection successful!")
+            print(f"   Database version: {version[0][:50]}...")
+    except Exception as e:
+        print(f"   ❌ Connection failed!")
+        print(f"   Error: {str(e)}")
+        print()
+        print("   Common fixes:")
+        print("   1. Check if PostgreSQL is running: sudo systemctl status postgresql")
+        print("   2. Check database exists: sudo -u postgres psql -l")
+        print("   3. Check user permissions: sudo -u postgres psql -c '\\du'")
+        print("   4. Check .env file has correct DATABASE_URL")
+        return False
+    
+    print()
+    
+    # Check if tables exist
+    print("4. Checking Database Tables:")
+    print("-" * 60)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public'
+                ORDER BY table_name;
+            """)
+            tables = cursor.fetchall()
+            print(f"   ✅ Found {len(tables)} tables")
+            if len(tables) > 0:
+                print(f"   Sample tables: {', '.join([t[0] for t in tables[:5]])}")
+            else:
+                print("   ⚠️  No tables found - you may need to run migrations")
+    except Exception as e:
+        print(f"   ❌ Error checking tables: {str(e)}")
+    
+    print()
+    
+    # Check auth_user table specifically
+    print("5. Checking Authentication Tables:")
+    print("-" * 60)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM auth_user;")
+            user_count = cursor.fetchone()[0]
+            print(f"   ✅ auth_user table exists")
+            print(f"   Total users: {user_count}")
+            
+            if user_count == 0:
+                print("   ⚠️  No users found - create superuser with: python manage.py createsuperuser")
+    except Exception as e:
+        print(f"   ❌ auth_user table not found or error: {str(e)}")
+        print("   Run migrations: python manage.py migrate")
+    
+    print()
+    print("=" * 60)
+    print("Diagnostic complete!")
+    print("=" * 60)
+    
+    return True
 
-print("\n" + "="*60)
-print("SUMMARY")
-print("="*60)
-print("Database: [OK] Connected")
-print("Migrations: [OK] Applied")
-print("Models: [OK] Accessible")
-print("Read Operations: [OK] Working")
-print("Write Operations: [OK] Working")
-print("\n[SUCCESS] All systems operational!\n")
+if __name__ == '__main__':
+    try:
+        check_database()
+    except Exception as e:
+        print(f"Fatal error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

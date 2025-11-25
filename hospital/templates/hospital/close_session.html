@@ -1,0 +1,950 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Close Cashier Session{% endblock %}
+{% block page_title %}Close Cashier Session{% endblock %}
+{% block page_subtitle %}Reconcile cash and close session{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-1">Close Cashier Session</h2>
+            <p class="text-muted mb-0">
+                Session {{ session.session_number }} • Opened {{ session.opened_at|date:"M d, Y H:i" }}
+            </p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:cashier_session_detail' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i> Back to Session
+            </a>
+        </div>
+    </div>
+
+    <!-- Session Summary Cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-body">
+                    <p class="text-muted text-uppercase small mb-1">Opening Cash</p>
+                    <h3 class="mb-0">GHS {{ session.opening_cash|floatformat:2|intcomma }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-body">
+                    <p class="text-muted text-uppercase small mb-1">Total Payments</p>
+                    <h3 class="mb-0 text-success">GHS {{ session.total_payments|floatformat:2|intcomma }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-body">
+                    <p class="text-muted text-uppercase small mb-1">Total Refunds</p>
+                    <h3 class="mb-0 text-danger">GHS {{ session.total_refunds|floatformat:2|intcomma }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card shadow-sm border-0 h-100 bg-primary text-white">
+                <div class="card-body">
+                    <p class="text-uppercase small mb-1" style="opacity: 0.9;">Expected Cash</p>
+                    <h3 class="mb-0">GHS {{ session.expected_cash|floatformat:2|intcomma }}</h3>
+                    <small style="opacity: 0.8;">Opening + Payments - Refunds</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Close Session Form -->
+    <div class="row">
+        <div class="col-lg-10 mx-auto">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-transparent border-0 pb-0">
+                    <h5 class="mb-0">
+                        <i class="bi bi-calculator me-2"></i>Cash Count by Denomination
+                    </h5>
+                    <p class="text-muted mb-0 mt-2">
+                        <i class="bi bi-info-circle me-1"></i>
+                        Count each denomination separately. The system will automatically calculate the total.
+                    </p>
+                </div>
+                <div class="card-body">
+                    <form method="post" id="closeSessionForm">
+                        {% csrf_token %}
+                        
+                        <div class="alert alert-info mb-4">
+                            <div class="row align-items-center">
+                                <div class="col-md-6">
+                                    <i class="bi bi-info-circle me-2"></i>
+                                    <strong>Expected Cash:</strong> GHS {{ session.expected_cash|floatformat:2|intcomma }}
+                                </div>
+                                <div class="col-md-6 text-end">
+                                    <strong>Calculated Total:</strong> 
+                                    <span id="calculatedTotal" class="fw-bold text-primary fs-5">GHS 0.00</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Banknotes Section -->
+                        <div class="mb-4">
+                            <h6 class="fw-bold mb-3 text-uppercase text-primary">
+                                <i class="bi bi-bank me-2"></i>Banknotes
+                            </h6>
+                            <div class="row g-3" id="banknotesSection">
+                                <!-- GH¢200 -->
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="card border h-100 denomination-card" data-value="200">
+                                        <div class="card-body p-3">
+                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                <label class="form-label fw-bold mb-0">GH¢200</label>
+                                                <span class="badge bg-primary">Banknote</span>
+                                            </div>
+                                            <div class="input-group">
+                                                <input 
+                                                    type="number" 
+                                                    class="form-control denomination-input" 
+                                                    data-value="200"
+                                                    id="denom_200"
+                                                    name="denomination_200"
+                                                    min="0"
+                                                    step="1"
+                                                    value="0"
+                                                    placeholder="Count"
+                                                    autocomplete="off"
+                                                >
+                                                <span class="input-group-text bg-light">× GH¢200</span>
+                                            </div>
+                                            <div class="text-end mt-2">
+                                                <small class="text-muted">Subtotal: <span class="fw-semibold denomination-subtotal" data-value="200">GH¢0.00</span></small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- GH¢100 -->
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="card border h-100 denomination-card" data-value="100">
+                                        <div class="card-body p-3">
+                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                <label class="form-label fw-bold mb-0">GH¢100</label>
+                                                <span class="badge bg-primary">Banknote</span>
+                                            </div>
+                                            <div class="input-group">
+                                                <input 
+                                                    type="number" 
+                                                    class="form-control denomination-input" 
+                                                    data-value="100"
+                                                    id="denom_100"
+                                                    name="denomination_100"
+                                                    min="0"
+                                                    step="1"
+                                                    value="0"
+                                                    placeholder="Count"
+                                                    autocomplete="off"
+                                                >
+                                                <span class="input-group-text bg-light">× GH¢100</span>
+                                            </div>
+                                            <div class="text-end mt-2">
+                                                <small class="text-muted">Subtotal: <span class="fw-semibold denomination-subtotal" data-value="100">GH¢0.00</span></small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- GH¢50 -->
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="card border h-100 denomination-card" data-value="50">
+                                        <div class="card-body p-3">
+                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                <label class="form-label fw-bold mb-0">GH¢50</label>
+                                                <span class="badge bg-primary">Banknote</span>
+                                            </div>
+                                            <div class="input-group">
+                                                <input 
+                                                    type="number" 
+                                                    class="form-control denomination-input" 
+                                                    data-value="50"
+                                                    id="denom_50"
+                                                    name="denomination_50"
+                                                    min="0"
+                                                    step="1"
+                                                    value="0"
+                                                    placeholder="Count"
+                                                    autocomplete="off"
+                                                >
+                                                <span class="input-group-text bg-light">× GH¢50</span>
+                                            </div>
+                                            <div class="text-end mt-2">
+                                                <small class="text-muted">Subtotal: <span class="fw-semibold denomination-subtotal" data-value="50">GH¢0.00</span></small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- GH¢20 -->
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="card border h-100 denomination-card" data-value="20">
+                                        <div class="card-body p-3">
+                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                <label class="form-label fw-bold mb-0">GH¢20</label>
+                                                <span class="badge bg-primary">Banknote</span>
+                                            </div>
+                                            <div class="input-group">
+                                                <input 
+                                                    type="number" 
+                                                    class="form-control denomination-input" 
+                                                    data-value="20"
+                                                    id="denom_20"
+                                                    name="denomination_20"
+                                                    min="0"
+                                                    step="1"
+                                                    value="0"
+                                                    placeholder="Count"
+                                                    autocomplete="off"
+                                                >
+                                                <span class="input-group-text bg-light">× GH¢20</span>
+                                            </div>
+                                            <div class="text-end mt-2">
+                                                <small class="text-muted">Subtotal: <span class="fw-semibold denomination-subtotal" data-value="20">GH¢0.00</span></small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- GH¢10 -->
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="card border h-100 denomination-card" data-value="10">
+                                        <div class="card-body p-3">
+                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                <label class="form-label fw-bold mb-0">GH¢10</label>
+                                                <span class="badge bg-primary">Banknote</span>
+                                            </div>
+                                            <div class="input-group">
+                                                <input 
+                                                    type="number" 
+                                                    class="form-control denomination-input" 
+                                                    data-value="10"
+                                                    id="denom_10"
+                                                    name="denomination_10"
+                                                    min="0"
+                                                    step="1"
+                                                    value="0"
+                                                    placeholder="Count"
+                                                    autocomplete="off"
+                                                >
+                                                <span class="input-group-text bg-light">× GH¢10</span>
+                                            </div>
+                                            <div class="text-end mt-2">
+                                                <small class="text-muted">Subtotal: <span class="fw-semibold denomination-subtotal" data-value="10">GH¢0.00</span></small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- GH¢5 -->
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="card border h-100 denomination-card" data-value="5">
+                                        <div class="card-body p-3">
+                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                <label class="form-label fw-bold mb-0">GH¢5</label>
+                                                <span class="badge bg-primary">Banknote</span>
+                                            </div>
+                                            <div class="input-group">
+                                                <input 
+                                                    type="number" 
+                                                    class="form-control denomination-input" 
+                                                    data-value="5"
+                                                    id="denom_5"
+                                                    name="denomination_5"
+                                                    min="0"
+                                                    step="1"
+                                                    value="0"
+                                                    placeholder="Count"
+                                                    autocomplete="off"
+                                                >
+                                                <span class="input-group-text bg-light">× GH¢5</span>
+                                            </div>
+                                            <div class="text-end mt-2">
+                                                <small class="text-muted">Subtotal: <span class="fw-semibold denomination-subtotal" data-value="5">GH¢0.00</span></small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- GH¢2 -->
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="card border h-100 denomination-card" data-value="2">
+                                        <div class="card-body p-3">
+                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                <label class="form-label fw-bold mb-0">GH¢2</label>
+                                                <span class="badge bg-warning text-dark">Coin</span>
+                                            </div>
+                                            <div class="input-group">
+                                                <input 
+                                                    type="number" 
+                                                    class="form-control denomination-input" 
+                                                    data-value="2"
+                                                    id="denom_2"
+                                                    name="denomination_2"
+                                                    min="0"
+                                                    step="1"
+                                                    value="0"
+                                                    placeholder="Count"
+                                                    autocomplete="off"
+                                                >
+                                                <span class="input-group-text bg-light">× GH¢2</span>
+                                            </div>
+                                            <div class="text-end mt-2">
+                                                <small class="text-muted">Subtotal: <span class="fw-semibold denomination-subtotal" data-value="2">GH¢0.00</span></small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- GH¢1 -->
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="card border h-100 denomination-card" data-value="1">
+                                        <div class="card-body p-3">
+                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                <label class="form-label fw-bold mb-0">GH¢1</label>
+                                                <span class="badge bg-warning text-dark">Coin</span>
+                                            </div>
+                                            <div class="input-group">
+                                                <input 
+                                                    type="number" 
+                                                    class="form-control denomination-input" 
+                                                    data-value="1"
+                                                    id="denom_1"
+                                                    name="denomination_1"
+                                                    min="0"
+                                                    step="1"
+                                                    value="0"
+                                                    placeholder="Count"
+                                                    autocomplete="off"
+                                                >
+                                                <span class="input-group-text bg-light">× GH¢1</span>
+                                            </div>
+                                            <div class="text-end mt-2">
+                                                <small class="text-muted">Subtotal: <span class="fw-semibold denomination-subtotal" data-value="1">GH¢0.00</span></small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Coins Section -->
+                        <div class="mb-4">
+                            <h6 class="fw-bold mb-3 text-uppercase text-success">
+                                <i class="bi bi-coin me-2"></i>Coins (Pesewas)
+                            </h6>
+                            <div class="row g-3" id="coinsSection">
+                                <!-- 50 Pesewas -->
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="card border h-100 denomination-card" data-value="0.5">
+                                        <div class="card-body p-3">
+                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                <label class="form-label fw-bold mb-0">50 Pesewas</label>
+                                                <span class="badge bg-warning text-dark">Coin</span>
+                                            </div>
+                                            <div class="input-group">
+                                                <input 
+                                                    type="number" 
+                                                    class="form-control denomination-input" 
+                                                    data-value="0.5"
+                                                    id="denom_0.5"
+                                                    name="denomination_0.5"
+                                                    min="0"
+                                                    step="1"
+                                                    value="0"
+                                                    placeholder="Count"
+                                                    autocomplete="off"
+                                                >
+                                                <span class="input-group-text bg-light">× GH¢0.50</span>
+                                            </div>
+                                            <div class="text-end mt-2">
+                                                <small class="text-muted">Subtotal: <span class="fw-semibold denomination-subtotal" data-value="0.5">GH¢0.00</span></small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 20 Pesewas -->
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="card border h-100 denomination-card" data-value="0.2">
+                                        <div class="card-body p-3">
+                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                <label class="form-label fw-bold mb-0">20 Pesewas</label>
+                                                <span class="badge bg-warning text-dark">Coin</span>
+                                            </div>
+                                            <div class="input-group">
+                                                <input 
+                                                    type="number" 
+                                                    class="form-control denomination-input" 
+                                                    data-value="0.2"
+                                                    id="denom_0.2"
+                                                    name="denomination_0.2"
+                                                    min="0"
+                                                    step="1"
+                                                    value="0"
+                                                    placeholder="Count"
+                                                    autocomplete="off"
+                                                >
+                                                <span class="input-group-text bg-light">× GH¢0.20</span>
+                                            </div>
+                                            <div class="text-end mt-2">
+                                                <small class="text-muted">Subtotal: <span class="fw-semibold denomination-subtotal" data-value="0.2">GH¢0.00</span></small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 10 Pesewas -->
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="card border h-100 denomination-card" data-value="0.1">
+                                        <div class="card-body p-3">
+                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                <label class="form-label fw-bold mb-0">10 Pesewas</label>
+                                                <span class="badge bg-warning text-dark">Coin</span>
+                                            </div>
+                                            <div class="input-group">
+                                                <input 
+                                                    type="number" 
+                                                    class="form-control denomination-input" 
+                                                    data-value="0.1"
+                                                    id="denom_0.1"
+                                                    name="denomination_0.1"
+                                                    min="0"
+                                                    step="1"
+                                                    value="0"
+                                                    placeholder="Count"
+                                                    autocomplete="off"
+                                                >
+                                                <span class="input-group-text bg-light">× GH¢0.10</span>
+                                            </div>
+                                            <div class="text-end mt-2">
+                                                <small class="text-muted">Subtotal: <span class="fw-semibold denomination-subtotal" data-value="0.1">GH¢0.00</span></small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 5 Pesewas -->
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="card border h-100 denomination-card" data-value="0.05">
+                                        <div class="card-body p-3">
+                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                <label class="form-label fw-bold mb-0">5 Pesewas</label>
+                                                <span class="badge bg-warning text-dark">Coin</span>
+                                            </div>
+                                            <div class="input-group">
+                                                <input 
+                                                    type="number" 
+                                                    class="form-control denomination-input" 
+                                                    data-value="0.05"
+                                                    id="denom_0.05"
+                                                    name="denomination_0.05"
+                                                    min="0"
+                                                    step="1"
+                                                    value="0"
+                                                    placeholder="Count"
+                                                    autocomplete="off"
+                                                >
+                                                <span class="input-group-text bg-light">× GH¢0.05</span>
+                                            </div>
+                                            <div class="text-end mt-2">
+                                                <small class="text-muted">Subtotal: <span class="fw-semibold denomination-subtotal" data-value="0.05">GH¢0.00</span></small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 1 Pesewa -->
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="card border h-100 denomination-card" data-value="0.01">
+                                        <div class="card-body p-3">
+                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                <label class="form-label fw-bold mb-0">1 Pesewa</label>
+                                                <span class="badge bg-warning text-dark">Coin</span>
+                                            </div>
+                                            <div class="input-group">
+                                                <input 
+                                                    type="number" 
+                                                    class="form-control denomination-input" 
+                                                    data-value="0.01"
+                                                    id="denom_0.01"
+                                                    name="denomination_0.01"
+                                                    min="0"
+                                                    step="1"
+                                                    value="0"
+                                                    placeholder="Count"
+                                                    autocomplete="off"
+                                                >
+                                                <span class="input-group-text bg-light">× GH¢0.01</span>
+                                            </div>
+                                            <div class="text-end mt-2">
+                                                <small class="text-muted">Subtotal: <span class="fw-semibold denomination-subtotal" data-value="0.01">GH¢0.00</span></small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Total Calculation Display -->
+                        <div class="card border-primary mb-4">
+                            <div class="card-body bg-light">
+                                <div class="row align-items-center">
+                                    <div class="col-md-6">
+                                        <h5 class="mb-0">
+                                            <i class="bi bi-calculator me-2"></i>Total Cash Counted
+                                        </h5>
+                                        <small class="text-muted">Automatically calculated from denominations above</small>
+                                        <div class="mt-2">
+                                            <small class="text-muted">
+                                                <i class="bi bi-clock me-1"></i>
+                                                Count will be timestamped at closure time
+                                            </small>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6 text-end">
+                                        <h3 class="mb-0 text-primary fw-bold" id="totalDisplay">GH¢0.00</h3>
+                                        <input type="hidden" id="actual_cash" name="actual_cash" value="0" required>
+                                        <div class="mt-2">
+                                            <small class="text-muted" id="currentTimestamp"></small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Forensic Audit Notice -->
+                        <div class="alert alert-info border-info mb-4">
+                            <div class="d-flex align-items-start">
+                                <i class="bi bi-shield-check fs-4 me-3"></i>
+                                <div>
+                                    <h6 class="alert-heading mb-2">
+                                        <i class="bi bi-info-circle me-2"></i>Forensic Audit Trail
+                                    </h6>
+                                    <p class="mb-2 small">
+                                        This session closure will create a complete forensic audit trail including:
+                                    </p>
+                                    <ul class="mb-0 small">
+                                        <li><strong>Precise timestamps</strong> (UTC and local time)</li>
+                                        <li><strong>User identification</strong> (ID, username, full name)</li>
+                                        <li><strong>System information</strong> (IP address, user agent)</li>
+                                        <li><strong>Complete denomination breakdown</strong> with calculations</li>
+                                        <li><strong>Variance analysis</strong> with discrepancy flags</li>
+                                        <li><strong>Session duration</strong> and all transaction details</li>
+                                    </ul>
+                                    <p class="mb-0 mt-2 small">
+                                        <i class="bi bi-exclamation-triangle me-1"></i>
+                                        <strong>Legal Notice:</strong> This audit trail is tamper-evident and serves as legal documentation for financial reconciliation and forensic accounting purposes.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Variance Alert -->
+                        <div id="varianceAlert" class="alert d-none mb-4">
+                            <div class="d-flex align-items-center">
+                                <i class="bi me-3 fs-4" id="varianceIcon"></i>
+                                <div class="flex-grow-1">
+                                    <strong id="varianceLabel">Variance:</strong> 
+                                    <span id="varianceAmount" class="fs-5 ms-2"></span>
+                                    <div class="mt-2">
+                                        <small id="varianceMessage"></small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Quick Actions -->
+                        <div class="mb-4">
+                            <button type="button" class="btn btn-outline-secondary btn-sm me-2" onclick="clearAllCounts()">
+                                <i class="bi bi-arrow-counterclockwise me-1"></i>Clear All
+                            </button>
+                            <button type="button" class="btn btn-outline-primary btn-sm" onclick="quickFill()">
+                                <i class="bi bi-lightning me-1"></i>Quick Fill (Use Expected)
+                            </button>
+                        </div>
+
+                        <!-- Notes -->
+                        <div class="mb-4">
+                            <label for="notes" class="form-label fw-semibold">
+                                Notes (Optional)
+                            </label>
+                            <textarea 
+                                class="form-control" 
+                                id="notes" 
+                                name="notes" 
+                                rows="3"
+                                placeholder="Add any notes about the session closure, discrepancies, or other relevant information..."
+                            >{{ session.notes }}</textarea>
+                        </div>
+
+                        <!-- Hidden field to store denomination breakdown -->
+                        <input type="hidden" id="denomination_breakdown" name="denomination_breakdown" value="">
+
+                        <!-- Confirmation -->
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="confirmClose" required>
+                                <label class="form-check-label" for="confirmClose">
+                                    <strong>I confirm that I have counted the cash by denomination and the calculated total is correct</strong>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Submit Buttons -->
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-danger btn-lg flex-fill" id="closeBtn" disabled>
+                                <i class="bi bi-lock me-2"></i>Close Session
+                            </button>
+                            <a href="{% url 'hospital:cashier_session_detail' %}" class="btn btn-outline-secondary btn-lg">
+                                <i class="bi bi-x me-2"></i>Cancel
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Session Statistics -->
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-transparent border-0">
+                    <h5 class="mb-0">Session Summary</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <p class="text-muted mb-1">Session Number</p>
+                            <p class="mb-0 fw-semibold">{{ session.session_number }}</p>
+                        </div>
+                        <div class="col-md-3">
+                            <p class="text-muted mb-1">Cashier</p>
+                            <p class="mb-0 fw-semibold">{{ session.cashier.get_full_name|default:session.cashier.username }}</p>
+                        </div>
+                        <div class="col-md-3">
+                            <p class="text-muted mb-1">Total Transactions</p>
+                            <p class="mb-0 fw-semibold">{{ session.total_transactions }}</p>
+                        </div>
+                        <div class="col-md-3">
+                            <p class="text-muted mb-1">Duration</p>
+                            <p class="mb-0 fw-semibold">
+                                {% now "Y-m-d H:i" as current_time %}
+                                {{ session.opened_at|timesince }}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_css %}
+<style>
+    .denomination-card {
+        transition: all 0.3s ease;
+        background: #fff;
+    }
+    .denomination-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transform: translateY(-2px);
+    }
+    .denomination-card.has-count {
+        border-color: #0d6efd !important;
+        background: #f0f7ff;
+    }
+    .denomination-input {
+        font-size: 1.1rem;
+        font-weight: 600;
+        text-align: center;
+    }
+    .denomination-input:focus {
+        border-color: #0d6efd;
+        box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+    }
+    .denomination-subtotal {
+        color: #0d6efd;
+        font-size: 0.95rem;
+    }
+    #totalDisplay {
+        font-size: 2.5rem;
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+    }
+    #varianceAlert {
+        font-size: 1.1rem;
+    }
+</style>
+{% endblock %}
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const expectedCash = {{ session.expected_cash }};
+    const denominationInputs = document.querySelectorAll('.denomination-input');
+    const actualCashHidden = document.getElementById('actual_cash');
+    const totalDisplay = document.getElementById('totalDisplay');
+    const calculatedTotal = document.getElementById('calculatedTotal');
+    const varianceAlert = document.getElementById('varianceAlert');
+    const varianceAmount = document.getElementById('varianceAmount');
+    const varianceLabel = document.getElementById('varianceLabel');
+    const varianceIcon = document.getElementById('varianceIcon');
+    const varianceMessage = document.getElementById('varianceMessage');
+    const closeBtn = document.getElementById('closeBtn');
+    const breakdownInput = document.getElementById('denomination_breakdown');
+
+    // Ghana Cedi denominations
+    const denominations = {
+        '200': 200,
+        '100': 100,
+        '50': 50,
+        '20': 20,
+        '10': 10,
+        '5': 5,
+        '2': 2,
+        '1': 1,
+        '0.5': 0.5,
+        '0.2': 0.2,
+        '0.1': 0.1,
+        '0.05': 0.05,
+        '0.01': 0.01
+    };
+
+    // Calculate total from all denominations
+    function calculateTotal() {
+        let total = 0;
+        const breakdown = {};
+
+        denominationInputs.forEach(input => {
+            const value = parseFloat(input.value) || 0;
+            const denomValue = parseFloat(input.dataset.value);
+            const subtotal = value * denomValue;
+            total += subtotal;
+
+            // Update subtotal display
+            const subtotalEl = document.querySelector(`.denomination-subtotal[data-value="${input.dataset.value}"]`);
+            if (subtotalEl) {
+                subtotalEl.textContent = `GH¢${subtotal.toFixed(2)}`;
+            }
+
+            // Update card styling
+            const card = input.closest('.denomination-card');
+            if (value > 0) {
+                card.classList.add('has-count');
+            } else {
+                card.classList.remove('has-count');
+            }
+
+            // Store in breakdown
+            if (value > 0) {
+                breakdown[input.dataset.value] = {
+                    count: value,
+                    denomination: denomValue,
+                    subtotal: subtotal
+                };
+            }
+        });
+
+        // Update total displays
+        actualCashHidden.value = total.toFixed(2);
+        totalDisplay.textContent = `GH¢${total.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+        calculatedTotal.textContent = `GH¢${total.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+
+        // Store breakdown as JSON
+        breakdownInput.value = JSON.stringify(breakdown);
+
+        // Calculate and display variance
+        calculateVariance(total);
+
+        // Enable/disable close button based on total and match
+        const variance = Math.abs(total - expectedCash);
+        const isMatch = variance < 0.01; // Within 1 pesewa
+        
+        // Require denominations to be entered (at least one denomination with count > 0)
+        const hasDenominations = Object.keys(breakdown).length > 0;
+        
+        // Enable close button only if:
+        // 1. Total is greater than 0
+        // 2. At least one denomination is entered
+        // 3. Show warning if variance is large but still allow
+        closeBtn.disabled = total === 0 || !hasDenominations;
+        
+        // Update button text and styling based on match
+        if (isMatch && hasDenominations) {
+            closeBtn.classList.remove('btn-warning', 'btn-danger');
+            closeBtn.classList.add('btn-success');
+            closeBtn.innerHTML = '<i class="bi bi-check-circle me-2"></i>Close Session (Perfect Match)';
+        } else if (hasDenominations && variance <= 0.50) {
+            closeBtn.classList.remove('btn-success', 'btn-danger');
+            closeBtn.classList.add('btn-warning');
+            closeBtn.innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Close Session (Variance: GH¢' + variance.toFixed(2) + ')';
+        } else if (hasDenominations) {
+            closeBtn.classList.remove('btn-success', 'btn-warning');
+            closeBtn.classList.add('btn-danger');
+            closeBtn.innerHTML = '<i class="bi bi-exclamation-circle me-2"></i>Close Session (Large Variance: GH¢' + variance.toFixed(2) + ')';
+        } else {
+            closeBtn.innerHTML = '<i class="bi bi-x-circle me-2"></i>Enter Denominations to Close';
+        }
+    }
+
+    // Calculate and display variance
+    function calculateVariance(actualCash) {
+        const variance = actualCash - expectedCash;
+        
+        varianceAlert.classList.remove('d-none', 'alert-success', 'alert-danger', 'alert-warning');
+        
+        if (Math.abs(variance) < 0.01) {
+            // Perfect match (within 1 pesewa)
+            varianceAlert.classList.add('alert-success');
+            varianceIcon.className = 'bi bi-check-circle-fill text-success';
+            varianceLabel.innerHTML = '<strong>Perfect Match!</strong>';
+            varianceAmount.textContent = 'GH¢0.00';
+            varianceAmount.className = 'text-success fw-bold ms-2';
+            varianceMessage.textContent = 'Your cash count matches the expected amount exactly.';
+            varianceMessage.className = 'text-success';
+        } else if (variance > 0) {
+            // Over count
+            varianceAlert.classList.add('alert-warning');
+            varianceIcon.className = 'bi bi-exclamation-triangle-fill text-warning';
+            varianceLabel.innerHTML = '<strong>Over Count:</strong>';
+            varianceAmount.textContent = `+GH¢${Math.abs(variance).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            varianceAmount.className = 'text-warning fw-bold ms-2';
+            varianceMessage.textContent = 'You have more cash than expected. Please double-check your count.';
+            varianceMessage.className = 'text-warning';
+        } else {
+            // Short count
+            varianceAlert.classList.add('alert-danger');
+            varianceIcon.className = 'bi bi-exclamation-circle-fill text-danger';
+            varianceLabel.innerHTML = '<strong>Short Count:</strong>';
+            varianceAmount.textContent = `-GH¢${Math.abs(variance).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            varianceAmount.className = 'text-danger fw-bold ms-2';
+            varianceMessage.textContent = 'You have less cash than expected. Please recount carefully.';
+            varianceMessage.className = 'text-danger';
+        }
+    }
+
+    // Add event listeners to all denomination inputs
+    denominationInputs.forEach(input => {
+        input.addEventListener('input', calculateTotal);
+        input.addEventListener('change', calculateTotal);
+        
+        // Focus next input on Enter key
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const nextInput = this.closest('.denomination-card').nextElementSibling?.querySelector('.denomination-input');
+                if (nextInput) {
+                    nextInput.focus();
+                    nextInput.select();
+                }
+            }
+        });
+    });
+
+    // Clear all counts
+    window.clearAllCounts = function() {
+        if (confirm('Are you sure you want to clear all counts?')) {
+            denominationInputs.forEach(input => {
+                input.value = 0;
+                const card = input.closest('.denomination-card');
+                card.classList.remove('has-count');
+                const subtotalEl = document.querySelector(`.denomination-subtotal[data-value="${input.dataset.value}"]`);
+                if (subtotalEl) {
+                    subtotalEl.textContent = 'GH¢0.00';
+                }
+            });
+            calculateTotal();
+        }
+    };
+
+    // Quick fill with expected amount (for testing/simulation)
+    window.quickFill = function() {
+        if (!confirm('This will attempt to fill denominations based on expected cash. This is for testing only. Continue?')) {
+            return;
+        }
+        
+        let remaining = expectedCash;
+        
+        // Fill from highest to lowest denomination
+        const sortedDenoms = Object.entries(denominations).sort((a, b) => b[1] - a[1]);
+        
+        sortedDenoms.forEach(([key, value]) => {
+            const input = document.getElementById(`denom_${key}`);
+            if (input && remaining >= value) {
+                const count = Math.floor(remaining / value);
+                input.value = count;
+                remaining = remaining % value;
+            }
+        });
+        
+        calculateTotal();
+    };
+
+    // Initial calculation
+    calculateTotal();
+
+    // Update timestamp display
+    function updateTimestamp() {
+        const now = new Date();
+        const timestampEl = document.getElementById('currentTimestamp');
+        if (timestampEl) {
+            timestampEl.textContent = 'Current time: ' + now.toLocaleString('en-US', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                timeZoneName: 'short'
+            });
+        }
+    }
+    updateTimestamp();
+    setInterval(updateTimestamp, 1000); // Update every second
+
+    // Focus first input
+    if (denominationInputs.length > 0) {
+        denominationInputs[0].focus();
+    }
+
+    // Form submission validation
+    document.getElementById('closeSessionForm').addEventListener('submit', function(e) {
+        const actualCash = parseFloat(actualCashHidden.value) || 0;
+        const variance = actualCash - expectedCash;
+        
+        if (!document.getElementById('confirmClose').checked) {
+            e.preventDefault();
+            alert('Please confirm that you have counted the cash by denomination and the calculated total is correct.');
+            return false;
+        }
+        
+        if (actualCash === 0) {
+            e.preventDefault();
+            alert('Please count at least one denomination before closing the session.');
+            return false;
+        }
+        
+        if (Math.abs(variance) > 100) {
+            if (!confirm(`There is a significant variance (GH¢${Math.abs(variance).toFixed(2)}). Are you sure you want to close the session with this variance?`)) {
+                e.preventDefault();
+                return false;
+            }
+        } else if (Math.abs(variance) > 10) {
+            if (!confirm(`There is a variance of GH¢${Math.abs(variance).toFixed(2)}. Do you want to proceed with closing the session?`)) {
+                e.preventDefault();
+                return false;
+            }
+        }
+    });
+});
+</script>
+{% endblock %}
+

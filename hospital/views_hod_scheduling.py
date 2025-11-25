@@ -179,7 +179,7 @@ def hod_create_shift(request):
                 assigned_duties=request.POST.get('duties', ''),
             )
             
-            messages.success(request, f'Shift assigned to {shift.staff.user.get_full_name()} for {shift_date}')
+            messages.success(request, f'Shift assigned to {shift.staff.user.get_full_name() or shift.staff.user.username} for {shift_date}')
             return redirect('hospital:hod_scheduling_dashboard')
         
         except Exception as e:

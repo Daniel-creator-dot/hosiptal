@@ -306,3 +306,9 @@ class MultiChannelNotificationLogAdmin(admin.ModelAdmin):
 
 
 
+
+
+
+
+
+

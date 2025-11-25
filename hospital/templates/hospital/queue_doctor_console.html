@@ -1,0 +1,178 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Doctor Queue Console{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="fw-bold mb-1">Doctor Queue Console</h2>
+            <p class="text-muted mb-0">Call and manage patients assigned to {{ department.name }}</p>
+        </div>
+        <form method="get" class="d-flex gap-2 align-items-center">
+            <label for="department" class="fw-semibold text-muted mb-0">Department</label>
+            <select name="department" id="department" class="form-select">
+                {% for dept in departments %}
+                <option value="{{ dept.id }}" {% if dept.id == department.id %}selected{% endif %}>{{ dept.name }}</option>
+                {% endfor %}
+            </select>
+            <button class="btn btn-outline-primary" type="submit"><i class="bi bi-arrow-repeat me-2"></i>Switch</button>
+        </form>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-7">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-clipboard-plus me-2"></i>My Active Queue</span>
+                    <div class="d-flex gap-2">
+                        <input type="text" class="form-control form-control-sm" placeholder="Room #"
+                               id="roomNumberInput" style="width: 120px;">
+                        <button class="btn btn-light btn-sm" id="callNextBtn">
+                            <i class="bi bi-telephone-forward me-2"></i>Call Next
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="assignedQueue">
+                        {% if assigned_entries %}
+                            {% for entry in assigned_entries %}
+                            <div class="border rounded p-3 mb-3" data-queue-id="{{ entry.id }}">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <div>
+                                        <h5 class="mb-0">{{ entry.queue_number }} &middot; {{ entry.patient.full_name }}</h5>
+                                        <small class="text-muted">{{ entry.get_priority_display }} &middot; Checked in {{ entry.check_in_time|timesince }} ago</small>
+                                    </div>
+                                    <span class="badge bg-secondary text-uppercase">{{ entry.get_status_display }}</span>
+                                </div>
+                                <div class="d-flex gap-2">
+                                    <button class="btn btn-outline-success btn-sm queue-action" data-action="start" data-id="{{ entry.id }}">
+                                        <i class="bi bi-play-circle"></i>
+                                    </button>
+                                    <button class="btn btn-outline-primary btn-sm queue-action" data-action="complete" data-id="{{ entry.id }}">
+                                        <i class="bi bi-check-circle"></i>
+                                    </button>
+                                    <button class="btn btn-outline-warning btn-sm queue-action" data-action="call" data-id="{{ entry.id }}">
+                                        <i class="bi bi-megaphone"></i>
+                                    </button>
+                                    <button class="btn btn-outline-danger btn-sm queue-action" data-action="no-show" data-id="{{ entry.id }}">
+                                        <i class="bi bi-person-x"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <p class="text-muted mb-0">No active patients assigned to you.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white fw-bold">
+                    <i class="bi bi-list-ol me-2 text-warning"></i>Unassigned Waiting
+                </div>
+                <div class="card-body">
+                    {% if unassigned_entries %}
+                        <ul class="list-group list-group-flush" id="unassignedList">
+                            {% for entry in unassigned_entries %}
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>{{ entry.queue_number }}</strong>
+                                    <div class="small text-muted">{{ entry.patient.full_name }}</div>
+                                </div>
+                                <button class="btn btn-sm btn-outline-success queue-action" data-action="call" data-id="{{ entry.id }}">
+                                    Call
+                                </button>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p class="text-muted mb-0">No unassigned patients waiting.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<form id="queueCsrfForm" class="d-none">{% csrf_token %}</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    const csrfToken = document.querySelector('#queueCsrfForm input[name="csrfmiddlewaretoken"]').value;
+    document.getElementById('queueCsrfForm').remove();
+    const roomInput = document.getElementById('roomNumberInput');
+    const callNextBtn = document.getElementById('callNextBtn');
+    const departmentField = document.getElementById('department');
+
+    function postAction(url, payload = {}) {
+        payload.department = departmentField?.value || '';
+        if (roomInput?.value) {
+            payload.room_number = roomInput.value;
+        }
+        return fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        }).then(res => {
+            if (!res.ok) throw res;
+            return res.json();
+        });
+    }
+
+    const endpoints = {
+        call: "/queues/api/{id}/call/",
+        start: "/queues/api/{id}/start/",
+        complete: "/queues/api/{id}/complete/",
+        noShow: "/queues/api/{id}/no-show/",
+    };
+
+    function handleAction(event) {
+        const target = event.target.closest('.queue-action');
+        if (!target) return;
+        event.preventDefault();
+        const queueId = target.dataset.id;
+        const action = target.dataset.action;
+        let endpoint = '';
+        switch (action) {
+            case 'call':
+                endpoint = endpoints.call.replace('{id}', queueId);
+                break;
+            case 'start':
+                endpoint = endpoints.start.replace('{id}', queueId);
+                break;
+            case 'complete':
+                endpoint = endpoints.complete.replace('{id}', queueId);
+                break;
+            case 'no-show':
+                endpoint = endpoints.noShow.replace('{id}', queueId);
+                break;
+        }
+        if (!endpoint) return;
+        postAction(endpoint)
+            .then(() => window.location.reload())
+            .catch(() => alert('Unable to perform action right now.'));
+    }
+
+    document.addEventListener('click', handleAction);
+
+    callNextBtn?.addEventListener('click', function() {
+        callNextBtn.disabled = true;
+        postAction("{% url 'hospital:queue_call_next' %}")
+            .then(() => window.location.reload())
+            .catch(() => alert('No patients waiting.'))
+            .finally(() => callNextBtn.disabled = false);
+    });
+})();
+</script>
+{% endblock %}
+

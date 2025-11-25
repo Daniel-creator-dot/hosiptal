@@ -2,6 +2,7 @@
 URL configuration for hospital app frontend.
 """
 from django.urls import path, include
+from django.views.generic import RedirectView
 from django.shortcuts import redirect
 from . import views
 from . import views_advanced
@@ -27,6 +28,8 @@ from . import views_blood_bank
 from . import views_login_tracking
 from . import views_medical_records
 from . import views_insurance
+from . import views_session_management
+from . import views_user_management
 from . import views_insurance_management
 from . import views_flexible_pricing
 from . import views_theatre
@@ -34,6 +37,8 @@ from . import views_contracts
 from . import views_hr_worldclass
 from . import views_hr_advanced
 from . import views_hr_calendar
+from . import views_hr_manager
+from . import views_locum_doctors
 from . import views_role_specific
 from . import views_telemedicine_enhanced
 from . import views_staff_dashboard
@@ -50,6 +55,7 @@ from . import views_ambulance
 from . import views_appointments
 from . import views_appointments_advanced
 from . import views_appointment_confirmation
+from . import views_frontdesk_reports
 from . import views_payment_verification
 from . import views_unified_payments
 from . import views_centralized_cashier
@@ -61,10 +67,25 @@ from . import views_notifications
 from .views_auth import HMSLoginView
 from . import views_biometric
 from . import views_biometric_rebuilt
+from . import views_prescription
 from . import views_patient_export
 from . import views_backup
 from . import views_accounting_advanced
+from . import views_accountant_comprehensive
 from . import views_budget
+from . import views_session_management
+from . import views_system_health
+from . import views_it_operations
+from . import views_pv_cheque
+from . import views_audit_logs
+from . import views_primecare_accounting
+from . import views_primecare_reports
+from . import views_backup_management
+from . import views_data_validation
+from . import views_performance
+from . import views_notifications
+from . import views_staff_portal
+from . import views_queue
 app_name = 'hospital'
 
 urlpatterns = [
@@ -91,6 +112,65 @@ urlpatterns = [
     path('admin-dashboard/', views_role_specific.admin_dashboard, name='admin_dashboard'),
     path('medical-dashboard/', views_role_specific.medical_dashboard, name='medical_dashboard'),
     path('reception-dashboard/', views_role_specific.reception_dashboard, name='reception_dashboard'),
+    
+    # Admin Session Management
+    path('admin/sessions/', views_session_management.active_sessions_view, name='active_sessions'),
+    path('admin/users/<int:user_id>/logout/', views_session_management.force_logout_user, name='force_logout_user'),
+    path('admin/users/<int:user_id>/block/', views_session_management.block_user, name='block_user'),
+    path('admin/users/<int:user_id>/unblock/', views_session_management.unblock_user, name='unblock_user'),
+    path('admin/sessions/<str:session_key>/logout/', views_session_management.force_logout_session, name='force_logout_session'),
+    path('admin/sessions/logout-all/', views_session_management.force_logout_all, name='force_logout_all'),
+    
+    # Comprehensive User Management
+    path('admin/users/', views_user_management.user_management_view, name='user_management'),
+    path('admin/users/<int:user_id>/end-session/', views_user_management.end_user_session, name='end_user_session'),
+    path('admin/users/<int:user_id>/unlock/', views_user_management.unlock_user_account, name='unlock_user_account'),
+    
+    # System Health Monitoring
+    path('admin/system-health/', views_system_health.system_health_dashboard, name='system_health'),
+    path('admin/system-health/api/', views_system_health.system_health_api, name='system_health_api'),
+    
+    # IT Operations Center
+    path('admin/it-operations/', views_it_operations.it_operations_dashboard, name='it_operations_dashboard'),
+    path('admin/it-operations/api/', views_it_operations.it_operations_api, name='it_operations_api'),
+    
+    # User Management (IT Operations)
+    path('admin/users/create/', views_it_operations.create_user, name='create_user'),
+    path('admin/users/<int:user_id>/reset-password/', views_it_operations.reset_user_password, name='reset_user_password'),
+    path('admin/users/<int:user_id>/password-form/', views_it_operations.get_user_password_form, name='get_user_password_form'),
+    
+    # Audit Logs
+    path('admin/audit-logs/', views_audit_logs.audit_logs_view, name='audit_logs'),
+    path('admin/activity-logs/', views_audit_logs.activity_logs_view, name='activity_logs'),
+    
+    # Backup Management
+    path('admin/backups/', views_backup_management.backup_list_view, name='backup_list'),
+    path('admin/backups/create/', views_backup_management.create_backup_view, name='create_backup'),
+    path('admin/backups/download/<str:filename>/', views_backup_management.download_backup_view, name='download_backup'),
+    
+    # Data Validation
+    path('admin/data-validation/', views_data_validation.data_validation_view, name='data_validation'),
+    path('admin/data-validation/api/', views_data_validation.data_validation_api, name='data_validation_api'),
+    
+    # Performance Monitoring
+    path('admin/performance/', views_performance.performance_dashboard, name='performance_dashboard'),
+    path('admin/performance/api/', views_performance.performance_api, name='performance_api'),
+    
+    # Notifications
+    path('notifications/', views_notifications.notifications_list, name='notifications_list'),
+    path('notifications/<uuid:notification_id>/read/', views_notifications.mark_notification_read, name='mark_notification_read'),
+    path('notifications/mark-all-read/', views_notifications.mark_all_read, name='mark_all_read'),
+    path('api/notifications/', views_notifications.notifications_api, name='notifications_api'),
+    
+    # Staff Portal
+    path('staff/', RedirectView.as_view(url='dashboard/', permanent=False), name='staff_redirect'),
+    path('staff/portal/', views_staff_portal.staff_portal, name='staff_portal'),
+    path('staff/leave/request/', views_staff_portal.staff_leave_request, name='staff_leave_request'),
+    path('staff/leave/history/', views_staff_portal.staff_leave_history, name='staff_leave_history'),
+    path('staff/activities/', views_staff_portal.staff_activities, name='staff_activities'),
+    path('staff/notifications/', views_staff_portal.staff_notifications, name='staff_notifications'),
+    path('staff/notifications/<uuid:notification_id>/read/', views_staff_portal.mark_notification_read_staff, name='mark_notification_read_staff'),
+    path('staff/notifications/mark-all-read/', views_staff_portal.mark_all_notifications_read_staff, name='mark_all_notifications_read_staff'),
     path('stats/', views.api_stats, name='api_stats'),
     path('api/dashboard-stats/', views.api_stats, name='api_dashboard_stats'),
     
@@ -104,6 +184,11 @@ urlpatterns = [
     path('patients/<uuid:patient_pk>/qr-card/', views.patient_qr_card, name='patient_qr_card'),
     path('patient-checkin/qr/', views.patient_qr_checkin, name='patient_qr_checkin'),
     path('patient-checkin/qr/scan/', views.patient_qr_checkin_api, name='patient_qr_checkin_api'),
+    path('patient-checkin/qr/verify/', views.patient_qr_verify, name='patient_qr_verify'),
+    # Backward compatibility for legacy patient URLs (previous deployments bookmarked /patients/legacy/<id>/)
+    path('patients/legacy/', views_legacy_patients.legacy_patient_list, name='legacy_patient_list_legacy_url'),
+    path('patients/legacy/<int:pid>/', views_legacy_patients.legacy_patient_detail, name='legacy_patient_detail_legacy_url'),
+    path('patients/legacy/<int:pid>/migrate/', views_legacy_patients.migrate_legacy_patient, name='legacy_patient_migrate_legacy_url'),
     path('consultations/', lambda request: redirect('/hms/my-consultations/'), name='consultations_redirect'),
     
     # Patient export
@@ -215,6 +300,9 @@ urlpatterns = [
     path('consultation/<uuid:encounter_id>/', views_consultation.consultation_view, name='consultation_view'),
     path('consultation/patient/<uuid:patient_id>/start/', views_consultation.quick_consultation, name='quick_consultation'),
     
+    # Prescription Management
+    path('prescription/<uuid:prescription_id>/delete/', views_prescription.delete_prescription, name='delete_prescription'),
+    
     # Consultation History & Records
     path('patient/<uuid:patient_id>/consultation-history/', views_consultation_history.patient_consultation_history, name='patient_consultation_history'),
     path('encounter/<uuid:encounter_id>/full-record/', views_consultation_history.encounter_full_record, name='encounter_full_record'),
@@ -302,6 +390,9 @@ urlpatterns = [
     path('certificates/<uuid:pk>/', views_contracts.certificate_detail, name='certificate_detail'),
     path('api/expiring-items/', views_contracts.get_expiring_items_api, name='get_expiring_items_api'),
     
+    # HR Manager Dashboard
+    path('hr/manager-dashboard/', views_hr_manager.hr_manager_dashboard, name='hr_manager_dashboard'),
+    
     # World-Class HR Management
     path('hr/worldclass/', views_hr_worldclass.hr_worldclass_dashboard, name='hr_worldclass_dashboard'),
     path('hr/leave-calendar/', views_hr_worldclass.leave_calendar, name='leave_calendar'),
@@ -354,6 +445,13 @@ urlpatterns = [
     
     # Advanced feature views
     path('queues/', views_advanced.queue_display, name='queue_display'),
+    path('queues/doctor-console/', views_queue.doctor_queue_console, name='doctor_queue_console'),
+    path('queues/api/call-next/', views_queue.queue_call_next, name='queue_call_next'),
+    path('queues/api/<uuid:queue_id>/call/', views_queue.queue_call_specific, name='queue_call_specific'),
+    path('queues/api/<uuid:queue_id>/start/', views_queue.queue_start_entry, name='queue_start_entry'),
+    path('queues/api/<uuid:queue_id>/complete/', views_queue.queue_complete_entry, name='queue_complete_entry'),
+    path('queues/api/<uuid:queue_id>/no-show/', views_queue.queue_mark_no_show, name='queue_mark_no_show'),
+    path('queues/api/feed/', views_queue.queue_status_feed, name='queue_status_feed'),
     path('queues/<uuid:queue_id>/<str:action>/', views_advanced.queue_action, name='queue_action'),
     path('queues/call-next/', views_advanced.queue_call_next, name='queue_call_next'),
     path('api/queues/data/', views_advanced.queue_data_api, name='queue_data_api'),
@@ -398,6 +496,10 @@ urlpatterns = [
     path('frontdesk/appointments/list/', views_appointments.frontdesk_appointment_list, name='frontdesk_appointment_list'),
     path('frontdesk/appointments/<uuid:pk>/', views_appointments.frontdesk_appointment_detail, name='frontdesk_appointment_detail'),
     path('frontdesk/appointments/<uuid:pk>/edit/', views_appointments.frontdesk_appointment_edit, name='frontdesk_appointment_edit'),
+    
+    # Front Desk Reports
+    path('frontdesk/reports/', views_frontdesk_reports.frontdesk_reports_dashboard, name='frontdesk_reports_dashboard'),
+    path('frontdesk/reports/generate/', views_frontdesk_reports.frontdesk_report_generate, name='frontdesk_report_generate'),
     
     # Legacy shortcut
     path('appointments/', views_appointments.frontdesk_appointment_dashboard, name='appointments_redirect'),
@@ -480,7 +582,10 @@ urlpatterns = [
     path('cashier/payments/process-invoice/<uuid:invoice_id>/', views_cashier.process_payment, name='process_payment_invoice'),
     path('cashier/receipt/<uuid:receipt_id>/', views_cashier.payment_receipt, name='payment_receipt'),
     path('cashier/session/', views_cashier.cashier_session_detail, name='cashier_session_detail'),
+    path('cashier/session/create/', views_cashier.create_session, name='create_session'),
     path('cashier/session/<uuid:session_id>/close/', views_cashier.close_session, name='close_session'),
+    path('cashier/session/<uuid:session_id>/update-notes/', views_cashier.update_session_notes, name='update_session_notes'),
+    path('cashier-sessions/', views_cashier.cashier_sessions_list, name='cashier_sessions_list'),
     path('cashier/bills/', views_cashier.cashier_bills, name='cashier_bills'),
     path('cashier/invoices/', views_cashier.cashier_invoices, name='cashier_invoices'),
     path('cashier/invoices/<uuid:pk>/', views_cashier.cashier_invoice_detail, name='cashier_invoice_detail'),
@@ -489,6 +594,7 @@ urlpatterns = [
     
     # Accounting Module (OLD - commented out, using advanced accounting instead)
     # path('accounting/', views_accounting.accounting_dashboard, name='accounting_dashboard'),
+    path('accounts/', views_accounting.chart_of_accounts, name='chart_of_accounts'),
     path('accounting/ar/', views_accounting.accounts_receivable, name='accounts_receivable_old'),
     path('accounting/ledger/', views_accounting.general_ledger, name='general_ledger_old'),
     # path('accounting/trial-balance/', views_accounting.trial_balance, name='trial_balance'),  # OLD - Using advanced version
@@ -512,6 +618,8 @@ urlpatterns = [
     path('hr/staff/<uuid:staff_id>/document/', views_hr.staff_document_upload, name='staff_document_upload'),
     path('hr/staff/<uuid:staff_id>/review/', views_hr.performance_review_create, name='performance_review_create'),
     path('hr/staff/<uuid:staff_id>/training/', views_hr.training_record_create, name='training_record_create'),
+    # Payroll redirect (for easier access)
+    path('payroll/', lambda request: redirect('hospital:payroll_list'), name='payroll_redirect'),
     path('hr/payroll/', views_hr.payroll_list, name='payroll_list'),
     path('hr/payroll/<uuid:pk>/', views_hr.payroll_detail, name='payroll_detail'),
     path('hr/payroll/process/<uuid:period_id>/', views_hr.process_payroll, name='process_payroll'),
@@ -671,20 +779,15 @@ urlpatterns = [
     path('pricing/specialist/create/', views_pricing.create_specialist_service, name='create_specialist_service'),
     path('pricing/bulk-update/', views_pricing.bulk_price_update, name='bulk_price_update'),
     
-    # Staff Self-Service Portal
-    path('staff/portal/', views_staff_portal.staff_dashboard, name='staff_portal_dashboard'),
-    path('staff/profile/', views_staff_portal.staff_profile, name='staff_profile'),
-    
-    # Staff Leave Management (Self-Service)
-    path('staff/leave/', views_staff_portal.staff_leave_list, name='staff_leave_list'),
-    path('staff/leave/create/', views_staff_portal.staff_leave_request_create, name='staff_leave_request_create'),
-    path('staff/leave/<uuid:pk>/', views_staff_portal.staff_leave_detail, name='staff_leave_detail'),
-    path('staff/leave/<uuid:pk>/submit/', views_staff_portal.staff_leave_submit, name='staff_leave_submit'),
-    path('staff/leave/<uuid:pk>/cancel/', views_staff_portal.staff_leave_cancel, name='staff_leave_cancel'),
-    
-    # Staff Training & Performance (Self-Service)
-    path('staff/training/', views_staff_portal.staff_training_history, name='staff_training_history'),
-    path('staff/performance/', views_staff_portal.staff_performance_reviews, name='staff_performance_reviews'),
+    # Staff Self-Service Portal (Old URLs - commented out, using new ones below)
+    # path('staff/profile/', views_staff_portal.staff_profile, name='staff_profile'),
+    # path('staff/leave/', views_staff_portal.staff_leave_list, name='staff_leave_list'),
+    # path('staff/leave/create/', views_staff_portal.staff_leave_request_create, name='staff_leave_request_create'),
+    # path('staff/leave/<uuid:pk>/', views_staff_portal.staff_leave_detail, name='staff_leave_detail'),
+    # path('staff/leave/<uuid:pk>/submit/', views_staff_portal.staff_leave_submit, name='staff_leave_submit'),
+    # path('staff/leave/<uuid:pk>/cancel/', views_staff_portal.staff_leave_cancel, name='staff_leave_cancel'),
+    # path('staff/training/', views_staff_portal.staff_training_history, name='staff_training_history'),
+    path('performance-reviews/', views_staff_portal.staff_performance_reviews, name='staff_performance_reviews'),
     
     # Manager/Admin Leave Approval
     path('hr/leave/approvals/', views_hr.leave_approval_list, name='leave_approval_list'),
@@ -725,13 +828,99 @@ urlpatterns = [
     path('accounting/vouchers/mark-paid/', views_accounting_advanced.mark_voucher_paid, name='mark_voucher_paid'),
     path('accounting/vouchers/export-excel/', views_accounting_advanced.export_vouchers_excel, name='export_vouchers_excel'),
     path('accounting/vouchers/export-pdf/', views_accounting_advanced.export_vouchers_pdf, name='export_vouchers_pdf'),
+    
+    # Payment Voucher and Cheque Management
+    path('accounting/pv/setup-accounts/', views_pv_cheque.pv_account_setup, name='pv_account_setup'),
+    path('accounting/pv/', views_pv_cheque.pv_list, name='pv_list'),
+    path('accounting/pv/create/', views_pv_cheque.pv_create, name='pv_create'),
+    path('accounting/pv/<int:voucher_id>/', views_pv_cheque.pv_detail, name='pv_detail'),
+    path('accounting/pv/<int:voucher_id>/approve/', views_pv_cheque.pv_approve, name='pv_approve'),
+    path('accounting/pv/<int:voucher_id>/mark-paid/', views_pv_cheque.pv_mark_paid, name='pv_mark_paid'),
+    path('accounting/cheques/', views_pv_cheque.cheque_list, name='cheque_list'),
+    path('accounting/cheques/create/', views_pv_cheque.cheque_create, name='cheque_create'),
+    path('accounting/cheques/<int:cheque_id>/', views_pv_cheque.cheque_detail, name='cheque_detail'),
+    path('accounting/cheques/<int:cheque_id>/clear/', views_pv_cheque.cheque_clear, name='cheque_clear'),
+    path('accounting/cheques/<int:cheque_id>/bounce/', views_pv_cheque.cheque_bounce, name='cheque_bounce'),
+    path('accounting/cheques/<int:cheque_id>/void/', views_pv_cheque.cheque_void, name='cheque_void'),
+    path('accounting/cheques/<int:cheque_id>/print/', views_pv_cheque.cheque_print, name='cheque_print'),
     path('accounting/receipt-vouchers/', views_accounting_advanced.receipt_voucher_list, name='receipt_voucher_list'),
     path('accounting/api/stats/', views_accounting_advanced.accounting_api_stats, name='accounting_api_stats'),
+    
+    # ==================== COMPREHENSIVE ACCOUNTANT FEATURES ====================
+    # Comprehensive Accountant Dashboard
+    path('accountant/comprehensive-dashboard/', views_accountant_comprehensive.accountant_comprehensive_dashboard, name='accountant_comprehensive_dashboard'),
+    
+    # Cashbook
+    path('accountant/cashbook/', views_accountant_comprehensive.cashbook_list, name='cashbook_list'),
+    path('accountant/cashbook/<int:entry_id>/', views_accountant_comprehensive.cashbook_detail, name='cashbook_detail'),
+    path('accountant/cashbook/<int:entry_id>/classify/', views_accountant_comprehensive.cashbook_classify, name='cashbook_classify'),
+    path('accountant/cashbook/bulk-classify/', views_accountant_comprehensive.cashbook_bulk_classify, name='cashbook_bulk_classify'),
+    
+    # Bank Reconciliation
+    path('accountant/bank-reconciliation/', views_accountant_comprehensive.bank_reconciliation_list, name='bank_reconciliation_list'),
+    path('accountant/bank-reconciliation/<int:recon_id>/', views_accountant_comprehensive.bank_reconciliation_detail, name='bank_reconciliation_detail'),
+    
+    # Insurance Receivable
+    path('accountant/insurance-receivable/', views_accountant_comprehensive.insurance_receivable_list, name='insurance_receivable_list'),
+    
+    # Procurement Purchases
+    path('accountant/procurement-purchases/', views_accountant_comprehensive.procurement_purchase_list, name='procurement_purchase_list'),
+    
+    # Payroll
+    path('accountant/payroll/', views_accountant_comprehensive.payroll_list, name='payroll_list'),
+    path('accountant/doctor-commissions/', views_accountant_comprehensive.doctor_commission_list, name='doctor_commission_list'),
+    
+    # Profit & Loss Reports
+    path('accountant/profit-loss/', views_accountant_comprehensive.profit_loss_list, name='profit_loss_list'),
+    path('accountant/profit-loss/create/', views_accountant_comprehensive.profit_loss_create, name='profit_loss_create'),
+    path('accountant/profit-loss/<uuid:report_id>/edit/', views_accountant_comprehensive.profit_loss_edit, name='profit_loss_edit'),
+    path('accountant/detailed-financial-report/', views_accountant_comprehensive.detailed_financial_report, name='detailed_financial_report'),
+    
+    # Registration Fees
+    path('accountant/registration-fees/', views_accountant_comprehensive.registration_fee_list, name='registration_fee_list'),
+    
+    # Cash Sales
+    path('accountant/cash-sales/', views_accountant_comprehensive.cash_sale_list, name='cash_sale_list'),
+    
+    # Corporate Accounts
+    path('accountant/corporate-accounts/', views_accountant_comprehensive.corporate_account_list, name='corporate_account_list'),
+    
+    # Withholding Receivable
+    path('accountant/withholding-receivable/', views_accountant_comprehensive.withholding_receivable_list, name='withholding_receivable_list'),
+    
+    # Deposits
+    path('accountant/deposits/', views_accountant_comprehensive.deposit_list, name='deposit_list'),
+    
+    # Initial Revaluations
+    path('accountant/revaluations/', views_accountant_comprehensive.initial_revaluation_list, name='initial_revaluation_list'),
+    
+    # Chart of Accounts
+    path('accountant/chart-of-accounts/', views_accountant_comprehensive.chart_of_accounts, name='chart_of_accounts'),
+    path('accountant/sync-accounts/', views_accountant_comprehensive.sync_accounts, name='sync_accounts'),
     
     # Revenue Stream Monitoring
     path('accounting/revenue-streams/', views_revenue_monitoring.revenue_streams_dashboard, name='revenue_streams_dashboard'),
     path('accounting/revenue-by-department/', views_revenue_monitoring.revenue_by_department_report, name='revenue_by_department'),
     path('accounting/api/revenue-streams/', views_revenue_monitoring.revenue_streams_api, name='revenue_streams_api'),
+    
+    # Primecare Medical Centre Accounting
+    path('primecare/record-deposit/', views_primecare_accounting.record_deposit, name='primecare_record_deposit'),
+    path('primecare/received-payment/', views_primecare_accounting.received_payment, name='primecare_received_payment'),
+    path('primecare/receivable-details/<int:receivable_id>/', views_primecare_accounting.get_receivable_details, name='primecare_receivable_details'),
+    
+    # Primecare Financial Reports
+    path('primecare/balance-sheet/', views_primecare_reports.primecare_balance_sheet, name='primecare_balance_sheet'),
+    path('primecare/profit-loss/', views_primecare_reports.primecare_profit_loss, name='primecare_profit_loss'),
+    
+    # Locum Doctor Payment Management (Accountants)
+    path('locum/doctors/', views_locum_doctors.locum_doctors_dashboard, name='locum_doctors_dashboard'),
+    path('locum/doctors/services/', views_locum_doctors.locum_doctor_services_list, name='locum_doctor_services_list'),
+    path('locum/doctors/services/new/', views_locum_doctors.locum_doctor_service_create, name='locum_doctor_service_create'),
+    path('locum/doctors/services/<uuid:service_id>/', views_locum_doctors.locum_doctor_service_detail, name='locum_doctor_service_detail'),
+    path('locum/doctors/services/<uuid:service_id>/edit/', views_locum_doctors.locum_doctor_service_edit, name='locum_doctor_service_edit'),
+    path('locum/doctors/services/doctor/<uuid:doctor_id>/', views_locum_doctors.locum_doctor_services_list, name='locum_doctor_services_by_doctor'),
+    path('locum/doctors/doctor/<uuid:doctor_id>/create-batch/', views_locum_doctors.locum_doctor_payment_batch, name='locum_doctor_payment_batch'),
+    path('locum/doctors/batch/<uuid:batch_id>/', views_locum_doctors.locum_doctor_payment_batch_detail, name='locum_doctor_payment_batch_detail'),
     
     # Department Budgeting System
     path('budget/', views_budget.budget_dashboard, name='budget_dashboard'),

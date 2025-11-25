@@ -13,6 +13,66 @@ from .utils_roles import get_user_role, get_role_display_info
 
 ACCESS_DENIED_TEMPLATE = 'hospital/access_denied.html'
 
+# Accounting-related URL patterns that accountants are allowed to access
+ACCOUNTING_ALLOWED_PATTERNS = [
+    '/hms/accounting',
+    '/hms/accountant',  # All accountant features
+    '/hms/invoice',
+    '/hms/payment',
+    '/hms/cashier',
+    '/hms/revenue',
+    '/hms/accounts',
+    '/hms/budget',
+    '/hms/procurement/accounts',
+    '/hms/accounts-approval',
+    '/hms/financial',
+    '/hms/receipt',
+    '/hms/reports/financial',
+    '/hms/payroll',
+    '/hms/hr/payroll',
+    '/hms/locum',
+    '/hms/admin',  # Admin panel
+    '/hms/logout',
+    '/hms/login',
+    '/hms/dashboard',  # Will redirect to accountant dashboard
+    '/admin',  # Django admin
+]
+
+
+def block_accountant_from_non_accounting(view_func):
+    """
+    Decorator to block accountants from accessing non-accounting features.
+    Accountants should only access accounting, cashier, and related financial features.
+    """
+    @wraps(view_func)
+    def _wrapped(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return view_func(request, *args, **kwargs)
+        
+        user_role = get_user_role(request.user)
+        
+        # Only block accountants, allow admins and others
+        if user_role == 'accountant' and not request.user.is_superuser:
+            # Check if the current path is accounting-related
+            current_path = request.path.lower()
+            
+            # Allow accounting-related URLs
+            is_accounting_url = any(
+                pattern in current_path 
+                for pattern in ACCOUNTING_ALLOWED_PATTERNS
+            )
+            
+            if not is_accounting_url:
+                messages.error(
+                    request, 
+                    "Access denied. Accountants can only access accounting, cashier, and financial features."
+                )
+                return redirect('hospital:accountant_dashboard')
+        
+        return view_func(request, *args, **kwargs)
+    
+    return _wrapped
+
 
 def role_required(*allowed_roles, redirect_to=None, raise_exception=False, message=None):
     """

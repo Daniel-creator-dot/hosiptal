@@ -1,0 +1,103 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Cashbook Entry Detail - HMS{% endblock %}
+{% block page_title %}Cashbook Entry: {{ entry.entry_number }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header">
+                    <h5><i class="bi bi-journal-text"></i> Entry Details</h5>
+                </div>
+                <div class="card-body">
+                    <dl class="row">
+                        <dt class="col-sm-4">Entry Number:</dt>
+                        <dd class="col-sm-8"><strong>{{ entry.entry_number }}</strong></dd>
+                        
+                        <dt class="col-sm-4">Entry Type:</dt>
+                        <dd class="col-sm-8">
+                            <span class="badge bg-{% if entry.entry_type == 'receipt' %}success{% else %}danger{% endif %}">
+                                {{ entry.get_entry_type_display }}
+                            </span>
+                        </dd>
+                        
+                        <dt class="col-sm-4">Entry Date:</dt>
+                        <dd class="col-sm-8">{{ entry.entry_date|date:"F d, Y" }}</dd>
+                        
+                        <dt class="col-sm-4">Amount:</dt>
+                        <dd class="col-sm-8"><strong class="h4">GHS {{ entry.amount|floatformat:2|intcomma }}</strong></dd>
+                        
+                        <dt class="col-sm-4">Payee/Payer:</dt>
+                        <dd class="col-sm-8">{{ entry.payee_or_payer }}</dd>
+                        
+                        <dt class="col-sm-4">Description:</dt>
+                        <dd class="col-sm-8">{{ entry.description }}</dd>
+                        
+                        <dt class="col-sm-4">Reference:</dt>
+                        <dd class="col-sm-8">{{ entry.reference|default:"-" }}</dd>
+                        
+                        <dt class="col-sm-4">Payment Method:</dt>
+                        <dd class="col-sm-8">{{ entry.get_payment_method_display }}</dd>
+                        
+                        <dt class="col-sm-4">Status:</dt>
+                        <dd class="col-sm-8">
+                            {% if entry.status == 'pending' %}
+                                <span class="badge bg-warning">Pending (Held)</span>
+                            {% elif entry.status == 'classified' %}
+                                <span class="badge bg-success">Classified</span>
+                            {% else %}
+                                <span class="badge bg-secondary">{{ entry.get_status_display }}</span>
+                            {% endif %}
+                        </dd>
+                        
+                        <dt class="col-sm-4">Held Until:</dt>
+                        <dd class="col-sm-8">{{ entry.held_until|date:"F d, Y" }}</dd>
+                        
+                        {% if entry.classified_at %}
+                        <dt class="col-sm-4">Classified At:</dt>
+                        <dd class="col-sm-8">{{ entry.classified_at|date:"F d, Y H:i" }}</dd>
+                        
+                        <dt class="col-sm-4">Classified By:</dt>
+                        <dd class="col-sm-8">{{ entry.classified_by.get_full_name|default:"-" }}</dd>
+                        {% endif %}
+                    </dl>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5><i class="bi bi-info-circle"></i> Actions</h5>
+                </div>
+                <div class="card-body">
+                    {% if entry.status == 'pending' and can_classify %}
+                    <div class="alert alert-success">
+                        <i class="bi bi-check-circle"></i> This entry can be classified to revenue/expense.
+                    </div>
+                    <a href="{% url 'hospital:cashbook_classify' entry.id %}" class="btn btn-success w-100 mb-2">
+                        <i class="bi bi-check-circle"></i> Classify to Revenue/Expense
+                    </a>
+                    {% elif entry.status == 'pending' %}
+                    <div class="alert alert-warning">
+                        <i class="bi bi-clock"></i> This entry is held until {{ entry.held_until|date:"F d, Y" }}.
+                    </div>
+                    {% endif %}
+                    
+                    <a href="{% url 'admin:hospital_cashbook_change' entry.id %}" class="btn btn-primary w-100 mb-2">
+                        <i class="bi bi-pencil"></i> Edit Entry
+                    </a>
+                    <a href="{% url 'hospital:cashbook_list' %}" class="btn btn-secondary w-100">
+                        <i class="bi bi-arrow-left"></i> Back to List
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

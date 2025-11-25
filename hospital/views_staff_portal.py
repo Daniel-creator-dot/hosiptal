@@ -1,377 +1,303 @@
 """
-Staff Self-Service Portal Views
-Staff can request leave, view performance, training, etc.
+Staff Portal Views
+Allows staff to view their information, apply for leave, and see notifications
 """
-from django.shortcuts import render, redirect, get_object_or_404
+from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.http import JsonResponse
+from django.views.decorators.http import require_http_methods
 from django.utils import timezone
-from django.db.models import Q, Sum
-from decimal import Decimal
-from datetime import date, timedelta
-from .models import Staff
-from .models_hr import (
-    LeaveBalance, PerformanceReview, TrainingRecord, StaffContract,
-    Payroll, StaffShift, StaffQualification, TrainingProgram
-)
-from .models_advanced import LeaveRequest, Attendance
+from django.db.models import Q
+from .models import Staff, Notification
+from .models_advanced import LeaveRequest
+from .models_audit import ActivityLog, AuditLog
+from .models_hr import PerformanceReview
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @login_required
-def staff_dashboard(request):
-    """Staff self-service dashboard"""
-    # Get staff record for current user
+def staff_portal(request):
+    """Main staff portal dashboard"""
     try:
         staff = Staff.objects.get(user=request.user, is_deleted=False)
     except Staff.DoesNotExist:
-        messages.error(request, 'Staff profile not found.')
+        messages.error(request, "Staff profile not found. Please contact HR.")
         return redirect('hospital:dashboard')
     
-    # Leave balance
-    leave_balance, _ = LeaveBalance.objects.get_or_create(staff=staff)
+    # Get recent notifications
+    recent_notifications = Notification.objects.filter(
+        recipient=request.user,
+        is_deleted=False
+    ).order_by('-created')[:10]
     
-    # Pending leave requests
-    pending_leaves = LeaveRequest.objects.filter(
-        staff=staff,
-        status='pending',
+    unread_notifications = Notification.objects.filter(
+        recipient=request.user,
+        is_read=False,
         is_deleted=False
     ).count()
     
-    # Upcoming leaves (approved)
+    # Get recent activity logs for this staff
+    recent_activities = ActivityLog.objects.filter(
+        user=request.user
+    ).order_by('-created')[:20]
+    
+    # Get pending leave requests
+    pending_leaves = LeaveRequest.objects.filter(
+        staff=staff,
+        is_deleted=False
+    ).order_by('-created')[:10]
+    
+    # Get approved leaves (upcoming)
+    from datetime import timedelta
     upcoming_leaves = LeaveRequest.objects.filter(
         staff=staff,
         status='approved',
-        start_date__gte=date.today(),
+        start_date__gte=timezone.now().date(),
         is_deleted=False
     ).order_by('start_date')[:5]
     
-    # Recent trainings
-    recent_trainings = TrainingRecord.objects.filter(
-        staff=staff,
-        is_deleted=False
-    ).order_by('-start_date')[:5]
-    
-    # Upcoming shifts
-    upcoming_shifts = StaffShift.objects.filter(
-        staff=staff,
-        shift_date__gte=date.today(),
-        is_deleted=False
-    ).order_by('shift_date', 'start_time')[:7]
-    
-    # Latest performance review
-    latest_review = PerformanceReview.objects.filter(
-        staff=staff,
-        is_deleted=False
-    ).order_by('-review_date').first()
-    
-    # This month attendance
-    attendance_count = Attendance.objects.filter(
-        staff=staff,
-        date__month=date.today().month,
-        date__year=date.today().year,
-        status='present',
-        is_deleted=False
-    ).count()
+    # Get staff information
+    staff_info = {
+        'name': staff.user.get_full_name() or staff.user.username,
+        'employee_id': staff.employee_id or 'N/A',
+        'department': staff.department.name if staff.department else 'N/A',
+        'profession': staff.profession or 'N/A',
+        'phone': staff.phone_number or 'N/A',
+        'email': staff.user.email or 'N/A',
+    }
     
     context = {
+        'title': 'Staff Portal',
         'staff': staff,
-        'leave_balance': leave_balance,
+        'staff_info': staff_info,
+        'recent_notifications': recent_notifications,
+        'unread_notifications': unread_notifications,
+        'recent_activities': recent_activities,
         'pending_leaves': pending_leaves,
         'upcoming_leaves': upcoming_leaves,
-        'recent_trainings': recent_trainings,
-        'upcoming_shifts': upcoming_shifts,
-        'latest_review': latest_review,
-        'attendance_count': attendance_count,
     }
-    return render(request, 'hospital/staff_dashboard.html', context)
+    
+    return render(request, 'hospital/staff/portal.html', context)
 
 
 @login_required
-def staff_leave_request_create(request):
-    """Staff create leave request"""
+def staff_leave_request(request):
+    """Staff leave request form"""
     try:
         staff = Staff.objects.get(user=request.user, is_deleted=False)
     except Staff.DoesNotExist:
-        messages.error(request, 'Staff profile not found.')
-        return redirect('hospital:dashboard')
+        messages.error(request, "Staff profile not found. Please contact HR.")
+        return redirect('hospital:staff_portal')
     
     if request.method == 'POST':
-        leave_type = request.POST.get('leave_type')
-        start_date_str = request.POST.get('start_date')
-        end_date_str = request.POST.get('end_date')
-        reason = request.POST.get('reason', '').strip()
-        contact = request.POST.get('contact_during_leave', '').strip()
-        covering_staff_id = request.POST.get('covering_staff')
-        handover_notes = request.POST.get('handover_notes', '').strip()
-        
         try:
-            start_date = date.fromisoformat(start_date_str)
-            end_date = date.fromisoformat(end_date_str)
+            start_date = request.POST.get('start_date')
+            end_date = request.POST.get('end_date')
+            leave_type = request.POST.get('leave_type', 'annual')
+            reason = request.POST.get('reason', '')
             
-            # Calculate working days (excluding weekends)
-            days_requested = LeaveRequest.calculate_working_days(start_date, end_date)
+            if not start_date or not end_date:
+                messages.error(request, "Please provide both start and end dates.")
+                return redirect('hospital:staff_leave_request')
             
-            # Validation
-            if start_date < date.today():
-                messages.error(request, 'Start date cannot be in the past.')
-                return redirect('hospital:staff_leave_request_create')
-            
-            if end_date < start_date:
-                messages.error(request, 'End date must be after start date.')
-                return redirect('hospital:staff_leave_request_create')
-            
-            if not reason:
-                messages.error(request, 'Reason is required.')
-                return redirect('hospital:staff_leave_request_create')
-            
-            # Check leave balance
-            leave_balance, _ = LeaveBalance.objects.get_or_create(staff=staff)
-            available_days = 0
-            
-            if leave_type == 'annual':
-                available_days = leave_balance.annual_leave
-            elif leave_type == 'sick':
-                available_days = leave_balance.sick_leave
-            elif leave_type == 'casual':
-                available_days = leave_balance.casual_leave
-            
-            if leave_type in ['annual', 'sick', 'casual'] and days_requested > available_days:
-                messages.warning(request, f'Insufficient leave balance. Available: {available_days} days, Requested: {days_requested} days.')
-            
-            # Get covering staff if specified
-            covering_staff = None
-            if covering_staff_id:
-                try:
-                    covering_staff = Staff.objects.get(pk=covering_staff_id, is_deleted=False)
-                except Staff.DoesNotExist:
-                    pass
+            # Calculate days requested
+            from datetime import datetime
+            start = datetime.strptime(start_date, '%Y-%m-%d').date()
+            end = datetime.strptime(end_date, '%Y-%m-%d').date()
+            days_requested = LeaveRequest.calculate_working_days(start, end)
             
             # Create leave request
             leave_request = LeaveRequest.objects.create(
                 staff=staff,
-                leave_type=leave_type,
                 start_date=start_date,
                 end_date=end_date,
-                days_requested=days_requested,
+                leave_type=leave_type,
                 reason=reason,
-                contact_during_leave=contact,
-                covering_staff=covering_staff,
-                handover_notes=handover_notes,
-                status='draft'
+                days_requested=days_requested,
+                status='pending',
+                submitted_at=timezone.now(),
             )
             
-            # Handle attachment if provided
-            if request.FILES.get('attachment'):
-                leave_request.attachment = request.FILES['attachment']
-                leave_request.save()
+            # Create notification for HR
+            from django.contrib.auth.models import User
+            hr_users = User.objects.filter(
+                Q(is_staff=True) | Q(is_superuser=True)
+            ).filter(
+                Q(staff__department__name__icontains='hr') | Q(staff__profession__icontains='hr')
+            )
             
-            messages.success(request, 'Leave request created! Click "Submit" to send for approval.')
-            return redirect('hospital:staff_leave_detail', pk=leave_request.pk)
+            # If no HR users found, notify all admins
+            if not hr_users.exists():
+                hr_users = User.objects.filter(Q(is_staff=True) | Q(is_superuser=True))[:5]
             
-        except ValueError as e:
-            messages.error(request, f'Invalid date format: {str(e)}')
-            return redirect('hospital:staff_leave_request_create')
+            for hr_user in hr_users:
+                Notification.objects.create(
+                    recipient=hr_user,
+                    notification_type='info',
+                    title=f'New Leave Request from {staff.user.get_full_name()}',
+                    message=f'{staff.user.get_full_name()} ({staff.employee_id or staff.user.username}) has requested {leave_type.replace("_", " ").title()} leave from {start_date} to {end_date} ({days_requested} days). Reason: {reason[:100] if reason else "No reason provided"}',
+                    related_object_id=leave_request.id,
+                    related_object_type='LeaveRequest',
+                )
+            
+            # Also notify the staff member
+            Notification.objects.create(
+                recipient=request.user,
+                notification_type='success',
+                title='Leave Request Submitted',
+                message=f'Your {leave_type.replace("_", " ").title()} leave request from {start_date} to {end_date} has been submitted and is pending HR approval.',
+                related_object_id=leave_request.id,
+                related_object_type='LeaveRequest',
+            )
+            
+            messages.success(request, f"Leave request submitted successfully. HR will review it shortly. You will be notified once it's reviewed.")
+            return redirect('hospital:staff_portal')
+            
+        except Exception as e:
+            logger.error(f"Error creating leave request: {e}", exc_info=True)
+            messages.error(request, f"Error submitting leave request: {str(e)}")
     
-    # Get leave balance
-    leave_balance, _ = LeaveBalance.objects.get_or_create(staff=staff)
-    
-    # Get other staff for covering options
-    other_staff = Staff.objects.filter(
-        is_active=True,
-        is_deleted=False
-    ).exclude(pk=staff.pk).select_related('user')
+    # Get leave types from model
+    LEAVE_TYPES = LeaveRequest.LEAVE_TYPES
     
     context = {
+        'title': 'Apply for Leave',
         'staff': staff,
-        'leave_balance': leave_balance,
-        'other_staff': other_staff,
+        'leave_types': LEAVE_TYPES,
     }
-    return render(request, 'hospital/staff_leave_request_create.html', context)
+    
+    return render(request, 'hospital/staff/leave_request.html', context)
 
 
 @login_required
-def staff_leave_list(request):
-    """List all staff's leave requests"""
+def staff_leave_history(request):
+    """Staff leave history"""
     try:
         staff = Staff.objects.get(user=request.user, is_deleted=False)
     except Staff.DoesNotExist:
-        messages.error(request, 'Staff profile not found.')
-        return redirect('hospital:dashboard')
-    
-    status_filter = request.GET.get('status', '')
+        messages.error(request, "Staff profile not found.")
+        return redirect('hospital:staff_portal')
     
     leave_requests = LeaveRequest.objects.filter(
         staff=staff,
         is_deleted=False
     ).order_by('-created')
     
-    if status_filter:
-        leave_requests = leave_requests.filter(status=status_filter)
-    
-    # Get leave balance
-    leave_balance, _ = LeaveBalance.objects.get_or_create(staff=staff)
-    
     context = {
+        'title': 'My Leave History',
         'staff': staff,
         'leave_requests': leave_requests,
-        'status_filter': status_filter,
-        'leave_balance': leave_balance,
     }
-    return render(request, 'hospital/staff_leave_list.html', context)
+    
+    return render(request, 'hospital/staff/leave_history.html', context)
 
 
 @login_required
-def staff_leave_detail(request, pk):
-    """View leave request details"""
-    leave_request = get_object_or_404(LeaveRequest, pk=pk, is_deleted=False)
-    
-    # Verify ownership
+def staff_activities(request):
+    """Staff activity log"""
     try:
         staff = Staff.objects.get(user=request.user, is_deleted=False)
-        if leave_request.staff != staff and not request.user.is_staff:
-            messages.error(request, 'Unauthorized access.')
-            return redirect('hospital:staff_leave_list')
     except Staff.DoesNotExist:
-        messages.error(request, 'Staff profile not found.')
-        return redirect('hospital:dashboard')
+        messages.error(request, "Staff profile not found.")
+        return redirect('hospital:staff_portal')
+    
+    # Get all activities for this user
+    activities = ActivityLog.objects.filter(
+        user=request.user
+    ).order_by('-created')
+    
+    # Get audit logs related to this staff
+    audit_logs = AuditLog.objects.filter(
+        user=request.user
+    ).order_by('-created')
     
     context = {
-        'leave_request': leave_request,
+        'title': 'My Activities',
         'staff': staff,
+        'activities': activities[:50],  # Limit to 50 most recent
+        'audit_logs': audit_logs[:50],
     }
-    return render(request, 'hospital/staff_leave_detail.html', context)
+    
+    return render(request, 'hospital/staff/activities.html', context)
 
 
 @login_required
-def staff_leave_submit(request, pk):
-    """Submit leave request for approval"""
-    leave_request = get_object_or_404(LeaveRequest, pk=pk, is_deleted=False)
-    
-    # Verify ownership
-    try:
-        staff = Staff.objects.get(user=request.user, is_deleted=False)
-        if leave_request.staff != staff:
-            messages.error(request, 'Unauthorized access.')
-            return redirect('hospital:staff_leave_list')
-    except Staff.DoesNotExist:
-        messages.error(request, 'Staff profile not found.')
-        return redirect('hospital:dashboard')
-    
-    if leave_request.submit():
-        messages.success(request, 'Leave request submitted for approval!')
-    else:
-        messages.error(request, 'Leave request cannot be submitted.')
-    
-    return redirect('hospital:staff_leave_detail', pk=pk)
-
-
-@login_required
-def staff_leave_cancel(request, pk):
-    """Cancel leave request"""
-    leave_request = get_object_or_404(LeaveRequest, pk=pk, is_deleted=False)
-    
-    # Verify ownership
-    try:
-        staff = Staff.objects.get(user=request.user, is_deleted=False)
-        if leave_request.staff != staff:
-            messages.error(request, 'Unauthorized access.')
-            return redirect('hospital:staff_leave_list')
-    except Staff.DoesNotExist:
-        messages.error(request, 'Staff profile not found.')
-        return redirect('hospital:dashboard')
-    
-    if leave_request.status in ['draft', 'pending']:
-        leave_request.status = 'cancelled'
-        leave_request.save()
-        messages.success(request, 'Leave request cancelled.')
-    else:
-        messages.error(request, 'Cannot cancel leave request.')
-    
-    return redirect('hospital:staff_leave_list')
-
-
-@login_required
-def staff_training_history(request):
-    """View staff training history"""
+def staff_notifications(request):
+    """Staff notifications page"""
     try:
         staff = Staff.objects.get(user=request.user, is_deleted=False)
     except Staff.DoesNotExist:
-        messages.error(request, 'Staff profile not found.')
-        return redirect('hospital:dashboard')
+        messages.error(request, "Staff profile not found.")
+        return redirect('hospital:staff_portal')
     
-    trainings = TrainingRecord.objects.filter(
-        staff=staff,
+    notifications = Notification.objects.filter(
+        recipient=request.user,
         is_deleted=False
-    ).order_by('-start_date')
+    ).order_by('-created')
     
-    # Statistics
-    total_trainings = trainings.count()
-    total_hours = trainings.aggregate(Sum('duration_hours'))['duration_hours__sum'] or Decimal('0.00')
-    completed_trainings = trainings.filter(status='completed').count()
-    
-    # Upcoming trainings
-    upcoming = trainings.filter(
-        start_date__gte=date.today(),
-        status='scheduled'
-    )
+    unread_count = notifications.filter(is_read=False).count()
     
     context = {
+        'title': 'My Notifications',
         'staff': staff,
-        'trainings': trainings,
-        'total_trainings': total_trainings,
-        'total_hours': total_hours,
-        'completed_trainings': completed_trainings,
-        'upcoming': upcoming,
+        'notifications': notifications,
+        'unread_count': unread_count,
     }
-    return render(request, 'hospital/staff_training_history.html', context)
+    
+    return render(request, 'hospital/staff/notifications.html', context)
+
+
+@login_required
+@require_http_methods(["POST"])
+def mark_notification_read_staff(request, notification_id):
+    """Mark notification as read (staff portal)"""
+    try:
+        notification = Notification.objects.get(
+            id=notification_id,
+            recipient=request.user,
+            is_deleted=False
+        )
+        notification.mark_as_read()
+        return JsonResponse({'success': True})
+    except Notification.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Notification not found'}, status=404)
+
+
+@login_required
+@require_http_methods(["POST"])
+def mark_all_notifications_read_staff(request):
+    """Mark all notifications as read (staff portal)"""
+    Notification.objects.filter(
+        recipient=request.user,
+        is_read=False,
+        is_deleted=False
+    ).update(is_read=True, read_at=timezone.now())
+    
+    messages.success(request, "All notifications marked as read.")
+    return redirect('hospital:staff_notifications')
 
 
 @login_required
 def staff_performance_reviews(request):
-    """View staff performance reviews"""
+    """Staff performance reviews list"""
     try:
         staff = Staff.objects.get(user=request.user, is_deleted=False)
     except Staff.DoesNotExist:
-        messages.error(request, 'Staff profile not found.')
-        return redirect('hospital:dashboard')
+        messages.error(request, "Staff profile not found.")
+        return redirect('hospital:staff_portal')
     
     reviews = PerformanceReview.objects.filter(
         staff=staff,
         is_deleted=False
-    ).order_by('-review_date')
+    ).select_related('reviewed_by', 'reviewed_by__user').order_by('-review_date')
     
     context = {
+        'title': 'My Performance Reviews',
         'staff': staff,
         'reviews': reviews,
     }
+    
     return render(request, 'hospital/staff_performance_reviews.html', context)
-
-
-@login_required
-def staff_profile(request):
-    """Staff profile with documents and qualifications"""
-    try:
-        staff = Staff.objects.get(user=request.user, is_deleted=False)
-    except Staff.DoesNotExist:
-        messages.error(request, 'Staff profile not found.')
-        return redirect('hospital:dashboard')
-    
-    # Get related data
-    contract = StaffContract.objects.filter(
-        staff=staff,
-        is_active=True,
-        is_deleted=False
-    ).first()
-    
-    qualifications = StaffQualification.objects.filter(
-        staff=staff,
-        is_deleted=False
-    ).order_by('-issue_date')
-    
-    context = {
-        'staff': staff,
-        'contract': contract,
-        'qualifications': qualifications,
-    }
-    return render(request, 'hospital/staff_profile.html', context)
-

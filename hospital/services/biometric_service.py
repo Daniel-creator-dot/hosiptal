@@ -150,53 +150,105 @@ class BiometricService:
                     tmp_file.write(image_data)
                     tmp_path = tmp_file.name
                 
+                # Try multiple detector backends in order of reliability
+                detector_backends = ['opencv', 'ssd', 'dlib', 'mtcnn', 'retinaface']
+                last_error = None
+                
+                for detector_backend in detector_backends:
+                    try:
+                        # Try with enforce_detection=False first (more lenient)
+                        embedding_objs = self.DeepFace.represent(
+                            img_path=tmp_path,
+                            model_name=model,
+                            enforce_detection=False,  # More lenient - won't fail if face is partially visible
+                            detector_backend=detector_backend,
+                            align=True
+                        )
+                        
+                        if embedding_objs and len(embedding_objs) > 0:
+                            metadata['detector_backend'] = detector_backend
+                            logger.info(f"Successfully detected face using {detector_backend} detector")
+                            
+                            embedding = embedding_objs[0]['embedding']
+                            metadata['face_detected'] = True
+                            metadata['num_faces'] = len(embedding_objs)
+                            
+                            # Additional face detection metadata
+                            if 'facial_area' in embedding_objs[0]:
+                                facial_area = embedding_objs[0]['facial_area']
+                                metadata['facial_area'] = facial_area
+                                
+                                # Calculate face size as quality indicator
+                                face_width = facial_area['w']
+                                face_height = facial_area['h']
+                                metadata['quality_checks']['face_size'] = f"{face_width}x{face_height}"
+                            
+                            processing_time = (time.time() - start_time) * 1000
+                            metadata['processing_time_ms'] = int(processing_time)
+                            
+                            # Clean up temp file
+                            import os
+                            try:
+                                os.unlink(tmp_path)
+                            except:
+                                pass
+                            
+                            return np.array(embedding), metadata
+                        else:
+                            # No face detected with this detector, try next
+                            logger.debug(f"No face detected with {detector_backend}, trying next detector...")
+                            continue
+                            
+                    except Exception as e:
+                        last_error = str(e)
+                        logger.debug(f"DeepFace {detector_backend} detector failed: {str(e)}, trying next...")
+                        continue
+                
+                # If all detectors failed, try one more time with enforce_detection=False and opencv
                 try:
-                    # Extract face embedding using DeepFace
-                    # Use opencv detector - fast, reliable, no extra downloads needed
                     embedding_objs = self.DeepFace.represent(
                         img_path=tmp_path,
                         model_name=model,
-                        enforce_detection=True,
-                        detector_backend='opencv',  # Fast and reliable
-                        align=True
+                        enforce_detection=False,
+                        detector_backend='opencv',
+                        align=False  # Try without alignment
                     )
-                    metadata['detector_backend'] = 'opencv'
-                    logger.debug(f"Successfully detected face using opencv detector")
                     
                     if embedding_objs and len(embedding_objs) > 0:
+                        metadata['detector_backend'] = 'opencv_no_align'
+                        logger.info("Successfully detected face using opencv (no alignment)")
+                        
                         embedding = embedding_objs[0]['embedding']
                         metadata['face_detected'] = True
                         metadata['num_faces'] = len(embedding_objs)
                         
-                        # Additional face detection metadata
-                        if 'facial_area' in embedding_objs[0]:
-                            facial_area = embedding_objs[0]['facial_area']
-                            metadata['facial_area'] = facial_area
-                            
-                            # Calculate face size as quality indicator
-                            face_width = facial_area['w']
-                            face_height = facial_area['h']
-                            metadata['quality_checks']['face_size'] = f"{face_width}x{face_height}"
-                        
                         processing_time = (time.time() - start_time) * 1000
                         metadata['processing_time_ms'] = int(processing_time)
                         
-                        return np.array(embedding), metadata
-                    else:
-                        metadata['error'] = 'No face detected'
-                        return None, metadata
+                        # Clean up temp file
+                        import os
+                        try:
+                            os.unlink(tmp_path)
+                        except:
+                            pass
                         
+                        return np.array(embedding), metadata
                 except Exception as e:
-                    logger.error(f"DeepFace encoding error: {str(e)}")
-                    metadata['error'] = str(e)
-                    return None, metadata
-                finally:
-                    # Clean up temp file
-                    import os
-                    try:
-                        os.unlink(tmp_path)
-                    except:
-                        pass
+                    logger.debug(f"Final fallback attempt failed: {str(e)}")
+                
+                # All attempts failed
+                error_msg = f"No face detected. Last error: {last_error}" if last_error else "No face detected in image"
+                metadata['error'] = error_msg
+                metadata['tried_detectors'] = detector_backends
+                
+                # Clean up temp file
+                import os
+                try:
+                    os.unlink(tmp_path)
+                except:
+                    pass
+                
+                return None, metadata
             
             # Fallback to face_recognition library
             elif self.face_recognition_available:
@@ -407,8 +459,8 @@ class BiometricService:
             # Ensure score is between 0 and 100
             liveness_score = max(Decimal('0.00'), min(Decimal('100.00'), liveness_score))
             
-            # Threshold for liveness
-            threshold = Decimal('30.00') if lenient_mode else Decimal('40.00')
+            # Threshold for liveness (more lenient)
+            threshold = Decimal('25.00') if lenient_mode else Decimal('30.00')
             is_live = liveness_score >= threshold
             
             metadata['liveness_checks'] = {
@@ -527,9 +579,9 @@ class BiometricAuthenticationService:
             # Calculate quality score
             quality_score = self.biometric_service.calculate_quality_score(image_data, metadata)
             
-            # Check minimum quality (lowered to 45 for better usability)
-            if quality_score < Decimal('45.00'):
-                return False, None, f"Image quality too low ({quality_score}/100). Please improve lighting and focus."
+            # Check minimum quality (lowered to 35 for better usability)
+            if quality_score < Decimal('35.00'):
+                return False, None, f"Image quality too low ({quality_score}/100). Please improve lighting and ensure face is clearly visible."
             
             # Generate template hash and data
             template_hash = self.biometric_service.generate_template_hash(encoding)
@@ -659,7 +711,8 @@ class BiometricAuthenticationService:
             # Calculate quality score
             quality_score = self.biometric_service.calculate_quality_score(image_data, metadata)
             
-            if quality_score < Decimal('40.00'):
+            # Lower threshold for better usability (was 40.00)
+            if quality_score < Decimal('30.00'):
                 self._log_failed_auth(
                     None,
                     biometric_type,
@@ -670,7 +723,7 @@ class BiometricAuthenticationService:
                     ip_address,
                     metadata
                 )
-                return False, None, f"Image quality too low ({quality_score}/100)", metadata
+                return False, None, f"Image quality too low ({quality_score}/100). Please improve lighting and ensure face is clearly visible.", metadata
             
             # Search for matching biometric templates
             active_biometrics = StaffBiometric.objects.filter(

@@ -385,7 +385,7 @@ Variable Name: DEFAULT_FROM_EMAIL
 Value: noreply@primecare.com
 
 Variable Name: SMS_API_KEY
-Value: 3316dce1-fd2a-4b4e-b6b2-60b30be375bb
+Value: 84c879bb-f9f9-4666-84a8-9f70a9b238cc
 
 Variable Name: SMS_SENDER_ID
 Value: PrimeCare
@@ -420,6 +420,9 @@ After setting these variables and saving:
 
 *Last Updated: November 13, 2024*  
 *For: HMS Render Deployment*
+
+
+
 
 
 

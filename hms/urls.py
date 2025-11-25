@@ -38,6 +38,9 @@ urlpatterns = [
     path('api/allauth/', include('allauth.urls')),
     path('health/', include('health_check.urls')),
     path('prometheus/', include('django_prometheus.urls')),
+    
+    # Favicon - return empty response to avoid 400 errors
+    path('favicon.ico', views.favicon, name='favicon'),
 ]
 
 # Add debug toolbar URLs in development - DISABLED for performance

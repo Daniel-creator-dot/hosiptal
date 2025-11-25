@@ -21,6 +21,7 @@
         border-radius: 12px;
         image-rendering: -webkit-optimize-contrast;
         image-rendering: crisp-edges;
+        image-rendering: pixelated; /* Fallback for crisp-edges */
     }
     
     .scanner-overlay {
@@ -160,8 +161,8 @@
                     
                     <!-- Camera Selection -->
                     <div class="mb-3 text-center">
-                        <label class="form-label"><strong>Select Camera:</strong></label>
-                        <select id="camera-select" class="form-select" style="max-width: 400px; margin: 0 auto;">
+                        <label class="form-label" for="camera-select"><strong>Select Camera:</strong></label>
+                        <select id="camera-select" class="form-select" style="max-width: 400px; margin: 0 auto;" title="Select camera device" aria-label="Select camera device">
                             <option value="">Loading cameras...</option>
                         </select>
                     </div>
@@ -439,10 +440,20 @@ function getCameras() {
         }
     }).catch(err => {
         console.error('Error getting cameras:', err);
+        let errorMsg = 'Unable to access camera. ';
+        if (err.name === 'NotAllowedError' || err.message.includes('permission')) {
+            errorMsg += 'Please allow camera permissions and refresh the page.';
+        } else if (err.name === 'NotFoundError') {
+            errorMsg += 'No camera found. Please connect a camera device.';
+        } else {
+            errorMsg += err.message || 'Unknown error occurred.';
+        }
+        
         document.getElementById('qr-reader-results').innerHTML = `
             <div class="alert alert-danger">
-                <h5>Camera Error</h5>
-                <p>Unable to access camera. Please use manual entry.</p>
+                <h5><i class="bi bi-exclamation-triangle"></i> Camera Error</h5>
+                <p>${errorMsg}</p>
+                <p class="mb-0">Please use manual entry or check your camera settings.</p>
             </div>
         `;
     });
@@ -508,11 +519,34 @@ function startScanner() {
         `;
     }).catch(err => {
         console.error('Error starting scanner:', err);
+        isScanning = false;
+        document.getElementById('start-scan-btn').style.display = 'inline-block';
+        document.getElementById('stop-scan-btn').style.display = 'none';
+        
+        let errorMsg = 'Unable to start scanner. ';
+        if (err.name === 'NotAllowedError' || err.message.includes('permission')) {
+            errorMsg += 'Please allow camera permissions in your browser settings and try again.';
+        } else if (err.name === 'NotFoundError' || err.message.includes('No camera')) {
+            errorMsg += 'No camera found. Please connect a camera device.';
+        } else if (err.name === 'NotReadableError' || err.message.includes('busy')) {
+            errorMsg += 'Camera is busy or in use by another application. Please close other apps using the camera.';
+        } else if (err.message) {
+            errorMsg += err.message;
+        } else {
+            errorMsg += 'Unknown error occurred.';
+        }
+        
         document.getElementById('qr-reader-results').innerHTML = `
             <div class="alert alert-danger">
                 <h5><i class="bi bi-exclamation-triangle"></i> Scanner Error</h5>
-                <p><strong>Error:</strong> ${err}</p>
-                <p>Try: Check camera permissions, ensure good lighting, or use manual entry.</p>
+                <p><strong>Error:</strong> ${errorMsg}</p>
+                <p class="mb-2">Try:</p>
+                <ul class="mb-0">
+                    <li>Check camera permissions in browser settings</li>
+                    <li>Ensure good lighting</li>
+                    <li>Close other applications using the camera</li>
+                    <li>Use manual entry as alternative</li>
+                </ul>
             </div>
         `;
     });

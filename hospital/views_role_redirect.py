@@ -28,6 +28,10 @@ def role_dashboard_redirect(request):
         'receptionist': 'hospital:receptionist_dashboard',
         'cashier': 'hospital:cashier_dashboard_role',
         'admin': 'hospital:admin_dashboard_role',
+        'accountant': 'hospital:accountant_comprehensive_dashboard',
+        'hr_manager': 'hospital:hr_manager_dashboard',
+        'pharmacist': 'hospital:pharmacy_pending_dispensing',
+        'store_manager': 'hospital:inventory_dashboard',
     }
     
     dashboard_url = role_dashboards.get(profession)

@@ -11,13 +11,44 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from .models import Patient, Encounter, Staff, Department, Ward, Bed, Admission
-from .models_workflow import Bill, PaymentRequest
-from .models_accounting import Transaction
 from .models import Order, LabResult, Prescription
-from .models_advanced import ImagingStudy, MedicationAdministrationRecord
-from .models_legacy_patients import LegacyPatient
-from .models_legacy_mapping import LegacyIDMapping
 from .decorators import role_required
+from .services.performance_analytics import performance_analytics_service
+
+# Import optional models with safe fallbacks
+Bill = None
+PaymentRequest = None
+try:
+    from .models_workflow import Bill, PaymentRequest
+except (ImportError, AttributeError, Exception):
+    Bill = None
+    PaymentRequest = None
+
+Transaction = None
+try:
+    from .models_accounting import Transaction
+except (ImportError, AttributeError, Exception):
+    Transaction = None
+
+ImagingStudy = None
+MedicationAdministrationRecord = None
+try:
+    from .models_advanced import ImagingStudy, MedicationAdministrationRecord
+except (ImportError, AttributeError, Exception):
+    ImagingStudy = None
+    MedicationAdministrationRecord = None
+
+LegacyPatient = None
+try:
+    from .models_legacy_patients import LegacyPatient
+except (ImportError, AttributeError, Exception):
+    LegacyPatient = None
+
+LegacyIDMapping = None
+try:
+    from .models_legacy_mapping import LegacyIDMapping
+except (ImportError, AttributeError, Exception):
+    LegacyIDMapping = None
 
 
 def get_staff_profile(user):
@@ -43,6 +74,19 @@ def ensure_staff_profile(request, role_label, expected_profession=None):
         return None, response
 
     return staff, None
+
+
+def prescription_avg_minutes(queryset):
+    """Helper to calculate average dispense turnaround in minutes for a queryset."""
+    if not queryset:
+        return 0
+    durations = []
+    for prescription in queryset:
+        if prescription.dispensed_at:
+            durations.append((prescription.dispensed_at - prescription.created).total_seconds() / 60)
+    if not durations:
+        return 0
+    return round(sum(durations) / len(durations), 1)
 
 
 @login_required
@@ -87,18 +131,27 @@ def doctor_dashboard(request):
     ).select_related('encounter', 'patient', 'test').order_by('-created')[:10]
     
     # Legacy patient statistics
-    total_legacy_patients = LegacyPatient.objects.count()
+    total_legacy_patients = 0
+    unmigrated_count = 0
+    migration_progress = 100
+    recent_legacy_patients = []
+    
+    if LegacyPatient:
+        try:
+            total_legacy_patients = LegacyPatient.objects.count()
+            # Check migration status
+            legacy_mrns = set(f'PMC-LEG-{str(lp.pid).zfill(6)}' for lp in LegacyPatient.objects.all()[:1000])  # Sample
+            migrated_mrns = set(Patient.objects.filter(mrn__startswith='PMC-LEG-', is_deleted=False).values_list('mrn', flat=True))
+            
+            unmigrated_count = len(legacy_mrns - migrated_mrns)
+            migration_progress = ((len(migrated_mrns) / max(len(legacy_mrns), 1)) * 100) if legacy_mrns else 100
+            
+            # Recent legacy patients (for awareness)
+            recent_legacy_patients = LegacyPatient.objects.all().order_by('-id')[:5]
+        except Exception:
+            pass
+    
     total_django_patients = Patient.objects.filter(is_deleted=False).count()
-    
-    # Check migration status
-    legacy_mrns = set(f'PMC-LEG-{str(lp.pid).zfill(6)}' for lp in LegacyPatient.objects.all()[:1000])  # Sample
-    migrated_mrns = set(Patient.objects.filter(mrn__startswith='PMC-LEG-', is_deleted=False).values_list('mrn', flat=True))
-    
-    unmigrated_count = len(legacy_mrns - migrated_mrns)
-    migration_progress = ((len(migrated_mrns) / max(len(legacy_mrns), 1)) * 100) if legacy_mrns else 100
-    
-    # Recent legacy patients (for awareness)
-    recent_legacy_patients = LegacyPatient.objects.all().order_by('-id')[:5]
     
     # Statistics
     stats = {
@@ -111,6 +164,8 @@ def doctor_dashboard(request):
         'migration_progress': round(migration_progress, 1),
     }
     
+    performance_snapshot = performance_analytics_service.generate_snapshot(staff) if staff else None
+
     context = {
         'staff': staff,
         'today_appointments': today_appointments,
@@ -120,6 +175,7 @@ def doctor_dashboard(request):
         'recent_legacy_patients': recent_legacy_patients,
         'stats': stats,
         'today': today,
+        'performance_snapshot': performance_snapshot,
     }
     
     return render(request, 'hospital/role_dashboards/doctor_dashboard.html', context)
@@ -140,7 +196,7 @@ def nurse_dashboard(request):
         staff=staff,
         is_active=True
     ).distinct() if hasattr(Ward, 'staff') else Ward.objects.none()
-
+    
     if not assigned_wards.exists():
         if staff.department_id:
             assigned_wards = Ward.objects.filter(
@@ -150,45 +206,66 @@ def nurse_dashboard(request):
         else:
             assigned_wards = Ward.objects.filter(is_active=True).distinct()
     
-    # Patients in assigned wards
-    ward_patients = Patient.objects.filter(
-        encounters__admission__ward__in=assigned_wards,
-        encounters__status='active',
-        encounters__is_deleted=False
-    ).distinct()
+    ward_scope_exists = assigned_wards.exists()
+    
+    patient_filters = {
+        'encounters__status': 'active',
+        'encounters__is_deleted': False,
+    }
+    encounter_filters = {
+        'status': 'active',
+        'is_deleted': False,
+    }
+    medication_filters = {
+        'status__in': ['scheduled', 'held'],
+        'is_deleted': False,
+    }
+    
+    if ward_scope_exists:
+        patient_filters['encounters__admission__ward__in'] = assigned_wards
+        encounter_filters['admission__ward__in'] = assigned_wards
+        medication_filters['encounter__admission__ward__in'] = assigned_wards
+    else:
+        patient_filters['encounters__admission__isnull'] = False
+        encounter_filters['admission__isnull'] = False
+        medication_filters['encounter__admission__isnull'] = False
+    
+    # Patients in scope wards (or all admitted if no wards configured)
+    ward_patients = Patient.objects.filter(**patient_filters).distinct()
     
     # Pending vital signs
-    pending_vitals = Encounter.objects.filter(
-        admission__ward__in=assigned_wards,
-        status='active',
-        is_deleted=False
-    ).exclude(
+    pending_vitals = Encounter.objects.filter(**encounter_filters).exclude(
         vitals__recorded_at__date=today
-    ).select_related('patient', 'admission__ward')[:20]
+    ).select_related('patient', 'admission__ward', 'admission__bed')[:20]
     
     # Medication administration records
-    pending_medications = MedicationAdministrationRecord.objects.filter(
-        encounter__admission__ward__in=assigned_wards,
-        status__in=['scheduled', 'held'],
-        is_deleted=False
-    ).select_related('encounter', 'patient', 'prescription')[:20]
+    pending_medications = []
+    if MedicationAdministrationRecord:
+        try:
+            pending_medications = MedicationAdministrationRecord.objects.filter(
+                **medication_filters
+            ).select_related('encounter', 'encounter__patient', 'prescription')[:20]
+        except Exception:
+            pass
     
     # Bed status in assigned wards
-    bed_status = Bed.objects.filter(
-        ward__in=assigned_wards,
-        is_active=True
-    ).select_related('ward')
+    bed_status_qs = Bed.objects.filter(is_active=True)
+    if ward_scope_exists:
+        bed_status_qs = bed_status_qs.filter(ward__in=assigned_wards)
+    bed_status = bed_status_qs.select_related('ward')
     
     # Statistics
     stats = {
         'assigned_wards': assigned_wards.count(),
         'ward_patients': ward_patients.count(),
         'pending_vitals': pending_vitals.count(),
-        'pending_medications': pending_medications.count(),
+        'pending_medications': len(pending_medications),
         'total_beds': bed_status.count(),
         'occupied_beds': bed_status.filter(status='occupied').count(),
     }
     
+    performance_snapshot = performance_analytics_service.generate_snapshot(staff) if staff else None
+
     context = {
         'staff': staff,
         'assigned_wards': assigned_wards,
@@ -198,6 +275,7 @@ def nurse_dashboard(request):
         'bed_status': bed_status,
         'stats': stats,
         'today': today,
+        'performance_snapshot': performance_snapshot,
     }
     
     return render(request, 'hospital/role_dashboards/nurse_dashboard.html', context)
@@ -257,6 +335,8 @@ def lab_technician_dashboard(request):
         ).count(),
     }
     
+    performance_snapshot = performance_analytics_service.generate_snapshot(staff) if staff else None
+
     context = {
         'staff': staff,
         'pending_orders': pending_orders,
@@ -265,6 +345,7 @@ def lab_technician_dashboard(request):
         'equipment_status': equipment_status,
         'stats': stats,
         'today': today,
+        'performance_snapshot': performance_snapshot,
     }
     
     return render(request, 'hospital/role_dashboards/lab_technician_dashboard.html', context)
@@ -273,8 +354,41 @@ def lab_technician_dashboard(request):
 @login_required
 @role_required('pharmacist')
 def pharmacist_dashboard(request):
-    """Pharmacists work exclusively inside the dispensing/payment workflow."""
-    return redirect('hospital:pharmacy_pending_dispensing')
+    """Pharmacist dashboard with performance summary."""
+    staff, error_response = ensure_staff_profile(request, 'Pharmacist', expected_profession='pharmacist')
+    if error_response:
+        return error_response
+
+    today = timezone.now().date()
+    pending_prescriptions = Prescription.objects.filter(
+        status='pending',
+        is_deleted=False,
+    ).select_related('encounter__patient').order_by('-created')[:15]
+
+    dispensed_today_qs = Prescription.objects.filter(
+        dispensed_by=staff,
+        dispensed_at__date=today,
+        status='dispensed',
+    ).select_related('encounter__patient')
+    dispensed_today = dispensed_today_qs.order_by('-dispensed_at')[:10]
+
+    stats = {
+        'pending_queue': Prescription.objects.filter(status='pending', is_deleted=False).count(),
+        'dispensed_today': dispensed_today_qs.count(),
+        'avg_dispense_minutes': prescription_avg_minutes(dispensed_today_qs),
+    }
+
+    performance_snapshot = performance_analytics_service.generate_snapshot(staff)
+
+    context = {
+        'staff': staff,
+        'pending_prescriptions': pending_prescriptions,
+        'dispensed_today': dispensed_today,
+        'stats': stats,
+        'today': today,
+        'performance_snapshot': performance_snapshot,
+    }
+    return render(request, 'hospital/role_dashboards/pharmacist_dashboard.html', context)
 
 
 @login_required
@@ -292,31 +406,48 @@ def radiologist_dashboard(request):
         order_type='imaging',
         status='pending',
         is_deleted=False
-    ).select_related('encounter', 'patient').order_by('-created')[:20]
+    ).select_related('encounter', 'encounter__patient').order_by('-created')[:20]
     
     # In progress studies
-    in_progress_studies = ImagingStudy.objects.filter(
-        status='in_progress',
-        is_deleted=False
-    ).select_related('order', 'patient').order_by('-updated')[:20]
+    in_progress_studies = []
+    if ImagingStudy:
+        try:
+            in_progress_studies = ImagingStudy.objects.filter(
+                status='in_progress',
+                is_deleted=False
+            ).select_related('order', 'order__encounter__patient').order_by('-updated')[:20]
+        except Exception:
+            pass
     
     # Completed studies (recent)
-    completed_studies = ImagingStudy.objects.filter(
-        status='completed',
-        is_deleted=False
-    ).select_related('order', 'patient').order_by('-completed_at')[:20]
+    completed_studies = []
+    if ImagingStudy:
+        try:
+            completed_studies = ImagingStudy.objects.filter(
+                status='completed',
+                is_deleted=False
+            ).select_related('order', 'order__encounter__patient').order_by('-completed_at')[:20]
+        except Exception:
+            pass
     
     # Equipment status
     equipment_status = []  # Placeholder for imaging equipment monitoring
     
     # Statistics
+    completed_today = 0
+    if ImagingStudy:
+        try:
+            completed_today = ImagingStudy.objects.filter(
+                completed_at__date=today,
+                is_deleted=False
+            ).count()
+        except Exception:
+            pass
+    
     stats = {
         'pending_orders': pending_orders.count(),
-        'in_progress_studies': in_progress_studies.count(),
-        'completed_today': ImagingStudy.objects.filter(
-            completed_at__date=today,
-            is_deleted=False
-        ).count(),
+        'in_progress_studies': len(in_progress_studies),
+        'completed_today': completed_today,
         'total_studies_today': Order.objects.filter(
             order_type='imaging',
             created__date=today,
@@ -377,6 +508,8 @@ def receptionist_dashboard(request):
         ).count(),
     }
     
+    performance_snapshot = performance_analytics_service.generate_snapshot(staff) if staff else None
+
     context = {
         'staff': staff,
         'today_appointments': today_appointments,
@@ -384,6 +517,7 @@ def receptionist_dashboard(request):
         'walk_in_patients': walk_in_patients,
         'stats': stats,
         'today': today,
+        'performance_snapshot': performance_snapshot,
     }
     
     return render(request, 'hospital/role_dashboards/receptionist_dashboard.html', context)
@@ -400,33 +534,53 @@ def cashier_dashboard_role(request):
     today = timezone.now().date()
     
     # Pending payments
-    pending_payments = PaymentRequest.objects.filter(
-        status='pending',
-        is_deleted=False
-    ).select_related('patient', 'invoice').order_by('-created')[:20]
+    pending_payments = []
+    if PaymentRequest:
+        try:
+            pending_payments = PaymentRequest.objects.filter(
+                status='pending',
+                is_deleted=False
+            ).select_related('patient', 'invoice').order_by('-created')[:20]
+        except Exception:
+            pass
     
     # Today's transactions
-    today_transactions = Transaction.objects.filter(
-        processed_by=request.user,
-        transaction_date__date=today,
-        is_deleted=False
-    ).select_related('patient', 'invoice').order_by('-transaction_date')
+    today_transactions = []
+    if Transaction:
+        try:
+            today_transactions = Transaction.objects.filter(
+                processed_by=request.user,
+                transaction_date__date=today,
+                is_deleted=False
+            ).select_related('patient', 'invoice').order_by('-transaction_date')
+        except Exception:
+            pass
     
     # Outstanding bills
-    outstanding_bills = Bill.objects.filter(
-        status__in=['issued', 'partially_paid'],
-        patient_portion__gt=0,
-        is_deleted=False
-    ).select_related('patient', 'invoice').order_by('-issued_at')[:20]
+    outstanding_bills = []
+    if Bill:
+        try:
+            outstanding_bills = Bill.objects.filter(
+                status__in=['issued', 'partially_paid'],
+                patient_portion__gt=0,
+                is_deleted=False
+            ).select_related('patient', 'invoice').order_by('-issued_at')[:20]
+        except Exception:
+            pass
     
     # Statistics
+    today_revenue = Decimal('0.00')
+    if Transaction and today_transactions:
+        try:
+            today_revenue = sum(t.amount for t in today_transactions if hasattr(t, 'transaction_type') and t.transaction_type == 'payment_received') or Decimal('0.00')
+        except Exception:
+            pass
+    
     stats = {
-        'pending_payments': pending_payments.count(),
-        'today_transactions': today_transactions.count(),
-        'outstanding_bills': outstanding_bills.count(),
-        'today_revenue': today_transactions.filter(
-            transaction_type='payment_received'
-        ).aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00'),
+        'pending_payments': len(pending_payments),
+        'today_transactions': len(today_transactions),
+        'outstanding_bills': len(outstanding_bills),
+        'today_revenue': today_revenue,
     }
     
     context = {
@@ -453,11 +607,12 @@ def admin_dashboard_role(request):
     
     # System overview - Include both Django and Legacy patients
     django_patients = Patient.objects.filter(is_deleted=False).count()
-    try:
-        from .models_legacy_patients import LegacyPatient
-        legacy_patients = LegacyPatient.objects.count()
-    except:
-        legacy_patients = 0
+    legacy_patients = 0
+    if LegacyPatient:
+        try:
+            legacy_patients = LegacyPatient.objects.count()
+        except Exception:
+            pass
     total_patients = django_patients + legacy_patients
     total_staff = Staff.objects.filter(is_deleted=False).count()
     total_departments = Department.objects.filter(is_deleted=False).count()

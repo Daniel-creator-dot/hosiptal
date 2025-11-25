@@ -1,0 +1,247 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Data Integrity Check - Admin{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h4 class="mb-1">Data Integrity Check</h4>
+                    <p class="text-muted mb-0">Validate data consistency and integrity across all modules</p>
+                </div>
+                <button id="runCheckBtn" class="btn btn-primary">
+                    <i class="bi bi-arrow-clockwise"></i> Run Check
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="alert alert-{% if total_errors > 0 %}warning{% else %}success{% endif %}">
+                <i class="bi bi-{% if total_errors > 0 %}exclamation-triangle{% else %}check-circle{% endif %} me-2"></i>
+                <strong>Total Issues Found: {{ total_errors }}</strong>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results by Model -->
+    <div class="row g-4">
+        <!-- Patient Errors -->
+        {% if results.patient_errors %}
+        <div class="col-md-6">
+            <div class="card border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-person-x me-2"></i>Patient Errors ({{ results.patient_errors|length }})</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>MRN</th>
+                                    <th>Name</th>
+                                    <th>Errors</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for error in results.patient_errors %}
+                                <tr>
+                                    <td><code>{{ error.mrn }}</code></td>
+                                    <td>{{ error.name }}</td>
+                                    <td>
+                                        <ul class="mb-0 small">
+                                            {% for err in error.errors %}
+                                            <li>{{ err }}</li>
+                                            {% endfor %}
+                                        </ul>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Encounter Errors -->
+        {% if results.encounter_errors %}
+        <div class="col-md-6">
+            <div class="card border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-clipboard-x me-2"></i>Encounter Errors ({{ results.encounter_errors|length }})</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Patient</th>
+                                    <th>Errors</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for error in results.encounter_errors %}
+                                <tr>
+                                    <td>{{ error.patient }}</td>
+                                    <td>
+                                        <ul class="mb-0 small">
+                                            {% for err in error.errors %}
+                                            <li>{{ err }}</li>
+                                            {% endfor %}
+                                        </ul>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Order Errors -->
+        {% if results.order_errors %}
+        <div class="col-md-6">
+            <div class="card border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>Order Errors ({{ results.order_errors|length }})</h5>
+                </div>
+                <div class="card-body">
+                    {% for error in results.order_errors %}
+                    <div class="mb-2">
+                        <strong>Order {{ error.id|slice:":8" }}</strong>
+                        <ul class="mb-0 small">
+                            {% for err in error.errors %}
+                            <li>{{ err }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Invoice Errors -->
+        {% if results.invoice_errors %}
+        <div class="col-md-6">
+            <div class="card border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-receipt me-2"></i>Invoice Errors ({{ results.invoice_errors|length }})</h5>
+                </div>
+                <div class="card-body">
+                    {% for error in results.invoice_errors %}
+                    <div class="mb-2">
+                        <strong>{{ error.invoice_number }}</strong>
+                        <ul class="mb-0 small">
+                            {% for err in error.errors %}
+                            <li>{{ err }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Staff Errors -->
+        {% if results.staff_errors %}
+        <div class="col-md-6">
+            <div class="card border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-people me-2"></i>Staff Errors ({{ results.staff_errors|length }})</h5>
+                </div>
+                <div class="card-body">
+                    {% for error in results.staff_errors %}
+                    <div class="mb-2">
+                        <strong>{{ error.name }}</strong>
+                        <ul class="mb-0 small">
+                            {% for err in error.errors %}
+                            <li>{{ err }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Leave Errors -->
+        {% if results.leave_errors %}
+        <div class="col-md-6">
+            <div class="card border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-calendar-x me-2"></i>Leave Request Errors ({{ results.leave_errors|length }})</h5>
+                </div>
+                <div class="card-body">
+                    {% for error in results.leave_errors %}
+                    <div class="mb-2">
+                        <strong>Leave Request {{ error.id|slice:":8" }}</strong>
+                        <ul class="mb-0 small">
+                            {% for err in error.errors %}
+                            <li>{{ err }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- No Errors -->
+        {% if total_errors == 0 %}
+        <div class="col-12">
+            <div class="card border-success">
+                <div class="card-body text-center py-5">
+                    <i class="bi bi-check-circle-fill text-success" style="font-size: 48px;"></i>
+                    <h5 class="mt-3">All Data Integrity Checks Passed!</h5>
+                    <p class="text-muted">No data integrity issues found.</p>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+document.getElementById('runCheckBtn').addEventListener('click', function() {
+    const btn = this;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Running Check...';
+    
+    fetch('{% url "hospital:data_validation_api" %}', {
+        method: 'GET',
+        headers: {
+            'X-CSRFToken': window.getCsrfToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+    })
+    .then(response => response.json())
+    .then(data => {
+        location.reload();
+    })
+    .catch(error => {
+        alert('Error running check: ' + error);
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Run Check';
+    });
+});
+</script>
+{% endblock %}
+
+
+
+
+
+

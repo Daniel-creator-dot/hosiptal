@@ -6,7 +6,10 @@ import requests
 import logging
 from django.conf import settings
 from django.utils import timezone
-from user_agents import parse
+try:
+    from user_agents import parse as parse_user_agent
+except ImportError:
+    parse_user_agent = None
 from decimal import Decimal
 
 logger = logging.getLogger(__name__)
@@ -121,31 +124,41 @@ class LoginLocationService:
         Extract device and browser information from user agent
         """
         user_agent_string = request.META.get('HTTP_USER_AGENT', '')
-        user_agent = parse(user_agent_string)
-        
-        # Determine device type
-        if user_agent.is_mobile:
-            device_type = 'mobile'
-        elif user_agent.is_tablet:
-            device_type = 'tablet'
-        elif user_agent.is_pc:
-            device_type = 'desktop'
-        else:
-            device_type = 'unknown'
-        
-        # Device name
-        device_name = str(user_agent.device.family)
-        if device_name == 'Other':
-            device_name = f"{user_agent.os.family} Device"
+        if parse_user_agent:
+            user_agent = parse_user_agent(user_agent_string)
+            
+            # Determine device type
+            if user_agent.is_mobile:
+                device_type = 'mobile'
+            elif user_agent.is_tablet:
+                device_type = 'tablet'
+            elif user_agent.is_pc:
+                device_type = 'desktop'
+            else:
+                device_type = 'unknown'
+            
+            device_name = str(user_agent.device.family)
+            if device_name == 'Other':
+                device_name = f"{user_agent.os.family} Device"
+            
+            return {
+                'user_agent': user_agent_string,
+                'browser': user_agent.browser.family,
+                'browser_version': user_agent.browser.version_string,
+                'os': user_agent.os.family,
+                'os_version': user_agent.os.version_string,
+                'device_type': device_type,
+                'device_name': device_name,
+            }
         
         return {
             'user_agent': user_agent_string,
-            'browser': user_agent.browser.family,
-            'browser_version': user_agent.browser.version_string,
-            'os': user_agent.os.family,
-            'os_version': user_agent.os.version_string,
-            'device_type': device_type,
-            'device_name': device_name,
+            'browser': 'Unknown',
+            'browser_version': '',
+            'os': 'Unknown',
+            'os_version': '',
+            'device_type': 'unknown',
+            'device_name': 'Unknown Device',
         }
     
     def create_device_fingerprint(self, request):

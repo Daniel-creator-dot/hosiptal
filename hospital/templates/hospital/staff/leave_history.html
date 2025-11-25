@@ -1,0 +1,107 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}My Leave History{% endblock %}
+
+{% block page_title %}My Leave History{% endblock %}
+{% block page_subtitle %}View all your leave requests{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-3">
+        <div class="col-12">
+            <a href="{% url 'hospital:staff_leave_request' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle me-2"></i>Apply for Leave
+            </a>
+            <a href="{% url 'hospital:staff_portal' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-2"></i>Back to Portal
+            </a>
+        </div>
+    </div>
+
+    <!-- Statistics -->
+    {% if stats %}
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="modern-card text-center">
+                <h3 class="mb-0">{{ stats.total }}</h3>
+                <small class="text-muted">Total Requests</small>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="modern-card text-center">
+                <h3 class="mb-0 text-success">{{ stats.approved }}</h3>
+                <small class="text-muted">Approved</small>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="modern-card text-center">
+                <h3 class="mb-0 text-warning">{{ stats.pending }}</h3>
+                <small class="text-muted">Pending</small>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="modern-card text-center">
+                <h3 class="mb-0 text-danger">{{ stats.rejected }}</h3>
+                <small class="text-muted">Rejected</small>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="modern-card">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Leave Type</th>
+                        <th>Start Date</th>
+                        <th>End Date</th>
+                        <th>Duration</th>
+                        <th>Status</th>
+                        <th>Reason</th>
+                        <th>Applied On</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for leave in leave_requests %}
+                    <tr>
+                        <td>{{ leave.get_leave_type_display }}</td>
+                        <td>{{ leave.start_date|date:"M d, Y" }}</td>
+                        <td>{{ leave.end_date|date:"M d, Y" }}</td>
+                        <td>
+                            {% if leave.days_requested %}
+                                {{ leave.days_requested }} day{{ leave.days_requested|pluralize }}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="badge bg-{% if leave.status == 'approved' %}success{% elif leave.status == 'rejected' %}danger{% elif leave.status == 'pending' %}warning{% else %}secondary{% endif %}">
+                                {{ leave.get_status_display }}
+                            </span>
+                        </td>
+                        <td>{{ leave.reason|truncatewords:10|default:"-" }}</td>
+                        <td>
+                            <small>{{ leave.submitted_at|date:"M d, Y"|default:leave.created|date:"M d, Y" }}</small>
+                            {% if leave.approved_at %}
+                            <br><small class="text-muted">Approved: {{ leave.approved_at|date:"M d, Y" }}</small>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="text-center text-muted py-5">
+                            <i class="bi bi-calendar-x" style="font-size: 48px;"></i>
+                            <p class="mt-3">No leave requests found</p>
+                            <a href="{% url 'hospital:staff_leave_request' %}" class="btn btn-primary">Apply for Leave</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

@@ -1,0 +1,951 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}IT Operations Center{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12 d-flex justify-content-between align-items-center flex-wrap gap-3">
+            <div>
+                <h4 class="mb-1">IT Operations Center</h4>
+                <p class="text-muted mb-0">Unified view of infrastructure, security, and user activity.</p>
+            </div>
+            <div class="d-flex gap-2">
+                <a href="{% url 'hospital:system_health' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-heart-pulse me-2"></i>System Health
+                </a>
+                <button class="btn btn-primary" id="refreshSnapshotBtn">
+                    <i class="bi bi-arrow-clockwise me-2"></i>Refresh Snapshot
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary cards -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-3 col-12">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div>
+                            <small class="text-muted">Overall Status</small>
+                            <h5 class="mb-0" id="overallStatusMessage">{{ health_data.overall_status.message }}</h5>
+                        </div>
+                        <span id="overallStatusBadge" class="badge bg-{% if health_data.overall_status.status == 'healthy' %}success{% elif health_data.overall_status.status == 'warning' %}warning{% else %}danger{% endif %} px-3 py-2">
+                            {{ health_data.overall_status.status|upper }}
+                        </span>
+                    </div>
+                    <small class="text-muted">Last checked {{ snapshot.timestamp|naturaltime }}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-12">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <small class="text-muted d-block mb-1">System Uptime</small>
+                    {% if uptime.available %}
+                    <h5 class="mb-0" id="uptimeValue">{{ uptime.humanized }}</h5>
+                    <small class="text-muted">Since {{ uptime.boot_time|date:"M d, Y H:i" }}</small>
+                    {% else %}
+                    <h5 class="mb-0 text-warning">{{ uptime.message }}</h5>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-12">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <small class="text-muted d-block mb-1">Active Sessions</small>
+                    <h5 class="mb-0" id="activeSessions">{{ session_stats.active_sessions }}</h5>
+                    <small class="text-muted">Staff online: <span id="activeStaff">{{ session_stats.active_staff }}</span></small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-12">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <small class="text-muted d-block mb-1">Incidents (24h)</small>
+                    <h5 class="mb-0" id="incidentTotal">{{ incident_summary.total_incidents }}</h5>
+                    <small class="text-muted">Critical: <span id="criticalCount">{{ incident_summary.severity_counts.critical }}</span></small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- User Management Section -->
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="mb-0"><i class="bi bi-people me-2"></i>User Management</h5>
+                        <small class="text-muted">Create new users and manage passwords</small>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-primary" onclick="showCreateUserModal()">
+                            <i class="bi bi-person-plus me-2"></i>Create New User
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <div class="d-flex align-items-center p-3 bg-light rounded">
+                                <div class="flex-shrink-0">
+                                    <i class="bi bi-person-plus-fill text-primary" style="font-size: 2rem;"></i>
+                                </div>
+                                <div class="flex-grow-1 ms-3">
+                                    <h6 class="mb-1">Create User</h6>
+                                    <small class="text-muted">Add new user accounts with passwords</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="d-flex align-items-center p-3 bg-light rounded">
+                                <div class="flex-shrink-0">
+                                    <i class="bi bi-key-fill text-warning" style="font-size: 2rem;"></i>
+                                </div>
+                                <div class="flex-grow-1 ms-3">
+                                    <h6 class="mb-1">Reset Password</h6>
+                                    <small class="text-muted">Reset passwords for existing users</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="d-flex align-items-center p-3 bg-light rounded">
+                                <div class="flex-shrink-0">
+                                    <i class="bi bi-shield-check-fill text-success" style="font-size: 2rem;"></i>
+                                </div>
+                                <div class="flex-grow-1 ms-3">
+                                    <h6 class="mb-1">Permissions</h6>
+                                    <small class="text-muted">Set staff and superuser privileges</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Resource utilization -->
+    <div class="row g-4 mb-4">
+        <div class="col-xl-3 col-md-6">
+            <div class="card h-100 border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-3">
+                        <div>
+                            <h6 class="text-muted mb-1">CPU Utilization</h6>
+                            <h4 class="mb-0" id="cpuPercent">{{ cpu.percent|default:'—' }}%</h4>
+                        </div>
+                        <span class="badge bg-{% if cpu.status == 'healthy' %}success{% elif cpu.status == 'warning' %}warning{% elif cpu.status == 'critical' %}danger{% else %}secondary{% endif %}" id="cpuStatusBadge">{{ cpu.status|upper }}</span>
+                    </div>
+                    <div class="progress" style="height: 10px;">
+                        <div id="cpuProgressBar" class="progress-bar {% if cpu.percent and cpu.percent > 85 %}bg-danger{% elif cpu.percent and cpu.percent > 70 %}bg-warning{% else %}bg-success{% endif %}" role="progressbar" style="width: {{ cpu.percent|default:0 }}%"></div>
+                    </div>
+                    <small class="text-muted d-block mt-2">Cores: {{ cpu.cores|default:"?" }}</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xl-3 col-md-6">
+            <div class="card h-100 border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-3">
+                        <div>
+                            <h6 class="text-muted mb-1">Memory Usage</h6>
+                            <h4 class="mb-0" id="memoryPercent">
+                                {% if health_data.memory.percent_used %}
+                                    {{ health_data.memory.percent_used }}%
+                                {% else %}
+                                    —
+                                {% endif %}
+                            </h4>
+                        </div>
+                        <span class="badge bg-{% if health_data.memory.status == 'healthy' %}success{% elif health_data.memory.status == 'warning' %}warning{% else %}danger{% endif %}">
+                            {{ health_data.memory.status|upper }}
+                        </span>
+                    </div>
+                    {% if health_data.memory.percent_used %}
+                    <div class="progress" style="height: 10px;">
+                        <div class="progress-bar {% if health_data.memory.percent_used > 90 %}bg-danger{% elif health_data.memory.percent_used > 80 %}bg-warning{% else %}bg-success{% endif %}" role="progressbar" style="width: {{ health_data.memory.percent_used }}%"></div>
+                    </div>
+                    <small class="text-muted d-block mt-2">
+                        Used {{ health_data.memory.used_gb }} GB / Total {{ health_data.memory.total_gb }} GB
+                    </small>
+                    {% else %}
+                    <small class="text-muted">{{ health_data.memory.message }}</small>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xl-3 col-md-6">
+            <div class="card h-100 border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-3">
+                        <div>
+                            <h6 class="text-muted mb-1">Disk Usage</h6>
+                            <h4 class="mb-0">
+                                {% if health_data.disk.percent_used %}
+                                    {{ health_data.disk.percent_used }}%
+                                {% else %}
+                                    —
+                                {% endif %}
+                            </h4>
+                        </div>
+                        <span class="badge bg-{% if health_data.disk.status == 'healthy' %}success{% elif health_data.disk.status == 'warning' %}warning{% else %}danger{% endif %}">
+                            {{ health_data.disk.status|upper }}
+                        </span>
+                    </div>
+                    {% if health_data.disk.percent_used %}
+                    <div class="progress" style="height: 10px;">
+                        <div class="progress-bar {% if health_data.disk.percent_used > 90 %}bg-danger{% elif health_data.disk.percent_used > 80 %}bg-warning{% else %}bg-success{% endif %}" role="progressbar" style="width: {{ health_data.disk.percent_used }}%"></div>
+                    </div>
+                    <small class="text-muted d-block mt-2">
+                        Used {{ health_data.disk.used_gb }} GB / Free {{ health_data.disk.free_gb }} GB
+                    </small>
+                    {% else %}
+                    <small class="text-muted">{{ health_data.disk.message }}</small>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xl-3 col-md-6">
+            <div class="card h-100 border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-3">
+                        <div>
+                            <h6 class="text-muted mb-1">Network Traffic</h6>
+                            <h4 class="mb-0">Live</h4>
+                        </div>
+                        <span class="badge bg-{% if network.status == 'healthy' %}success{% elif network.status == 'warning' %}warning{% else %}danger{% endif %}">
+                            {{ network.status|upper }}
+                        </span>
+                    </div>
+                    {% if network.has_metrics %}
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <small class="text-muted d-block">Sent</small>
+                            <strong id="networkSent">{{ network.bytes_sent|filesizeformat }}</strong>
+                        </div>
+                        <div class="text-end">
+                            <small class="text-muted d-block">Received</small>
+                            <strong id="networkRecv">{{ network.bytes_recv|filesizeformat }}</strong>
+                        </div>
+                    </div>
+                    {% else %}
+                    <small class="text-muted">{{ network.message }}</small>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Services and sessions -->
+    <div class="row g-4 mb-4">
+        <div class="col-lg-6">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-0">
+                    <h5 class="mb-0"><i class="bi bi-hdd-network me-2"></i>Core Services</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        {% for name, svc in health_data.services.items %}
+                        <div class="col-md-6 mb-3">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="text-muted text-uppercase small">{{ name }}</span>
+                                <span class="badge bg-{% if svc.status == 'healthy' %}success{% elif svc.status == 'warning' %}warning{% else %}danger{% endif %}">
+                                    {{ svc.status|upper }}
+                                </span>
+                            </div>
+                            <small class="text-muted">{{ svc.message }}</small>
+                        </div>
+                        {% empty %}
+                        <p class="text-muted mb-0">No service metrics available.</p>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-0">
+                    <h5 class="mb-0"><i class="bi bi-shield-lock me-2"></i>Session & Access Insights</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-4">
+                            <h3 class="mb-0" id="activeSessionsCard">{{ session_stats.active_sessions }}</h3>
+                            <small class="text-muted d-block">Active Sessions</small>
+                        </div>
+                        <div class="col-4">
+                            <h3 class="mb-0" id="activeStaffCard">{{ session_stats.active_staff }}</h3>
+                            <small class="text-muted d-block">Staff Accounts</small>
+                        </div>
+                        <div class="col-4">
+                            <h3 class="mb-0" id="recentLogins">{{ session_stats.recent_logins }}</h3>
+                            <small class="text-muted d-block">Logins (24h)</small>
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="text-muted">Incident Severity</span>
+                            <small class="text-muted">Last 24 hours</small>
+                        </div>
+                        <div class="mt-3">
+                            <div class="d-flex justify-content-between">
+                                <span><span class="badge bg-danger me-2">Critical</span><span id="criticalCountInline">{{ incident_summary.severity_counts.critical }}</span></span>
+                                <span><span class="badge bg-danger-subtle text-danger me-2">Error</span><span id="errorCount">{{ incident_summary.severity_counts.error }}</span></span>
+                                <span><span class="badge bg-warning text-dark me-2">Warn</span><span id="warningCount">{{ incident_summary.severity_counts.warning }}</span></span>
+                                <span><span class="badge bg-secondary me-2">Info</span><span id="infoCount">{{ incident_summary.severity_counts.info }}</span></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Sessions & Account Control -->
+    <div class="row g-4 mb-4">
+        <div class="col-lg-7">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="mb-0"><i class="bi bi-people me-2"></i>Active Sessions</h5>
+                        <small class="text-muted">Top {{ active_sessions|length }} sessions shown</small>
+                    </div>
+                    <a href="{% url 'hospital:active_sessions' %}" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-box-arrow-up-right me-1"></i>Full Manager
+                    </a>
+                </div>
+                <div class="card-body" id="activeSessionsList">
+                    {% if active_sessions %}
+                    <div class="list-group list-group-flush">
+                        {% for session in active_sessions %}
+                        <div class="list-group-item border-0 px-0" data-session-key="{{ session.session_key }}">
+                            <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
+                                <div>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <strong>{{ session.full_name }}</strong>
+                                        <span class="badge {% if session.is_superuser %}bg-danger{% elif session.is_staff %}bg-primary{% else %}bg-secondary{% endif %}">
+                                            {% if session.is_superuser %}Superuser{% elif session.is_staff %}Staff{% else %}User{% endif %}
+                                        </span>
+                                        {% if not session.is_active_user %}
+                                        <span class="badge bg-warning text-dark">Blocked</span>
+                                        {% endif %}
+                                    </div>
+                                    <div class="text-muted small">
+                                        Logged in {{ session.login_time|naturaltime }} • {{ session.username }}
+                                    </div>
+                                    <div class="text-muted small">
+                                        {% if session.email %}<i class="bi bi-envelope me-1"></i>{{ session.email }}{% endif %}
+                                    </div>
+                                    {% if session.ip_address %}
+                                    <div class="text-muted small">
+                                        <i class="bi bi-geo-alt me-1"></i>{{ session.ip_address }}
+                                    </div>
+                                    {% endif %}
+                                    {% if session.user_agent %}
+                                    <div class="text-muted small">
+                                        <i class="bi bi-laptop me-1"></i>{{ session.user_agent|truncatewords:10 }}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                                <div class="d-flex flex-column gap-2">
+                                    <button class="btn btn-sm btn-outline-secondary"
+                                            onclick="logoutSession('{{ session.session_key|escapejs }}', '{{ session.username|escapejs }}', this)">
+                                        <i class="bi bi-box-arrow-right me-1"></i>Logout Session
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-secondary"
+                                            onclick="logoutUser({{ session.user_id }}, '{{ session.username|escapejs }}', this)">
+                                        <i class="bi bi-person-x me-1"></i>Logout User
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-warning"
+                                            onclick="showResetPasswordModal({{ session.user_id }}, '{{ session.username|escapejs }}')">
+                                        <i class="bi bi-key me-1"></i>Reset Password
+                                    </button>
+                                    {% if session.is_active_user %}
+                                    <button class="btn btn-sm btn-outline-danger"
+                                            onclick="blockUser({{ session.user_id }}, '{{ session.username|escapejs }}', this)">
+                                        <i class="bi bi-lock-fill me-1"></i>Block User
+                                    </button>
+                                    {% else %}
+                                    <button class="btn btn-sm btn-success"
+                                            onclick="unblockUser({{ session.user_id }}, '{{ session.username|escapejs }}', this)">
+                                        <i class="bi bi-unlock-fill me-1"></i>Unblock
+                                    </button>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="text-muted mb-0">No active sessions detected.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="mb-0"><i class="bi bi-lock-fill me-2"></i>Blocked Accounts</h5>
+                        <small class="text-muted">Recent locked users</small>
+                    </div>
+                    <span class="badge {% if blocked_users %}bg-danger{% else %}bg-success{% endif %}">
+                        {{ blocked_users|length }} locked
+                    </span>
+                </div>
+                <div class="card-body" id="blockedUsersList">
+                    {% if blocked_users %}
+                    <div class="list-group list-group-flush">
+                        {% for blocked in blocked_users %}
+                        <div class="list-group-item border-0 px-0">
+                            <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
+                                <div>
+                                    <strong>{{ blocked.full_name }}</strong>
+                                    <div class="text-muted small">
+                                        {{ blocked.username }}{% if blocked.email %} • {{ blocked.email }}{% endif %}
+                                    </div>
+                                    <div class="text-muted small">
+                                        {% if blocked.last_login %}
+                                            Last login {{ blocked.last_login|naturaltime }}
+                                        {% else %}
+                                            Never logged in
+                                        {% endif %}
+                                    </div>
+                                    {% if blocked.last_ip %}
+                                    <div class="text-muted small">
+                                        <i class="bi bi-geo-alt me-1"></i>{{ blocked.last_ip }}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                                <div class="d-flex flex-column gap-2">
+                                    <button class="btn btn-sm btn-warning"
+                                            onclick="showResetPasswordModal({{ blocked.user_id }}, '{{ blocked.username|escapejs }}')">
+                                        <i class="bi bi-key me-1"></i>Reset Password
+                                    </button>
+                                    <button class="btn btn-sm btn-success"
+                                            onclick="unblockUser({{ blocked.user_id }}, '{{ blocked.username|escapejs }}', this)">
+                                        <i class="bi bi-unlock-fill me-1"></i>Unblock
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="text-muted mb-0">No blocked accounts. All users are active.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Incidents & Activity -->
+    <div class="row g-4">
+        <div class="col-lg-7">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-bug me-2"></i>Recent Incidents</h5>
+                    <small class="text-muted">Auto-refreshes every minute</small>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Severity</th>
+                                    <th>Description</th>
+                                    <th>User</th>
+                                </tr>
+                            </thead>
+                            <tbody id="incidentTableBody">
+                                {% for incident in recent_incidents %}
+                                <tr>
+                                    <td>{{ incident.created|date:"Y-m-d H:i" }}</td>
+                                    <td><span class="badge bg-{% if incident.severity == 'critical' %}danger{% elif incident.severity == 'error' %}danger{% elif incident.severity == 'warning' %}warning{% else %}secondary{% endif %}">{{ incident.severity|upper }}</span></td>
+                                    <td>{{ incident.description|truncatechars:80 }}</td>
+                                    <td>
+                                        {% if incident.user %}
+                                            {{ incident.user.username }}
+                                        {% else %}
+                                            System
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="4" class="text-muted text-center">No incident data available.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-activity me-2"></i>Live Activity</h5>
+                    <small class="text-muted">Last {{ activity_feed|length }} events</small>
+                </div>
+                <div class="card-body">
+                    <div class="list-group list-group-flush" id="activityFeed">
+                        {% for activity in activity_feed %}
+                        <div class="list-group-item border-0 px-0">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <strong>{{ activity.activity_type|title }}</strong>
+                                    <p class="mb-1 text-muted small">{{ activity.description }}</p>
+                                </div>
+                                <small class="text-muted text-end">
+                                    {% if activity.user %}
+                                        {{ activity.user.username }}
+                                    {% else %}
+                                        System
+                                    {% endif %}<br>
+                                    {{ activity.created|naturaltime }}
+                                </small>
+                            </div>
+                        </div>
+                        {% empty %}
+                        <p class="text-muted mb-0">No activity recorded.</p>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const refreshBtn = document.getElementById('refreshSnapshotBtn');
+    const endpoint = "{% url 'hospital:it_operations_api' %}";
+
+    function formatBytes(bytes) {
+        if (bytes === null || bytes === undefined) return 'N/A';
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        if (bytes === 0) return '0 B';
+        const i = Math.floor(Math.log(bytes) / Math.log(1024));
+        return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${sizes[i]}`;
+    }
+
+    function updateDashboard(data) {
+        // Overall status
+        const badge = document.getElementById('overallStatusBadge');
+        const message = document.getElementById('overallStatusMessage');
+        if (badge && data.health_data.overall_status) {
+            const status = data.health_data.overall_status.status;
+            badge.className = `badge px-3 py-2 bg-${status === 'healthy' ? 'success' : status === 'warning' ? 'warning' : 'danger'}`;
+            badge.textContent = status.toUpperCase();
+            message.textContent = data.health_data.overall_status.message;
+        }
+
+        // Uptime
+        const uptimeValue = document.getElementById('uptimeValue');
+        if (uptimeValue && data.uptime && data.uptime.available) {
+            uptimeValue.textContent = data.uptime.humanized;
+        }
+
+        // Sessions
+        ['activeSessions', 'activeSessionsCard'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = data.session_stats.active_sessions ?? '0';
+        });
+        const activeStaffEls = [document.getElementById('activeStaff'), document.getElementById('activeStaffCard')];
+        activeStaffEls.forEach(el => {
+            if (el) el.textContent = data.session_stats.active_staff ?? '0';
+        });
+        const recentLogins = document.getElementById('recentLogins');
+        if (recentLogins) {
+            recentLogins.textContent = data.session_stats.recent_logins ?? '0';
+        }
+
+        // Incidents summary
+        const summary = data.incident_summary?.severity_counts || {};
+        const mappings = {
+            criticalCount: summary.critical,
+            criticalCountInline: summary.critical,
+            errorCount: summary.error,
+            warningCount: summary.warning,
+            infoCount: summary.info,
+            incidentTotal: data.incident_summary?.total_incidents
+        };
+        Object.entries(mappings).forEach(([id, value]) => {
+            const el = document.getElementById(id);
+            if (el && value !== undefined) el.textContent = value;
+        });
+
+        // CPU
+        const cpuPercent = document.getElementById('cpuPercent');
+        const cpuBadge = document.getElementById('cpuStatusBadge');
+        const cpuBar = document.getElementById('cpuProgressBar');
+        if (cpuPercent) cpuPercent.textContent = `${data.cpu.percent ?? '—'}%`;
+        if (cpuBadge) {
+            const cpuStatus = data.cpu.status || 'secondary';
+            cpuBadge.className = `badge bg-${cpuStatus}`;
+            cpuBadge.textContent = cpuStatus.toUpperCase();
+        }
+        if (cpuBar && data.cpu.percent !== undefined) {
+            cpuBar.style.width = `${data.cpu.percent}%`;
+            cpuBar.className = `progress-bar ${data.cpu.percent > 85 ? 'bg-danger' : data.cpu.percent > 70 ? 'bg-warning' : 'bg-success'}`;
+        }
+
+        // Network
+        const netSent = document.getElementById('networkSent');
+        const netRecv = document.getElementById('networkRecv');
+        if (netSent) netSent.textContent = formatBytes(data.network.bytes_sent);
+        if (netRecv) netRecv.textContent = formatBytes(data.network.bytes_recv);
+
+        // Incidents table
+        const tableBody = document.getElementById('incidentTableBody');
+        if (tableBody && Array.isArray(data.recent_incidents)) {
+            tableBody.innerHTML = data.recent_incidents.map(incident => `
+                <tr>
+                    <td>${incident.timestamp ? new Date(incident.timestamp).toLocaleString() : '—'}</td>
+                    <td><span class="badge ${incident.severity === 'critical' || incident.severity === 'error' ? 'bg-danger' : incident.severity === 'warning' ? 'bg-warning' : 'bg-secondary'}">${incident.severity?.toUpperCase() ?? ''}</span></td>
+                    <td>${incident.description ?? ''}</td>
+                    <td>${incident.user ?? 'System'}</td>
+                </tr>
+            `).join('');
+        }
+
+        // Activity feed
+        const activityFeed = document.getElementById('activityFeed');
+        if (activityFeed && Array.isArray(data.activity_feed)) {
+            activityFeed.innerHTML = data.activity_feed.map(activity => `
+                <div class="list-group-item border-0 px-0">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <strong>${activity.activity_type?.replace('_', ' ') ?? 'Activity'}</strong>
+                            <p class="mb-1 text-muted small">${activity.description ?? ''}</p>
+                        </div>
+                        <small class="text-muted text-end">
+                            ${activity.user ?? 'System'}<br>
+                            ${activity.timestamp ? new Date(activity.timestamp).toLocaleString() : ''}
+                        </small>
+                    </div>
+                </div>
+            `).join('');
+        }
+    }
+
+    function fetchSnapshot() {
+        fetch(endpoint)
+            .then(response => response.json())
+            .then(updateDashboard)
+            .catch(error => console.error('IT dashboard refresh failed:', error));
+    }
+
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', fetchSnapshot);
+    }
+
+    setInterval(fetchSnapshot, 60000);
+})();
+
+function logoutSession(sessionKey, username, buttonElement) {
+    if (!confirm(`Logout session for ${username}?`)) {
+        return;
+    }
+
+    const btn = buttonElement;
+    const originalHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Working...';
+
+    fetch(`/hms/admin/sessions/${sessionKey}/logout/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': window.getCsrfToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        credentials: 'same-origin',
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(data.message || 'Session terminated', 'success');
+            const row = btn.closest('.list-group-item');
+            if (row) {
+                row.remove();
+            }
+        } else {
+            alert(data.error || 'Unable to logout session');
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    })
+    .catch(() => {
+        alert('Unable to logout session. Try again.');
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+    });
+}
+
+function logoutUser(userId, username, buttonElement) {
+    if (!confirm(`Logout all sessions for ${username}?`)) {
+        return;
+    }
+
+    const btn = buttonElement;
+    const originalHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Working...';
+
+    fetch(`/hms/admin/users/${userId}/logout/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': window.getCsrfToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        credentials: 'same-origin',
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(data.message || 'User logged out', 'success');
+        } else {
+            alert(data.error || 'Unable to logout user');
+        }
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+    })
+    .catch(() => {
+        alert('Unable to logout user. Try again.');
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+    });
+}
+
+function blockUser(userId, username, buttonElement) {
+    if (!confirm(`Block ${username}? They will be logged out immediately.`)) {
+        return;
+    }
+
+    const btn = buttonElement;
+    const originalHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Blocking...';
+
+    fetch(`/hms/admin/users/${userId}/block/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': window.getCsrfToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        credentials: 'same-origin',
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(data.message || 'User blocked', 'warning');
+            setTimeout(() => window.location.reload(), 800);
+        } else {
+            alert(data.error || 'Unable to block user');
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    })
+    .catch(() => {
+        alert('Unable to block user. Try again.');
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+    });
+}
+
+function unblockUser(userId, username, buttonElement) {
+    if (!confirm(`Unblock ${username}? They will regain access immediately.`)) {
+        return;
+    }
+
+    const btn = buttonElement;
+    const originalHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Unblocking...';
+
+    fetch(`/hms/admin/users/${userId}/unblock/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': window.getCsrfToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        credentials: 'same-origin',
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(data.message || 'User unblocked', 'success');
+            const row = btn.closest('.list-group-item');
+            if (row) {
+                row.remove();
+            }
+        } else {
+            alert(data.error || 'Unable to unblock user');
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    })
+    .catch(() => {
+        alert('Unable to unblock user. Try again.');
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+    });
+}
+
+function showNotification(message, type) {
+    const el = document.createElement('div');
+    el.className = `alert alert-${type === 'success' ? 'success' : type === 'warning' ? 'warning' : 'info'} alert-dismissible fade show`;
+    el.style.position = 'fixed';
+    el.style.top = '20px';
+    el.style.right = '20px';
+    el.style.zIndex = '9999';
+    el.innerHTML = `
+        <i class="bi bi-${type === 'success' ? 'check-circle' : type === 'warning' ? 'exclamation-triangle' : 'info-circle'}-fill me-2"></i>
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 5000);
+}
+
+function showResetPasswordModal(userId, username) {
+    fetch(`/hms/admin/users/${userId}/password-form/`)
+        .then(response => response.text())
+        .then(html => {
+            // Remove existing modal if present
+            const existingModal = document.getElementById('resetPasswordModal');
+            if (existingModal) {
+                existingModal.remove();
+            }
+            
+            // Add new modal to body
+            const modalContainer = document.createElement('div');
+            modalContainer.innerHTML = html;
+            document.body.appendChild(modalContainer);
+            
+            // Show modal
+            const modal = new bootstrap.Modal(document.getElementById('resetPasswordModal'));
+            modal.show();
+        })
+        .catch(error => {
+            console.error('Error loading password reset form:', error);
+            alert('Error loading password reset form. Please try again.');
+        });
+}
+
+function showCreateUserModal() {
+    fetch('{% url "hospital:create_user" %}')
+        .then(response => response.text())
+        .then(html => {
+            // Remove existing modal if present
+            const existingModal = document.getElementById('createUserModal');
+            if (existingModal) {
+                existingModal.remove();
+            }
+            
+            // Parse HTML and extract scripts
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const modalElement = doc.querySelector('#createUserModal');
+            const scripts = doc.querySelectorAll('script');
+            
+            // Add modal to body
+            if (modalElement) {
+                document.body.appendChild(modalElement);
+            }
+            
+            // Execute scripts
+            scripts.forEach(oldScript => {
+                const newScript = document.createElement('script');
+                Array.from(oldScript.attributes).forEach(attr => {
+                    newScript.setAttribute(attr.name, attr.value);
+                });
+                newScript.appendChild(document.createTextNode(oldScript.innerHTML));
+                document.body.appendChild(newScript);
+            });
+            
+            // Initialize staff fields visibility after modal is added to DOM
+            setTimeout(function() {
+                const createStaffCheckbox = document.getElementById('id_create_staff_profile');
+                if (createStaffCheckbox) {
+                    // Define toggle function if not already defined
+                    if (typeof window.toggleStaffFields !== 'function') {
+                        window.toggleStaffFields = function(checked) {
+                            const departmentField = document.getElementById('staffDepartmentField');
+                            const professionField = document.getElementById('staffProfessionField');
+                            const departmentInput = document.getElementById('id_department');
+                            const professionInput = document.getElementById('id_profession');
+                            
+                            if (checked) {
+                                if (departmentField) {
+                                    departmentField.style.display = '';
+                                    departmentField.classList.remove('d-none');
+                                }
+                                if (professionField) {
+                                    professionField.style.display = '';
+                                    professionField.classList.remove('d-none');
+                                }
+                                if (departmentInput) {
+                                    departmentInput.required = true;
+                                    departmentInput.setAttribute('required', 'required');
+                                }
+                                if (professionInput) {
+                                    professionInput.required = true;
+                                    professionInput.setAttribute('required', 'required');
+                                }
+                            } else {
+                                if (departmentField) {
+                                    departmentField.style.display = 'none';
+                                    departmentField.classList.add('d-none');
+                                }
+                                if (professionField) {
+                                    professionField.style.display = 'none';
+                                    professionField.classList.add('d-none');
+                                }
+                                if (departmentInput) {
+                                    departmentInput.required = false;
+                                    departmentInput.removeAttribute('required');
+                                    departmentInput.value = '';
+                                }
+                                if (professionInput) {
+                                    professionInput.required = false;
+                                    professionInput.removeAttribute('required');
+                                    professionInput.value = '';
+                                }
+                            }
+                        };
+                    }
+                    
+                    // Set initial state
+                    window.toggleStaffFields(createStaffCheckbox.checked);
+                    
+                    // Attach event listener
+                    createStaffCheckbox.addEventListener('change', function() {
+                        window.toggleStaffFields(this.checked);
+                    });
+                }
+            }, 50);
+            
+            // Show modal
+            const modal = new bootstrap.Modal(document.getElementById('createUserModal'));
+            modal.show();
+        })
+        .catch(error => {
+            console.error('Error loading create user form:', error);
+            alert('Error loading create user form. Please try again.');
+        });
+}
+</script>
+
+{% endblock %}
+

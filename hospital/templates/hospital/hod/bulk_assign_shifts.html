@@ -1,0 +1,213 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Bulk Assign Shifts - {{ department.name }}{% endblock %}
+
+{% block page_title %}Bulk Assign Shifts{% endblock %}
+{% block page_subtitle %}{{ department.name }}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-10">
+        <div class="modern-card">
+            <div class="mb-4">
+                <h5 class="mb-2">
+                    <i class="bi bi-people-fill me-2"></i>
+                    Bulk Assign Shifts Using Template
+                </h5>
+                <p class="text-muted mb-0">
+                    Assign shifts to multiple staff members at once using a shift template.
+                </p>
+            </div>
+
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+
+            <form method="post" novalidate>
+                {% csrf_token %}
+                
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label for="template" class="form-label">
+                            <i class="bi bi-file-earmark-text me-1"></i>Shift Template *
+                        </label>
+                        <select class="form-select" id="template" name="template" required title="Select shift template" aria-label="Select shift template">
+                            <option value="">Select a template...</option>
+                            {% for template in templates %}
+                            <option value="{{ template.id }}">
+                                {{ template.name }} 
+                                {% if template.shift_type %}
+                                    - {{ template.get_shift_type_display }}
+                                {% endif %}
+                                {% if template.start_time and template.end_time %}
+                                    ({{ template.start_time|time:"H:i" }} - {{ template.end_time|time:"H:i" }})
+                                {% endif %}
+                            </option>
+                            {% empty %}
+                            <option value="" disabled>No templates available. Create a template first.</option>
+                            {% endfor %}
+                        </select>
+                        <small class="text-muted">
+                            Select a shift template to apply to selected staff members
+                        </small>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label for="start_date" class="form-label">
+                            <i class="bi bi-calendar-event me-1"></i>Start Date *
+                        </label>
+                        <input type="date" 
+                               class="form-control" 
+                               id="start_date" 
+                               name="start_date" 
+                               required
+                               aria-label="Start date for shift assignment">
+                    </div>
+
+                    <div class="col-md-6">
+                        <label for="end_date" class="form-label">
+                            <i class="bi bi-calendar-check me-1"></i>End Date *
+                        </label>
+                        <input type="date" 
+                               class="form-control" 
+                               id="end_date" 
+                               name="end_date" 
+                               required
+                               aria-label="End date for shift assignment">
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label">
+                            <i class="bi bi-person-check me-1"></i>Select Staff Members *
+                        </label>
+                        <div class="border rounded p-3" style="max-height: 300px; overflow-y: auto;">
+                            {% if dept_staff %}
+                                <div class="mb-2">
+                                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="selectAll()">
+                                        <i class="bi bi-check-all me-1"></i>Select All
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="deselectAll()">
+                                        <i class="bi bi-x-square me-1"></i>Deselect All
+                                    </button>
+                                </div>
+                                <div class="row g-2">
+                                    {% for staff in dept_staff %}
+                                    <div class="col-md-6 col-lg-4">
+                                        <div class="form-check">
+                                            <input class="form-check-input" 
+                                                   type="checkbox" 
+                                                   name="staff" 
+                                                   value="{{ staff.id }}" 
+                                                   id="staff_{{ staff.id }}"
+                                                   aria-label="Select {{ staff.user.get_full_name|default:staff.user.username }}">
+                                            <label class="form-check-label" for="staff_{{ staff.id }}">
+                                                {{ staff.user.get_full_name|default:staff.user.username }}
+                                                {% if staff.get_profession_display %}
+                                                    <small class="text-muted d-block">{{ staff.get_profession_display }}</small>
+                                                {% elif staff.specialization %}
+                                                    <small class="text-muted d-block">{{ staff.specialization }}</small>
+                                                {% endif %}
+                                            </label>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                <p class="text-muted mb-0">No staff members found in this department.</p>
+                            {% endif %}
+                        </div>
+                        <small class="text-muted">
+                            Select one or more staff members to assign shifts to
+                        </small>
+                    </div>
+
+                    <div class="col-12">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <strong>Note:</strong> Shifts will be created for all selected staff members for each day between the start and end dates using the selected template.
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check-circle me-2"></i>Assign Shifts
+                            </button>
+                            <a href="{% url 'hospital:hod_scheduling_dashboard' %}" class="btn btn-secondary">
+                                <i class="bi bi-x-circle me-2"></i>Cancel
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Set default dates (today and 7 days from now)
+    const today = new Date();
+    const nextWeek = new Date(today);
+    nextWeek.setDate(today.getDate() + 7);
+    
+    document.getElementById('start_date').value = today.toISOString().split('T')[0];
+    document.getElementById('end_date').value = nextWeek.toISOString().split('T')[0];
+    
+    // Validate date range
+    const startDateInput = document.getElementById('start_date');
+    const endDateInput = document.getElementById('end_date');
+    
+    function validateDates() {
+        const startDate = new Date(startDateInput.value);
+        const endDate = new Date(endDateInput.value);
+        
+        if (startDate > endDate) {
+            alert('End date must be after start date');
+            endDateInput.value = startDateInput.value;
+        }
+    }
+    
+    startDateInput.addEventListener('change', validateDates);
+    endDateInput.addEventListener('change', validateDates);
+});
+
+function selectAll() {
+    document.querySelectorAll('input[name="staff"]').forEach(function(checkbox) {
+        checkbox.checked = true;
+    });
+}
+
+function deselectAll() {
+    document.querySelectorAll('input[name="staff"]').forEach(function(checkbox) {
+        checkbox.checked = false;
+    });
+}
+
+// Form validation
+document.querySelector('form').addEventListener('submit', function(e) {
+    const selectedStaff = document.querySelectorAll('input[name="staff"]:checked').length;
+    if (selectedStaff === 0) {
+        e.preventDefault();
+        alert('Please select at least one staff member');
+        return false;
+    }
+    
+    const template = document.getElementById('template').value;
+    if (!template) {
+        e.preventDefault();
+        alert('Please select a shift template');
+        return false;
+    }
+});
+</script>
+{% endblock %}
+

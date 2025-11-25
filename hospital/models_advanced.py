@@ -872,7 +872,7 @@ class LeaveRequest(BaseModel):
     def send_approval_sms(self):
         """Send SMS to staff when leave is approved with return date"""
         try:
-            from .services.sms_service import send_sms
+            from ..services.sms_service import sms_service
             
             # Get staff phone number
             staff_phone = self.staff.phone_number or self.staff.user.username
@@ -909,13 +909,25 @@ class LeaveRequest(BaseModel):
             )
             
             # Send SMS to staff
-            staff_result = send_sms(staff_phone, staff_message)
+            staff_result = sms_service.send_sms(
+                phone_number=staff_phone,
+                message=staff_message,
+                message_type='leave_approved',
+                recipient_name=staff_name,
+                related_object_id=self.id,
+                related_object_type='LeaveRequest'
+            )
             
             # Send confirmation SMS to admin
             admin_phone = "0247904675"  # Admin number
-            admin_result = send_sms(admin_phone, admin_message)
+            admin_result = sms_service.send_sms(
+                phone_number=admin_phone,
+                message=admin_message,
+                message_type='leave_approved_notification',
+                recipient_name='Admin'
+            )
             
-            return staff_result.get('success', False)
+            return staff_result.status == 'sent'
         except Exception as e:
             print(f"Failed to send leave approval SMS: {e}")
             return False

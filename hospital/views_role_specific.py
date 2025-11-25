@@ -2,6 +2,9 @@
 Role-Specific Dashboard Views
 Each role gets a tailored dashboard showing only relevant features
 """
+import logging
+
+from django.db import DatabaseError, connection
 from django.shortcuts import render, redirect
 from django.urls import reverse
 from django.contrib.auth.decorators import login_required
@@ -11,35 +14,77 @@ from datetime import timedelta, date
 
 from .models import Patient, Encounter, Staff, Appointment, Invoice, Bed, Admission, Order
 from .models_advanced import LeaveRequest
+
+# Import Queue model - ensure it's always defined to prevent NameError
+# CRITICAL: Queue must be defined at module level before any function uses it
+Queue = None  # Initialize to None first to ensure it's always defined
 try:
     from .models_advanced import Queue
-except ImportError:
+except (ImportError, AttributeError, Exception):
+    # If import fails for any reason, keep it as None
     Queue = None
+# Initialize optional models to None first to ensure they're always defined
+QueueEntry = None
+try:
+    from .models_queue import QueueEntry
+except (ImportError, AttributeError, Exception):
+    QueueEntry = None
+
 from .models_hr import Payroll, StaffContract
 from .utils_roles import get_user_role, get_role_display_info
 from .decorators import role_required
+from .services.performance_analytics import performance_analytics_service
 
 # Import optional models with try/except for robustness
+CashierSession = None
+PaymentRequest = None
 try:
     from .models_workflow import CashierSession, PaymentRequest
-except ImportError:
+except (ImportError, AttributeError, Exception):
     CashierSession = None
     PaymentRequest = None
 
+JournalEntry = None
+Account = None
+PaymentReceipt = None
 try:
     from .models_accounting import JournalEntry, Account, PaymentReceipt
-except ImportError:
+except (ImportError, AttributeError, Exception):
     JournalEntry = None
     Account = None
     PaymentReceipt = None
 
 
+logger = logging.getLogger(__name__)
+
+
+def _safe_db_call(default, label, fn):
+    """
+    Execute a callable that hits the database and gracefully handle failures.
+    When the database raises an error (e.g., missing table/column on a remote
+    environment), we log the incident, rollback the broken transaction and
+    return the provided default so dashboards still load.
+    """
+    if fn is None:
+        return default
+    try:
+        return fn()
+    except DatabaseError as exc:
+        logger.warning("Dashboard query '%s' failed: %s", label, exc)
+        try:
+            connection.rollback()
+        except Exception:
+            # Best-effort rollback; connection might already be clean or closed
+            pass
+        return default
+
+
 @login_required
 @role_required('accountant')
 def accountant_dashboard(request):
-    """Accounting-focused dashboard for accountants"""
-    today = timezone.now().date()
-    this_month_start = date(today.year, today.month, 1)
+    """Accounting-focused dashboard for accountants - Redirects to comprehensive dashboard"""
+    from django.shortcuts import redirect
+    return redirect('hospital:accountant_comprehensive_dashboard')
     
     # Financial Statistics
     # Use PaymentReceipt or PaymentRequest for revenue calculation
@@ -47,15 +92,23 @@ def accountant_dashboard(request):
     total_revenue_month = 0
     
     if PaymentReceipt:
-        total_revenue_today = PaymentReceipt.objects.filter(
-            receipt_date=today,
-            is_deleted=False
-        ).aggregate(total=Sum('amount_paid'))['total'] or 0
+        total_revenue_today = _safe_db_call(
+            0,
+            'accountant_dashboard.total_revenue_today',
+            lambda: PaymentReceipt.objects.filter(
+                receipt_date__date=today,
+                is_deleted=False
+            ).aggregate(total=Sum('amount_paid'))['total'] or 0
+        )
         
-        total_revenue_month = PaymentReceipt.objects.filter(
-            receipt_date__gte=this_month_start,
-            is_deleted=False
-        ).aggregate(total=Sum('amount_paid'))['total'] or 0
+        total_revenue_month = _safe_db_call(
+            0,
+            'accountant_dashboard.total_revenue_month',
+            lambda: PaymentReceipt.objects.filter(
+                receipt_date__gte=this_month_start,
+                is_deleted=False
+            ).aggregate(total=Sum('amount_paid'))['total'] or 0
+        )
     
     outstanding_invoices = Invoice.objects.filter(
         is_deleted=False,
@@ -72,17 +125,25 @@ def accountant_dashboard(request):
     # Recent transactions
     recent_payments = []
     if PaymentReceipt:
-        recent_payments = PaymentReceipt.objects.filter(
-            is_deleted=False
-        ).select_related('invoice__patient').order_by('-receipt_date')[:10]
+        recent_payments = _safe_db_call(
+            PaymentReceipt.objects.none(),
+            'accountant_dashboard.recent_payments',
+            lambda: PaymentReceipt.objects.filter(
+                is_deleted=False
+            ).select_related('invoice__patient').order_by('-receipt_date')[:10]
+        )
     
     # Active cashier sessions
     active_sessions = []
     if CashierSession:
-        active_sessions = CashierSession.objects.filter(
-            is_deleted=False,
-            closed_at__isnull=True
-        ).select_related('cashier__user')
+        active_sessions = _safe_db_call(
+            CashierSession.objects.none(),
+            'accountant_dashboard.active_sessions',
+            lambda: CashierSession.objects.filter(
+                is_deleted=False,
+                closed_at__isnull=True
+            ).select_related('cashier__user')
+        )
     
     # Pending invoices
     pending_invoices = Invoice.objects.filter(
@@ -114,11 +175,18 @@ def admin_dashboard(request):
     
     # Overall hospital statistics - Include both Django and Legacy patients
     django_patients = Patient.objects.filter(is_deleted=False).count()
+    legacy_patients = 0
     try:
         from .models_legacy_patients import LegacyPatient
-        legacy_patients = LegacyPatient.objects.count()
-    except:
-        legacy_patients = 0
+    except ImportError:
+        LegacyPatient = None
+    
+    if LegacyPatient:
+        legacy_patients = _safe_db_call(
+            0,
+            'admin_dashboard.legacy_patients',
+            lambda: LegacyPatient.objects.count()
+        )
     total_patients = django_patients + legacy_patients
     active_encounters = Encounter.objects.filter(
         is_deleted=False,
@@ -128,36 +196,62 @@ def admin_dashboard(request):
     total_staff = Staff.objects.filter(is_active=True, is_deleted=False).count()
     
     # Financial
-    revenue_today = 0
+    total_revenue_today = 0
+    total_revenue_month = 0
+    this_month_start = date(today.year, today.month, 1)
     if PaymentReceipt:
-        revenue_today = PaymentReceipt.objects.filter(
-            receipt_date=today,
-            is_deleted=False
-        ).aggregate(total=Sum('amount_paid'))['total'] or 0
+        total_revenue_today = _safe_db_call(
+            0,
+            'admin_dashboard.total_revenue_today',
+            lambda: PaymentReceipt.objects.filter(
+                receipt_date__date=today,
+                is_deleted=False
+            ).aggregate(total=Sum('amount_paid'))['total'] or 0
+        )
+        total_revenue_month = _safe_db_call(
+            0,
+            'admin_dashboard.total_revenue_month',
+            lambda: PaymentReceipt.objects.filter(
+                receipt_date__gte=this_month_start,
+                is_deleted=False
+            ).aggregate(total=Sum('amount_paid'))['total'] or 0
+        )
     
-    outstanding = Invoice.objects.filter(
+    outstanding_invoices = Invoice.objects.filter(
         is_deleted=False,
         status__in=['issued', 'partially_paid', 'overdue']
     ).aggregate(total=Sum('balance'))['total'] or 0
     
     # HR Statistics
-    staff_on_leave = LeaveRequest.objects.filter(
-        status='approved',
-        start_date__lte=today,
-        end_date__gte=today,
-        is_deleted=False
-    ).values('staff').distinct().count()
+    staff_on_leave = _safe_db_call(
+        0,
+        'admin_dashboard.staff_on_leave',
+        lambda: LeaveRequest.objects.filter(
+            status='approved',
+            start_date__lte=today,
+            end_date__gte=today,
+            is_deleted=False
+        ).values('staff').distinct().count()
+    )
     
-    pending_leaves = LeaveRequest.objects.filter(
-        status='pending',
-        is_deleted=False
-    ).count()
+    pending_leaves = _safe_db_call(
+        0,
+        'admin_dashboard.pending_leaves',
+        lambda: LeaveRequest.objects.filter(
+            status='pending',
+            is_deleted=False
+        ).count()
+    )
     
     # Clinical
-    appointments_today = Appointment.objects.filter(
-        appointment_date__date=today,
-        is_deleted=False
-    ).count()
+    appointments_today = _safe_db_call(
+        0,
+        'admin_dashboard.appointments_today',
+        lambda: Appointment.objects.filter(
+            appointment_date__date=today,
+            is_deleted=False
+        ).count()
+    )
     
     context = {
         'title': 'Administrator Dashboard',
@@ -165,8 +259,9 @@ def admin_dashboard(request):
         'total_patients': total_patients,
         'active_encounters': active_encounters,
         'total_staff': total_staff,
-        'revenue_today': revenue_today,
-        'outstanding': outstanding,
+        'total_revenue_today': total_revenue_today,
+        'total_revenue_month': total_revenue_month,
+        'outstanding_invoices': outstanding_invoices,
         'staff_on_leave': staff_on_leave,
         'pending_leaves': pending_leaves,
         'appointments_today': appointments_today,
@@ -348,6 +443,7 @@ def medical_dashboard(request):
 def reception_dashboard(request):
     """Reception-focused dashboard"""
     today = timezone.now().date()
+    staff = getattr(request.user, 'staff', None)
     
     # Today's appointments
     today_appointments = Appointment.objects.filter(
@@ -371,6 +467,18 @@ def reception_dashboard(request):
     total_patients = Patient.objects.filter(is_deleted=False).count()
     appointments_count = today_appointments.count()
     
+    queue_waiting = []
+    if QueueEntry:
+        queue_waiting = QueueEntry.objects.filter(
+            queue_date=today,
+            status__in=['checked_in', 'called'],
+            is_deleted=False
+        ).select_related('patient').order_by('priority', 'sequence_number')[:5]
+    
+    performance_snapshot = None
+    if staff and staff.profession == 'receptionist':
+        performance_snapshot = performance_analytics_service.generate_snapshot(staff)
+
     context = {
         'title': 'Reception Dashboard',
         'role_info': get_role_display_info(request.user),
@@ -380,6 +488,8 @@ def reception_dashboard(request):
         'total_patients': total_patients,
         'appointments_count': appointments_count,
         'today': today,
+        'queue_waiting': queue_waiting,
+        'performance_snapshot': performance_snapshot,
     }
     
     return render(request, 'hospital/roles/reception_dashboard.html', context)

@@ -1,0 +1,164 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}{% if form_action == 'edit' %}Edit{% else %}Create{% endif %} Profit & Loss Report - HMS{% endblock %}
+{% block page_title %}{% if form_action == 'edit' %}Edit{% else %}Create{% endif %} Profit & Loss Report{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-10">
+            <div class="card">
+                <div class="card-header">
+                    <h5><i class="bi bi-graph-up"></i> {% if form_action == 'edit' %}Edit{% else %}Create{% endif %} Profit & Loss Report</h5>
+                </div>
+                <div class="card-body">
+                    <form method="post">
+                        {% csrf_token %}
+                        
+                        <!-- Report Information -->
+                        <div class="mb-4">
+                            <h6 class="border-bottom pb-2 mb-3">Report Information</h6>
+                            
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label for="report_period" class="form-label">Report Period *</label>
+                                    <select name="report_period" id="report_period" class="form-select" required>
+                                        <option value="">Select Period</option>
+                                        <option value="monthly" {% if report.report_period == 'monthly' %}selected{% endif %}>Monthly</option>
+                                        <option value="quarterly" {% if report.report_period == 'quarterly' %}selected{% endif %}>Quarterly</option>
+                                        <option value="yearly" {% if report.report_period == 'yearly' %}selected{% endif %}>Yearly</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="fiscal_year" class="form-label">Fiscal Year *</label>
+                                    <select name="fiscal_year" id="fiscal_year" class="form-select" required>
+                                        <option value="">Select Fiscal Year</option>
+                                        {% for fy in fiscal_years %}
+                                        <option value="{{ fy.id }}" {% if report.fiscal_year_id == fy.id %}selected{% endif %}>
+                                            {{ fy.name }} ({{ fy.start_date|date:"Y" }} - {{ fy.end_date|date:"Y" }})
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label for="period_start" class="form-label">Period Start *</label>
+                                    <input type="date" name="period_start" id="period_start" class="form-control" 
+                                           value="{% if report %}{{ report.period_start|date:'Y-m-d' }}{% endif %}" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="period_end" class="form-label">Period End *</label>
+                                    <input type="date" name="period_end" id="period_end" class="form-control" 
+                                           value="{% if report %}{{ report.period_end|date:'Y-m-d' }}{% endif %}" required>
+                                </div>
+                            </div>
+                            
+                            {% if report %}
+                            <div class="mb-3">
+                                <label class="form-label">Report Number</label>
+                                <input type="text" class="form-control" value="{{ report.report_number }}" readonly>
+                            </div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Revenue -->
+                        <div class="mb-4">
+                            <h6 class="border-bottom pb-2 mb-3">Revenue</h6>
+                            <p class="text-muted small">Enter total revenue and optionally break down by category as JSON</p>
+                            
+                            <div class="mb-3">
+                                <label for="total_revenue" class="form-label">Total Revenue *</label>
+                                <input type="number" name="total_revenue" id="total_revenue" class="form-control" 
+                                       step="0.01" min="0" value="{% if report %}{{ report.total_revenue }}{% else %}0{% endif %}" required>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="revenue_by_category" class="form-label">Revenue by Category (JSON - Optional)</label>
+                                <textarea name="revenue_by_category" id="revenue_by_category" class="form-control" rows="3" 
+                                          placeholder='{"Consultation": 50000, "Surgery": 100000, "Pharmacy": 30000}'>{% if report %}{{ report.revenue_by_category|safe }}{% endif %}</textarea>
+                                <small class="text-muted">Enter as JSON object with category names and amounts</small>
+                            </div>
+                        </div>
+                        
+                        <!-- Expenses -->
+                        <div class="mb-4">
+                            <h6 class="border-bottom pb-2 mb-3">Expenses</h6>
+                            <p class="text-muted small">Enter total expenses and optionally break down by category as JSON</p>
+                            
+                            <div class="mb-3">
+                                <label for="total_expenses" class="form-label">Total Expenses *</label>
+                                <input type="number" name="total_expenses" id="total_expenses" class="form-control" 
+                                       step="0.01" min="0" value="{% if report %}{{ report.total_expenses }}{% else %}0{% endif %}" required>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="expenses_by_category" class="form-label">Expenses by Category (JSON - Optional)</label>
+                                <textarea name="expenses_by_category" id="expenses_by_category" class="form-control" rows="3" 
+                                          placeholder='{"Salaries": 80000, "Supplies": 20000, "Utilities": 10000}'>{% if report %}{{ report.expenses_by_category|safe }}{% endif %}</textarea>
+                                <small class="text-muted">Enter as JSON object with category names and amounts</small>
+                            </div>
+                        </div>
+                        
+                        {% if report %}
+                        <!-- Calculated Fields (Read-only) -->
+                        <div class="mb-4">
+                            <h6 class="border-bottom pb-2 mb-3">Calculated Values</h6>
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <label class="form-label">Gross Profit</label>
+                                    <input type="text" class="form-control" value="GHS {{ report.gross_profit|floatformat:2 }}" readonly>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Net Profit</label>
+                                    <input type="text" class="form-control" value="GHS {{ report.net_profit|floatformat:2 }}" readonly>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Profit Percentage</label>
+                                    <input type="text" class="form-control" value="{{ report.profit_percentage|floatformat:2 }}%" readonly>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                        
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                            <a href="{% url 'hospital:profit_loss_list' %}" class="btn btn-secondary">
+                                <i class="bi bi-x-circle"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check-circle"></i> {% if form_action == 'edit' %}Update{% else %}Create{% endif %} Report
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Auto-calculate profit when revenue/expenses change
+document.addEventListener('DOMContentLoaded', function() {
+    const revenueInput = document.getElementById('total_revenue');
+    const expensesInput = document.getElementById('total_expenses');
+    
+    function calculateProfit() {
+        const revenue = parseFloat(revenueInput.value) || 0;
+        const expenses = parseFloat(expensesInput.value) || 0;
+        const profit = revenue - expenses;
+        const profitPercent = revenue > 0 ? (profit / revenue * 100).toFixed(2) : 0;
+        
+        // Show preview if both values are entered
+        if (revenue > 0 || expenses > 0) {
+            console.log(`Gross Profit: GHS ${profit.toFixed(2)}, Profit %: ${profitPercent}%`);
+        }
+    }
+    
+    if (revenueInput) revenueInput.addEventListener('input', calculateProfit);
+    if (expensesInput) expensesInput.addEventListener('input', calculateProfit);
+});
+</script>
+{% endblock %}
+

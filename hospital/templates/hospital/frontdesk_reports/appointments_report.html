@@ -1,0 +1,128 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}{{ title }} - Front Desk Reports{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border-radius: 20px; padding: 40px; margin-bottom: 32px; box-shadow: 0 10px 40px rgba(59, 130, 246, 0.3);">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1 class="mb-2"><i class="bi bi-calendar-event me-3"></i>{{ title }} Report</h1>
+                <p class="mb-0" style="opacity: 0.95; font-size: 16px;">{{ start_date|date:"F d, Y" }} to {{ end_date|date:"F d, Y" }}</p>
+            </div>
+            <div>
+                <a href="{% url 'hospital:frontdesk_reports_dashboard' %}" class="btn btn-light">
+                    <i class="bi bi-arrow-left me-2"></i>Back to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-4">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 36px; font-weight: 800; color: #3b82f6;">{{ summary.total_appointments }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Total Appointments</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h6 class="mb-3">By Status</h6>
+                {% for item in summary.by_status %}
+                <div class="d-flex justify-content-between mb-2">
+                    <span>{{ item.status|title }}</span>
+                    <strong>{{ item.count }}</strong>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h6 class="mb-3">By Department</h6>
+                {% for item in summary.by_department %}
+                <div class="d-flex justify-content-between mb-2">
+                    <span>{{ item.department__name|default:"N/A" }}</span>
+                    <strong>{{ item.count }}</strong>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Buttons -->
+    <div class="mb-3">
+        <a href="?report_type={{ report_type }}&start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}&export=csv" 
+           class="btn btn-success">
+            <i class="bi bi-file-earmark-spreadsheet me-2"></i>Export CSV
+        </a>
+    </div>
+
+    <!-- Report Table -->
+    <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Patient</th>
+                        <th>MRN</th>
+                        <th>Provider</th>
+                        <th>Department</th>
+                        <th>Status</th>
+                        <th>Reason</th>
+                        <th>Duration</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in page_obj %}
+                    <tr>
+                        <td>{{ item.appointment_date|date:"M d, Y" }}</td>
+                        <td>{{ item.appointment_time|time:"H:i" }}</td>
+                        <td>{{ item.patient_name }}</td>
+                        <td>{{ item.patient_mrn }}</td>
+                        <td>{{ item.provider }}</td>
+                        <td>{{ item.department }}</td>
+                        <td><span class="badge bg-{% if item.status == 'completed' %}success{% elif item.status == 'cancelled' %}danger{% else %}warning{% endif %}">{{ item.status|title }}</span></td>
+                        <td>{{ item.reason|truncatewords:10 }}</td>
+                        <td>{{ item.duration }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="9" class="text-center text-muted py-4">No appointments found for the selected date range.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        {% if page_obj.has_other_pages %}
+        <nav aria-label="Page navigation">
+            <ul class="pagination justify-content-center">
+                {% if page_obj.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?report_type={{ report_type }}&start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}&page={{ page_obj.previous_page_number }}">Previous</a>
+                </li>
+                {% endif %}
+                
+                <li class="page-item active">
+                    <span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+                </li>
+                
+                {% if page_obj.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?report_type={{ report_type }}&start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}&page={{ page_obj.next_page_number }}">Next</a>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+

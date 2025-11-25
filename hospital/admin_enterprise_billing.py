@@ -127,17 +127,19 @@ class CorporateAccountAdmin(admin.ModelAdmin):
     
     def current_balance_display(self, obj):
         color = '#dc3545' if obj.current_balance > 0 else '#28a745'
+        balance_str = "{:,.2f}".format(float(obj.current_balance))
         return format_html(
-            '<strong style="color: {};">GHS {:,.2f}</strong>',
-            color, obj.current_balance
+            '<strong style="color: {};">GHS {}</strong>',
+            color, balance_str
         )
     current_balance_display.short_description = 'Balance'
     current_balance_display.admin_order_field = 'current_balance'
     
     def credit_limit_display(self, obj):
+        limit_str = "{:,.2f}".format(float(obj.credit_limit))
         return format_html(
-            'GHS {:,.2f}',
-            obj.credit_limit
+            'GHS {}',
+            limit_str
         )
     credit_limit_display.short_description = 'Credit Limit'
     
@@ -281,9 +283,11 @@ class CorporateEmployeeAdmin(admin.ModelAdmin):
         remaining = obj.remaining_limit
         if remaining is None:
             return "No limit set"
+        remaining_str = "{:,.2f}".format(float(remaining))
+        annual_str = "{:,.2f}".format(float(obj.annual_limit))
         return format_html(
-            'GHS {:,.2f} of GHS {:,.2f} remaining',
-            remaining, obj.annual_limit
+            'GHS {} of GHS {} remaining',
+            remaining_str, annual_str
         )
     remaining_limit_display.short_description = 'Remaining Limit'
 
@@ -417,9 +421,10 @@ class MonthlyStatementAdmin(admin.ModelAdmin):
     period_display.short_description = 'Period'
     
     def closing_balance_display(self, obj):
+        balance_str = "{:,.2f}".format(float(obj.closing_balance))
         return format_html(
-            '<strong style="color: #dc3545;">GHS {:,.2f}</strong>',
-            obj.closing_balance
+            '<strong style="color: #dc3545;">GHS {}</strong>',
+            balance_str
         )
     closing_balance_display.short_description = 'Amount Due'
     closing_balance_display.admin_order_field = 'closing_balance'
@@ -451,9 +456,10 @@ class MonthlyStatementAdmin(admin.ModelAdmin):
     overdue_display.short_description = 'Overdue'
     
     def amount_outstanding_display(self, obj):
+        amount_str = "{:,.2f}".format(float(obj.amount_outstanding))
         return format_html(
-            'GHS {:,.2f}',
-            obj.amount_outstanding
+            'GHS {}',
+            amount_str
         )
     amount_outstanding_display.short_description = 'Outstanding'
     
@@ -524,15 +530,18 @@ class ServicePricingAdmin(admin.ModelAdmin):
     )
     
     def cash_price_display(self, obj):
-        return format_html('GHS {:,.2f}', obj.cash_price)
+        price_str = "{:,.2f}".format(float(obj.cash_price))
+        return format_html('GHS {}', price_str)
     cash_price_display.short_description = 'Cash'
     
     def corporate_price_display(self, obj):
-        return format_html('GHS {:,.2f}', obj.corporate_price)
+        price_str = "{:,.2f}".format(float(obj.corporate_price))
+        return format_html('GHS {}', price_str)
     corporate_price_display.short_description = 'Corporate'
     
     def insurance_price_display(self, obj):
-        return format_html('GHS {:,.2f}', obj.insurance_price)
+        price_str = "{:,.2f}".format(float(obj.insurance_price))
+        return format_html('GHS {}', price_str)
     insurance_price_display.short_description = 'Insurance'
     
     def payer_display(self, obj):
@@ -602,21 +611,24 @@ class ARAgingSnapshotAdmin(admin.ModelAdmin):
     )
     
     def total_outstanding_display(self, obj):
+        total_str = "{:,.2f}".format(float(obj.total_outstanding))
         return format_html(
-            '<strong style="color: #dc3545; font-size: 1.2em;">GHS {:,.2f}</strong>',
-            obj.total_outstanding
+            '<strong style="color: #dc3545; font-size: 1.2em;">GHS {}</strong>',
+            total_str
         )
     total_outstanding_display.short_description = 'Total AR'
     
     def current_display(self, obj):
-        return format_html('GHS {:,.2f}', obj.current_0_30)
+        amount_str = "{:,.2f}".format(float(obj.current_0_30))
+        return format_html('GHS {}', amount_str)
     current_display.short_description = 'Current (0-30)'
     
     def overdue_display(self, obj):
         overdue = obj.days_31_60 + obj.days_61_90 + obj.days_91_120 + obj.days_over_120
+        overdue_str = "{:,.2f}".format(float(overdue))
         return format_html(
-            '<strong style="color: #dc3545;">GHS {:,.2f}</strong>',
-            overdue
+            '<strong style="color: #dc3545;">GHS {}</strong>',
+            overdue_str
         )
     overdue_display.short_description = 'Overdue (31+)'
     
@@ -628,6 +640,12 @@ class ARAgingSnapshotAdmin(admin.ModelAdmin):
             color, percentage
         )
     overdue_percentage_display.short_description = 'Overdue %'
+
+
+
+
+
+
 
 
 

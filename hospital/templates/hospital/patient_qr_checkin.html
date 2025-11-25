@@ -201,39 +201,97 @@
         scanStatus.className = `text-${state}`;
     }
     
-    function startCamera() {
+    async function startCamera() {
         if (isScanning) return;
-        html5QrCode = new Html5Qrcode('qr-video-container');
-        html5QrCode.start(
-            { facingMode: "environment" },
-            { fps: 10, qrbox: { width: 280, height: 280 } },
-            decodedText => {
-                stopCamera();
-                processQr(decodedText);
-            },
-            errorMessage => {
-                // ignore frame scan errors
+        
+        try {
+            updateStatus('Requesting camera access...', 'info');
+            
+            // First, try to get available cameras
+            const cameras = await Html5Qrcode.getCameras();
+            if (cameras.length === 0) {
+                throw new Error('No cameras found. Please connect a camera device.');
             }
-        ).then(() => {
+            
+            updateStatus('Initializing scanner...', 'info');
+            html5QrCode = new Html5Qrcode('qr-video-container');
+            
+            // Try back camera first (environment), then front camera (user)
+            let cameraConfig = { facingMode: "environment" };
+            let cameraId = null;
+            
+            // Try to use specific camera ID if available
+            if (cameras.length > 0) {
+                // Prefer back camera for QR scanning
+                const backCamera = cameras.find(cam => cam.label.toLowerCase().includes('back') || cam.label.toLowerCase().includes('rear'));
+                if (backCamera) {
+                    cameraId = backCamera.id;
+                    cameraConfig = { deviceId: { exact: cameraId } };
+                }
+            }
+            
+            await html5QrCode.start(
+                cameraId || cameraConfig,
+                {
+                    fps: 10,
+                    qrbox: { width: 280, height: 280 },
+                    aspectRatio: 1.0,
+                    disableFlip: false
+                },
+                decodedText => {
+                    stopCamera();
+                    processQr(decodedText);
+                },
+                errorMessage => {
+                    // Ignore frame scan errors (normal during scanning)
+                }
+            );
+            
             isScanning = true;
             startBtn.disabled = true;
             stopBtn.disabled = false;
             updateStatus('Camera active - align QR within the frame', 'success');
-        }).catch(err => {
-            updateStatus('Unable to access camera: ' + err, 'danger');
-        });
+            
+        } catch (err) {
+            console.error('Camera error:', err);
+            let errorMsg = 'Unable to access camera. ';
+            
+            if (err.name === 'NotAllowedError' || err.message.includes('permission')) {
+                errorMsg += 'Please allow camera permissions and try again.';
+            } else if (err.name === 'NotFoundError' || err.message.includes('No camera')) {
+                errorMsg += 'No camera found. Please connect a camera device.';
+            } else if (err.name === 'NotReadableError' || err.message.includes('busy')) {
+                errorMsg += 'Camera is busy or in use by another application.';
+            } else {
+                errorMsg += err.message || 'Unknown error occurred.';
+            }
+            
+            updateStatus(errorMsg, 'danger');
+            isScanning = false;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+        }
     }
     
-    function stopCamera() {
+    async function stopCamera() {
         if (!html5QrCode) return;
-        html5QrCode.stop().then(() => {
+        try {
+            await html5QrCode.stop();
             html5QrCode.clear();
             html5QrCode = null;
             isScanning = false;
             startBtn.disabled = false;
             stopBtn.disabled = true;
             updateStatus('Camera idle', 'muted');
-        }).catch(() => {});
+        } catch (err) {
+            console.error('Error stopping camera:', err);
+            // Force cleanup even if stop fails
+            html5QrCode = null;
+            isScanning = false;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            updateStatus('Camera stopped', 'muted');
+        }
     }
     
     function processQr(qrData) {
@@ -294,12 +352,29 @@
         .catch(({ body }) => {
             resultCard.className = 'result-card error';
             updateStatus('Unable to complete check-in', 'danger');
+            let debugInfo = '';
+            if (body?.debug) {
+                debugInfo = `
+                    <div class="mt-3 p-2 bg-light rounded">
+                        <small class="text-muted">
+                            <strong>Debug Info:</strong><br>
+                            ${JSON.stringify(body.debug, null, 2).replace(/\n/g, '<br>')}
+                        </small>
+                    </div>
+                `;
+            }
             resultContent.innerHTML = `
                 <h5 class="text-danger">Check-in Failed</h5>
                 <p class="mb-2">${body?.error || 'Unknown error occurred.'}</p>
-                <button class="btn btn-outline-danger btn-sm" onclick="startCamera()">
-                    <i class="bi bi-arrow-repeat"></i> Retry Scan
-                </button>
+                ${debugInfo}
+                <div class="mt-3">
+                    <button class="btn btn-outline-danger btn-sm me-2" onclick="startCamera()">
+                        <i class="bi bi-arrow-repeat"></i> Retry Scan
+                    </button>
+                    <button class="btn btn-outline-info btn-sm" onclick="document.getElementById('manual-input').focus()">
+                        <i class="bi bi-keyboard"></i> Try Manual Entry
+                    </button>
+                </div>
             `;
         });
     }

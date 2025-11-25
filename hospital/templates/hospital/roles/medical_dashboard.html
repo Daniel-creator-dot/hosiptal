@@ -112,8 +112,8 @@
         </div>
         <div class="kpi-card">
             <div class="kpi-label">Pending Lab Results</div>
-            <div class="kpi-value">{{ pending_labs_count }}</div>
-            <p class="secondary-text mb-0">Awaiting your review</p>
+            <div class="kpi-value" data-pending-labs-count>{{ pending_labs_count }}</div>
+            <p class="secondary-text mb-0">Awaiting your review <span class="badge bg-success bg-opacity-25 text-success ms-2" id="live-indicator" style="font-size: 8px; padding: 2px 6px;">LIVE</span></p>
         </div>
         <div class="kpi-card">
             <div class="kpi-label">Recent Admissions</div>
@@ -289,7 +289,7 @@
                 <span class="pill-link text-danger">Immediate</span>
             </div>
             {% for order in high_priority_orders %}
-            <div class="list-tile">
+            <div class="list-tile" data-order-id="{{ order.id|stringformat:'s' }}">
                 <div class="d-flex justify-content-between">
                     <div>
                         <strong>{{ order.encounter.patient.full_name }}</strong>
@@ -309,17 +309,19 @@
                 <h5 class="section-title mb-0"><i class="bi bi-bezier me-2 text-primary"></i>Pending Lab Results</h5>
                 <span class="pill-link text-primary">Review</span>
             </div>
-            {% for order in pending_labs %}
-            <div class="list-tile d-flex justify-content-between align-items-center">
-                <div>
-                    <strong>{{ order.encounter.patient.full_name }}</strong>
-                    <div class="secondary-text">Order {{ order.pk|slice:":8" }} · {{ order.notes|default:"Awaiting processing"|truncatewords:10 }}</div>
+            <div id="pending-labs-section">
+                {% for order in pending_labs %}
+                <div class="list-tile d-flex justify-content-between align-items-center" data-lab-order-id="{{ order.id|stringformat:'s' }}">
+                    <div>
+                        <strong>{{ order.encounter.patient.full_name }}</strong>
+                        <div class="secondary-text">Order {{ order.pk|slice:":8" }} · {{ order.notes|default:"Awaiting processing"|truncatewords:10 }}</div>
+                    </div>
+                    <span class="badge bg-warning text-dark">{{ order.get_priority_display }}</span>
                 </div>
-                <span class="badge bg-warning text-dark">{{ order.get_priority_display }}</span>
+                {% empty %}
+                <div class="empty-state">All labs have been signed off.</div>
+                {% endfor %}
             </div>
-            {% empty %}
-            <div class="empty-state">All labs have been signed off.</div>
-            {% endfor %}
         </section>
     </div>
 
@@ -327,7 +329,7 @@
         <div class="card-shell">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <h5 class="section-title mb-0"><i class="bi bi-people-fill me-2 text-primary"></i>My Active Patients</h5>
-                <span class="pill-link text-primary">Consults</span>
+                <a href="{% url 'hospital:my_consultations' %}" class="pill-link text-primary">Consults</a>
             </div>
             {% for encounter in my_encounters %}
             <div class="list-tile">
@@ -351,7 +353,7 @@
             <div class="quick-actions" style="margin-top: 18px;">
                 <a class="action-pill" href="{% url 'hospital:medical_records_list' %}"><i class="bi bi-folder2-open"></i>Records</a>
                 <a class="action-pill" href="{% url 'hospital:orders_list' %}"><i class="bi bi-kanban"></i>Orders Board</a>
-                {% if my_encounters %}
+                {% if my_encounters|length > 0 %}
                 <a class="action-pill" href="{% url 'hospital:patient_timeline' my_encounters.0.patient.id %}"><i class="bi bi-clock-history"></i>Timeline</a>
                 {% else %}
                 <span class="action-pill" style="pointer-events:none;opacity:.35;"><i class="bi bi-clock-history"></i>Timeline</span>
@@ -373,9 +375,22 @@
 {% endblock %}
 
 {% block extra_js %}
+<!-- Live Dashboard Updates - Automatically removes completed items -->
+<script src="{% static 'hospital/js/dashboard-live-updates.js' %}"></script>
 <script>
 // Enable global auto-refresh for the medical dashboard (every 45 seconds)
+// Note: Live updates run every 5 seconds, full refresh is backup
 window.DASHBOARD_AUTO_REFRESH_INTERVAL = 45000;
+
+// Pulse animation for live indicator
+(function() {
+    const indicator = document.getElementById('live-indicator');
+    if (indicator) {
+        setInterval(() => {
+            indicator.style.opacity = indicator.style.opacity === '0.5' ? '1' : '0.5';
+        }, 1000);
+    }
+})();
 </script>
 {% endblock %}
 

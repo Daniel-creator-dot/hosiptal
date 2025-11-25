@@ -4,6 +4,24 @@
 {% block title %}Queue Display - HMS{% endblock %}
 
 {% block extra_head %}
+<script>
+document.documentElement.classList.add('queue-display-fullscreen');
+// Hide sidebar and topbar for full-screen queue display
+document.addEventListener('DOMContentLoaded', function() {
+    const sidebar = document.querySelector('.sidebar, #sidebar, .main-sidebar');
+    const topbar = document.querySelector('.topbar, #topbar, .navbar, .main-header');
+    if (sidebar) sidebar.style.display = 'none';
+    if (topbar) topbar.style.display = 'none';
+    
+    // Ensure main content takes full width
+    const mainContent = document.querySelector('.main-content, .content-wrapper, #content');
+    if (mainContent) {
+        mainContent.style.marginLeft = '0';
+        mainContent.style.width = '100%';
+        mainContent.style.maxWidth = '100%';
+    }
+});
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
@@ -11,6 +29,29 @@
 
 {% block extra_css %}
 <style>
+    html.queue-display-fullscreen body {
+        background: linear-gradient(135deg, #e0f2fe 0%, #eef2ff 100%) !important;
+        min-height: 100vh;
+        overflow: hidden;
+    }
+    html.queue-display-fullscreen .sidebar,
+    html.queue-display-fullscreen .topbar,
+    html.queue-display-fullscreen .sidebar-overlay {
+        display: none !important;
+    }
+    html.queue-display-fullscreen .main-content {
+        margin-left: 0 !important;
+        background: transparent !important;
+    }
+    html.queue-display-fullscreen .content-container {
+        padding: 24px 48px !important;
+        max-width: 100% !important;
+        height: 100%;
+    }
+    html.queue-display-fullscreen .mobile-menu-toggle {
+        display: none !important;
+    }
+
     :root {
         --queue-primary: #6366F1;
         --queue-success: #10B981;
@@ -23,14 +64,14 @@
         background: #F3F4F6;
     }
 
-    /* Hero Header */
+    /* Hero Header - More Welcoming */
     .queue-hero {
-        background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%);
+        background: linear-gradient(135deg, #10B981 0%, #059669 30%, #047857 100%);
         color: white;
         border-radius: 24px;
         padding: 48px;
         margin-bottom: 32px;
-        box-shadow: 0 20px 60px rgba(102, 126, 234, 0.4);
+        box-shadow: 0 20px 60px rgba(16, 185, 129, 0.3);
         position: relative;
         overflow: hidden;
     }
@@ -42,19 +83,27 @@
         right: -10%;
         width: 500px;
         height: 500px;
-        background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+        background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, transparent 70%);
         border-radius: 50%;
+        animation: pulse 4s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 0.3; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(1.05); }
     }
 
     .queue-hero h1 {
         font-size: 42px;
         font-weight: 800;
         margin-bottom: 8px;
+        text-shadow: 0 2px 10px rgba(0,0,0,0.1);
     }
 
     .queue-hero-subtitle {
         font-size: 18px;
-        opacity: 0.9;
+        opacity: 0.95;
+        font-weight: 400;
     }
 
     /* Statistics Cards */
@@ -66,18 +115,41 @@
     }
 
     .stat-card {
-        background: white;
+        background: linear-gradient(145deg, #FFFFFF 0%, #F9FAFB 100%);
         border-radius: 20px;
-        padding: 24px;
+        padding: 28px 24px;
         text-align: center;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-        transition: all 0.3s;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
         border: 2px solid transparent;
+        position: relative;
+        overflow: hidden;
+        /* Prevent content shift during updates */
+        min-height: 120px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+
+    .stat-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.3), transparent);
+        transform: translateX(-100%);
+        transition: transform 0.6s ease;
+    }
+
+    .stat-card:hover::before {
+        transform: translateX(100%);
     }
 
     .stat-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 8px 25px rgba(0,0,0,0.12);
+        transform: translateY(-8px) scale(1.02);
+        box-shadow: 0 12px 30px rgba(0,0,0,0.15);
     }
 
     .stat-card.waiting {
@@ -98,6 +170,11 @@
         font-family: 'Orbitron', sans-serif;
         line-height: 1;
         margin-bottom: 8px;
+        /* Prevent layout shift */
+        min-height: 56px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
 
     .stat-number.waiting { color: var(--queue-warning); }
@@ -119,6 +196,87 @@
         padding: 32px;
         margin-bottom: 24px;
         box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+    }
+
+    .health-tip-panel {
+        background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 50%, #ecfccb 100%);
+        border-radius: 24px;
+        padding: 28px;
+        min-height: 260px;
+        color: #1e3a8a;
+        box-shadow: 0 8px 30px rgba(59, 130, 246, 0.2);
+        position: relative;
+        overflow: hidden;
+        border: 2px solid rgba(59, 130, 246, 0.1);
+    }
+
+    .health-tip-panel::before {
+        content: '✨';
+        position: absolute;
+        top: 15px;
+        right: 20px;
+        font-size: 32px;
+        opacity: 0.3;
+        animation: float 3s ease-in-out infinite;
+    }
+
+    @keyframes float {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-10px); }
+    }
+
+    .health-tip-card {
+        display: none;
+        flex-direction: column;
+        gap: 12px;
+        opacity: 0;
+        transform: translateX(30px);
+        transition: opacity 0.5s ease, transform 0.5s ease;
+        position: absolute;
+        width: 100%;
+        top: 0;
+        left: 0;
+        pointer-events: none;
+    }
+
+    .health-tip-card.active {
+        display: flex;
+        opacity: 1;
+        transform: translateX(0);
+        position: relative;
+        pointer-events: auto;
+    }
+
+    #health-tip-container {
+        position: relative;
+        min-height: 200px;
+        overflow: hidden;
+    }
+
+    .health-tip-title {
+        font-size: 20px;
+        font-weight: 800;
+    }
+
+    .health-tip-message {
+        font-size: 15px;
+        line-height: 1.5;
+    }
+
+    .audio-toggle {
+        background: rgba(255,255,255,0.2);
+        border: 1px solid rgba(255,255,255,0.6);
+        color: white;
+        padding: 8px 18px;
+        border-radius: 999px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+
+    .audio-toggle.active {
+        background: rgba(16,185,129,0.2);
+        border-color: rgba(16,185,129,0.8);
     }
 
     .queue-section-header {
@@ -424,279 +582,1341 @@
         font-size: 24px;
         color: var(--queue-primary);
     }
+
+    /* Hide base template sidebar and topbar */
+    .queue-display-fullscreen .sidebar,
+    .queue-display-fullscreen #sidebar,
+    .queue-display-fullscreen .main-sidebar,
+    .queue-display-fullscreen .topbar,
+    .queue-display-fullscreen #topbar,
+    .queue-display-fullscreen .navbar,
+    .queue-display-fullscreen .main-header {
+        display: none !important;
+    }
+    
+    .queue-display-fullscreen .main-content,
+    .queue-display-fullscreen .content-wrapper,
+    .queue-display-fullscreen #content {
+        margin-left: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        padding: 0 !important;
+    }
+
+    .queue-display-wrapper {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        width: 100%;
+        max-width: 100%;
+        padding: 24px;
+        box-sizing: border-box;
+    }
+
+    .queue-header-block {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+    }
+
+    .queue-main {
+        flex: 1;
+        display: flex !important;
+        flex-direction: row !important;
+        gap: 24px;
+        min-height: 500px !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        overflow: visible !important;
+        margin-top: 24px;
+    }
+    
+    .queue-left {
+        flex: 2;
+        display: flex !important;
+        flex-direction: column;
+        gap: 24px;
+        min-height: 0;
+        min-width: 0;
+    }
+    
+    @media (max-width: 1200px) {
+        .queue-main {
+            flex-direction: column;
+        }
+    }
+
+    .queue-left {
+        flex: 2;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        min-height: 0;
+    }
+
+    .queue-right {
+        flex: 1;
+        display: flex !important;
+        flex-direction: column;
+        gap: 24px;
+        min-height: 0;
+        min-width: 350px !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        background: #f8fafc;
+        border-radius: 16px;
+        padding: 20px;
+    }
+
+    .now-serving-panel {
+        flex: 0 0 auto;
+    }
+
+    .queue-panels {
+        display: flex;
+        gap: 24px;
+        flex: 1;
+        min-height: 0;
+    }
+
+    .queue-panels .queue-section {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    .queue-scroll {
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .queue-scroll .patient-card:last-child {
+        margin-bottom: 0;
+    }
+
+    /* Gallery */
+    .queue-gallery-card {
+        background: linear-gradient(145deg, #FFFFFF 0%, #F9FAFB 100%);
+        border-radius: 24px;
+        padding: 24px;
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+        border: 1px solid rgba(99, 102, 241, 0.15);
+        min-height: 320px;
+    }
+
+    .gallery-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        text-transform: uppercase;
+        font-weight: 700;
+        font-size: 14px;
+        color: #475569;
+    }
+
+    .gallery-viewport {
+        position: relative;
+        border-radius: 20px;
+        overflow: hidden;
+        min-height: 340px;
+        height: 340px;
+        background: #0f172a;
+        display: block !important;
+    }
+    
+    @keyframes float {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-10px); }
+    }
+
+    .gallery-slide {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        transition: opacity 0.8s ease, transform 0.8s ease;
+        transform: scale(1.02);
+    }
+
+    .gallery-slide.active {
+        opacity: 1;
+        transform: scale(1);
+        z-index: 2;
+    }
+
+    .gallery-slide img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .gallery-caption {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        padding: 12px 20px;
+        background: linear-gradient(180deg, transparent, rgba(15, 23, 42, 0.75));
+        color: white;
+        font-weight: 600;
+        text-shadow: 0 2px 6px rgba(0,0,0,0.4);
+    }
+
+    .gallery-dots {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+        margin-top: 18px;
+    }
+
+    .gallery-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: rgba(99, 102, 241, 0.3);
+        cursor: pointer;
+        transition: transform 0.2s ease, background 0.2s ease;
+    }
+
+    .gallery-dot.active {
+        background: rgba(255, 255, 255, 0.9) !important;
+        transform: scale(1.2);
+    }
+
+    .gallery-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #94a3b8;
+        height: 100%;
+        padding: 40px 20px;
+        text-align: center;
+    }
+
+    .gallery-empty i {
+        font-size: 48px;
+        margin-bottom: 12px;
+    }
+
+    /* Calendar Widget */
+    .calendar-widget {
+        background: linear-gradient(145deg, #FFFFFF 0%, #F9FAFB 100%);
+        border-radius: 24px;
+        padding: 24px;
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+        border: 2px solid rgba(99, 102, 241, 0.15);
+        text-align: center;
+        flex: 0 0 auto;
+    }
+
+    .calendar-header {
+        font-size: 14px;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: #475569;
+        margin-bottom: 16px;
+        letter-spacing: 0.5px;
+    }
+
+    .calendar-date {
+        font-size: 48px;
+        font-weight: 900;
+        color: var(--queue-primary);
+        line-height: 1;
+        margin-bottom: 8px;
+        font-family: 'Orbitron', sans-serif;
+    }
+
+    .calendar-day {
+        font-size: 20px;
+        font-weight: 600;
+        color: #64748b;
+        margin-bottom: 12px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    .calendar-time {
+        font-size: 32px;
+        font-weight: 700;
+        color: #1e293b;
+        font-family: 'Orbitron', sans-serif;
+        margin-bottom: 4px;
+    }
+
+    .calendar-time-label {
+        font-size: 12px;
+        color: #94a3b8;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .calendar-month-year {
+        font-size: 16px;
+        font-weight: 600;
+        color: #475569;
+        margin-top: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <!-- Hero Header -->
-    <div class="queue-hero">
-        <h1>
-            <i class="bi bi-list-ol me-3"></i>Queue Management
-        </h1>
-        <div class="queue-hero-subtitle">
-            Real-time patient queue monitoring and control
-        </div>
-    </div>
-
-    <!-- Statistics Cards -->
-    <div class="stats-grid">
-        <div class="stat-card waiting">
-            <div class="stat-number waiting" id="waitingCount">{{ waiting|length }}</div>
-            <div class="stat-label">
-                <i class="bi bi-hourglass-split me-1"></i>Waiting
+<div class="queue-display-wrapper">
+    <div class="queue-header-block">
+        <div class="queue-hero">
+            <h1>
+                <i class="bi bi-heart-pulse me-3"></i>Welcome to PrimeCare Hospital
+            </h1>
+            <div class="queue-hero-subtitle">
+                👋 We're here to serve you! Real-time queue monitoring ensures you're cared for promptly and efficiently.
             </div>
-        </div>
-        <div class="stat-card progress">
-            <div class="stat-number progress" id="progressCount">{{ in_progress|length }}</div>
-            <div class="stat-label">
-                <i class="bi bi-activity me-1"></i>In Progress
-            </div>
-        </div>
-        <div class="stat-card completed">
-            <div class="stat-number completed" id="completedCount">0</div>
-            <div class="stat-label">
-                <i class="bi bi-check-circle me-1"></i>Completed Today
-            </div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-number" style="color: #6366F1;" id="avgWaitTime">--</div>
-            <div class="stat-label">
-                <i class="bi bi-clock me-1"></i>Avg Wait (min)
-            </div>
-        </div>
-    </div>
-
-    <!-- Filter Section -->
-    <div class="filter-section">
-        <form method="get" class="row g-3">
-            <div class="col-md-4">
-                <label class="filter-label">
-                    <i class="bi bi-building me-2"></i>Department
-                </label>
-                <select name="department" class="filter-select">
-                    <option value="">All Departments</option>
-                    {% for dept in departments %}
-                    <option value="{{ dept.id }}" {% if selected_department == dept.id|stringformat:"s" %}selected{% endif %}>
-                        {{ dept.name }}
-                    </option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="col-md-4">
-                <label class="filter-label">
-                    <i class="bi bi-geo-alt me-2"></i>Location
-                </label>
-                <select name="location" class="filter-select">
-                    <option value="">All Locations</option>
-                    <option value="clinic" {% if selected_location == 'clinic' %}selected{% endif %}>Clinic</option>
-                    <option value="ward" {% if selected_location == 'ward' %}selected{% endif %}>Ward</option>
-                    <option value="er" {% if selected_location == 'er' %}selected{% endif %}>Emergency Room</option>
-                    <option value="pharmacy" {% if selected_location == 'pharmacy' %}selected{% endif %}>Pharmacy</option>
-                    <option value="lab" {% if selected_location == 'lab' %}selected{% endif %}>Laboratory</option>
-                    <option value="imaging" {% if selected_location == 'imaging' %}selected{% endif %}>Imaging</option>
-                </select>
-            </div>
-            <div class="col-md-4">
-                <label class="filter-label">&nbsp;</label>
-                <button type="submit" class="action-btn btn-call w-100">
-                    <i class="bi bi-funnel"></i> Apply Filters
-                </button>
-            </div>
-        </form>
-    </div>
-
-    <div class="row g-4">
-        <!-- Waiting Queue -->
-        <div class="col-lg-6">
-            <div class="queue-section">
-                <div class="queue-section-header">
-                    <div class="queue-section-title">
-                        <span class="queue-badge">{{ waiting|length }}</span>
-                        Waiting
+            <div class="queue-panels">
+                <!-- Waiting Queue -->
+                <div class="queue-section waiting-panel">
+                    <div class="queue-section-header">
+                        <div class="queue-section-title">
+                            <span class="queue-badge">{{ waiting|length }}</span>
+                            Waiting
+                        </div>
+                        <form method="post" action="{% url 'hospital:queue_call_next' %}" id="callNextForm">
+                            {% csrf_token %}
+                            {% if selected_department %}<input type="hidden" name="department" value="{{ selected_department }}">{% endif %}
+                            {% if selected_location %}<input type="hidden" name="location" value="{{ selected_location }}">{% endif %}
+                            <button type="submit" class="call-next-btn" id="callNextBtn">
+                                <i class="bi bi-telephone-forward me-2"></i>Call Next
+                            </button>
+                        </form>
                     </div>
-                    <form method="post" action="{% url 'hospital:queue_call_next' %}" id="callNextForm">
-                        {% csrf_token %}
-                        {% if selected_department %}<input type="hidden" name="department" value="{{ selected_department }}">{% endif %}
-                        {% if selected_location %}<input type="hidden" name="location" value="{{ selected_location }}">{% endif %}
-                        <button type="submit" class="call-next-btn">
-                            <i class="bi bi-telephone-forward me-2"></i>Call Next
-                        </button>
-                    </form>
-                </div>
 
-                <div id="waitingList">
-                    {% if waiting %}
-                        {% for queue in waiting %}
-                        <div class="patient-card priority-{{ queue.priority }}">
-                            <div class="row align-items-center">
-                                <div class="col-auto">
-                                    <div class="queue-number">{{ queue.queue_number }}</div>
-                                </div>
-                                <div class="col">
-                                    <div class="patient-info">
-                                        <h5>{{ queue.encounter.patient.full_name }}</h5>
-                                        <div class="patient-meta">
-                                            <span><i class="bi bi-person-badge me-1"></i>{{ queue.encounter.patient.mrn }}</span>
-                                            <span class="priority-badge priority-{{ queue.priority }}">
-                                                {{ queue.get_priority_display }}
-                                            </span>
-                                            <span class="wait-timer" data-checked-in="{{ queue.check_in_time|date:'c' }}">
-                                                <i class="bi bi-clock me-1"></i>
-                                                <span class="timer-text">
-                                                    {% if queue.estimated_wait_minutes %}
-                                                        {{ queue.estimated_wait_minutes }} min
-                                                    {% else %}
-                                                        --
-                                                    {% endif %}
+                    <div id="waitingList" class="queue-scroll">
+                        {% if waiting %}
+                            {% for queue in waiting %}
+                            <div class="patient-card priority-{{ queue.priority }}">
+                                <div class="row align-items-center">
+                                    <div class="col-auto">
+                                        <div class="queue-number">{{ queue.queue_number }}</div>
+                                    </div>
+                                    <div class="col">
+                                        <div class="patient-info">
+                                            <h5>{{ queue.encounter.patient.full_name }}</h5>
+                                            <div class="patient-meta">
+                                                <span><i class="bi bi-person-badge me-1"></i>{{ queue.encounter.patient.mrn }}</span>
+                                                <span class="priority-badge priority-{{ queue.priority }}">
+                                                    {{ queue.get_priority_display }}
                                                 </span>
-                                            </span>
+                                                <span class="wait-timer" data-checked-in="{{ queue.check_in_time|date:'c' }}">
+                                                    <i class="bi bi-clock me-1"></i>
+                                                    <span class="timer-text">
+                                                        {% if queue.estimated_wait_minutes %}
+                                                            {{ queue.estimated_wait_minutes }} min
+                                                        {% else %}
+                                                            --
+                                                        {% endif %}
+                                                    </span>
+                                                </span>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                                <div class="col-auto">
-                                    <a href="{% url 'hospital:queue_action' queue_id=queue.pk action='call' %}" class="action-btn btn-call">
-                                        <i class="bi bi-telephone"></i> Call
-                                    </a>
+                                    <div class="col-auto">
+                                        <a href="{% url 'hospital:queue_action' queue_id=queue.pk action='call' %}" class="action-btn btn-call">
+                                            <i class="bi bi-telephone"></i> Call
+                                        </a>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                        {% endfor %}
-                    {% else %}
-                        <div class="empty-state">
-                            <div class="empty-state-icon">
-                                <i class="bi bi-inbox"></i>
+                            {% endfor %}
+                        {% else %}
+                            <div class="empty-state">
+                                <div class="empty-state-icon">
+                                    <i class="bi bi-check-circle" style="color: #10B981; font-size: 64px;"></i>
+                                </div>
+                                <div class="empty-state-text">🎉 Great! No patients waiting. We're ready to serve!</div>
                             </div>
-                            <div class="empty-state-text">No patients waiting</div>
+                        {% endif %}
+                    </div>
+                </div>
+                
+                <!-- In Progress -->
+                <div class="queue-section progress-panel">
+                    <div class="queue-section-header">
+                        <div class="queue-section-title">
+                            <span class="queue-badge progress">{{ in_progress|length }}</span>
+                            In Progress
                         </div>
-                    {% endif %}
+                    </div>
+
+                    <div id="progressList" class="queue-scroll">
+                        {% if in_progress %}
+                            {% for queue in in_progress|slice:":4" %}
+                            <div class="patient-card in-progress">
+                                <div class="row align-items-center">
+                                    <div class="col-auto">
+                                        <div class="queue-number">{{ queue.queue_number }}</div>
+                                    </div>
+                                    <div class="col">
+                                        <div class="patient-info">
+                                            <h5>{{ queue.encounter.patient.full_name }}</h5>
+                                            <div class="patient-meta">
+                                                <span><i class="bi bi-person-badge me-1"></i>{{ queue.encounter.patient.mrn }}</span>
+                                                {% if queue.started_time or queue.called_time %}
+                                                <span><i class="bi bi-clock-history me-1"></i>Called {{ queue.started_time|default:queue.called_time|timesince }} ago</span>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-auto d-flex gap-2">
+                                        <a href="{% url 'hospital:queue_action' queue_id=queue.pk action='complete' %}" class="action-btn btn-complete">
+                                            <i class="bi bi-check-circle"></i> Complete
+                                        </a>
+                                        <a href="{% url 'hospital:queue_action' queue_id=queue.pk action='skip' %}" class="action-btn btn-skip">
+                                            <i class="bi bi-skip-forward"></i>
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <div class="empty-state">
+                                <div class="empty-state-icon">
+                                    <i class="bi bi-emoji-smile" style="color: #3B82F6; font-size: 64px;"></i>
+                                </div>
+                                <div class="empty-state-text">✨ All clear! Consultation rooms are available.</div>
+                            </div>
+                        {% endif %}
+                    </div>
                 </div>
             </div>
         </div>
-
-        <!-- In Progress -->
-        <div class="col-lg-6">
-            <div class="queue-section">
-                <div class="queue-section-header">
-                    <div class="queue-section-title">
-                        <span class="queue-badge progress">{{ in_progress|length }}</span>
-                        In Progress
-                    </div>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-card waiting">
+                <div class="stat-number waiting" id="waitingCount">{{ waiting|length }}</div>
+                <div class="stat-label">
+                    <i class="bi bi-hourglass-split me-1"></i>Waiting
                 </div>
-
-                <div id="progressList">
-                    {% if in_progress %}
-                        {% for queue in in_progress %}
-                        <div class="patient-card in-progress">
-                            <div class="row align-items-center">
-                                <div class="col-auto">
-                                    <div class="queue-number">{{ queue.queue_number }}</div>
-                                </div>
-                                <div class="col">
-                                    <div class="patient-info">
-                                        <h5>{{ queue.encounter.patient.full_name }}</h5>
-                                        <div class="patient-meta">
-                                            <span><i class="bi bi-person-badge me-1"></i>{{ queue.encounter.patient.mrn }}</span>
-                                            {% if queue.started_time or queue.called_time %}
-                                            <span><i class="bi bi-clock-history me-1"></i>Called {{ queue.started_time|default:queue.called_time|timesince }} ago</span>
-                                            {% endif %}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col-auto d-flex gap-2">
-                                    <a href="{% url 'hospital:queue_action' queue_id=queue.pk action='complete' %}" class="action-btn btn-complete">
-                                        <i class="bi bi-check-circle"></i> Complete
-                                    </a>
-                                    <a href="{% url 'hospital:queue_action' queue_id=queue.pk action='skip' %}" class="action-btn btn-skip">
-                                        <i class="bi bi-skip-forward"></i>
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
-                        {% endfor %}
-                    {% else %}
-                        <div class="empty-state">
-                            <div class="empty-state-icon">
-                                <i class="bi bi-clipboard-check"></i>
-                            </div>
-                            <div class="empty-state-text">No patients in progress</div>
-                        </div>
-                    {% endif %}
+            </div>
+            <div class="stat-card progress">
+                <div class="stat-number progress" id="progressCount">{{ in_progress|length }}</div>
+                <div class="stat-label">
+                    <i class="bi bi-activity me-1"></i>In Progress
+                </div>
+            </div>
+            <div class="stat-card completed">
+                <div class="stat-number completed" id="completedCount">{{ completed_today|default:0 }}</div>
+                <div class="stat-label">
+                    <i class="bi bi-check-circle me-1"></i>Completed Today
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" style="color: #6366F1;" id="avgWaitTime">{% if avg_wait_minutes %}{{ avg_wait_minutes }}{% else %}--{% endif %}</div>
+                <div class="stat-label">
+                    <i class="bi bi-clock me-1"></i>Avg Wait (min)
                 </div>
             </div>
         </div>
     </div>
-
-    <!-- Quick Actions -->
-    <div class="text-center mt-4">
-        <a href="{% url 'hospital:queue_create' %}" class="action-btn btn-call" style="font-size: 18px; padding: 16px 40px;">
-            <i class="bi bi-plus-circle me-2"></i>Add Patient to Queue
-        </a>
+    
+    <div class="queue-main" style="background: rgba(255, 0, 0, 0.1); border: 3px dashed red; padding: 20px;">
+        <div class="queue-left" style="background: rgba(0, 255, 0, 0.1); border: 2px solid green; padding: 10px;">
+            <div class="queue-section now-serving-panel" id="now-serving-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="queue-section-title">
+                <i class="bi bi-broadcast-pin text-success"></i> <span>🎯 Now Serving</span>
+            </div>
+                    <button type="button" class="audio-toggle" id="queue-audio-toggle">
+                        🔈 Enable Voice Callouts
+                    </button>
+                </div>
+                <div class="row g-4">
+                    <div class="col-md-6 text-center">
+                        <div class="queue-number" id="now-serving-number">
+                            {% if now_serving %}{{ now_serving.queue_number }}{% else %}--{% endif %}
+                        </div>
+                        <p class="text-muted mb-1">🎫 Ticket Number</p>
+                        <p class="mb-0 text-uppercase fw-bold" id="now-serving-room">
+                            {% if now_serving and now_serving.room_number %}
+                                📍 Room {{ now_serving.room_number }}
+                            {% else %}
+                                ⏳ Please wait nearby
+                            {% endif %}
+                        </p>
+                        <small class="text-muted" id="now-serving-doctor">
+                            {% if now_serving and now_serving.assigned_doctor %}
+                                {{ now_serving.assigned_doctor.get_full_name }}
+                            {% else %}
+                                ---
+                            {% endif %}
+                        </small>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="fw-bold text-uppercase">📋 Up Next</h6>
+                        <ul class="list-unstyled mb-0" id="up-next-list">
+                            {% for entry in waiting %}
+                            <li class="d-flex align-items-center justify-content-between py-2 border-bottom">
+                                <span class="fw-bold">{{ entry.queue_number }}</span>
+                                <small class="text-muted">{{ entry.patient.full_name }}</small>
+                            </li>
+                            {% empty %}
+                            <li class="text-muted">✨ Queue is clear! We're ready to serve you.</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="queue-right" style="background: rgba(0, 0, 255, 0.1); border: 3px solid blue; padding: 10px;">
+            <div style="background: yellow; color: black; padding: 10px; margin-bottom: 10px; font-weight: bold; text-align: center;">
+                🔵 RIGHT COLUMN - Calendar & Gallery Here
+            </div>
+            <div class="calendar-widget">
+                <div class="calendar-header">
+                    <i class="bi bi-calendar3 me-2"></i>Today
+                </div>
+                <div class="calendar-date" id="calendarDate">{{ today|date:"d" }}</div>
+                <div class="calendar-day" id="calendarDay">{{ today|date:"l" }}</div>
+                <div class="calendar-time" id="calendarTime">{{ today|date:"g:i A" }}</div>
+                <div class="calendar-time-label">Current Time</div>
+                <div class="calendar-month-year" id="calendarMonthYear">{{ today|date:"F Y" }}</div>
+            </div>
+            <div class="queue-gallery-card flex-grow-1">
+                <div class="gallery-header">
+                    <span>Calm Corner</span>
+                    <small>{% if slideshow_images %}Rotating memories ({{ slideshow_images|length }} images){% else %}Wellness & Information{% endif %}</small>
+                </div>
+                <div class="gallery-viewport" id="gallery-viewport" style="min-height: 340px; display: block;">
+                    {% if slideshow_images and slideshow_images|length > 0 %}
+                        <!-- Image Slideshow -->
+                        {% for slide in slideshow_images %}
+                        <div class="gallery-slide {% if forloop.first %}active{% endif %}" data-index="{{ forloop.counter0 }}" style="{% if forloop.first %}opacity: 1 !important; z-index: 2; display: block;{% else %}opacity: 0; z-index: 1;{% endif %}">
+                            <img src="{{ slide.url }}" alt="{{ slide.caption }}" 
+                                 style="width: 100%; height: 100%; object-fit: cover; display: block;"
+                                 loading="lazy"
+                                 onload="console.log('✅ Image loaded: {{ slide.url }}'); this.parentElement.style.opacity='1'; this.parentElement.style.display='block';" 
+                                 onerror="console.error('❌ Failed: {{ slide.url }}'); var next = this.parentElement.nextElementSibling; if(next && next.classList.contains('gallery-slide')) { next.classList.add('active'); next.style.opacity='1'; } this.parentElement.remove();">
+                            <div class="gallery-caption">{{ slide.caption }}</div>
+                        </div>
+                        {% endfor %}
+                        {% if slideshow_images|length > 1 %}
+                        <div class="gallery-dots" style="position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; z-index: 10;">
+                            {% for slide in slideshow_images %}
+                            <span class="gallery-dot {% if forloop.first %}active{% endif %}" data-index="{{ forloop.counter0 }}" style="width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.3s;"></span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    {% else %}
+                        <!-- Alternative: Wellness Messages Display - ALWAYS VISIBLE -->
+                        <div class="gallery-empty" style="display: flex !important; flex-direction: column; align-items: center; justify-content: center; height: 100%; min-height: 340px; padding: 40px; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                            <div style="font-size: 80px; margin-bottom: 20px; animation: float 3s ease-in-out infinite;">🌿</div>
+                            <h3 style="color: white; margin-bottom: 16px; font-weight: 700;">Welcome to PrimeCare Hospital</h3>
+                            <p style="color: rgba(255,255,255,0.9); margin-bottom: 24px; font-size: 16px;">We're here to provide you with the best care possible.</p>
+                            <div style="background: rgba(255, 255, 255, 0.2); backdrop-filter: blur(10px); padding: 24px; border-radius: 16px; width: 100%; max-width: 400px; margin-bottom: 16px;">
+                                <p style="color: white; font-weight: 600; margin-bottom: 8px; font-size: 18px;">💡 Wellness Tip</p>
+                                <p style="color: rgba(255,255,255,0.95); font-size: 15px; line-height: 1.6;">Stay hydrated and take deep breaths while you wait. Our team is working to serve you as quickly as possible.</p>
+                            </div>
+                            <div style="background: rgba(255, 255, 255, 0.15); padding: 12px 20px; border-radius: 8px; width: 100%; max-width: 400px;">
+                                <small style="color: rgba(255,255,255,0.9);">📸 To add photos: Place images in <strong>media/queue_display/</strong> folder</small>
+                            </div>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="health-tip-panel flex-grow-1">
+                <p class="text-uppercase fw-bold mb-2">Wellness Spotlight</p>
+                <div id="health-tip-container">
+                    {% if health_tips %}
+                        {% for tip in health_tips %}
+                        <div class="health-tip-card {% if forloop.first %}active{% endif %}" data-tip-index="{{ forloop.counter0 }}">
+                            <div class="health-tip-title">
+                                {{ tip.icon }} {{ tip.title }}
+                            </div>
+                            <div class="health-tip-message">
+                                {{ tip.message }}
+                            </div>
+                            <small class="fw-bold">{{ tip.category|default:"General" }}</small>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <!-- Default Tips if none in database -->
+                        <div class="health-tip-card active" data-tip-index="0">
+                            <div class="health-tip-title">💧 Stay Hydrated!</div>
+                            <div class="health-tip-message">Welcome! Sip water frequently while you wait to keep energized for your consultation. We care about your well-being! 🌟</div>
+                        </div>
+                        <div class="health-tip-card" data-tip-index="1">
+                            <div class="health-tip-title">🧘 Practice Deep Breathing</div>
+                            <div class="health-tip-message">Take slow, deep breaths to help you relax. Breathe in through your nose for 4 counts, hold for 4, and exhale through your mouth for 4. It works wonders! 😌</div>
+                        </div>
+                        <div class="health-tip-card" data-tip-index="2">
+                            <div class="health-tip-title">📱 Limit Screen Time</div>
+                            <div class="health-tip-message">While waiting, try to rest your eyes. Look away from your phone or book every 20 minutes. Your eyes will thank you! 👀</div>
+                        </div>
+                        <div class="health-tip-card" data-tip-index="3">
+                            <div class="health-tip-title">🚶 Gentle Movement</div>
+                            <div class="health-tip-message">Feel free to stand and stretch gently if you've been sitting. Gentle movement improves circulation and helps reduce tension. 💪</div>
+                        </div>
+                        <div class="health-tip-card" data-tip-index="4">
+                            <div class="health-tip-title">😊 Stay Positive</div>
+                            <div class="health-tip-message">Remember, our healthcare team is here to help! We're working efficiently to ensure everyone receives the best care possible. Stay positive! 🌈</div>
+                        </div>
+                        <div class="health-tip-card" data-tip-index="5">
+                            <div class="health-tip-title">📝 Prepare Your Questions</div>
+                            <div class="health-tip-message">Use this time to note down any questions or concerns you'd like to discuss with your healthcare provider. It helps make the most of your consultation! 📋</div>
+                        </div>
+                        <div class="health-tip-card" data-tip-index="6">
+                            <div class="health-tip-title">🍎 Eat Nutritious Meals</div>
+                            <div class="health-tip-message">If possible, enjoy a light, nutritious snack while waiting. Fresh fruits, nuts, or whole grains give you sustained energy. Your body will appreciate it! 🥗</div>
+                        </div>
+                        <div class="health-tip-card" data-tip-index="7">
+                            <div class="health-tip-title">🤝 We're Here for You</div>
+                            <div class="health-tip-message">Your health is our priority! Our friendly staff is available to assist you with any questions or concerns. Don't hesitate to ask! 💙</div>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
 <!-- Audio Indicator -->
-<div class="audio-indicator" id="audioToggle" title="Toggle sound">
-    <i class="bi bi-volume-up" id="audioIcon"></i>
+<div class="audio-indicator" id="audioIndicator" title="Queue audio is muted">
+    <i class="bi bi-volume-mute"></i>
 </div>
+{% endblock %}
 
-<!-- Hidden audio element -->
-<audio id="notificationSound" preload="auto">
-    <source src="{% static 'hospital/sounds/notification.mp3' %}" type="audio/mpeg">
-</audio>
-
+{% block extra_js %}
 <script>
-// Audio management
-let audioEnabled = true;
-const audioToggle = document.getElementById('audioToggle');
-const audioIcon = document.getElementById('audioIcon');
-const notificationSound = document.getElementById('notificationSound');
+(function() {
+    const feedUrl = "{% url 'hospital:queue_status_feed' %}{% if selected_department %}?department={{ selected_department }}{% endif %}";
+    const audioToggleBtn = document.getElementById('queue-audio-toggle');
+    const audioIndicator = document.getElementById('audioIndicator');
+    const waitingCountEl = document.getElementById('waitingCount');
+    const progressCountEl = document.getElementById('progressCount');
+    const upNextList = document.getElementById('up-next-list');
+    const healthTipContainer = document.getElementById('health-tip-container');
+    const waitingList = document.getElementById('waitingList');
+    // Initialize gallery slideshow
+    let gallerySlides = document.querySelectorAll('.gallery-slide');
+    let galleryDots = document.querySelectorAll('.gallery-dot');
+    let galleryIndex = 0;
+    let galleryInterval = null;
 
-audioToggle.addEventListener('click', function() {
-    audioEnabled = !audioEnabled;
-    audioIcon.className = audioEnabled ? 'bi bi-volume-up' : 'bi bi-volume-mute';
-});
-
-// Update wait timers
-function updateTimers() {
-    document.querySelectorAll('.wait-timer').forEach(timer => {
-        const checkedIn = new Date(timer.dataset.checkedIn);
-        const now = new Date();
-        const diffMinutes = Math.floor((now - checkedIn) / (1000 * 60));
-        const timerText = timer.querySelector('.timer-text');
+    function initGallery() {
+        gallerySlides = document.querySelectorAll('.gallery-slide');
+        galleryDots = document.querySelectorAll('.gallery-dot');
         
-        if (diffMinutes < 1) {
-            timerText.textContent = 'Just now';
-        } else if (diffMinutes < 60) {
-            timerText.textContent = `GHS {diffMinutes} min`;
-            if (diffMinutes > 30) {
-                timer.classList.add('long');
+        // If no slides, show alternative content (already in template)
+        if (gallerySlides.length === 0) {
+            console.log('📸 No images found - showing wellness message instead');
+            return;
+        }
+        
+        console.log(`📸 Gallery initialized: ${gallerySlides.length} slides, ${galleryDots.length} dots`);
+        
+        // Ensure first slide is active
+        if (gallerySlides.length > 0) {
+            gallerySlides[0].classList.add('active');
+            gallerySlides[0].style.opacity = '1';
+            gallerySlides[0].style.zIndex = '2';
+        }
+        
+        // Set up dot click handlers
+        galleryDots.forEach(dot => {
+            dot.addEventListener('click', function() {
+                const idx = parseInt(this.dataset.index, 10) || 0;
+                setGallerySlide(idx);
+            });
+        });
+
+        // Start auto-rotation if more than one slide
+        if (gallerySlides.length > 1) {
+            if (galleryInterval) clearInterval(galleryInterval);
+            galleryInterval = setInterval(() => {
+                setGallerySlide(galleryIndex + 1);
+            }, 8000);
+            console.log('📸 Auto-rotation started (8s interval)');
+        }
+    }
+
+    function setGallerySlide(nextIndex) {
+        if (!gallerySlides || gallerySlides.length === 0) return;
+        gallerySlides.forEach(slide => slide.classList.remove('active'));
+        galleryDots.forEach(dot => dot.classList.remove('active'));
+        galleryIndex = nextIndex % gallerySlides.length;
+        if (gallerySlides[galleryIndex]) {
+            gallerySlides[galleryIndex].classList.add('active');
+        }
+        if (galleryDots[galleryIndex]) {
+            galleryDots[galleryIndex].classList.add('active');
+        }
+    }
+
+    // Initialize gallery on page load and after DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initGallery);
+    } else {
+        initGallery();
+    }
+    
+    // Also try to initialize after a short delay in case images load late
+    setTimeout(initGallery, 1000);
+    const defaultHealthTips = [
+        {
+            icon: '💧',
+            title: 'Stay Hydrated!',
+            message: 'Welcome! Sip water frequently while you wait to keep energized for your consultation. We care about your well-being! 🌟',
+            category: 'Wellness'
+        },
+        {
+            icon: '🧘',
+            title: 'Practice Deep Breathing',
+            message: 'Take slow, deep breaths to help you relax. Inhale for 4, hold for 4, exhale for 4. It works wonders! 😌',
+            category: 'Calm'
+        },
+        {
+            icon: '📱',
+            title: 'Limit Screen Time',
+            message: 'Rest your eyes every 20 minutes by looking away from your phone or book. Your eyes will thank you! 👀',
+            category: 'Vision'
+        },
+        {
+            icon: '🚶',
+            title: 'Gentle Movement',
+            message: 'Stand and stretch gently if you have been sitting. Light movement improves circulation and eases tension. 💪',
+            category: 'Mobility'
+        },
+        {
+            icon: '😊',
+            title: 'Stay Positive',
+            message: 'Our healthcare team is here for you! We’re working efficiently to ensure everyone receives the best care possible. 🌈',
+            category: 'Mindset'
+        },
+        {
+            icon: '📝',
+            title: 'Prepare Your Questions',
+            message: 'Use this time to note any questions or concerns for your provider. It helps you get the most from your visit. 📋',
+            category: 'Preparation'
+        },
+        {
+            icon: '🍎',
+            title: 'Choose Nutritious Snacks',
+            message: 'If you brought a snack, opt for fruits, nuts, or whole grains to keep your energy steady. 🥗',
+            category: 'Nutrition'
+        },
+        {
+            icon: '🤝',
+            title: 'We’re Here for You',
+            message: 'Need assistance? Our friendly staff is nearby and ready to help with any questions. 💙',
+            category: 'Support'
+        }
+    ];
+
+    let audioEnabled = false;
+    let lastAnnouncementId = "{{ now_serving.id|default:'' }}";
+    let tipPointer = 0;
+    let speechSynthesisSupported = false;
+    let userInteracted = false;
+
+    // Check if speech synthesis is available
+    function checkSpeechSupport() {
+        speechSynthesisSupported = 'speechSynthesis' in window;
+        if (!speechSynthesisSupported) {
+            console.warn('⚠️ Speech Synthesis not supported in this browser');
+            if (audioToggleBtn) {
+                audioToggleBtn.disabled = true;
+                audioToggleBtn.textContent = '🔇 Voice Not Supported';
             }
-        } else {
-            const hours = Math.floor(diffMinutes / 60);
-            const mins = diffMinutes % 60;
-            timerText.textContent = `GHS {hours}h GHS {mins}m`;
-            timer.classList.add('long');
+        }
+        return speechSynthesisSupported;
+    }
+
+    // Enable audio after first user interaction (to satisfy browser autoplay policy)
+    function enableAudioOnInteraction() {
+        if (userInteracted) return;
+        userInteracted = true;
+        // Auto-enable audio after first user interaction
+        if (speechSynthesisSupported && !audioEnabled) {
+            setAudioState(true);
+            console.log('✅ Audio enabled after user interaction');
+        }
+    }
+
+    // Add event listeners for user interaction (multiple events to catch any interaction)
+    document.addEventListener('click', enableAudioOnInteraction, { once: true });
+    document.addEventListener('touchstart', enableAudioOnInteraction, { once: true });
+    document.addEventListener('keydown', enableAudioOnInteraction, { once: true });
+    document.addEventListener('mousedown', enableAudioOnInteraction, { once: true });
+    
+    // Also enable on page load if user has already interacted (for page refreshes)
+    if (document.hasFocus()) {
+        setTimeout(() => {
+            if (speechSynthesisSupported && !audioEnabled) {
+                enableAudioOnInteraction();
+            }
+        }, 1000);
+    }
+
+    function setAudioState(enabled) {
+        audioEnabled = enabled && speechSynthesisSupported;
+        if (audioToggleBtn) {
+            audioToggleBtn.classList.toggle('active', audioEnabled);
+            if (!speechSynthesisSupported) {
+                audioToggleBtn.textContent = '🔇 Voice Not Supported';
+                audioToggleBtn.disabled = true;
+            } else {
+                audioToggleBtn.textContent = audioEnabled ? '🔊 Voice Enabled' : '🔈 Enable Voice Callouts';
+                audioToggleBtn.disabled = false;
+            }
+        }
+        if (audioIndicator) {
+            audioIndicator.querySelector('i').className = audioEnabled ? 'bi bi-volume-up' : 'bi bi-volume-mute';
+            audioIndicator.title = audioEnabled ? 'Queue audio is active' : 'Queue audio is muted';
+            audioIndicator.style.opacity = speechSynthesisSupported ? '1' : '0.5';
+        }
+    }
+
+    function toggleAudio() {
+        if (!speechSynthesisSupported) {
+            alert('Speech synthesis is not supported in your browser. Please use a modern browser like Chrome, Firefox, or Edge.');
+            return;
+        }
+        enableAudioOnInteraction(); // Ensure user has interacted
+        const newState = !audioEnabled;
+        setAudioState(newState);
+        console.log(`🔊 Audio ${newState ? 'ENABLED' : 'DISABLED'}`);
+        if (newState) {
+            // Test announcement
+            const testEntry = {
+                queue_number: 'TEST',
+                patient: { full_name: 'Test Patient' }
+            };
+            setTimeout(() => announce(testEntry, true), 500);
+        }
+    }
+
+    audioToggleBtn?.addEventListener('click', toggleAudio);
+    audioIndicator?.addEventListener('click', toggleAudio);
+
+    function announce(entry, force = false) {
+        // Check prerequisites
+        if (!entry) {
+            console.warn('⚠️ Cannot announce: No entry provided');
+            return;
+        }
+        
+        if (!speechSynthesisSupported) {
+            console.warn('⚠️ Cannot announce: Speech synthesis not supported');
+            return;
+        }
+        
+        if (!audioEnabled && !force) {
+            console.log('🔇 Audio disabled, skipping announcement');
+            return;
+        }
+
+        try {
+            // Ensure user has interacted (required by browser autoplay policy)
+            if (!userInteracted) {
+                console.log('⏳ Waiting for user interaction before announcing...');
+                return;
+            }
+
+            // Build announcement message
+            const queueNum = entry.queue_number ? entry.queue_number.replace('-', ' ') : 'Unknown';
+            const roomInfo = entry.room_number ? `Room ${entry.room_number}` : 'the consultation area';
+            const message = `Ticket number ${queueNum}, please proceed to ${roomInfo}.`;
+            
+            console.log('🔊 Announcing:', message);
+            
+            // Create and configure utterance
+            const utterance = new SpeechSynthesisUtterance(message);
+            utterance.rate = 0.9; // Slightly slower for clarity
+            utterance.pitch = 1.0;
+            utterance.volume = 1.0;
+            utterance.lang = 'en-US';
+            
+            // Handle events
+            utterance.onstart = () => {
+                console.log('✅ Speech started');
+            };
+            
+            utterance.onerror = (event) => {
+                console.error('❌ Speech error:', event.error);
+                if (event.error === 'not-allowed') {
+                    alert('Audio permission denied. Please enable audio in your browser settings.');
+                }
+            };
+            
+            utterance.onend = () => {
+                console.log('✅ Speech ended');
+            };
+            
+            // Cancel any ongoing speech and speak
+            window.speechSynthesis.cancel();
+            
+            // Small delay to ensure cancellation is processed
+            setTimeout(() => {
+                window.speechSynthesis.speak(utterance);
+            }, 100);
+            
+        } catch (error) {
+            console.error('❌ Error in announce function:', error);
+        }
+    }
+
+    function renderNowServing(entry) {
+        const numberEl = document.getElementById('now-serving-number');
+        const roomEl = document.getElementById('now-serving-room');
+        const doctorEl = document.getElementById('now-serving-doctor');
+        if (!numberEl || !roomEl || !doctorEl) return;
+
+        if (!entry) {
+            numberEl.textContent = '--';
+            roomEl.textContent = 'Waiting Area';
+            doctorEl.textContent = '---';
+            return;
+        }
+
+        numberEl.textContent = entry.queue_number;
+        roomEl.textContent = entry.room_number ? `📍 Room ${entry.room_number}` : '⏳ Please wait nearby';
+        doctorEl.textContent = entry.assigned_doctor || '---';
+
+        // Announce when queue number changes (new patient called)
+        if (entry.id && entry.id !== lastAnnouncementId) {
+            console.log('📢 New queue entry detected:', entry.queue_number, 'Previous:', lastAnnouncementId);
+            announce(entry);
+            lastAnnouncementId = entry.id;
+        }
+    }
+
+    function renderUpNext(entries) {
+        if (!upNextList) return;
+        upNextList.innerHTML = '';
+        if (!entries || !entries.length) {
+            upNextList.innerHTML = '<li class="text-muted">✨ Queue is clear! We\'re ready to serve you. 🎉</li>';
+            return;
+        }
+        entries.forEach(entry => {
+            const li = document.createElement('li');
+            li.className = 'd-flex align-items-center justify-content-between py-2 border-bottom';
+            li.innerHTML = `<span class="fw-bold">${entry.queue_number}</span><small class="text-muted">${entry.patient || ''}</small>`;
+            upNextList.appendChild(li);
+        });
+    }
+
+    let tipsInitialized = false;
+    
+    function renderTips(tips) {
+        if (!healthTipContainer || tipsInitialized) return;
+
+        const normalizeTips = (items) => {
+            return items
+                .filter(Boolean)
+                .map(item => ({
+                    icon: item.icon || '💡',
+                    title: item.title || '',
+                    message: item.message || '',
+                    category: item.category || 'General'
+                }));
+        };
+
+        let tipsToRender = Array.isArray(tips) ? normalizeTips(tips) : [];
+
+        if (tipsToRender.length > 0 && tipsToRender.length < 2 && defaultHealthTips.length) {
+            const needed = Math.min(defaultHealthTips.length, 3 - tipsToRender.length);
+            tipsToRender = tipsToRender.concat(defaultHealthTips.slice(0, needed));
+        }
+
+        if (tipsToRender.length === 0) {
+            if (defaultHealthTips.length > 0) {
+                tipsToRender = normalizeTips(defaultHealthTips.slice(0, 3));
+            } else {
+                const existingCards = healthTipContainer.querySelectorAll('.health-tip-card');
+                if (existingCards.length > 0) {
+                    tipsInitialized = true;
+                    tipPointer = 0;
+                    healthTipContainer.dataset.initialized = '1';
+                }
+                return;
+            }
+        }
+
+        healthTipContainer.innerHTML = '';
+        tipsToRender.forEach((tip, index) => {
+            const card = document.createElement('div');
+            card.className = 'health-tip-card' + (index === 0 ? ' active' : '');
+            card.dataset.tipIndex = index;
+            card.innerHTML = `
+                <div class="health-tip-title">${tip.icon || '💡'} ${tip.title}</div>
+                <div class="health-tip-message">${tip.message}</div>
+                <small class="fw-bold">${tip.category || 'General'}</small>
+            `;
+            healthTipContainer.appendChild(card);
+        });
+
+        healthTipContainer.dataset.initialized = '1';
+        tipsInitialized = true;
+        tipPointer = 0;
+    }
+    
+    function rotateTips() {
+        if (!healthTipContainer || !tipsInitialized) return;
+        const cards = Array.from(healthTipContainer.querySelectorAll('.health-tip-card'));
+        if (cards.length <= 1) return;
+        
+        // Find current active card
+        const activeIndex = cards.findIndex(card => card.classList.contains('active'));
+        if (activeIndex === -1 && cards.length > 0) {
+            cards[0].classList.add('active');
+            tipPointer = 0;
+            return;
+        }
+        
+        // Remove active class with transition
+        cards.forEach(card => card.classList.remove('active'));
+        
+        // Set next active card after a brief delay for smooth transition
+        setTimeout(() => {
+            tipPointer = (activeIndex + 1) % cards.length;
+            if (cards[tipPointer]) {
+                cards[tipPointer].classList.add('active');
+            }
+        }, 50);
+    }
+
+    function updateCounts(waitingLength, progressLength, completedCount, avgWait) {
+        // Normalize values
+        const newWaiting = parseInt(waitingLength) || 0;
+        const newProgress = parseInt(progressLength) || 0;
+        const newCompleted = parseInt(completedCount) || 0;
+        const newAvgWait = avgWait !== null && avgWait !== undefined ? parseInt(avgWait) : null;
+        
+        // Only update if values changed to prevent unnecessary reflows and blinking
+        if (waitingCountEl) {
+            const currentWaiting = parseInt(waitingCountEl.textContent) || 0;
+            if (currentWaiting !== newWaiting) {
+                waitingCountEl.textContent = newWaiting;
+            }
+        }
+        
+        if (progressCountEl) {
+            const currentProgress = parseInt(progressCountEl.textContent) || 0;
+            if (currentProgress !== newProgress) {
+                progressCountEl.textContent = newProgress;
+            }
+        }
+        
+        const completedCountEl = document.getElementById('completedCount');
+        if (completedCountEl) {
+            // Parse current value - handle both numeric and '--' or other text
+            let currentCompleted = 0;
+            const currentText = completedCountEl.textContent.trim();
+            if (currentText && currentText !== '--' && !isNaN(currentText)) {
+                currentCompleted = parseInt(currentText) || 0;
+            }
+            
+            if (currentCompleted !== newCompleted) {
+                completedCountEl.textContent = newCompleted;
+                console.log('✅ Updated completed count:', currentCompleted, '->', newCompleted);
+            } else if (newCompleted === 0 && currentText === '--') {
+                // Also update if showing '--' and we have 0
+                completedCountEl.textContent = newCompleted;
+            }
+        }
+        
+        const avgWaitEl = document.getElementById('avgWaitTime');
+        if (avgWaitEl) {
+            const currentAvgWait = avgWaitEl.textContent === '--' ? null : parseInt(avgWaitEl.textContent);
+            if (currentAvgWait !== newAvgWait) {
+                avgWaitEl.textContent = newAvgWait !== null ? newAvgWait : '--';
+            }
+        }
+    }
+
+    async function fetchFeed() {
+        try {
+            const response = await fetch(feedUrl, { 
+                headers: { 'Accept': 'application/json' },
+                cache: 'no-cache'
+            });
+            if (!response.ok) {
+                console.warn('Queue feed response not OK:', response.status);
+                return;
+            }
+            const data = await response.json();
+            
+            // Render components (only update what changed)
+            renderNowServing(data.now_serving);
+            renderUpNext(data.up_next);
+            
+            // Only initialize tips once, don't re-render on every update to prevent blinking
+            // This prevents the tips from being re-rendered on every feed update which causes blinking
+            if (!healthTipContainer.dataset.initialized) {
+                if (data.health_tips && data.health_tips.length > 0) {
+                    renderTips(data.health_tips);
+                } else {
+                    // Initialize with default tips from HTML if no tips from API
+                    const defaultCards = healthTipContainer.querySelectorAll('.health-tip-card');
+                    if (defaultCards.length > 0) {
+                        healthTipContainer.dataset.initialized = '1';
+                        tipPointer = 0;
+                    }
+                }
+            }
+            
+            // Use proper counts from the API response - ensure we get numbers, not strings
+            const waitingCount = data.waiting_count !== undefined ? parseInt(data.waiting_count) || 0 : (data.up_next || []).length;
+            const progressCount = data.in_progress_count !== undefined ? parseInt(data.in_progress_count) || 0 : (data.now_serving ? 1 : 0);
+            
+            // Fix completed count - handle all edge cases
+            let completedCount = 0;
+            if (data.completed_today !== undefined && data.completed_today !== null && data.completed_today !== '') {
+                // Convert to number, handling strings and numbers
+                const parsed = parseInt(data.completed_today);
+                if (!isNaN(parsed)) {
+                    completedCount = parsed;
+                } else {
+                    completedCount = 0;
+                }
+            } else {
+                completedCount = 0;
+            }
+            
+            const avgWait = data.avg_wait_minutes !== undefined && data.avg_wait_minutes !== null ? parseInt(data.avg_wait_minutes) : null;
+            
+            // Debug logging for completed count
+            if (data.completed_today !== undefined) {
+                console.log('📊 Queue Feed Data:', {
+                    waiting: waitingCount,
+                    in_progress: progressCount,
+                    completed_raw: data.completed_today,
+                    completed_type: typeof data.completed_today,
+                    completed_parsed: completedCount,
+                    avg_wait: avgWait,
+                    timestamp: new Date().toLocaleTimeString()
+                });
+            }
+            
+            updateCounts(
+                waitingCount, 
+                progressCount,
+                completedCount,
+                avgWait
+            );
+        } catch (error) {
+            console.error('Queue feed error:', error);
+        }
+    }
+
+    function updateTimers() {
+        document.querySelectorAll('.wait-timer').forEach(timer => {
+            const checkedIn = new Date(timer.dataset.checkedIn);
+            const now = new Date();
+            const diffMinutes = Math.floor((now - checkedIn) / 60000);
+            const textNode = timer.querySelector('.timer-text');
+            if (!textNode) return;
+
+            if (diffMinutes < 1) {
+                textNode.textContent = 'Just now';
+            } else if (diffMinutes < 60) {
+                textNode.textContent = `${diffMinutes} min`;
+            } else {
+                const hours = Math.floor(diffMinutes / 60);
+                const mins = diffMinutes % 60;
+                textNode.textContent = `${hours}h ${mins}m`;
+            }
+        });
+    }
+
+    function updateCalendar() {
+        const now = new Date();
+        const calendarTime = document.getElementById('calendarTime');
+        const calendarDate = document.getElementById('calendarDate');
+        const calendarDay = document.getElementById('calendarDay');
+        const calendarMonthYear = document.getElementById('calendarMonthYear');
+        
+        if (calendarTime) {
+            const hours = now.getHours();
+            const minutes = now.getMinutes();
+            const ampm = hours >= 12 ? 'PM' : 'AM';
+            const displayHours = hours % 12 || 12;
+            const displayMinutes = minutes.toString().padStart(2, '0');
+            calendarTime.textContent = `${displayHours}:${displayMinutes} ${ampm}`;
+        }
+        
+        if (calendarDate) {
+            calendarDate.textContent = now.getDate();
+        }
+        
+        if (calendarDay) {
+            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            calendarDay.textContent = days[now.getDay()];
+        }
+        
+        if (calendarMonthYear) {
+            const months = ['January', 'February', 'March', 'April', 'May', 'June', 
+                          'July', 'August', 'September', 'October', 'November', 'December'];
+            calendarMonthYear.textContent = `${months[now.getMonth()]} ${now.getFullYear()}`;
+        }
+    }
+
+    // Initialize tip rotation interval - only start once
+    let tipRotationInterval = null;
+    let rotationStarted = false;
+    
+    function startTipRotation() {
+        if (rotationStarted || tipRotationInterval) return;
+        rotationStarted = true;
+        
+        tipRotationInterval = setInterval(() => {
+            rotateTips();
+        }, 12000); // Rotate every 12 seconds to reduce blinking
+    }
+    
+    // Start tip rotation after tips are initialized
+    if (healthTipContainer) {
+        setTimeout(() => {
+            startTipRotation();
+        }, 5000); // Start rotation 5 seconds after page load
+    }
+    
+    // Check speech synthesis support on load
+    checkSpeechSupport();
+    
+    // Handle "Call Next" button to trigger announcement
+    const callNextBtn = document.getElementById('callNextBtn');
+    const callNextForm = document.getElementById('callNextForm');
+    
+    if (callNextForm) {
+        callNextForm.addEventListener('submit', function(e) {
+            enableAudioOnInteraction(); // Enable audio if not already enabled
+            console.log('📞 Call Next button clicked');
+            
+            // After form submission, wait a bit then fetch updated data and announce
+            setTimeout(() => {
+                fetchFeed().then(() => {
+                    // Small delay to ensure data is updated
+                    setTimeout(() => {
+                        fetchFeed();
+                    }, 500);
+                }).catch(err => {
+                    console.error('Error fetching after call next:', err);
+                    // Retry after a longer delay
+                    setTimeout(() => fetchFeed(), 1000);
+                });
+            }, 300);
+        });
+    }
+    
+    // Also listen for "Call" buttons in the waiting list
+    if (waitingList) {
+        const originalListener = waitingList.onclick;
+        waitingList.addEventListener('click', function(e) {
+            const callBtn = e.target.closest('a[href*="queue_action"], a[href*="call"], .btn-call');
+            if (callBtn && callBtn.href) {
+                enableAudioOnInteraction();
+                console.log('📞 Individual Call button clicked');
+                // After clicking, wait a bit then fetch updated data
+                setTimeout(() => {
+                    fetchFeed();
+                }, 1000);
+            }
+        });
+    }
+    
+    // Debug: Log slideshow images
+    console.log('🔍 DEBUG: Checking slideshow images...');
+    {% if slideshow_images %}
+    console.log('✅ Slideshow images found:', {{ slideshow_images|length }});
+    {% for slide in slideshow_images|slice:":5" %}
+    console.log('  📷 {{ slide.url }}');
+    {% endfor %}
+    {% if slideshow_images|length > 5 %}
+    console.log('  ... and {{ slideshow_images|length|add:"-5" }} more');
+    {% endif %}
+    {% else %}
+    console.warn('⚠️ No slideshow images found in template');
+    console.warn('⚠️ This means the view did not find any images');
+    console.warn('⚠️ Check server console for image search debug output');
+    console.warn('⚠️ Searched folders: media/queue_display/, media/waiting_room_slides/, media/reception_slides/, media/imaging_studies/');
+    {% endif %}
+    
+    // Verify gallery viewport exists
+    const viewport = document.getElementById('gallery-viewport');
+    if (viewport) {
+        console.log('✅ Gallery viewport found in DOM');
+        console.log('📐 Viewport height:', viewport.offsetHeight, 'px');
+        const emptyDiv = viewport.querySelector('.gallery-empty');
+        const slides = viewport.querySelectorAll('.gallery-slide');
+        console.log('📊 Empty div:', emptyDiv ? 'FOUND' : 'NOT FOUND');
+        console.log('📊 Slides:', slides.length);
+    } else {
+        console.error('❌ Gallery viewport NOT found in DOM!');
+    }
+    
+    // Check if right column exists
+    const rightColumn = document.querySelector('.queue-right');
+    const mainContainer = document.querySelector('.queue-main');
+    const leftColumn = document.querySelector('.queue-left');
+    
+    console.log('🔍 LAYOUT CHECK:');
+    console.log('  - queue-main exists:', mainContainer ? 'YES' : 'NO');
+    console.log('  - queue-left exists:', leftColumn ? 'YES' : 'NO');
+    console.log('  - queue-right exists:', rightColumn ? 'YES' : 'NO');
+    
+    if (rightColumn) {
+        console.log('  - Right column width:', rightColumn.offsetWidth, 'px');
+        console.log('  - Right column visible:', window.getComputedStyle(rightColumn).display !== 'none');
+        console.log('  - Right column opacity:', window.getComputedStyle(rightColumn).opacity);
+    }
+    
+    if (mainContainer) {
+        console.log('  - Main container display:', window.getComputedStyle(mainContainer).display);
+        console.log('  - Main container flex-direction:', window.getComputedStyle(mainContainer).flexDirection);
+        console.log('  - Main container width:', mainContainer.offsetWidth, 'px');
+    }
+    
+    // Initial fetch
+    fetchFeed();
+    
+    // Set up periodic updates - use reasonable interval
+    let feedInterval = setInterval(() => {
+        fetchFeed();
+    }, 8000); // Update every 8 seconds
+    
+    // Update timers
+    updateTimers();
+    let timerInterval = setInterval(updateTimers, 60000);
+    
+    // Update calendar
+    updateCalendar();
+    let calendarInterval = setInterval(updateCalendar, 1000);
+    
+    // Clean up intervals on page unload
+    window.addEventListener('beforeunload', () => {
+        if (tipRotationInterval) clearInterval(tipRotationInterval);
+        if (feedInterval) clearInterval(feedInterval);
+        if (timerInterval) clearInterval(timerInterval);
+        if (calendarInterval) clearInterval(calendarInterval);
+        if (window.speechSynthesis) {
+            window.speechSynthesis.cancel();
         }
     });
-}
-
-// Initial timer update
-updateTimers();
-// Update every minute
-setInterval(updateTimers, 60000);
-
-// Auto-refresh queue every 10 seconds
-setInterval(function() {
-    location.reload();
-}, 10000);
-
-// Call next with audio
-document.getElementById('callNextForm')?.addEventListener('submit', function(e) {
-    if (audioEnabled) {
-        notificationSound.play().catch(err => console.log('Audio play failed:', err));
-    }
-});
+    
+    // Log initial state
+    console.log('🎙️ Audio system initialized:', {
+        speechSupported: speechSynthesisSupported,
+        audioEnabled: audioEnabled,
+        userInteracted: userInteracted,
+        nowServingId: lastAnnouncementId
+    });
+})();
 </script>
 {% endblock %}
 

@@ -1,0 +1,278 @@
+{% extends "hospital/base.html" %}
+{% load static %}
+
+{% block title %}Detailed Financial Report{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h4 class="mb-0">
+                        <i class="bi bi-file-earmark-spreadsheet"></i> Detailed Financial Report
+                    </h4>
+                </div>
+                <div class="card-body">
+                    <!-- Filters Section -->
+                    <form method="get" class="mb-4">
+                        <div class="row g-3">
+                            <div class="col-md-3">
+                                <label class="form-label">Account</label>
+                                <select name="account" class="form-select">
+                                    <option value="">All Accounts</option>
+                                    {% for acc in all_accounts %}
+                                        <option value="{{ acc.id }}" {% if filters.account_id == acc.id|stringformat:"s" %}selected{% endif %}>
+                                            {{ acc.account_code }} - {{ acc.account_name }}
+                                        </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            
+                            <div class="col-md-2">
+                                <label class="form-label">Account Category</label>
+                                <select name="account_category" class="form-select">
+                                    <option value="">All Categories</option>
+                                    {% for cat in account_categories %}
+                                        <option value="{{ cat.id }}" {% if filters.account_category_id == cat.id|stringformat:"s" %}selected{% endif %}>
+                                            {{ cat.code }} - {{ cat.name }}
+                                        </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            
+                            <div class="col-md-2">
+                                <label class="form-label">Account Type</label>
+                                <select name="account_type" class="form-select">
+                                    <option value="">All Types</option>
+                                    {% for type_code, type_name in account_types %}
+                                        <option value="{{ type_code }}" {% if filters.account_type == type_code %}selected{% endif %}>
+                                            {{ type_name }}
+                                        </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            
+                            <div class="col-md-2">
+                                <label class="form-label">Start Date</label>
+                                <input type="date" name="start_date" class="form-control" value="{{ filters.start_date }}">
+                            </div>
+                            
+                            <div class="col-md-2">
+                                <label class="form-label">End Date</label>
+                                <input type="date" name="end_date" class="form-control" value="{{ filters.end_date }}">
+                            </div>
+                            
+                            <div class="col-md-1">
+                                <label class="form-label">Include All</label>
+                                <div class="form-check form-switch mt-2">
+                                    <input class="form-check-input" type="checkbox" name="include_all" value="true" 
+                                           {% if filters.include_all %}checked{% endif %}>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row mt-3">
+                            <div class="col-12">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-search"></i> Generate Report
+                                </button>
+                                <a href="{% url 'hospital:detailed_financial_report' %}" class="btn btn-secondary">
+                                    <i class="bi bi-arrow-clockwise"></i> Reset
+                                </a>
+                            </div>
+                        </div>
+                    </form>
+                    
+                    <!-- Summary Section -->
+                    <div class="row mb-4">
+                        <div class="col-md-3">
+                            <div class="card bg-success text-white">
+                                <div class="card-body">
+                                    <h6>Total Revenue</h6>
+                                    <h3>GHS {{ report_data.summary.total_revenue|floatformat:2 }}</h3>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-danger text-white">
+                                <div class="card-body">
+                                    <h6>Total Expenses</h6>
+                                    <h3>GHS {{ report_data.summary.total_expenses|floatformat:2 }}</h3>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-info text-white">
+                                <div class="card-body">
+                                    <h6>Net Income</h6>
+                                    <h3>GHS {{ report_data.summary.net_income|floatformat:2 }}</h3>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-primary text-white">
+                                <div class="card-body">
+                                    <h6>Total Assets</h6>
+                                    <h3>GHS {{ report_data.summary.total_assets|floatformat:2 }}</h3>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Account Breakdown -->
+                    <div class="accordion" id="accountAccordion">
+                        {% for account_data in report_data.accounts %}
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="heading{{ account_data.account.id }}">
+                                    <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}" type="button" 
+                                            data-bs-toggle="collapse" data-bs-target="#collapse{{ account_data.account.id }}">
+                                        <div class="d-flex justify-content-between w-100 me-3">
+                                            <div>
+                                                <strong>{{ account_data.account.account_code }}</strong> - {{ account_data.account.account_name }}
+                                                <span class="badge bg-secondary ms-2">{{ account_data.account.get_account_type_display }}</span>
+                                            </div>
+                                            <div class="text-end">
+                                                <span class="badge bg-primary">Opening: GHS {{ account_data.opening_balance|floatformat:2 }}</span>
+                                                <span class="badge bg-success ms-2">Closing: GHS {{ account_data.closing_balance|floatformat:2 }}</span>
+                                            </div>
+                                        </div>
+                                    </button>
+                                </h2>
+                                <div id="collapse{{ account_data.account.id }}" 
+                                     class="accordion-collapse collapse {% if forloop.first %}show{% endif %}" 
+                                     data-bs-parent="#accountAccordion">
+                                    <div class="accordion-body">
+                                        <!-- Transaction Summary -->
+                                        <div class="row mb-3">
+                                            <div class="col-md-4">
+                                                <strong>Total Debits:</strong> GHS {{ account_data.total_debit|floatformat:2 }}
+                                            </div>
+                                            <div class="col-md-4">
+                                                <strong>Total Credits:</strong> GHS {{ account_data.total_credit|floatformat:2 }}
+                                            </div>
+                                            <div class="col-md-4">
+                                                <strong>Balance:</strong> GHS {{ account_data.closing_balance|floatformat:2 }}
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Transactions Table -->
+                                        {% if account_data.transactions %}
+                                            <h6>Transactions</h6>
+                                            <div class="table-responsive">
+                                                <table class="table table-sm table-striped">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>Date</th>
+                                                            <th>Description</th>
+                                                            <th>Reference</th>
+                                                            <th class="text-end">Debit</th>
+                                                            <th class="text-end">Credit</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {% for trans in account_data.transactions %}
+                                                            <tr>
+                                                                <td>{{ trans.date|date:"Y-m-d" }}</td>
+                                                                <td>{{ trans.description|truncatewords:10 }}</td>
+                                                                <td>{{ trans.reference }}</td>
+                                                                <td class="text-end">{% if trans.debit %}{{ trans.debit|floatformat:2 }}{% else %}-{% endif %}</td>
+                                                                <td class="text-end">{% if trans.credit %}{{ trans.credit|floatformat:2 }}{% else %}-{% endif %}</td>
+                                                            </tr>
+                                                        {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        {% endif %}
+                                        
+                                        <!-- Related Data -->
+                                        <div class="row mt-3">
+                                            {% if account_data.related_data.cashbook_entries %}
+                                                <div class="col-md-6">
+                                                    <h6>Cashbook Entries ({{ account_data.related_data.cashbook_entries|length }})</h6>
+                                                    <ul class="list-group">
+                                                        {% for entry in account_data.related_data.cashbook_entries %}
+                                                            <li class="list-group-item">
+                                                                {{ entry.entry_number }} - {{ entry.entry_date|date:"Y-m-d" }} - 
+                                                                GHS {{ entry.amount|floatformat:2 }}
+                                                            </li>
+                                                        {% endfor %}
+                                                    </ul>
+                                                </div>
+                                            {% endif %}
+                                            
+                                            {% if account_data.related_data.receivables %}
+                                                <div class="col-md-6">
+                                                    <h6>Receivables ({{ account_data.related_data.receivables|length }})</h6>
+                                                    <ul class="list-group">
+                                                        {% for rec in account_data.related_data.receivables %}
+                                                            <li class="list-group-item">
+                                                                {{ rec.invoice.invoice_number }} - 
+                                                                Balance: GHS {{ rec.balance_due|floatformat:2 }}
+                                                            </li>
+                                                        {% endfor %}
+                                                    </ul>
+                                                </div>
+                                            {% endif %}
+                                            
+                                            {% if account_data.related_data.payables %}
+                                                <div class="col-md-6">
+                                                    <h6>Payables ({{ account_data.related_data.payables|length }})</h6>
+                                                    <ul class="list-group">
+                                                        {% for pay in account_data.related_data.payables %}
+                                                            <li class="list-group-item">
+                                                                {{ pay.bill_number }} - 
+                                                                Balance: GHS {{ pay.balance_due|floatformat:2 }}
+                                                            </li>
+                                                        {% endfor %}
+                                                    </ul>
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        {% empty %}
+                            <div class="alert alert-info">
+                                <i class="bi bi-info-circle"></i> No accounts found matching the selected filters.
+                            </div>
+                        {% endfor %}
+                    </div>
+                    
+                    <!-- Category Summary -->
+                    {% if report_data.by_category %}
+                        <div class="mt-4">
+                            <h5>Summary by Category</h5>
+                            <div class="table-responsive">
+                                <table class="table table-bordered">
+                                    <thead>
+                                        <tr>
+                                            <th>Category</th>
+                                            <th class="text-end">Total Debit</th>
+                                            <th class="text-end">Total Credit</th>
+                                            <th class="text-end">Balance</th>
+                                            <th>Accounts</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for category_key, category_data in report_data.by_category %}
+                                            <tr>
+                                                <td><strong>{{ category_key }}</strong></td>
+                                                <td class="text-end">GHS {{ category_data.total_debit|floatformat:2 }}</td>
+                                                <td class="text-end">GHS {{ category_data.total_credit|floatformat:2 }}</td>
+                                                <td class="text-end">GHS {{ category_data.balance|floatformat:2 }}</td>
+                                                <td>{{ category_data.accounts|length }} accounts</td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

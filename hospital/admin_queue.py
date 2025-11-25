@@ -5,7 +5,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
 from django.utils import timezone
-from .models_queue import QueueEntry, QueueNotification, QueueConfiguration
+from .models_queue import QueueEntry, QueueNotification, QueueConfiguration, HealthTip
 
 
 @admin.register(QueueEntry)
@@ -316,6 +316,16 @@ class QueueConfigurationAdmin(admin.ModelAdmin):
             '<span style="color: #dc3545;">✗ Disabled</span>'
         )
     notification_settings.short_description = 'Notifications'
+
+
+@admin.register(HealthTip)
+class HealthTipAdmin(admin.ModelAdmin):
+    list_display = ['title', 'category', 'audience', 'is_active', 'display_order', 'start_date', 'end_date']
+    list_filter = ['audience', 'is_active', 'category']
+    search_fields = ['title', 'message']
+    ordering = ['display_order', 'title']
+
+
 
 
 

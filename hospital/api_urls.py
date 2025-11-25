@@ -108,7 +108,18 @@ try:
 except ImportError:
     pass
 
+# Auto-save endpoints
+from .views_autosave import AutoSaveView, sync_check_view, bulk_auto_save_view
+# Dashboard live updates
+from .views_dashboard_updates import dashboard_updates_view
+
 urlpatterns = [
     path('', include(router.urls)),
+    # Auto-save endpoints
+    path('auto-save/', AutoSaveView.as_view(), name='api_autosave'),
+    path('sync-check/', sync_check_view, name='api_sync_check'),
+    path('bulk-auto-save/', bulk_auto_save_view, name='api_bulk_autosave'),
+    # Dashboard live updates
+    path('dashboard-updates/', dashboard_updates_view, name='api_dashboard_updates'),
 ]
 

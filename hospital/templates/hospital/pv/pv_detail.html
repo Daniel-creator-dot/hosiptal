@@ -1,0 +1,145 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Payment Voucher {{ voucher.voucher_number }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-lg-10 mx-auto">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2><i class="bi bi-receipt-cutoff me-2"></i>Payment Voucher: {{ voucher.voucher_number }}</h2>
+                <a href="{% url 'hospital:pv_list' %}" class="btn btn-secondary">
+                    <i class="bi bi-arrow-left me-2"></i>Back to List
+                </a>
+            </div>
+
+            <div class="row g-4">
+                <div class="col-md-8">
+                    <div class="card border-0 shadow-sm mb-4">
+                        <div class="card-header bg-white border-0">
+                            <h5 class="mb-0">Voucher Details</h5>
+                        </div>
+                        <div class="card-body">
+                            <dl class="row">
+                                <dt class="col-sm-4">Voucher Number:</dt>
+                                <dd class="col-sm-8"><strong>{{ voucher.voucher_number }}</strong></dd>
+                                
+                                <dt class="col-sm-4">Date:</dt>
+                                <dd class="col-sm-8">{{ voucher.voucher_date|date:"F d, Y" }}</dd>
+                                
+                                <dt class="col-sm-4">Payee:</dt>
+                                <dd class="col-sm-8">{{ voucher.payee_name }} {% if voucher.payee_type %}({{ voucher.payee_type }}){% endif %}</dd>
+                                
+                                <dt class="col-sm-4">Payment Type:</dt>
+                                <dd class="col-sm-8">{{ voucher.get_payment_type_display }}</dd>
+                                
+                                <dt class="col-sm-4">Amount:</dt>
+                                <dd class="col-sm-8"><strong class="text-primary fs-5">GHS {{ voucher.amount|floatformat:2 }}</strong></dd>
+                                
+                                <dt class="col-sm-4">Payment Method:</dt>
+                                <dd class="col-sm-8">{{ voucher.get_payment_method_display }}</dd>
+                                
+                                {% if voucher.cheque %}
+                                <dt class="col-sm-4">Cheque:</dt>
+                                <dd class="col-sm-8">
+                                    <a href="{% url 'hospital:cheque_detail' voucher.cheque.id %}" class="text-decoration-none">
+                                        #{{ voucher.cheque.cheque_number }} <i class="bi bi-arrow-right"></i>
+                                    </a>
+                                </dd>
+                                {% endif %}
+                                
+                                <dt class="col-sm-4">Status:</dt>
+                                <dd class="col-sm-8">
+                                    {% if voucher.status == 'draft' %}
+                                        <span class="badge bg-secondary">Draft</span>
+                                    {% elif voucher.status == 'pending_approval' %}
+                                        <span class="badge bg-warning">Pending Approval</span>
+                                    {% elif voucher.status == 'approved' %}
+                                        <span class="badge bg-info">Approved</span>
+                                    {% elif voucher.status == 'paid' %}
+                                        <span class="badge bg-success">Paid</span>
+                                    {% elif voucher.status == 'rejected' %}
+                                        <span class="badge bg-danger">Rejected</span>
+                                    {% endif %}
+                                </dd>
+                                
+                                <dt class="col-sm-4">Description:</dt>
+                                <dd class="col-sm-8">{{ voucher.description }}</dd>
+                                
+                                {% if voucher.notes %}
+                                <dt class="col-sm-4">Notes:</dt>
+                                <dd class="col-sm-8">{{ voucher.notes }}</dd>
+                                {% endif %}
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-4">
+                    <div class="card border-0 shadow-sm mb-4">
+                        <div class="card-header bg-white border-0">
+                            <h5 class="mb-0">Actions</h5>
+                        </div>
+                        <div class="card-body">
+                            {% if voucher.status == 'draft' %}
+                                <form method="post" action="{% url 'hospital:pv_approve' voucher.id %}" class="mb-2">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-warning w-100">
+                                        <i class="bi bi-check-circle me-2"></i>Submit for Approval
+                                    </button>
+                                </form>
+                            {% elif voucher.status == 'pending_approval' %}
+                                <form method="post" action="{% url 'hospital:pv_approve' voucher.id %}" class="mb-2">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-info w-100">
+                                        <i class="bi bi-check-circle me-2"></i>Approve
+                                    </button>
+                                </form>
+                            {% elif voucher.status == 'approved' %}
+                                <form method="post" action="{% url 'hospital:pv_mark_paid' voucher.id %}" class="mb-2">
+                                    {% csrf_token %}
+                                    <div class="mb-2">
+                                        <label class="form-label">Payment Date</label>
+                                        <input type="date" name="payment_date" class="form-control" value="{% now 'Y-m-d' %}">
+                                    </div>
+                                    <button type="submit" class="btn btn-success w-100">
+                                        <i class="bi bi-check-circle me-2"></i>Mark as Paid
+                                    </button>
+                                </form>
+                            {% endif %}
+                            
+                            {% if voucher.payment_method == 'cheque' and not voucher.cheque %}
+                                <a href="{% url 'hospital:cheque_create' %}?pv_id={{ voucher.id }}" class="btn btn-outline-primary w-100 mb-2">
+                                    <i class="bi bi-bank me-2"></i>Create Cheque
+                                </a>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-header bg-white border-0">
+                            <h5 class="mb-0">Accounting</h5>
+                        </div>
+                        <div class="card-body">
+                            <dl class="row mb-0">
+                                <dt class="col-sm-6">Expense Account:</dt>
+                                <dd class="col-sm-6">{{ voucher.expense_account }}</dd>
+                                
+                                <dt class="col-sm-6">Payment Account:</dt>
+                                <dd class="col-sm-6">{{ voucher.payment_account }}</dd>
+                                
+                                {% if voucher.journal_entry %}
+                                <dt class="col-sm-6">Journal Entry:</dt>
+                                <dd class="col-sm-6">{{ voucher.journal_entry.entry_number }}</dd>
+                                {% endif %}
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

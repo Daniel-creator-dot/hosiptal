@@ -8,16 +8,23 @@ from django.utils.html import format_html
 from django.db.models import Sum, Q
 from django.urls import reverse
 from django.utils.safestring import mark_safe
+from django.utils import timezone
 from .models_accounting_advanced import (
     AccountCategory, FiscalYear, AccountingPeriod,
     Journal, AdvancedJournalEntry, AdvancedJournalEntryLine, AdvancedGeneralLedger,
-    PaymentVoucher, ReceiptVoucher,
+    PaymentVoucher, ReceiptVoucher, Cheque,
     RevenueCategory, Revenue,
     ExpenseCategory, Expense,
     AdvancedAccountsReceivable, AccountsPayable,
     BankAccount, BankTransaction,
     Budget, BudgetLine, TaxRate,
-    AccountingAuditLog
+    AccountingAuditLog,
+    Cashbook, BankReconciliation, BankReconciliationItem,
+    InsuranceReceivable, ProcurementPurchase,
+    AccountingPayroll, AccountingPayrollEntry, DoctorCommission,
+    IncomeGroup, ProfitLossReport,
+    RegistrationFee, CashSale, AccountingCorporateAccount,
+    WithholdingReceivable, Deposit, InitialRevaluation
 )
 
 
@@ -627,4 +634,441 @@ class AccountingAuditLogAdmin(admin.ModelAdmin):
     
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+# ==================== CASHBOOK ====================
+
+@admin.register(Cashbook)
+class CashbookAdmin(admin.ModelAdmin):
+    list_display = ['entry_number', 'entry_type', 'entry_date', 'amount', 'payee_or_payer', 'status', 'held_until', 'can_classify_now']
+    list_filter = ['entry_type', 'status', 'entry_date', 'payment_method']
+    search_fields = ['entry_number', 'payee_or_payer', 'description', 'reference']
+    readonly_fields = ['entry_number', 'held_until', 'classified_at', 'classified_by']
+    date_hierarchy = 'entry_date'
+    actions = ['classify_ready_entries']
+    
+    fieldsets = (
+        ('Entry Information', {
+            'fields': ('entry_number', 'entry_type', 'entry_date', 'amount', 'payee_or_payer', 'description', 'reference')
+        }),
+        ('Payment Details', {
+            'fields': ('payment_method', 'cheque')
+        }),
+        ('Links', {
+            'fields': ('patient', 'invoice')
+        }),
+        ('Account Classification', {
+            'fields': ('cash_account', 'revenue_account', 'expense_account', 'status', 'held_until', 'classified_at', 'classified_by')
+        }),
+        ('Accounting', {
+            'fields': ('journal_entry',)
+        }),
+    )
+    
+    def can_classify_now(self, obj):
+        """Display if entry can be classified now"""
+        if obj and obj.pk:  # Only check for saved objects
+            try:
+                return obj.can_classify()
+            except (TypeError, AttributeError):
+                return False
+        return False
+    can_classify_now.boolean = True
+    can_classify_now.short_description = 'Ready to Classify'
+    
+    def classify_ready_entries(self, request, queryset):
+        """Classify all ready cashbook entries to revenue/expense"""
+        from django.utils import timezone
+        from django.contrib import messages
+        
+        count = 0
+        errors = []
+        
+        for entry in queryset.filter(status='pending'):
+            if entry.can_classify():
+                try:
+                    # Use existing accounts if set, otherwise skip
+                    if entry.entry_type == 'receipt' and entry.revenue_account:
+                        entry.classify_to_revenue(request.user, entry.revenue_account)
+                        count += 1
+                    elif entry.entry_type == 'payment' and entry.expense_account:
+                        entry.classify_to_revenue(request.user, expense_account=entry.expense_account)
+                        count += 1
+                    else:
+                        errors.append(f"{entry.entry_number}: Missing {'revenue' if entry.entry_type == 'receipt' else 'expense'} account")
+                except Exception as e:
+                    errors.append(f"{entry.entry_number}: {str(e)}")
+        
+        if count > 0:
+            self.message_user(request, f"Successfully classified {count} cashbook entries", level='success')
+        if errors:
+            self.message_user(request, f"Errors: {'; '.join(errors)}", level='error')
+    classify_ready_entries.short_description = "Classify ready entries to revenue/expense"
+    
+    def get_readonly_fields(self, request, obj=None):
+        readonly = list(self.readonly_fields)
+        if obj and obj.status == 'classified':
+            readonly.extend(['entry_type', 'amount', 'revenue_account', 'expense_account'])
+        return readonly
+
+
+# ==================== BANK RECONCILIATION ====================
+
+class BankReconciliationItemInline(admin.TabularInline):
+    model = BankReconciliationItem
+    extra = 1
+    fields = ['transaction', 'journal_entry', 'cheque', 'description', 'amount', 'is_matched']
+
+
+@admin.register(BankReconciliation)
+class BankReconciliationAdmin(admin.ModelAdmin):
+    list_display = ['reconciliation_number', 'bank_account', 'statement_date', 'statement_balance', 'adjusted_balance', 'difference', 'status']
+    list_filter = ['status', 'statement_date', 'bank_account']
+    search_fields = ['reconciliation_number', 'bank_account__account_name']
+    readonly_fields = ['reconciliation_number', 'book_balance', 'adjusted_balance', 'difference']
+    inlines = [BankReconciliationItemInline]
+    
+    fieldsets = (
+        ('Reconciliation Information', {
+            'fields': ('reconciliation_number', 'bank_account', 'statement_date', 'statement_balance', 'book_balance')
+        }),
+        ('Adjustments', {
+            'fields': ('deposits_in_transit', 'outstanding_cheques', 'bank_charges', 'interest_earned', 'other_adjustments')
+        }),
+        ('Results', {
+            'fields': ('adjusted_balance', 'difference', 'status')
+        }),
+        ('Completion', {
+            'fields': ('reconciled_by', 'reconciled_at', 'notes')
+        }),
+    )
+
+
+# ==================== INSURANCE RECEIVABLE ====================
+
+@admin.register(InsuranceReceivable)
+class InsuranceReceivableAdmin(admin.ModelAdmin):
+    list_display = ['receivable_number', 'insurance_company', 'patient', 'total_amount', 'amount_paid', 'balance_due', 'status', 'due_date']
+    list_filter = ['status', 'claim_date', 'insurance_company']
+    search_fields = ['receivable_number', 'claim_number', 'patient__first_name', 'patient__last_name', 'insurance_company__name']
+    readonly_fields = ['receivable_number', 'balance_due']
+    date_hierarchy = 'claim_date'
+    
+    fieldsets = (
+        ('Receivable Information', {
+            'fields': ('receivable_number', 'insurance_company', 'patient', 'invoice', 'claim_number', 'claim_date')
+        }),
+        ('Amounts', {
+            'fields': ('total_amount', 'amount_paid', 'balance_due', 'due_date', 'payment_date')
+        }),
+        ('Status Tracking', {
+            'fields': ('status', 'submitted_date', 'approved_date', 'rejection_reason')
+        }),
+        ('Accounting', {
+            'fields': ('receivable_account', 'journal_entry')
+        }),
+        ('Notes', {
+            'fields': ('notes',)
+        }),
+    )
+
+
+# ==================== PROCUREMENT PURCHASE ====================
+
+@admin.register(ProcurementPurchase)
+class ProcurementPurchaseAdmin(admin.ModelAdmin):
+    list_display = ['purchase_number', 'purchase_type', 'supplier_name', 'total_amount', 'status', 'purchase_date']
+    list_filter = ['purchase_type', 'status', 'purchase_date']
+    search_fields = ['purchase_number', 'supplier_name', 'supplier_invoice', 'description']
+    readonly_fields = ['purchase_number', 'net_amount']
+    date_hierarchy = 'purchase_date'
+    
+    fieldsets = (
+        ('Purchase Information', {
+            'fields': ('purchase_number', 'purchase_type', 'purchase_date', 'supplier_name', 'supplier_invoice', 'description', 'classification')
+        }),
+        ('Amounts', {
+            'fields': ('total_amount', 'tax_amount', 'net_amount')
+        }),
+        ('Status', {
+            'fields': ('status', 'created_by', 'approved_by')
+        }),
+        ('Accounting', {
+            'fields': ('expense_account', 'liability_account', 'payment_account', 'accounts_payable', 'journal_entry')
+        }),
+    )
+
+
+# ==================== PAYROLL ====================
+
+class AccountingPayrollEntryInline(admin.TabularInline):
+    model = AccountingPayrollEntry
+    extra = 1
+    fields = ['staff', 'gross_pay', 'deductions', 'net_pay', 'consultation_commission', 'surgery_commission', 'operational_share', 'hospital_share']
+
+
+@admin.register(AccountingPayroll)
+class AccountingPayrollAdmin(admin.ModelAdmin):
+    list_display = ['payroll_number', 'payroll_period_start', 'payroll_period_end', 'pay_date', 'total_net_pay', 'status']
+    list_filter = ['status', 'payroll_period_start', 'payroll_period_end']
+    search_fields = ['payroll_number']
+    readonly_fields = ['payroll_number', 'total_net_pay']
+    inlines = [AccountingPayrollEntryInline]
+    date_hierarchy = 'payroll_period_end'
+    
+    fieldsets = (
+        ('Payroll Information', {
+            'fields': ('payroll_number', 'payroll_period_start', 'payroll_period_end', 'pay_date', 'status')
+        }),
+        ('Totals', {
+            'fields': ('total_gross_pay', 'total_deductions', 'total_net_pay')
+        }),
+        ('Approval', {
+            'fields': ('created_by', 'approved_by')
+        }),
+    )
+
+
+@admin.register(DoctorCommission)
+class DoctorCommissionAdmin(admin.ModelAdmin):
+    list_display = ['commission_number', 'doctor', 'service_type', 'total_fee', 'doctor_share', 'operational_share', 'hospital_share', 'is_paid', 'service_date']
+    list_filter = ['service_type', 'is_paid', 'service_date']
+    search_fields = ['commission_number', 'doctor__user__first_name', 'doctor__user__last_name']
+    readonly_fields = ['commission_number', 'doctor_share', 'operational_share', 'hospital_share']
+    date_hierarchy = 'service_date'
+    
+    fieldsets = (
+        ('Commission Information', {
+            'fields': ('commission_number', 'doctor', 'service_type', 'service_date', 'invoice', 'total_fee')
+        }),
+        ('Commission Splits', {
+            'fields': ('doctor_share', 'operational_share', 'hospital_share')
+        }),
+        ('Payment', {
+            'fields': ('is_paid', 'paid_date')
+        }),
+        ('Accounting', {
+            'fields': ('doctor_receivable_account', 'hospital_revenue_account', 'operational_account', 'journal_entry')
+        }),
+    )
+
+
+# ==================== INCOME GROUPING & PROFIT/LOSS ====================
+
+@admin.register(IncomeGroup)
+class IncomeGroupAdmin(admin.ModelAdmin):
+    list_display = ['code', 'name', 'account', 'is_active']
+    list_filter = ['is_active']
+    search_fields = ['code', 'name']
+
+
+@admin.register(ProfitLossReport)
+class ProfitLossReportAdmin(admin.ModelAdmin):
+    list_display = ['report_number', 'report_period', 'period_start', 'period_end', 'total_revenue', 'total_expenses', 'net_profit', 'profit_percentage']
+    list_filter = ['report_period', 'fiscal_year', 'period_start']
+    search_fields = ['report_number']
+    readonly_fields = ['report_number', 'gross_profit', 'net_profit', 'profit_percentage', 'generated_at', 'generated_by']
+    date_hierarchy = 'period_end'
+    
+    fieldsets = (
+        ('Report Information', {
+            'fields': ('report_number', 'report_period', 'period_start', 'period_end', 'fiscal_year')
+        }),
+        ('Revenue', {
+            'fields': ('total_revenue', 'revenue_by_category'),
+            'description': 'Enter total revenue and optionally break down by category as JSON'
+        }),
+        ('Expenses', {
+            'fields': ('total_expenses', 'expenses_by_category'),
+            'description': 'Enter total expenses and optionally break down by category as JSON'
+        }),
+        ('Profit/Loss', {
+            'fields': ('gross_profit', 'net_profit', 'profit_percentage'),
+            'description': 'Calculated automatically from revenue and expenses'
+        }),
+        ('Generation', {
+            'fields': ('generated_at', 'generated_by'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def save_model(self, request, obj, form, change):
+        """Set generated_by when creating new report"""
+        if not change:  # New object
+            obj.generated_by = request.user
+        super().save_model(request, obj, form, change)
+
+
+# ==================== REGISTRATION FEE ====================
+
+@admin.register(RegistrationFee)
+class RegistrationFeeAdmin(admin.ModelAdmin):
+    list_display = ['fee_number', 'patient', 'registration_date', 'fee_amount', 'payment_method']
+    list_filter = ['payment_method', 'registration_date']
+    search_fields = ['fee_number', 'patient__first_name', 'patient__last_name', 'patient__mrn']
+    readonly_fields = ['fee_number']
+    date_hierarchy = 'registration_date'
+    
+    fieldsets = (
+        ('Fee Information', {
+            'fields': ('fee_number', 'patient', 'registration_date', 'fee_amount', 'payment_method')
+        }),
+        ('Accounting', {
+            'fields': ('revenue_account', 'journal_entry')
+        }),
+        ('Notes', {
+            'fields': ('notes',)
+        }),
+    )
+
+
+# ==================== CASH SALES & CORPORATE ====================
+
+@admin.register(CashSale)
+class CashSaleAdmin(admin.ModelAdmin):
+    list_display = ['sale_number', 'customer_name', 'sale_date', 'total_amount', 'payment_method']
+    list_filter = ['payment_method', 'sale_date']
+    search_fields = ['sale_number', 'customer_name', 'description']
+    readonly_fields = ['sale_number']
+    date_hierarchy = 'sale_date'
+    
+    fieldsets = (
+        ('Sale Information', {
+            'fields': ('sale_number', 'sale_date', 'customer_name', 'description', 'total_amount', 'payment_method')
+        }),
+        ('Accounting', {
+            'fields': ('revenue_account', 'cash_account', 'journal_entry', 'created_by')
+        }),
+    )
+
+
+@admin.register(AccountingCorporateAccount)
+class AccountingCorporateAccountAdmin(admin.ModelAdmin):
+    list_display = ['account_number', 'company_name', 'contact_person', 'credit_limit_display', 'current_balance_display', 'is_active']
+    list_filter = ['is_active']
+    search_fields = ['account_number', 'company_name', 'contact_person', 'contact_email']
+    
+    fieldsets = (
+        ('Company Information', {
+            'fields': ('account_number', 'company_name', 'contact_person', 'contact_email', 'contact_phone')
+        }),
+        ('Credit Management', {
+            'fields': ('credit_limit', 'current_balance')
+        }),
+        ('Accounting', {
+            'fields': ('receivable_account',)
+        }),
+        ('Status', {
+            'fields': ('is_active',)
+        }),
+    )
+    
+    def credit_limit_display(self, obj):
+        """Display credit limit formatted"""
+        if obj.credit_limit is None:
+            return '-'
+        try:
+            limit = float(obj.credit_limit)
+            # Return plain string, not SafeString
+            return "GHS {:,.2f}".format(limit)
+        except (ValueError, TypeError, AttributeError):
+            return str(obj.credit_limit) if obj.credit_limit else '-'
+    credit_limit_display.short_description = 'Credit Limit'
+    credit_limit_display.admin_order_field = 'credit_limit'
+    
+    def current_balance_display(self, obj):
+        """Display current balance formatted"""
+        if obj.current_balance is None:
+            return '-'
+        try:
+            balance = float(obj.current_balance)
+            # Format number as plain string first
+            balance_formatted = "{:,.2f}".format(balance)
+            if obj.credit_limit and balance >= float(obj.credit_limit):
+                # Pass the formatted string (not SafeString) to format_html
+                return format_html('<span style="color: red; font-weight: bold;">GHS {}</span>', balance_formatted)
+            # Return plain string for normal cases
+            return "GHS {}".format(balance_formatted)
+        except (ValueError, TypeError, AttributeError):
+            return str(obj.current_balance) if obj.current_balance else '-'
+    current_balance_display.short_description = 'Current Balance'
+    current_balance_display.admin_order_field = 'current_balance'
+
+
+# ==================== WITHHOLDING RECEIVABLE ====================
+
+@admin.register(WithholdingReceivable)
+class WithholdingReceivableAdmin(admin.ModelAdmin):
+    list_display = ['withholding_number', 'payer', 'withholding_date', 'amount_withheld', 'amount_recovered', 'balance', 'expected_recovery_date']
+    list_filter = ['withholding_date', 'expected_recovery_date']
+    search_fields = ['withholding_number', 'payer', 'description']
+    readonly_fields = ['withholding_number', 'balance']
+    date_hierarchy = 'withholding_date'
+    
+    fieldsets = (
+        ('Withholding Information', {
+            'fields': ('withholding_number', 'withholding_date', 'payer', 'description', 'amount_withheld')
+        }),
+        ('Recovery', {
+            'fields': ('amount_recovered', 'balance', 'expected_recovery_date', 'recovered_date')
+        }),
+        ('Accounting', {
+            'fields': ('receivable_account',)
+        }),
+        ('Notes', {
+            'fields': ('notes',)
+        }),
+    )
+
+
+# ==================== DEPOSITS ====================
+
+@admin.register(Deposit)
+class DepositAdmin(admin.ModelAdmin):
+    list_display = ['deposit_number', 'deposit_type', 'deposit_date', 'amount', 'from_account', 'to_account']
+    list_filter = ['deposit_type', 'deposit_date']
+    search_fields = ['deposit_number', 'description', 'reference']
+    readonly_fields = ['deposit_number']
+    date_hierarchy = 'deposit_date'
+    
+    fieldsets = (
+        ('Deposit Information', {
+            'fields': ('deposit_number', 'deposit_type', 'deposit_date', 'amount', 'description', 'reference')
+        }),
+        ('From/To Accounts', {
+            'fields': ('from_account', 'to_account', 'from_bank_account', 'to_bank_account')
+        }),
+        ('Accounting', {
+            'fields': ('journal_entry', 'created_by')
+        }),
+    )
+
+
+# ==================== INITIAL REVALUATIONS ====================
+
+@admin.register(InitialRevaluation)
+class InitialRevaluationAdmin(admin.ModelAdmin):
+    list_display = ['revaluation_number', 'account', 'revaluation_date', 'previous_value', 'new_value', 'revaluation_amount', 'revaluation_type']
+    list_filter = ['revaluation_type', 'revaluation_date', 'effective_date']
+    search_fields = ['revaluation_number', 'account__account_name', 'asset_description']
+    readonly_fields = ['revaluation_number', 'revaluation_amount', 'revaluation_type']
+    date_hierarchy = 'revaluation_date'
+    
+    fieldsets = (
+        ('Revaluation Information', {
+            'fields': ('revaluation_number', 'revaluation_date', 'effective_date', 'account', 'asset_description')
+        }),
+        ('Values', {
+            'fields': ('previous_value', 'new_value', 'revaluation_amount', 'revaluation_type')
+        }),
+        ('Details', {
+            'fields': ('reason',)
+        }),
+        ('Approval', {
+            'fields': ('approved_by', 'approved_at')
+        }),
+        ('Accounting', {
+            'fields': ('journal_entry',)
+        }),
+    )
 

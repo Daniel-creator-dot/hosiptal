@@ -288,9 +288,20 @@ def pharmacy_dispense_enforced(request, prescription_id):
                             f"Your medication {drug.name} has been dispensed. "
                             f"Instructions: {instructions}. PrimeCare Medical"
                         )
-                        sms_service.send_sms(patient.phone_number, message, 'pharmacy_dispensing', patient)
+                        sms_log = sms_service.send_sms(
+                            phone_number=patient.phone_number,
+                            message=message,
+                            message_type='pharmacy_dispensing',
+                            recipient_name=patient.full_name,
+                            related_object_id=dispensing_record.id if hasattr(dispensing_record, 'id') else prescription.id if hasattr(prescription, 'id') else None,
+                            related_object_type='DispensingRecord'
+                        )
+                        if sms_log.status == 'sent':
+                            logger.info(f"✅ SMS sent to {patient.phone_number}")
+                        else:
+                            logger.warning(f"⚠️ SMS failed: {sms_log.error_message or 'Unknown error'}")
                 except Exception as e:
-                    logger.error(f"Error sending SMS: {str(e)}")
+                    logger.error(f"❌ Error sending SMS: {str(e)}", exc_info=True)
                 
                 return redirect('hospital:pharmacy_pending_dispensing')
             

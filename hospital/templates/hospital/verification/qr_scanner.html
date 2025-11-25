@@ -199,26 +199,54 @@ function startCamera() {
         { facingMode: "environment" },
         {
             fps: 10,
-            qrbox: { width: 250, height: 250 }
+            qrbox: { width: 250, height: 250 },
+            aspectRatio: 1.0,
+            disableFlip: false
         },
         (decodedText) => {
             // QR Code detected!
             stopCamera();
             verifyQRCode(decodedText);
+        },
+        (errorMessage) => {
+            // Ignore frame scan errors (normal during scanning)
         }
-    ).catch(err => {
+    ).then(() => {
+        // Scanner started successfully
+        console.log('QR scanner started successfully');
+    }).catch(err => {
         console.error('Camera error:', err);
-        alert('Unable to access camera. Please check permissions.');
+        let errorMsg = 'Unable to access camera. ';
+        if (err.name === 'NotAllowedError' || err.message.includes('permission')) {
+            errorMsg += 'Please allow camera permissions in your browser settings.';
+        } else if (err.name === 'NotFoundError' || err.message.includes('No camera')) {
+            errorMsg += 'No camera found. Please connect a camera device.';
+        } else if (err.name === 'NotReadableError' || err.message.includes('busy')) {
+            errorMsg += 'Camera is busy or in use by another application.';
+        } else {
+            errorMsg += err.message || 'Unknown error occurred.';
+        }
+        alert(errorMsg);
+        // Reset UI
+        videoContainer.style.display = 'none';
+        startBtn.style.display = 'inline-block';
+        stopBtn.style.display = 'none';
     });
 }
 
-function stopCamera() {
+async function stopCamera() {
     const videoContainer = document.getElementById('video-container');
     const startBtn = document.getElementById('start-scan-btn');
     const stopBtn = document.getElementById('stop-scan-btn');
     
     if (html5QrCode) {
-        html5QrCode.stop();
+        try {
+            await html5QrCode.stop();
+            html5QrCode.clear();
+        } catch (err) {
+            console.error('Error stopping camera:', err);
+        }
+        html5QrCode = null;
     }
     
     videoContainer.style.display = 'none';
@@ -309,6 +337,12 @@ function verifyQRCode(qrData) {
 }
 </script>
 {% endblock %}
+
+
+
+
+
+
 
 
 

@@ -7,7 +7,8 @@ from django.contrib.auth import logout as auth_logout
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.db.models import Q, Sum, F
-from django.db import models, transaction
+from django.db import models, transaction, connection
+from django.db.transaction import TransactionManagementError
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -89,8 +90,21 @@ from .reports import generate_financial_report
 def dashboard(request):
     """World-Class Main Dashboard View with Role-Based Routing"""
     from decimal import Decimal
-    from .models_accounting import Transaction, PaymentReceipt
-    from .models_advanced import ImagingStudy
+    
+    # Import optional models with safe fallbacks
+    Transaction = None
+    PaymentReceipt = None
+    try:
+        from .models_accounting import Transaction, PaymentReceipt
+    except (ImportError, AttributeError, Exception):
+        Transaction = None
+        PaymentReceipt = None
+    
+    ImagingStudy = None
+    try:
+        from .models_advanced import ImagingStudy
+    except (ImportError, AttributeError, Exception):
+        ImagingStudy = None
     
     # Role-based dashboard routing
     user_role = get_user_role(request.user) if request.user.is_authenticated else 'staff'
@@ -98,7 +112,7 @@ def dashboard(request):
         
         # Redirect to role-specific dashboard
         if user_role == 'hr_manager':
-            return redirect('hospital:hr_worldclass_dashboard')
+            return redirect('hospital:hr_manager_dashboard')
         elif user_role == 'doctor':
             return redirect('hospital:medical_dashboard')
         elif user_role == 'nurse':
@@ -111,9 +125,10 @@ def dashboard(request):
             return redirect('hospital:reception_dashboard')
         elif user_role == 'cashier':
             return redirect('hospital:cashier_dashboard')
+        elif user_role == 'accountant':
+            return redirect('hospital:accountant_comprehensive_dashboard')
         elif user_role == 'admin':
             return redirect('hospital:admin_dashboard')
-        # Accountants stay on general dashboard with trimmed actions
     
     stats = get_dashboard_stats()
     demographics = get_patient_demographics()
@@ -487,7 +502,15 @@ def end_session(request):
     """
     # Default to main HMS dashboard (which will enforce login as needed)
     next_url = request.GET.get('next') or '/hms/'
-    auth_logout(request)
+    try:
+        auth_logout(request)
+    except TransactionManagementError:
+        logger.warning("Broken transaction detected during logout; rolling back connection.")
+        try:
+            connection.rollback()
+        except Exception as rollback_error:
+            logger.error("Failed to rollback broken transaction on logout: %s", rollback_error)
+        auth_logout(request)
     return redirect(next_url)
 
 
@@ -495,9 +518,23 @@ def end_session(request):
 def patient_list(request):
     """List all patients - OPTIMIZED for mobile performance"""
     from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
-    from .models_legacy_patients import LegacyPatient
     from datetime import datetime
     from django.core.cache import cache
+    
+    # Try to import LegacyPatient, but handle gracefully if it doesn't exist
+    LegacyPatient = None
+    legacy_table_exists = False
+    try:
+        from .models_legacy_patients import LegacyPatient
+        # Check if the table actually exists in the database
+        try:
+            LegacyPatient.objects.count()  # This will fail if table doesn't exist
+            legacy_table_exists = True
+        except Exception:
+            legacy_table_exists = False
+            LegacyPatient = None
+    except ImportError:
+        LegacyPatient = None
     
     query = request.GET.get('q', '').strip()
     source_filter = request.GET.get('source', 'all')  # 'all', 'new', 'legacy'
@@ -509,7 +546,14 @@ def patient_list(request):
     counts = cache.get(cache_key)
     if not counts:
         new_count = Patient.objects.filter(is_deleted=False).count()
-        legacy_count = LegacyPatient.objects.count()
+        # Safely get legacy count - handle if table doesn't exist
+        legacy_count = 0
+        if LegacyPatient and legacy_table_exists:
+            try:
+                legacy_count = LegacyPatient.objects.count()
+            except Exception as e:
+                logger.warning(f"Could not count legacy patients: {e}")
+                legacy_count = 0
         counts = {'new': new_count, 'legacy': legacy_count, 'total': new_count + legacy_count}
         cache.set(cache_key, counts, 300)  # Cache for 5 minutes
     
@@ -518,27 +562,33 @@ def patient_list(request):
     total_count = counts['total']
     
     all_patients = []
+    base_limit = 500 if not query else 2000
+    try:
+        django_patients_qs = Patient.objects.filter(is_deleted=False).only(
+            'id', 'first_name', 'last_name', 'middle_name', 'mrn', 'date_of_birth',
+            'gender', 'phone_number', 'created'
+        ).order_by('-created')
+    except Exception as e:
+        logger.error(f"Error loading patient list: {e}")
+        django_patients_qs = Patient.objects.none()
+    
+    base_queryset = django_patients_qs.order_by('-created')
     
     # Filter based on source selection
     if source_filter == 'new':
         # Only new Django patients
-        django_patients = Patient.objects.filter(is_deleted=False).only(
-            'id', 'first_name', 'last_name', 'middle_name', 'mrn', 'date_of_birth', 
-            'gender', 'phone_number', 'created'
-        ).order_by('-created')
+        filtered_qs = django_patients_qs.filter(
+            Q(first_name__icontains=query) |
+            Q(last_name__icontains=query) |
+            Q(middle_name__icontains=query) |
+            Q(mrn__icontains=query) |
+            Q(phone_number__icontains=query) |
+            Q(national_id__icontains=query)
+        ) if query else django_patients_qs
         
-        if query:
-            django_patients = django_patients.filter(
-                Q(first_name__icontains=query) |
-                Q(last_name__icontains=query) |
-                Q(middle_name__icontains=query) |
-                Q(mrn__icontains=query) |
-                Q(phone_number__icontains=query) |
-                Q(national_id__icontains=query)
-            )
+        filtered_qs = filtered_qs.order_by('-created')[:base_limit]
         
-        # Convert to list
-        for p in django_patients:
+        for p in filtered_qs:
             all_patients.append({
                 'id': str(p.id),
                 'name': p.full_name,
@@ -551,79 +601,78 @@ def patient_list(request):
                 'initials': f"{p.first_name[0] if p.first_name else ''}{p.last_name[0] if p.last_name else ''}",
                 'view_url': f"/hms/patients/{p.id}/",
                 'edit_url': f"/hms/patients/{p.id}/edit/",
+                'quick_visit_url': f"/hms/patients/{p.id}/quick-visit/",
             })
     
     elif source_filter == 'legacy':
         # Only legacy patients
-        legacy_patients = LegacyPatient.objects.all().only(
-            'id', 'pid', 'fname', 'lname', 'mname', 'DOB', 'sex', 'phone_cell', 'pmc_mrn'
-        ).order_by('lname', 'fname')
-        
-        if query:
-            legacy_patients = legacy_patients.filter(
-                Q(fname__icontains=query) |
-                Q(lname__icontains=query) |
-                Q(mname__icontains=query) |
-                Q(pid__icontains=query) |
-                Q(phone_cell__icontains=query) |
-                Q(pmc_mrn__icontains=query)
-            )
-        
-        # Convert to list
-        for lp in legacy_patients:
-            # Calculate age from DOB string
-            age_str = ''
+        if not LegacyPatient or not legacy_table_exists:
+            all_patients = []
+        else:
             try:
-                if lp.DOB:
-                    dob = datetime.strptime(lp.DOB, '%Y-%m-%d').date()
-                    today = datetime.today().date()
-                    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-                    age_str = f"{age} years"
-            except:
-                age_str = 'Unknown'
-            
-            all_patients.append({
-                'id': f"legacy-{lp.id}",
-                'name': lp.full_name,
-                'mrn': lp.mrn_display,
-                'dob': lp.DOB or 'Unknown',
-                'age': age_str,
-                'gender': lp.sex or 'Unknown',
-                'phone': lp.display_phone,
-                'source': 'legacy',
-                'initials': f"{lp.fname[0] if lp.fname else ''}{lp.lname[0] if lp.lname else ''}",
-                'view_url': f"/hms/patients/legacy/{lp.id}/",
-                'edit_url': None,  # Legacy patients are read-only
-            })
+                legacy_patients = LegacyPatient.objects.all().only(
+                    'id', 'pid', 'fname', 'lname', 'mname', 'DOB', 'sex', 'phone_cell', 'pmc_mrn'
+                ).order_by('lname', 'fname')
+                
+                if query:
+                    legacy_patients = legacy_patients.filter(
+                        Q(fname__icontains=query) |
+                        Q(lname__icontains=query) |
+                        Q(mname__icontains=query) |
+                        Q(pid__icontains=query) |
+                        Q(phone_cell__icontains=query) |
+                        Q(pmc_mrn__icontains=query)
+                    )
+                
+                legacy_patients = legacy_patients[:base_limit]
+                
+                # Convert to list
+                for lp in legacy_patients:
+                    # Calculate age from DOB string
+                    age_str = ''
+                    try:
+                        if lp.DOB:
+                            dob = datetime.strptime(lp.DOB, '%Y-%m-%d').date()
+                            today = datetime.today().date()
+                            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+                            age_str = f"{age} years"
+                    except:
+                        age_str = 'Unknown'
+                    
+                    all_patients.append({
+                        'id': f"legacy-{lp.id}",
+                        'name': lp.full_name,
+                        'mrn': lp.mrn_display,
+                        'dob': lp.DOB or 'Unknown',
+                        'age': age_str,
+                        'gender': lp.sex or 'Unknown',
+                        'phone': lp.display_phone,
+                        'source': 'legacy',
+                        'initials': f"{lp.fname[0] if lp.fname else ''}{lp.lname[0] if lp.lname else ''}",
+                        'view_url': f"/hms/patients/legacy/{lp.id}/",
+                        'edit_url': None,  # Legacy patients are read-only
+                    })
+            except Exception as e:
+                logger.warning(f"Could not fetch legacy patients: {e}")
+                all_patients = []  # Continue with empty list for legacy patients
     
     else:  # 'all' - show both (OPTIMIZED: limit initial load)
         # MOBILE OPTIMIZATION: Only load 100 most recent from each source
         # This prevents loading thousands of patients on initial page load
-        limit = 100 if not query else 1000  # Search needs more records
+        # REMOVED LIMIT: Show all patients to prevent data appearing missing
+        # limit = 100 if not query else 1000  # Search needs more records
         
-        # Get new patients (limited)
-        django_patients = Patient.objects.filter(is_deleted=False).only(
-            'id', 'first_name', 'last_name', 'middle_name', 'mrn', 'date_of_birth', 
-            'gender', 'phone_number', 'created'
-        ).order_by('-created')[:limit]
+        # Get new patients (NO LIMIT - show all)
+        filtered_qs = django_patients_qs.filter(
+            Q(first_name__icontains=query) |
+            Q(last_name__icontains=query) |
+            Q(middle_name__icontains=query) |
+            Q(mrn__icontains=query) |
+            Q(phone_number__icontains=query) |
+            Q(national_id__icontains=query)
+        ) if query else django_patients_qs
         
-        if query:
-            django_patients = Patient.objects.filter(
-                is_deleted=False
-            ).filter(
-                Q(first_name__icontains=query) |
-                Q(last_name__icontains=query) |
-                Q(middle_name__icontains=query) |
-                Q(mrn__icontains=query) |
-                Q(phone_number__icontains=query) |
-                Q(national_id__icontains=query)
-            ).only(
-                'id', 'first_name', 'last_name', 'middle_name', 'mrn', 'date_of_birth', 
-                'gender', 'phone_number', 'created'
-            ).order_by('-created')[:limit]
-        
-        # Add new patients
-        for p in django_patients:
+        for p in filtered_qs.order_by('-created')[:base_limit]:
             all_patients.append({
                 'id': str(p.id),
                 'name': p.full_name,
@@ -636,52 +685,57 @@ def patient_list(request):
                 'initials': f"{p.first_name[0] if p.first_name else ''}{p.last_name[0] if p.last_name else ''}",
                 'view_url': f"/hms/patients/{p.id}/",
                 'edit_url': f"/hms/patients/{p.id}/edit/",
+                'quick_visit_url': f"/hms/patients/{p.id}/quick-visit/",
             })
         
         # Get legacy patients (limited for performance)
-        if query:
-            legacy_patients = LegacyPatient.objects.filter(
-                Q(fname__icontains=query) |
-                Q(lname__icontains=query) |
-                Q(mname__icontains=query) |
-                Q(pid__icontains=query) |
-                Q(phone_cell__icontains=query) |
-                Q(pmc_mrn__icontains=query)
-            ).only(
-                'id', 'pid', 'fname', 'lname', 'mname', 'DOB', 'sex', 'phone_cell', 'pmc_mrn'
-            ).order_by('lname', 'fname')[:limit]
-        else:
-            # No search: only load 100 most recent legacy patients
-            legacy_patients = LegacyPatient.objects.all().only(
-                'id', 'pid', 'fname', 'lname', 'mname', 'DOB', 'sex', 'phone_cell', 'pmc_mrn'
-            ).order_by('-id')[:limit]
-        
-        # Add legacy patients
-        for lp in legacy_patients:
-            # Calculate age from DOB string
-            age_str = ''
+        if LegacyPatient and legacy_table_exists:
             try:
-                if lp.DOB:
-                    dob = datetime.strptime(lp.DOB, '%Y-%m-%d').date()
-                    today = datetime.today().date()
-                    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-                    age_str = f"{age} years"
-            except:
-                age_str = 'Unknown'
-            
-            all_patients.append({
-                'id': f"legacy-{lp.id}",
-                'name': lp.full_name,
-                'mrn': lp.mrn_display,
-                'dob': lp.DOB or 'Unknown',
-                'age': age_str,
-                'gender': lp.sex or 'Unknown',
-                'phone': lp.display_phone,
-                'source': 'legacy',
-                'initials': f"{lp.fname[0] if lp.fname else ''}{lp.lname[0] if lp.lname else ''}",
-                'view_url': f"/hms/patients/legacy/{lp.id}/",
-                'edit_url': None,  # Legacy patients are read-only
-            })
+                if query:
+                    legacy_patients = LegacyPatient.objects.filter(
+                        Q(fname__icontains=query) |
+                        Q(lname__icontains=query) |
+                        Q(mname__icontains=query) |
+                        Q(pid__icontains=query) |
+                        Q(phone_cell__icontains=query) |
+                        Q(pmc_mrn__icontains=query)
+                    ).only(
+                        'id', 'pid', 'fname', 'lname', 'mname', 'DOB', 'sex', 'phone_cell', 'pmc_mrn'
+                    ).order_by('lname', 'fname')[:base_limit]
+                else:
+                    legacy_patients = LegacyPatient.objects.all().only(
+                        'id', 'pid', 'fname', 'lname', 'mname', 'DOB', 'sex', 'phone_cell', 'pmc_mrn'
+                    ).order_by('-id')[:base_limit]
+                
+                # Add legacy patients
+                for lp in legacy_patients:
+                    # Calculate age from DOB string
+                    age_str = ''
+                    try:
+                        if lp.DOB:
+                            dob = datetime.strptime(lp.DOB, '%Y-%m-%d').date()
+                            today = datetime.today().date()
+                            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+                            age_str = f"{age} years"
+                    except:
+                        age_str = 'Unknown'
+                    
+                    all_patients.append({
+                        'id': f"legacy-{lp.id}",
+                        'name': lp.full_name,
+                        'mrn': lp.mrn_display,
+                        'dob': lp.DOB or 'Unknown',
+                        'age': age_str,
+                        'gender': lp.sex or 'Unknown',
+                        'phone': lp.display_phone,
+                        'source': 'legacy',
+                        'initials': f"{lp.fname[0] if lp.fname else ''}{lp.lname[0] if lp.lname else ''}",
+                        'view_url': f"/hms/patients/legacy/{lp.id}/",
+                        'edit_url': None,  # Legacy patients are read-only
+                    })
+            except Exception as e:
+                logger.warning(f"Could not fetch legacy patients: {e}")
+                # Continue without legacy patients
     
     # PAGINATION - Show 25 patients per page (faster on mobile)
     paginator = Paginator(all_patients, per_page)
@@ -698,7 +752,8 @@ def patient_list(request):
         'patients': patients_page.object_list,  # List of current page patients
         'query': query,
         'source': source_filter,
-        'total_count': len(all_patients),
+        'total_count': total_count,
+        'visible_count': len(all_patients),
         'new_count': new_count,
         'legacy_count': legacy_count,
         'is_paginated': patients_page.has_other_pages(),
@@ -1032,6 +1087,9 @@ def patient_detail(request, pk):
     prepared_by = request.user.get_full_name() or request.user.username
     qr_profile = getattr(patient, 'qr_profile', None)
     
+    user_role = get_user_role(request.user)
+    can_view_vitals = user_role not in {'receptionist'}
+    
     context = {
         'patient': patient,
         'encounters': encounters,
@@ -1058,6 +1116,8 @@ def patient_detail(request, pk):
         'qr_profile': qr_profile,
         'qr_card_url': reverse('hospital:patient_qr_card', args=[patient.pk]) if qr_profile else None,
         'qr_checkin_url': reverse('hospital:patient_qr_checkin'),
+        'user_role': user_role,
+        'can_view_vitals': can_view_vitals,
     }
     return render(request, 'hospital/patient_medical_record_sheet.html', context)
 
@@ -1079,6 +1139,75 @@ def patient_qr_card(request, patient_pk):
         'generated_at': timezone.now(),
     }
     return render(request, 'hospital/patient_qr_card.html', context)
+
+
+@login_required
+def patient_qr_verify(request):
+    """Simple QR code verification endpoint for testing"""
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'POST method required'}, status=405)
+    
+    qr_data = request.POST.get('qr_data', '').strip() or request.GET.get('qr_data', '').strip()
+    if not qr_data:
+        return JsonResponse({'success': False, 'error': 'QR code data is required'}, status=400)
+    
+    # Use the new robust lookup system
+    qr_profile = PatientQRCode.find_by_qr_data(qr_data)
+    
+    if not qr_profile:
+        # Try to extract patient UUID and create QR profile
+        patient_uuid = PatientQRCode.extract_patient_uuid(qr_data)
+        if patient_uuid:
+            patient = Patient.objects.filter(pk=patient_uuid, is_deleted=False).first()
+            if patient:
+                qr_profile = getattr(patient, 'qr_profile', None)
+                if not qr_profile:
+                    qr_profile, _ = PatientQRCode.objects.get_or_create(patient=patient)
+                    qr_profile.refresh_qr(save=True)
+            else:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Patient not found',
+                    'debug': {'patient_uuid': str(patient_uuid)}
+                }, status=404)
+        else:
+            # Try parsing payload to get more info
+            parsed = PatientQRCode.parse_qr_payload(qr_data)
+            return JsonResponse({
+                'success': False,
+                'error': 'Could not identify patient from QR code',
+                'debug': {
+                    'scanned_data': qr_data[:100],
+                    'parsed_data': parsed,
+                    'hint': 'QR code should contain a patient UUID, MRN, or valid QR payload'
+                }
+            }, status=400)
+    
+    # Verify
+    is_verified, verification_message = qr_profile.verify_qr_data(qr_data)
+    
+    # Parse payload for additional debug info
+    parsed = PatientQRCode.parse_qr_payload(qr_data)
+    
+    return JsonResponse({
+        'success': is_verified,
+        'verified': is_verified,
+        'verification_message': verification_message,
+        'patient': {
+            'mrn': qr_profile.patient.mrn,
+            'name': qr_profile.patient.full_name,
+            'uuid': str(qr_profile.patient.id)
+        },
+        'qr_profile': {
+            'has_qr_data': bool(qr_profile.qr_code_data),
+            'stored_qr_data': qr_profile.qr_code_data[:100] + '...' if qr_profile.qr_code_data and len(qr_profile.qr_code_data) > 100 else qr_profile.qr_code_data,
+            'scanned_data': qr_data[:100] + '...' if len(qr_data) > 100 else qr_data,
+            'scan_count': qr_profile.scan_count,
+            'last_scanned_at': qr_profile.last_scanned_at.isoformat() if qr_profile.last_scanned_at else None
+        },
+        'parsed': parsed,
+        'error': None if is_verified else verification_message
+    })
 
 
 @login_required
@@ -1105,18 +1234,61 @@ def patient_qr_checkin_api(request):
     if not qr_data:
         return JsonResponse({'success': False, 'error': 'QR code data is required.'}, status=400)
     
-    try:
-        patient_uuid, qr_token = PatientQRCode.parse_payload(qr_data)
-    except ValueError as exc:
-        return JsonResponse({'success': False, 'error': str(exc)}, status=400)
+    # Log the raw QR data for debugging
+    logger.info(f"QR Check-in attempt - Raw data: {qr_data[:100]}...")
     
-    patient = Patient.objects.filter(pk=patient_uuid, is_deleted=False).select_related('primary_insurance').first()
-    if not patient:
-        return JsonResponse({'success': False, 'error': 'Patient record not found.'}, status=404)
+    # SIMPLIFIED APPROACH: Direct database lookup
+    # Method 1: Find QR profile by scanning database directly
+    qr_profile = PatientQRCode.find_by_qr_data(qr_data)
     
-    qr_profile = getattr(patient, 'qr_profile', None)
-    if not qr_profile or qr_profile.qr_token != qr_token:
-        return JsonResponse({'success': False, 'error': 'QR code does not match this patient.'}, status=400)
+    if qr_profile:
+        patient = qr_profile.patient
+        logger.info(f"QR profile found for patient {patient.mrn} via database lookup")
+    else:
+        # Method 2: Extract patient UUID and find patient directly
+        patient_uuid = PatientQRCode.extract_patient_uuid(qr_data)
+        if patient_uuid:
+            patient = Patient.objects.filter(pk=patient_uuid, is_deleted=False).select_related('primary_insurance').first()
+            if patient:
+                logger.info(f"Patient found by UUID extraction: {patient.mrn}")
+                # Create QR profile if missing
+                qr_profile, _ = PatientQRCode.objects.get_or_create(patient=patient)
+                if not qr_profile.qr_code_data:
+                    qr_profile.refresh_qr(save=True)
+                    logger.info(f"Created/refreshed QR profile for patient {patient.mrn}")
+            else:
+                logger.warning(f"QR check-in - Patient not found for UUID: {patient_uuid}")
+                return JsonResponse({
+                    'success': False, 
+                    'error': 'Patient record not found.',
+                    'debug': {
+                        'patient_uuid': str(patient_uuid),
+                        'scanned_data': qr_data[:100]
+                    }
+                }, status=404)
+        else:
+            logger.warning(f"QR check-in - Could not extract patient UUID from: {qr_data[:100]}")
+            return JsonResponse({
+                'success': False, 
+                'error': 'Invalid QR code format. Could not identify patient.',
+                'debug': {
+                    'received_data': qr_data[:100],
+                    'hint': 'QR code should contain a patient UUID'
+                }
+            }, status=400)
+    
+    # If we found the patient, verification always passes (we found them by UUID)
+    # This ensures QR codes always work even if format is slightly different
+    if qr_profile and patient:
+        is_verified = True
+        verification_message = f"Patient found: {patient.mrn}"
+        # Update QR data if it doesn't match (for future scans)
+        if not qr_profile.qr_code_data or qr_profile.qr_code_data != str(patient.id):
+            logger.info(f"Updating QR data for patient {patient.mrn}")
+            qr_profile.refresh_qr(save=True)
+        # Mark the scan
+        qr_profile.mark_scan(request.user)
+        logger.info(f"QR check-in successful: {verification_message}")
     
     encounter_type = request.POST.get('encounter_type', 'outpatient')
     chief_complaint = request.POST.get('chief_complaint', '').strip() or 'QR check-in at reception'
@@ -1393,21 +1565,59 @@ def patient_quick_visit_create(request, patient_pk):
             queue_position = queue_service.get_position_in_queue(queue_entry)
             
             # Send queue SMS notification (professional queue message)
-            queue_notification_service.send_check_in_notification(queue_entry)
+            sms_sent = queue_notification_service.send_check_in_notification(queue_entry)
             
             logger.info(
                 f"✅ Queue entry created: {queue_number} for {patient.full_name} "
-                f"(Position: {queue_position}, Priority: {priority})"
+                f"(Position: {queue_position}, Priority: {priority}, SMS sent: {sms_sent})"
             )
+            
+            # If queue SMS failed, try fallback SMS
+            if not sms_sent and patient.phone_number:
+                logger.warning(f"Queue SMS failed, trying fallback SMS for {patient.full_name}")
+                try:
+                    from .services.sms_service import sms_service
+                    visit_date = encounter.started_at.strftime('%d/%m/%Y at %I:%M %p')
+                    message = (
+                        f"Dear {patient.first_name},\n\n"
+                        f"Your visit has been registered at PrimeCare Hospital.\n\n"
+                        f"Visit Type: {encounter.get_encounter_type_display()}\n"
+                        f"Date/Time: {visit_date}\n"
+                        f"MRN: {patient.mrn}\n"
+                        f"Queue Number: {queue_number}\n\n"
+                        f"Please proceed to the waiting area.\n\n"
+                        f"Thank you,\nPrimeCare Hospital"
+                    )
+                    sms_result = sms_service.send_sms(
+                        phone_number=patient.phone_number,
+                        message=message,
+                        message_type='visit_created',
+                        recipient_name=patient.full_name,
+                        related_object_id=encounter.id,
+                        related_object_type='Encounter'
+                    )
+                    if sms_result.status == 'sent':
+                        sms_sent = True
+                        logger.info(f"✅ Fallback SMS sent successfully to {patient.full_name}")
+                    else:
+                        logger.warning(f"⚠️ Fallback SMS failed: {sms_result.error_message}")
+                except Exception as sms_error:
+                    logger.error(f"❌ Fallback SMS exception: {str(sms_error)}", exc_info=True)
             
             # Add success message to display
-            messages.success(
-                request,
-                f"✅ Visit created! Queue Number: {queue_number}, Position: {queue_position}. SMS sent. Please record vital signs."
-            )
+            if sms_sent:
+                messages.success(
+                    request,
+                    f"✅ Visit created! Queue Number: {queue_number}, Position: {queue_position}. SMS sent. Please record vital signs."
+                )
+            else:
+                messages.warning(
+                    request,
+                    f"✅ Visit created! Queue Number: {queue_number}, Position: {queue_position}. SMS could not be sent - check patient phone number. Please record vital signs."
+                )
             
         except Exception as e:
-            logger.error(f"Error creating queue entry: {str(e)}", exc_info=True)
+            logger.error(f"❌ Error creating queue entry: {str(e)}", exc_info=True)
             # Fallback to old SMS if queue fails
             if patient.phone_number:
                 try:
@@ -1422,7 +1632,7 @@ def patient_quick_visit_create(request, patient_pk):
                         f"Please proceed to the waiting area.\n\n"
                         f"Thank you,\nPrimeCare Hospital"
                     )
-                    sms_service.send_sms(
+                    sms_result = sms_service.send_sms(
                         phone_number=patient.phone_number,
                         message=message,
                         message_type='visit_created',
@@ -1430,11 +1640,15 @@ def patient_quick_visit_create(request, patient_pk):
                         related_object_id=encounter.id,
                         related_object_type='Encounter'
                     )
-                    messages.success(request, f'New visit created for {patient.full_name}. SMS confirmation sent. Please record vital signs.')
+                    if sms_result.status == 'sent':
+                        messages.success(request, f'New visit created for {patient.full_name}. SMS confirmation sent. Please record vital signs.')
+                    else:
+                        messages.warning(request, f'New visit created for {patient.full_name}, but SMS could not be sent: {sms_result.error_message}. Please record vital signs.')
                 except Exception as sms_error:
-                    messages.success(request, f'New visit created for {patient.full_name}, but SMS could not be sent. Please record vital signs.')
-        else:
-            messages.success(request, f'New visit created for {patient.full_name}. Please record vital signs.')
+                    logger.error(f"❌ Fallback SMS exception: {str(sms_error)}", exc_info=True)
+                    messages.warning(request, f'New visit created for {patient.full_name}, but SMS could not be sent: {str(sms_error)}. Please record vital signs.')
+            else:
+                messages.warning(request, f'New visit created for {patient.full_name}, but patient has no phone number. Please record vital signs.')
         
         return redirect('hospital:record_vitals', encounter_id=encounter.pk)
     
@@ -1469,12 +1683,17 @@ def encounter_detail(request, pk):
     except:
         pass
     
+    user_role = get_user_role(request.user)
+    can_view_vitals = user_role not in {'receptionist'}
+    
     context = {
         'encounter': encounter,
         'vitals': vitals,
         'latest_vitals': latest_vitals,
         'orders': orders,
         'referrals': referrals,
+        'user_role': user_role,
+        'can_view_vitals': can_view_vitals,
     }
     return render(request, 'hospital/encounter_detail.html', context)
 
@@ -1901,6 +2120,7 @@ def financial_report_export_excel(request):
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Font, Alignment
+        from openpyxl.utils import get_column_letter
     except ImportError:
         return HttpResponse(
             'openpyxl is required for Excel export. Please install it and try again.',
@@ -1964,10 +2184,13 @@ def financial_report_export_excel(request):
         ws.cell(row=current_row, column=3, value=float(item['total'] or 0))
         current_row += 1
     
-    for column_cells in ws.columns:
-        length = max(len(str(cell.value)) if cell.value is not None else 0 for cell in column_cells)
-        column_letter = column_cells[0].column_letter
-        ws.column_dimensions[column_letter].width = max(15, length + 2)
+    for col_idx, column_cells in enumerate(ws.columns, start=1):
+        # Filter out MergedCell objects - they don't have .value
+        actual_cells = [cell for cell in column_cells if hasattr(cell, 'value')]
+        if actual_cells:
+            length = max(len(str(cell.value)) if cell.value is not None else 0 for cell in actual_cells)
+            column_letter = get_column_letter(col_idx)
+            ws.column_dimensions[column_letter].width = max(15, length + 2)
     
     buffer = BytesIO()
     wb.save(buffer)

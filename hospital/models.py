@@ -1,15 +1,21 @@
 import uuid
 import secrets
+import json
+import re
 from io import BytesIO
 from django.db import models
 from django.contrib.auth.models import User
 from django.core.validators import RegexValidator
+from django.core.exceptions import ValidationError
 from django.utils import timezone
 from model_utils.models import TimeStampedModel
 from django.db.models import Sum
 from django.core.files.base import ContentFile
 from PIL import Image, ImageOps
 import qrcode
+
+# Import login attempts model
+from .models_login_attempts import LoginAttempt
 
 
 class BaseModel(TimeStampedModel):
@@ -32,6 +38,7 @@ class UserSession(BaseModel):
     logout_time = models.DateTimeField(null=True, blank=True)
     user_agent = models.CharField(max_length=500, blank=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
+    is_locum = models.BooleanField(default=False, help_text='Mark as locum/visiting staff for payment tracking')
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -203,6 +210,8 @@ class Patient(BaseModel):
 class PatientQRCode(BaseModel):
     """Secure QR code profile for patient ID cards"""
     QR_PREFIX = "PCMCARD"
+    MRN_PATTERN = re.compile(r'PMC\d{6,}', re.IGNORECASE)
+    TOKEN_PATTERN = re.compile(r'[A-Za-z0-9]{8,64}')
     
     patient = models.OneToOneField(
         Patient,
@@ -210,7 +219,7 @@ class PatientQRCode(BaseModel):
         related_name='qr_profile'
     )
     qr_token = models.CharField(max_length=64, unique=True, blank=True)
-    qr_code_data = models.CharField(max_length=255, unique=True, blank=True)
+    qr_code_data = models.TextField(blank=True)  # Changed to TextField to support longer payloads
     qr_code_image = models.ImageField(upload_to='patient_qr_codes/', null=True, blank=True)
     scan_count = models.PositiveIntegerField(default=0)
     last_generated_at = models.DateTimeField(null=True, blank=True)
@@ -233,13 +242,18 @@ class PatientQRCode(BaseModel):
         return f"QR Card - {self.patient.full_name} ({self.patient.mrn})"
     
     def build_payload(self):
-        """Return the encoded payload for the QR card"""
-        return f"{self.QR_PREFIX}|{self.patient_id}|{self.qr_token}"
+        """Return the encoded payload for the QR card - SIMPLIFIED: Just patient UUID"""
+        # Use simple format: just the patient UUID as string
+        # This is the most reliable and works with any QR scanner
+        return str(self.patient_id)
     
     def refresh_qr(self, force_token=False, save=True):
         """Generate or refresh the QR credentials and image"""
+        # Generate token for security tracking (but not required for verification)
         if force_token or not self.qr_token:
             self.qr_token = secrets.token_urlsafe(16)
+        
+        # Store structured payload (JSON string)
         self.qr_code_data = self.build_payload()
         self.last_generated_at = timezone.now()
         self._generate_qr_image()
@@ -279,24 +293,167 @@ class PatientQRCode(BaseModel):
         if save:
             self.save(update_fields=['scan_count', 'last_scanned_at', 'last_scanned_by', 'modified'])
     
-    @classmethod
-    def parse_payload(cls, payload):
-        """Validate and extract identifiers from a QR payload"""
-        if not payload:
-            raise ValueError("QR code is empty.")
-        parts = payload.strip().split('|')
-        if len(parts) != 3:
-            raise ValueError("QR code format is invalid.")
-        prefix, patient_id_str, token = parts
-        if prefix != cls.QR_PREFIX:
-            raise ValueError("QR code prefix is invalid.")
+    @staticmethod
+    def _try_parse_uuid(value):
+        if not value:
+            return None
         try:
-            patient_uuid = uuid.UUID(patient_id_str)
-        except ValueError:
-            raise ValueError("QR code patient reference is invalid.")
-        if not token:
-            raise ValueError("QR code token is missing.")
-        return patient_uuid, token
+            return uuid.UUID(str(value).strip())
+        except (ValueError, AttributeError, TypeError):
+            return None
+    
+    @classmethod
+    def parse_qr_payload(cls, payload):
+        """
+        SIMPLIFIED: Parse QR payload - just extract patient UUID from any format.
+        Supports: direct UUID, JSON with patient_uuid, pipe-delimited, MRN lookup.
+        """
+        result = {
+            'raw': payload,
+            'patient_uuid': None,
+            'mrn': None,
+            'token': None,
+        }
+        if not payload:
+            return result
+        
+        payload = payload.strip()
+        result['raw'] = payload
+        
+        # Method 1: Try direct UUID (most common case)
+        maybe_uuid = cls._try_parse_uuid(payload)
+        if maybe_uuid:
+            result['patient_uuid'] = maybe_uuid
+            return result
+        
+        # Method 2: Try JSON format (backward compatibility)
+        try:
+            parsed = json.loads(payload)
+            if isinstance(parsed, dict):
+                result['patient_uuid'] = cls._try_parse_uuid(
+                    parsed.get('patient_uuid') or parsed.get('patientId') or parsed.get('patient_id')
+                )
+                if parsed.get('mrn'):
+                    result['mrn'] = str(parsed.get('mrn')).strip()
+                if parsed.get('token'):
+                    result['token'] = str(parsed.get('token')).strip()
+                return result
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+        
+        # Method 3: Pipe-delimited format (legacy)
+        if '|' in payload:
+            parts = [p.strip() for p in payload.split('|') if p.strip()]
+            if parts and parts[0].upper() == cls.QR_PREFIX:
+                parts = parts[1:]
+            for part in parts:
+                maybe_uuid = cls._try_parse_uuid(part)
+                if maybe_uuid:
+                    result['patient_uuid'] = maybe_uuid
+                    break
+                match = cls.MRN_PATTERN.search(part)
+                if match:
+                    result['mrn'] = match.group().upper()
+            return result
+        
+        # Method 4: Extract UUID from anywhere in the string
+        uuid_pattern = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+        uuid_match = re.search(uuid_pattern, payload, re.IGNORECASE)
+        if uuid_match:
+            result['patient_uuid'] = cls._try_parse_uuid(uuid_match.group())
+            return result
+        
+        # Method 5: MRN pattern
+        mrn_match = cls.MRN_PATTERN.search(payload)
+        if mrn_match:
+            result['mrn'] = mrn_match.group().upper()
+        
+        return result
+    
+    @classmethod
+    def extract_patient_uuid(cls, payload):
+        """Backward-compatible helper used by older code paths."""
+        parsed = cls.parse_qr_payload(payload)
+        return parsed.get('patient_uuid')
+    
+    @classmethod
+    def find_by_qr_data(cls, scanned_data):
+        """
+        Robust lookup that supports multiple QR formats.
+        """
+        if not scanned_data:
+            return None
+        
+        scanned_data = scanned_data.strip()
+        parsed = cls.parse_qr_payload(scanned_data)
+        
+        # 1. Exact stored payload
+        match = cls.objects.filter(qr_code_data=scanned_data, is_active=True).first()
+        if match:
+            return match
+        
+        # 2. Case-insensitive match
+        match = cls.objects.filter(qr_code_data__iexact=scanned_data, is_active=True).first()
+        if match:
+            return match
+        
+        # 3. Token match
+        token = parsed.get('token')
+        if token:
+            match = cls.objects.filter(qr_token=token, is_active=True).first()
+            if match:
+                return match
+        
+        # 4. Patient UUID match
+        patient_uuid = parsed.get('patient_uuid')
+        if patient_uuid:
+            match = cls.objects.filter(patient_id=patient_uuid, is_active=True).first()
+            if match:
+                return match
+        
+        # 5. MRN match via patient relationship
+        mrn = parsed.get('mrn')
+        if mrn:
+            patient = Patient.objects.filter(mrn__iexact=mrn, is_deleted=False).first()
+            if patient and hasattr(patient, 'qr_profile'):
+                return patient.qr_profile
+        
+        # 6. Partial match fallback
+        return cls.objects.filter(qr_code_data__icontains=scanned_data, is_active=True).first()
+    
+    def verify_qr_data(self, scanned_data):
+        """
+        SIMPLIFIED: Verify scanned QR data - just check if patient UUID matches.
+        """
+        if not scanned_data:
+            return False, "No QR data provided"
+        
+        scanned_data = scanned_data.strip()
+        
+        # Method 1: Exact match with stored qr_code_data (should be patient UUID)
+        if self.qr_code_data:
+            if scanned_data == self.qr_code_data:
+                return True, "QR data exact match"
+            if scanned_data.lower() == self.qr_code_data.lower():
+                return True, "QR data match (case-insensitive)"
+        
+        # Method 2: Extract UUID from scanned data and compare
+        parsed = self.parse_qr_payload(scanned_data)
+        patient_uuid = parsed.get('patient_uuid')
+        
+        if patient_uuid and str(patient_uuid) == str(self.patient_id):
+            return True, "Patient UUID verified"
+        
+        # Method 3: Direct UUID comparison (if scanned data is just UUID)
+        if str(self.patient_id) in scanned_data or scanned_data in str(self.patient_id):
+            return True, "Patient UUID found in scanned data"
+        
+        # Method 4: MRN fallback
+        mrn = parsed.get('mrn')
+        if mrn and self.patient.mrn and mrn.upper() == self.patient.mrn.upper():
+            return True, "Patient MRN verified"
+        
+        return False, f"QR verification failed - Patient UUID: {self.patient_id}, Scanned: {scanned_data[:50]}"
 
 
 class Encounter(BaseModel):
@@ -875,6 +1032,10 @@ class Staff(BaseModel):
     bank_branch = models.CharField(max_length=100, blank=True)
     
     # Additional
+    is_locum = models.BooleanField(
+        default=False,
+        help_text='Mark as locum/visiting staff for payment tracking'
+    )
     is_active = models.BooleanField(default=True)
     staff_notes = models.TextField(blank=True, help_text='Additional notes about staff member')
     
@@ -1579,6 +1740,28 @@ class InvoiceLine(BaseModel):
     tax_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     line_total = models.DecimalField(max_digits=10, decimal_places=2)
+    insurance_exclusion_rule = models.ForeignKey(
+        'hospital.InsuranceExclusionRule',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='invoice_lines',
+        help_text="Reference to the exclusion rule that matched (if any)"
+    )
+    insurance_enforcement_action = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="What the insurer expects us to do (block/patient_pay/warn)"
+    )
+    insurance_exclusion_reason = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Friendly explanation for frontdesk/pharmacy users"
+    )
+    is_insurance_excluded = models.BooleanField(
+        default=False,
+        help_text="If True, this line will never be sent to insurance claims"
+    )
     
     class Meta:
         ordering = ['created']
@@ -1589,6 +1772,9 @@ class InvoiceLine(BaseModel):
     def save(self, *args, **kwargs):
         """Calculate line total before saving"""
         from decimal import Decimal
+        
+        self._evaluate_insurance_exclusions()
+        
         subtotal = Decimal(str(self.quantity)) * Decimal(str(self.unit_price))
         self.line_total = subtotal - Decimal(str(self.discount_amount)) + Decimal(str(self.tax_amount))
         super().save(*args, **kwargs)
@@ -1597,6 +1783,42 @@ class InvoiceLine(BaseModel):
         if self.invoice:
             self.invoice.calculate_totals()
             self.invoice.save()
+
+    def _evaluate_insurance_exclusions(self):
+        """
+        Run insurance exclusion logic before saving the line so we can block or mark items.
+        """
+        self.is_insurance_excluded = False
+        self.insurance_exclusion_rule = None
+        self.insurance_enforcement_action = ''
+        self.insurance_exclusion_reason = ''
+        
+        invoice = getattr(self, 'invoice', None)
+        if not invoice or not invoice.payer or invoice.payer.payer_type == 'cash':
+            return
+        
+        patient = invoice.patient
+        payer = invoice.payer
+        if not patient or not payer:
+            return
+        
+        from .services.insurance_exclusion_service import InsuranceExclusionService
+        exclusion_service = InsuranceExclusionService(
+            patient=patient,
+            payer=payer,
+            service_code=self.service_code,
+        )
+        result = exclusion_service.evaluate()
+        if not result.rule:
+            return
+        
+        self.insurance_exclusion_rule = result.rule
+        self.insurance_enforcement_action = result.enforcement
+        self.insurance_exclusion_reason = result.reason
+        self.is_insurance_excluded = result.is_excluded
+        
+        if result.should_block:
+            raise ValidationError(result.reason)
 
 
 # ==================== NEW FEATURES: APPOINTMENTS ====================

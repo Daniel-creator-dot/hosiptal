@@ -3,7 +3,7 @@ Department Budget Management Views
 """
 
 from django.shortcuts import render, get_object_or_404, redirect
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib import messages
 from django.http import JsonResponse
 from django.db.models import Sum, Q, F
@@ -17,6 +17,11 @@ from .models_department_budgeting import (
     BudgetExpense, BudgetTransfer, BudgetAlert,
     BudgetVariance, BudgetRevision
 )
+
+
+def is_accountant(user):
+    """Check if user is an accountant"""
+    return user.groups.filter(name__in=['Cashier', 'Admin', 'Accountant']).exists() or user.is_staff
 
 
 @login_required
@@ -275,9 +280,11 @@ def allocate_department_budgets(request, period_id):
 
 
 @login_required
+@user_passes_test(is_accountant, login_url='/admin/login/')
 def budget_vs_actual_report(request):
     """
     Budget vs Actual spending report
+    Accountants should have access to this report for financial analysis
     """
     # Get period
     period_id = request.GET.get('period')
@@ -363,6 +370,11 @@ def my_department_budget(request):
         return redirect('hospital:dashboard')
     
     return redirect('hospital:department_budget_detail', budget_id=budget.id)
+
+
+
+
+
 
 
 

@@ -12,7 +12,11 @@ app = Celery('hms')
 app.config_from_object('django.conf:settings', namespace='CELERY')
 
 # Load task modules from all registered Django apps.
-app.autodiscover_tasks()
+# Discover tasks from all Django apps plus the project-level `hms.tasks`
+installed_apps = list(getattr(settings, 'INSTALLED_APPS', []))
+if 'hms' not in installed_apps:
+    installed_apps.append('hms')
+app.autodiscover_tasks(lambda: installed_apps)
 
 # Celery Beat Schedule
 app.conf.beat_schedule = {
@@ -39,6 +43,14 @@ app.conf.beat_schedule = {
     'verify-database-integrity': {
         'task': 'hms.tasks.verify_database_integrity',
         'schedule': 604800.0,  # Weekly verification (7 days)
+    },
+    'auto-match-cash-revenue-daily': {
+        'task': 'hospital.tasks_primecare.auto_match_cash_revenue',
+        'schedule': 86400.0,  # Daily
+    },
+    'auto-match-credit-revenue-daily': {
+        'task': 'hospital.tasks_primecare.auto_match_credit_revenue',
+        'schedule': 86400.0,  # Daily
     },
 }
 

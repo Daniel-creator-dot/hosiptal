@@ -10,7 +10,7 @@ from django.utils import timezone
 from django.core.validators import MinValueValidator
 from decimal import Decimal
 from datetime import datetime, timedelta
-from .models import BaseModel, Patient, Invoice, Department
+from .models import BaseModel, Patient, Invoice, Department, Staff, Payer
 from .models_accounting import Account, CostCenter
 
 
@@ -325,6 +325,15 @@ class PaymentVoucher(BaseModel):
         ('other', 'Other Payment'),
     ]
     
+    PAYMENT_METHODS = [
+        ('cash', 'Cash'),
+        ('bank_transfer', 'Bank Transfer'),
+        ('cheque', 'Cheque'),
+        ('mobile_money', 'Mobile Money'),
+        ('card', 'Card'),
+        ('other', 'Other'),
+    ]
+    
     voucher_number = models.CharField(max_length=50, unique=True)
     voucher_date = models.DateField(default=timezone.now)
     
@@ -335,7 +344,7 @@ class PaymentVoucher(BaseModel):
     description = models.TextField()
     amount = models.DecimalField(max_digits=15, decimal_places=2, validators=[MinValueValidator(0)])
     
-    payment_method = models.CharField(max_length=50, default='bank_transfer')
+    payment_method = models.CharField(max_length=50, choices=PAYMENT_METHODS, default='bank_transfer')
     payment_reference = models.CharField(max_length=100, blank=True)
     payment_date = models.DateField(null=True, blank=True)
     
@@ -343,6 +352,7 @@ class PaymentVoucher(BaseModel):
     bank_name = models.CharField(max_length=200, blank=True)
     account_number = models.CharField(max_length=50, blank=True)
     cheque_number = models.CharField(max_length=50, blank=True)
+    cheque = models.ForeignKey('Cheque', on_delete=models.SET_NULL, null=True, blank=True, related_name='payment_vouchers')
     
     # Approval workflow
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
@@ -450,6 +460,107 @@ class PaymentVoucher(BaseModel):
             self.paid_by = user
             self.journal_entry = je
             self.save()
+
+
+class Cheque(BaseModel):
+    """Cheque Management - Track cheques issued for payments"""
+    STATUS_CHOICES = [
+        ('issued', 'Issued'),
+        ('cleared', 'Cleared'),
+        ('bounced', 'Bounced'),
+        ('void', 'Void'),
+        ('cancelled', 'Cancelled'),
+    ]
+    
+    cheque_number = models.CharField(max_length=50, unique=True, help_text="Cheque number from cheque book")
+    bank_account = models.ForeignKey('BankAccount', on_delete=models.PROTECT, related_name='cheques')
+    
+    payee_name = models.CharField(max_length=200)
+    amount = models.DecimalField(max_digits=15, decimal_places=2, validators=[MinValueValidator(0)])
+    
+    issue_date = models.DateField(default=timezone.now, help_text="Date cheque was issued")
+    cheque_date = models.DateField(help_text="Date written on cheque (may be post-dated)")
+    clear_date = models.DateField(null=True, blank=True, help_text="Date cheque cleared the bank")
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='issued')
+    
+    # Links
+    payment_voucher = models.ForeignKey(PaymentVoucher, on_delete=models.SET_NULL, null=True, blank=True, related_name='cheques')
+    journal_entry = models.ForeignKey(AdvancedJournalEntry, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    # Details
+    description = models.TextField(blank=True)
+    memo = models.CharField(max_length=200, blank=True, help_text="Memo line on cheque")
+    
+    # Tracking
+    issued_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='cheques_issued')
+    cleared_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='cheques_cleared')
+    
+    # Bank reconciliation
+    bank_statement_reference = models.CharField(max_length=100, blank=True)
+    reconciliation_date = models.DateField(null=True, blank=True)
+    
+    notes = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['-issue_date', '-cheque_number']
+        indexes = [
+            models.Index(fields=['cheque_number']),
+            models.Index(fields=['status', 'cheque_date']),
+            models.Index(fields=['bank_account', 'status']),
+        ]
+    
+    def __str__(self):
+        return f"Cheque #{self.cheque_number} - {self.payee_name} - GHS {self.amount} ({self.get_status_display()})"
+    
+    def save(self, *args, **kwargs):
+        if not self.cheque_number:
+            raise ValueError("Cheque number is required")
+        super().save(*args, **kwargs)
+    
+    def clear(self, user, clear_date=None, bank_reference=None):
+        """Mark cheque as cleared"""
+        if self.status not in ['issued', 'bounced']:
+            raise ValueError(f"Cannot clear cheque with status: {self.status}")
+        
+        self.status = 'cleared'
+        self.clear_date = clear_date or timezone.now().date()
+        self.cleared_by = user
+        if bank_reference:
+            self.bank_statement_reference = bank_reference
+        self.save()
+    
+    def bounce(self, user, notes=None):
+        """Mark cheque as bounced"""
+        if self.status != 'issued':
+            raise ValueError(f"Cannot bounce cheque with status: {self.status}")
+        
+        self.status = 'bounced'
+        if notes:
+            self.notes = f"{self.notes}\nBounced: {notes}" if self.notes else f"Bounced: {notes}"
+        self.save()
+    
+    def void_cheque(self, user, reason=None):
+        """Void a cheque"""
+        if self.status in ['cleared', 'void']:
+            raise ValueError(f"Cannot void cheque with status: {self.status}")
+        
+        self.status = 'void'
+        if reason:
+            self.notes = f"{self.notes}\nVoided: {reason}" if self.notes else f"Voided: {reason}"
+        self.save()
+    
+    @property
+    def is_post_dated(self):
+        """Check if cheque is post-dated"""
+        return self.cheque_date > timezone.now().date()
+    
+    @property
+    def days_outstanding(self):
+        """Calculate days since cheque was issued"""
+        if self.status == 'cleared' and self.clear_date:
+            return (self.clear_date - self.issue_date).days
+        return (timezone.now().date() - self.issue_date).days
 
 
 class ReceiptVoucher(BaseModel):
@@ -947,4 +1058,1135 @@ class AccountingAuditLog(BaseModel):
     
     def __str__(self):
         return f"{self.user} - {self.action} - {self.model_name} - {self.timestamp}"
+
+
+# ==================== CASHBOOK ====================
+
+class Cashbook(BaseModel):
+    """Cashbook - Receipts and Payments held until next day before revenue classification"""
+    ENTRY_TYPES = [
+        ('receipt', 'Receipt'),
+        ('payment', 'Payment'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending (Held)'),
+        ('classified', 'Classified to Revenue'),
+        ('void', 'Void'),
+    ]
+    
+    entry_number = models.CharField(max_length=50, unique=True)
+    entry_type = models.CharField(max_length=20, choices=ENTRY_TYPES)
+    entry_date = models.DateField(default=timezone.now)
+    
+    # Amounts
+    amount = models.DecimalField(max_digits=15, decimal_places=2, validators=[MinValueValidator(0)])
+    
+    # Payment/Receipt details
+    payee_or_payer = models.CharField(max_length=200, help_text="Name of person/entity receiving or making payment")
+    description = models.TextField()
+    reference = models.CharField(max_length=100, blank=True)
+    
+    # Payment method
+    payment_method = models.CharField(max_length=50, choices=PaymentVoucher.PAYMENT_METHODS, default='cash')
+    cheque = models.ForeignKey(Cheque, on_delete=models.SET_NULL, null=True, blank=True, related_name='cashbook_entries')
+    
+    # Links
+    patient = models.ForeignKey(Patient, on_delete=models.SET_NULL, null=True, blank=True)
+    invoice = models.ForeignKey(Invoice, on_delete=models.SET_NULL, null=True, blank=True)
+    journal_entry = models.ForeignKey(AdvancedJournalEntry, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    # Account classification (set after next day)
+    revenue_account = models.ForeignKey(Account, on_delete=models.SET_NULL, null=True, blank=True, related_name='cashbook_revenues')
+    expense_account = models.ForeignKey(Account, on_delete=models.SET_NULL, null=True, blank=True, related_name='cashbook_expenses')
+    cash_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='cashbook_entries')
+    
+    # Status and timing
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    held_until = models.DateField(null=True, blank=True, help_text="Date when entry can be classified to revenue (next day after entry date)")
+    classified_at = models.DateTimeField(null=True, blank=True)
+    classified_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='cashbook_classified')
+    
+    # User tracking
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='cashbook_entries_created')
+    
+    class Meta:
+        ordering = ['-entry_date', '-entry_number']
+        indexes = [
+            models.Index(fields=['entry_date', 'status']),
+            models.Index(fields=['held_until', 'status']),
+        ]
+    
+    def __str__(self):
+        return f"{self.entry_number} - {self.get_entry_type_display()} - GHS {self.amount}"
+    
+    def save(self, *args, **kwargs):
+        if not self.entry_number:
+            self.entry_number = self.generate_entry_number()
+        
+        # Set held_until to next calendar day if not set
+        if not self.held_until and self.status == 'pending':
+            from datetime import timedelta
+            # Set to next day (entry_date + 1 day)
+            if self.entry_date:
+                self.held_until = self.entry_date + timedelta(days=1)
+            else:
+                # If entry_date not set, use today + 1 day
+                self.held_until = timezone.now().date() + timedelta(days=1)
+        
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_entry_number():
+        """Generate unique cashbook entry number"""
+        today = timezone.now()
+        prefix = f"CB{today.strftime('%Y%m')}"
+        
+        last_entry = Cashbook.objects.filter(
+            entry_number__startswith=prefix
+        ).order_by('-entry_number').first()
+        
+        if last_entry:
+            try:
+                last_num = int(last_entry.entry_number[-6:])
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}{new_num:06d}"
+    
+    def can_classify(self):
+        """Check if entry can be classified to revenue (next day has arrived)"""
+        if not self.held_until:
+            return False
+        today = timezone.now().date()
+        return today >= self.held_until and self.status == 'pending'
+    
+    def classify_to_revenue(self, user, revenue_account=None, expense_account=None):
+        """Classify cashbook entry to revenue/expense accounts after next day"""
+        if not self.can_classify():
+            today = timezone.now().date()
+            raise ValueError(f"Entry cannot be classified yet. Can be classified from {self.held_until}. Today is {today}.")
+        
+        if self.status != 'pending':
+            raise ValueError("Only pending entries can be classified")
+        
+        with transaction.atomic():
+            # Create journal entry
+            je = AdvancedJournalEntry.objects.create(
+                journal=Journal.objects.get_or_create(journal_type='cash', defaults={'code': 'CASH', 'name': 'Cash Journal'})[0],
+                entry_date=timezone.now().date(),
+                description=f"Cashbook classification: {self.description}",
+                reference=self.entry_number,
+                created_by=user,
+            )
+            
+            if self.entry_type == 'receipt':
+                # Receipt: Debit Cash, Credit Revenue
+                account_to_credit = revenue_account or self.revenue_account
+                if not account_to_credit:
+                    raise ValueError("Revenue account must be specified for receipts")
+                
+                AdvancedJournalEntryLine.objects.create(
+                    journal_entry=je,
+                    line_number=1,
+                    account=self.cash_account,
+                    description=f"Cash receipt: {self.description}",
+                    debit_amount=self.amount,
+                    credit_amount=0,
+                )
+                
+                AdvancedJournalEntryLine.objects.create(
+                    journal_entry=je,
+                    line_number=2,
+                    account=account_to_credit,
+                    description=f"Revenue: {self.description}",
+                    debit_amount=0,
+                    credit_amount=self.amount,
+                )
+                
+                self.revenue_account = account_to_credit
+                
+            else:  # payment
+                # Payment: Debit Expense, Credit Cash
+                account_to_debit = expense_account or self.expense_account
+                if not account_to_debit:
+                    raise ValueError("Expense account must be specified for payments")
+                
+                AdvancedJournalEntryLine.objects.create(
+                    journal_entry=je,
+                    line_number=1,
+                    account=account_to_debit,
+                    description=f"Expense: {self.description}",
+                    debit_amount=self.amount,
+                    credit_amount=0,
+                )
+                
+                AdvancedJournalEntryLine.objects.create(
+                    journal_entry=je,
+                    line_number=2,
+                    account=self.cash_account,
+                    description=f"Cash payment: {self.description}",
+                    debit_amount=0,
+                    credit_amount=self.amount,
+                )
+                
+                self.expense_account = account_to_debit
+            
+            # Update totals and post
+            je.total_debit = self.amount
+            je.total_credit = self.amount
+            je.save()
+            je.post(user)
+            
+            # Update cashbook entry
+            self.status = 'classified'
+            self.classified_at = timezone.now()
+            self.classified_by = user
+            self.journal_entry = je
+            self.save()
+
+
+# ==================== BANK RECONCILIATION ====================
+
+class BankReconciliation(BaseModel):
+    """Bank Reconciliation - Match bank statements with accounting records"""
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('in_progress', 'In Progress'),
+        ('completed', 'Completed'),
+        ('reconciled', 'Fully Reconciled'),
+    ]
+    
+    reconciliation_number = models.CharField(max_length=50, unique=True)
+    bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='reconciliations')
+    
+    statement_date = models.DateField(help_text="Date of bank statement")
+    statement_balance = models.DecimalField(max_digits=15, decimal_places=2, help_text="Ending balance per bank statement")
+    
+    book_balance = models.DecimalField(max_digits=15, decimal_places=2, help_text="Ending balance per books")
+    
+    # Reconciliation items
+    deposits_in_transit = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    outstanding_cheques = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    bank_charges = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    interest_earned = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    other_adjustments = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    
+    adjusted_balance = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    difference = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    
+    reconciled_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    reconciled_at = models.DateTimeField(null=True, blank=True)
+    
+    notes = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['-statement_date', '-reconciliation_number']
+    
+    def __str__(self):
+        return f"{self.reconciliation_number} - {self.bank_account.account_name} - {self.statement_date}"
+    
+    def save(self, *args, **kwargs):
+        if not self.reconciliation_number:
+            self.reconciliation_number = self.generate_reconciliation_number()
+        
+        # Calculate adjusted balance
+        self.adjusted_balance = (
+            self.book_balance
+            + self.deposits_in_transit
+            - self.outstanding_cheques
+            - self.bank_charges
+            + self.interest_earned
+            + self.other_adjustments
+        )
+        
+        # Calculate difference
+        self.difference = self.statement_balance - self.adjusted_balance
+        
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_reconciliation_number():
+        """Generate unique reconciliation number"""
+        today = timezone.now()
+        prefix = f"BR{today.strftime('%Y%m')}"
+        
+        last_recon = BankReconciliation.objects.filter(
+            reconciliation_number__startswith=prefix
+        ).order_by('-reconciliation_number').first()
+        
+        if last_recon:
+            try:
+                last_num = int(last_recon.reconciliation_number[-6:])
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}{new_num:06d}"
+    
+    def reconcile(self, user):
+        """Mark reconciliation as completed"""
+        if abs(self.difference) > 0.01:
+            raise ValueError(f"Reconciliation is not balanced. Difference: GHS {self.difference}")
+        
+        self.status = 'reconciled'
+        self.reconciled_by = user
+        self.reconciled_at = timezone.now()
+        self.save()
+        
+        # Mark all matched transactions as reconciled
+        BankTransaction.objects.filter(
+            bank_account=self.bank_account,
+            transaction_date__lte=self.statement_date,
+            is_reconciled=False
+        ).update(
+            is_reconciled=True,
+            reconciled_date=self.statement_date
+        )
+
+
+class BankReconciliationItem(BaseModel):
+    """Individual items in bank reconciliation"""
+    reconciliation = models.ForeignKey(BankReconciliation, on_delete=models.CASCADE, related_name='items')
+    
+    transaction = models.ForeignKey(BankTransaction, on_delete=models.CASCADE, null=True, blank=True)
+    journal_entry = models.ForeignKey(AdvancedJournalEntry, on_delete=models.CASCADE, null=True, blank=True)
+    cheque = models.ForeignKey(Cheque, on_delete=models.CASCADE, null=True, blank=True)
+    
+    description = models.CharField(max_length=500)
+    amount = models.DecimalField(max_digits=15, decimal_places=2)
+    is_matched = models.BooleanField(default=False)
+    
+    class Meta:
+        ordering = ['reconciliation', 'created']
+
+
+# ==================== INSURANCE RECEIVABLE ====================
+
+class InsuranceReceivable(BaseModel):
+    """Insurance Receivable - Track amounts due from insurance companies"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending Submission'),
+        ('submitted', 'Submitted to Insurance'),
+        ('approved', 'Approved by Insurance'),
+        ('paid', 'Paid'),
+        ('rejected', 'Rejected'),
+        ('partial', 'Partially Paid'),
+    ]
+    
+    receivable_number = models.CharField(max_length=50, unique=True)
+    insurance_company = models.ForeignKey('Payer', on_delete=models.PROTECT, related_name='receivables', limit_choices_to={'payer_type': 'insurance'})
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='insurance_receivables')
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='insurance_receivables')
+    
+    claim_number = models.CharField(max_length=100, blank=True, help_text="Insurance claim number")
+    claim_date = models.DateField(default=timezone.now)
+    
+    total_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    amount_paid = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    balance_due = models.DecimalField(max_digits=15, decimal_places=2)
+    
+    due_date = models.DateField()
+    payment_date = models.DateField(null=True, blank=True)
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    
+    # Tracking
+    submitted_date = models.DateField(null=True, blank=True)
+    approved_date = models.DateField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+    
+    # Accounting
+    receivable_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='insurance_receivables')
+    journal_entry = models.ForeignKey(AdvancedJournalEntry, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    notes = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['-claim_date', '-receivable_number']
+        indexes = [
+            models.Index(fields=['insurance_company', 'status']),
+            models.Index(fields=['due_date', 'status']),
+        ]
+    
+    def __str__(self):
+        return f"{self.receivable_number} - {self.insurance_company.name} - GHS {self.balance_due}"
+    
+    def save(self, *args, **kwargs):
+        if not self.receivable_number:
+            self.receivable_number = self.generate_receivable_number()
+        
+        # Calculate balance
+        self.balance_due = self.total_amount - self.amount_paid
+        
+        # Update status based on payment
+        if self.amount_paid >= self.total_amount:
+            self.status = 'paid'
+        elif self.amount_paid > 0:
+            self.status = 'partial'
+        
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_receivable_number():
+        """Generate unique insurance receivable number"""
+        today = timezone.now()
+        prefix = f"IR{today.strftime('%Y%m')}"
+        
+        last_rec = InsuranceReceivable.objects.filter(
+            receivable_number__startswith=prefix
+        ).order_by('-receivable_number').first()
+        
+        if last_rec:
+            try:
+                last_num = int(last_rec.receivable_number[-6:])
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}{new_num:06d}"
+
+
+# ==================== PROCUREMENT ACCOUNTING ====================
+
+class ProcurementPurchase(BaseModel):
+    """Procurement Purchases - Cash and Credit with Accounts Payable integration"""
+    PURCHASE_TYPES = [
+        ('cash', 'Cash Purchase'),
+        ('credit', 'Credit Purchase'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('approved', 'Approved'),
+        ('received', 'Goods Received'),
+        ('paid', 'Paid'),
+        ('cancelled', 'Cancelled'),
+    ]
+    
+    purchase_number = models.CharField(max_length=50, unique=True)
+    purchase_type = models.CharField(max_length=20, choices=PURCHASE_TYPES)
+    purchase_date = models.DateField(default=timezone.now)
+    
+    supplier_name = models.CharField(max_length=200)
+    supplier_invoice = models.CharField(max_length=100, blank=True)
+    
+    total_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    tax_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    net_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    
+    description = models.TextField()
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    
+    # For credit purchases - link to Accounts Payable
+    accounts_payable = models.ForeignKey(AccountsPayable, on_delete=models.SET_NULL, null=True, blank=True, related_name='procurement_purchases')
+    
+    # Accounting
+    expense_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='procurement_purchases')
+    liability_account = models.ForeignKey(Account, on_delete=models.PROTECT, null=True, blank=True, related_name='procurement_liabilities', help_text="Accounts Payable account for credit purchases")
+    payment_account = models.ForeignKey(Account, on_delete=models.PROTECT, null=True, blank=True, related_name='procurement_payments', help_text="Cash/Bank account for cash purchases")
+    journal_entry = models.ForeignKey(AdvancedJournalEntry, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    # Classification
+    classification = models.CharField(max_length=100, blank=True, help_text="Purchase classification/category")
+    
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='procurement_approved')
+    
+    class Meta:
+        ordering = ['-purchase_date', '-purchase_number']
+    
+    def __str__(self):
+        return f"{self.purchase_number} - {self.supplier_name} - GHS {self.total_amount}"
+    
+    def save(self, *args, **kwargs):
+        if not self.purchase_number:
+            self.purchase_number = self.generate_purchase_number()
+        
+        # Calculate net amount
+        self.net_amount = self.total_amount - self.tax_amount
+        
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_purchase_number():
+        """Generate unique purchase number"""
+        today = timezone.now()
+        prefix = f"PR{today.strftime('%Y%m')}"
+        
+        last_purchase = ProcurementPurchase.objects.filter(
+            purchase_number__startswith=prefix
+        ).order_by('-purchase_number').first()
+        
+        if last_purchase:
+            try:
+                last_num = int(last_purchase.purchase_number[-6:])
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}{new_num:06d}"
+    
+    def process_purchase(self, user):
+        """Process purchase and create accounting entries"""
+        if self.status != 'approved':
+            raise ValueError("Only approved purchases can be processed")
+        
+        with transaction.atomic():
+            # Create journal entry
+            je = AdvancedJournalEntry.objects.create(
+                journal=Journal.objects.get_or_create(journal_type='purchase', defaults={'code': 'PUR', 'name': 'Purchase Journal'})[0],
+                entry_date=self.purchase_date,
+                description=f"Procurement: {self.description}",
+                reference=self.purchase_number,
+                created_by=user,
+            )
+            
+            if self.purchase_type == 'cash':
+                # Cash Purchase: Debit Expense, Credit Cash/Bank
+                AdvancedJournalEntryLine.objects.create(
+                    journal_entry=je,
+                    line_number=1,
+                    account=self.expense_account,
+                    description=self.description,
+                    debit_amount=self.net_amount,
+                    credit_amount=0,
+                )
+                
+                AdvancedJournalEntryLine.objects.create(
+                    journal_entry=je,
+                    line_number=2,
+                    account=self.payment_account,
+                    description=f"Payment: {self.description}",
+                    debit_amount=0,
+                    credit_amount=self.net_amount,
+                )
+                
+            else:  # credit
+                # Credit Purchase: Debit Expense, Credit Accounts Payable (Liability)
+                if not self.liability_account:
+                    raise ValueError("Liability account must be set for credit purchases")
+                
+                AdvancedJournalEntryLine.objects.create(
+                    journal_entry=je,
+                    line_number=1,
+                    account=self.expense_account,
+                    description=self.description,
+                    debit_amount=self.net_amount,
+                    credit_amount=0,
+                )
+                
+                AdvancedJournalEntryLine.objects.create(
+                    journal_entry=je,
+                    line_number=2,
+                    account=self.liability_account,
+                    description=f"Accounts Payable: {self.description}",
+                    debit_amount=0,
+                    credit_amount=self.net_amount,
+                )
+                
+                # Create Accounts Payable entry
+                ap = AccountsPayable.objects.create(
+                    bill_number=f"AP{self.purchase_number}",
+                    vendor_name=self.supplier_name,
+                    vendor_invoice=self.supplier_invoice,
+                    bill_date=self.purchase_date,
+                    due_date=self.purchase_date + timedelta(days=30),  # Default 30 days
+                    amount=self.net_amount,
+                    amount_paid=0,
+                    balance_due=self.net_amount,
+                    description=self.description,
+                    journal_entry=je,
+                )
+                
+                self.accounts_payable = ap
+            
+            # Update totals and post
+            je.total_debit = self.net_amount
+            je.total_credit = self.net_amount
+            je.save()
+            je.post(user)
+            
+            self.journal_entry = je
+            self.status = 'paid' if self.purchase_type == 'cash' else 'received'
+            self.save()
+
+
+# ==================== PAYROLL & COMMISSIONS ====================
+
+class AccountingPayroll(BaseModel):
+    """Accounting Payroll Management"""
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('calculated', 'Calculated'),
+        ('approved', 'Approved'),
+        ('paid', 'Paid'),
+    ]
+    
+    payroll_number = models.CharField(max_length=50, unique=True)
+    payroll_period_start = models.DateField()
+    payroll_period_end = models.DateField()
+    pay_date = models.DateField()
+    
+    total_gross_pay = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    total_deductions = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    total_net_pay = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='accounting_payrolls_created')
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='accounting_payrolls_approved')
+    
+    class Meta:
+        ordering = ['-payroll_period_end', '-payroll_number']
+    
+    def __str__(self):
+        return f"{self.payroll_number} - {self.payroll_period_start} to {self.payroll_period_end}"
+    
+    def save(self, *args, **kwargs):
+        if not self.payroll_number:
+            self.payroll_number = self.generate_payroll_number()
+        
+        self.total_net_pay = self.total_gross_pay - self.total_deductions
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_payroll_number():
+        """Generate unique payroll number"""
+        today = timezone.now()
+        prefix = f"PY{today.strftime('%Y%m')}"
+        
+        last_payroll = AccountingPayroll.objects.filter(
+            payroll_number__startswith=prefix
+        ).order_by('-payroll_number').first()
+        
+        if last_payroll:
+            try:
+                last_num = int(last_payroll.payroll_number[-6:])
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}{new_num:06d}"
+
+
+class AccountingPayrollEntry(BaseModel):
+    """Individual accounting payroll entries for staff"""
+    payroll = models.ForeignKey(AccountingPayroll, on_delete=models.CASCADE, related_name='entries')
+    staff = models.ForeignKey('Staff', on_delete=models.CASCADE, related_name='payroll_entries')
+    
+    gross_pay = models.DecimalField(max_digits=15, decimal_places=2)
+    deductions = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    net_pay = models.DecimalField(max_digits=15, decimal_places=2)
+    
+    # Commission splits (for doctors)
+    consultation_commission = models.DecimalField(max_digits=15, decimal_places=2, default=0, help_text="30% of consultation fees")
+    surgery_commission = models.DecimalField(max_digits=15, decimal_places=2, default=0, help_text="30% of surgery fees")
+    operational_share = models.DecimalField(max_digits=15, decimal_places=2, default=0, help_text="10% for operational items")
+    hospital_share = models.DecimalField(max_digits=15, decimal_places=2, default=0, help_text="Remaining share to hospital")
+    
+    notes = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['payroll', 'staff']
+        unique_together = ['payroll', 'staff']
+    
+    def __str__(self):
+        return f"{self.payroll.payroll_number} - {self.staff.user.get_full_name()} - GHS {self.net_pay}"
+
+
+class DoctorCommission(BaseModel):
+    """Doctor Commission Tracking - 30% to doctor, rest to hospital"""
+    commission_number = models.CharField(max_length=50, unique=True)
+    doctor = models.ForeignKey('Staff', on_delete=models.CASCADE, related_name='commissions', limit_choices_to={'profession': 'doctor'})
+    
+    service_type = models.CharField(max_length=50, choices=[
+        ('consultation', 'Consultation'),
+        ('surgery', 'Surgery'),
+        ('procedure', 'Procedure'),
+    ])
+    
+    service_date = models.DateField()
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='doctor_commissions')
+    
+    total_fee = models.DecimalField(max_digits=15, decimal_places=2)
+    doctor_share = models.DecimalField(max_digits=15, decimal_places=2, help_text="30% of total fee")
+    operational_share = models.DecimalField(max_digits=15, decimal_places=2, default=0, help_text="10% for operational items")
+    hospital_share = models.DecimalField(max_digits=15, decimal_places=2, help_text="Remaining amount to hospital")
+    
+    is_paid = models.BooleanField(default=False)
+    paid_date = models.DateField(null=True, blank=True)
+    
+    # Accounting
+    doctor_receivable_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='doctor_commissions')
+    hospital_revenue_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='hospital_commissions')
+    operational_account = models.ForeignKey(Account, on_delete=models.PROTECT, null=True, blank=True, related_name='operational_commissions')
+    journal_entry = models.ForeignKey(AdvancedJournalEntry, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-service_date', '-commission_number']
+    
+    def __str__(self):
+        return f"{self.commission_number} - {self.doctor.user.get_full_name()} - GHS {self.doctor_share}"
+    
+    def save(self, *args, **kwargs):
+        if not self.commission_number:
+            self.commission_number = self.generate_commission_number()
+        
+        # Calculate splits
+        if self.service_type == 'surgery':
+            # Surgery: 30% doctor, 10% operational, 60% hospital
+            self.doctor_share = self.total_fee * Decimal('0.30')
+            self.operational_share = self.total_fee * Decimal('0.10')
+            self.hospital_share = self.total_fee - self.doctor_share - self.operational_share
+        else:
+            # Consultation/Procedure: 30% doctor, 10% operational, 60% hospital
+            self.doctor_share = self.total_fee * Decimal('0.30')
+            self.operational_share = self.total_fee * Decimal('0.10')
+            self.hospital_share = self.total_fee - self.doctor_share - self.operational_share
+        
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_commission_number():
+        """Generate unique commission number"""
+        today = timezone.now()
+        prefix = f"DC{today.strftime('%Y%m')}"
+        
+        last_comm = DoctorCommission.objects.filter(
+            commission_number__startswith=prefix
+        ).order_by('-commission_number').first()
+        
+        if last_comm:
+            try:
+                last_num = int(last_comm.commission_number[-6:])
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}{new_num:06d}"
+
+
+# ==================== REVENUE GROUPING & PROFIT ANALYSIS ====================
+
+class IncomeGroup(BaseModel):
+    """Income Grouping for revenue classification"""
+    code = models.CharField(max_length=20, unique=True)
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='income_groups')
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['code']
+    
+    def __str__(self):
+        return f"{self.code} - {self.name}"
+
+
+class ProfitLossReport(BaseModel):
+    """Profit and Loss Reports with quarterly/yearly filtering"""
+    REPORT_PERIODS = [
+        ('monthly', 'Monthly'),
+        ('quarterly', 'Quarterly'),
+        ('yearly', 'Yearly'),
+    ]
+    
+    report_number = models.CharField(max_length=50, unique=True)
+    report_period = models.CharField(max_length=20, choices=REPORT_PERIODS)
+    period_start = models.DateField()
+    period_end = models.DateField()
+    fiscal_year = models.ForeignKey(FiscalYear, on_delete=models.PROTECT)
+    
+    # Revenue
+    total_revenue = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    revenue_by_category = models.JSONField(default=dict, blank=True)
+    
+    # Expenses
+    total_expenses = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    expenses_by_category = models.JSONField(default=dict, blank=True)
+    
+    # Profit/Loss
+    gross_profit = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    net_profit = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    profit_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0, help_text="Net profit as percentage of revenue")
+    
+    # Generated
+    generated_at = models.DateTimeField(default=timezone.now)
+    generated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    
+    class Meta:
+        ordering = ['-period_end', '-report_number']
+    
+    def __str__(self):
+        return f"{self.report_number} - {self.period_start} to {self.period_end}"
+    
+    def save(self, *args, **kwargs):
+        if not self.report_number:
+            self.report_number = self.generate_report_number()
+        
+        # Calculate profit
+        self.gross_profit = self.total_revenue - self.total_expenses
+        self.net_profit = self.gross_profit  # Can be adjusted for taxes
+        
+        # Calculate profit percentage
+        if self.total_revenue > 0:
+            self.profit_percentage = (self.net_profit / self.total_revenue) * 100
+        else:
+            self.profit_percentage = 0
+        
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_report_number():
+        """Generate unique report number"""
+        today = timezone.now()
+        prefix = f"PL{today.strftime('%Y%m')}"
+        
+        last_report = ProfitLossReport.objects.filter(
+            report_number__startswith=prefix
+        ).order_by('-report_number').first()
+        
+        if last_report:
+            try:
+                last_num = int(last_report.report_number[-6:])
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}{new_num:06d}"
+
+
+# ==================== REGISTRATION FEE ====================
+
+class RegistrationFee(BaseModel):
+    """Registration Fee Tracking"""
+    fee_number = models.CharField(max_length=50, unique=True)
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='registration_fees')
+    registration_date = models.DateField(default=timezone.now)
+    
+    fee_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    payment_method = models.CharField(max_length=50, choices=PaymentVoucher.PAYMENT_METHODS, default='cash')
+    
+    # Accounting
+    revenue_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='registration_fees')
+    journal_entry = models.ForeignKey(AdvancedJournalEntry, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    notes = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['-registration_date', '-fee_number']
+    
+    def __str__(self):
+        return f"{self.fee_number} - {self.patient.full_name} - GHS {self.fee_amount}"
+    
+    def save(self, *args, **kwargs):
+        if not self.fee_number:
+            self.fee_number = self.generate_fee_number()
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_fee_number():
+        """Generate unique registration fee number"""
+        today = timezone.now()
+        prefix = f"RF{today.strftime('%Y%m')}"
+        
+        last_fee = RegistrationFee.objects.filter(
+            fee_number__startswith=prefix
+        ).order_by('-fee_number').first()
+        
+        if last_fee:
+            try:
+                last_num = int(last_fee.fee_number[-6:])
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}{new_num:06d}"
+
+
+# ==================== CASH SALES & CORPORATE ====================
+
+class CashSale(BaseModel):
+    """Cash Sales - Direct cash transactions"""
+    sale_number = models.CharField(max_length=50, unique=True)
+    sale_date = models.DateField(default=timezone.now)
+    
+    customer_name = models.CharField(max_length=200)
+    description = models.TextField()
+    
+    total_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    payment_method = models.CharField(max_length=50, choices=PaymentVoucher.PAYMENT_METHODS, default='cash')
+    
+    # Accounting
+    revenue_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='cash_sales')
+    cash_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='cash_sale_payments')
+    journal_entry = models.ForeignKey(AdvancedJournalEntry, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    
+    class Meta:
+        ordering = ['-sale_date', '-sale_number']
+    
+    def __str__(self):
+        return f"{self.sale_number} - {self.customer_name} - GHS {self.total_amount}"
+    
+    def save(self, *args, **kwargs):
+        if not self.sale_number:
+            self.sale_number = self.generate_sale_number()
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_sale_number():
+        """Generate unique sale number"""
+        today = timezone.now()
+        prefix = f"CS{today.strftime('%Y%m')}"
+        
+        last_sale = CashSale.objects.filter(
+            sale_number__startswith=prefix
+        ).order_by('-sale_number').first()
+        
+        if last_sale:
+            try:
+                last_num = int(last_sale.sale_number[-6:])
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}{new_num:06d}"
+
+
+class AccountingCorporateAccount(BaseModel):
+    """Accounting Corporate Account Management"""
+    account_number = models.CharField(max_length=50, unique=True, db_index=True)
+    company_name = models.CharField(max_length=200)
+    contact_person = models.CharField(max_length=200, blank=True)
+    contact_email = models.EmailField(blank=True)
+    contact_phone = models.CharField(max_length=20, blank=True)
+    
+    credit_limit = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    current_balance = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    
+    # Accounting
+    receivable_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='corporate_accounts')
+    
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['company_name']
+    
+    def __str__(self):
+        return f"{self.account_number} - {self.company_name}"
+
+
+# ==================== WITHHOLDING RECEIVABLE ====================
+
+class WithholdingReceivable(BaseModel):
+    """Withholding Receivable - Amounts withheld from payments"""
+    withholding_number = models.CharField(max_length=50, unique=True)
+    withholding_date = models.DateField(default=timezone.now)
+    
+    payer = models.CharField(max_length=200, help_text="Entity that withheld the amount")
+    description = models.TextField()
+    
+    amount_withheld = models.DecimalField(max_digits=15, decimal_places=2)
+    amount_recovered = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    balance = models.DecimalField(max_digits=15, decimal_places=2)
+    
+    # Accounting
+    receivable_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='withholding_receivables')
+    
+    expected_recovery_date = models.DateField(null=True, blank=True)
+    recovered_date = models.DateField(null=True, blank=True)
+    
+    notes = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['-withholding_date', '-withholding_number']
+    
+    def __str__(self):
+        return f"{self.withholding_number} - {self.payer} - GHS {self.balance}"
+    
+    def save(self, *args, **kwargs):
+        if not self.withholding_number:
+            self.withholding_number = self.generate_withholding_number()
+        
+        self.balance = self.amount_withheld - self.amount_recovered
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_withholding_number():
+        """Generate unique withholding number"""
+        today = timezone.now()
+        prefix = f"WR{today.strftime('%Y%m')}"
+        
+        last_with = WithholdingReceivable.objects.filter(
+            withholding_number__startswith=prefix
+        ).order_by('-withholding_number').first()
+        
+        if last_with:
+            try:
+                last_num = int(last_with.withholding_number[-6:])
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}{new_num:06d}"
+
+
+# ==================== DEPOSITS ====================
+
+class Deposit(BaseModel):
+    """Deposit Recording - From and To tracking"""
+    DEPOSIT_TYPES = [
+        ('from', 'Deposit From'),
+        ('to', 'Deposit To'),
+    ]
+    
+    deposit_number = models.CharField(max_length=50, unique=True)
+    deposit_type = models.CharField(max_length=10, choices=DEPOSIT_TYPES)
+    deposit_date = models.DateField(default=timezone.now)
+    
+    from_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='deposits_from', null=True, blank=True)
+    to_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='deposits_to', null=True, blank=True)
+    from_bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='deposits_from', null=True, blank=True)
+    to_bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='deposits_to', null=True, blank=True)
+    
+    amount = models.DecimalField(max_digits=15, decimal_places=2)
+    description = models.TextField()
+    reference = models.CharField(max_length=100, blank=True)
+    
+    # Accounting
+    journal_entry = models.ForeignKey(AdvancedJournalEntry, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    
+    class Meta:
+        ordering = ['-deposit_date', '-deposit_number']
+    
+    def __str__(self):
+        return f"{self.deposit_number} - {self.get_deposit_type_display()} - GHS {self.amount}"
+    
+    def save(self, *args, **kwargs):
+        if not self.deposit_number:
+            self.deposit_number = self.generate_deposit_number()
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_deposit_number():
+        """Generate unique deposit number"""
+        today = timezone.now()
+        prefix = f"DP{today.strftime('%Y%m')}"
+        
+        last_deposit = Deposit.objects.filter(
+            deposit_number__startswith=prefix
+        ).order_by('-deposit_number').first()
+        
+        if last_deposit:
+            try:
+                last_num = int(last_deposit.deposit_number[-6:])
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}{new_num:06d}"
+
+
+# ==================== INITIAL REVALUATIONS ====================
+
+class InitialRevaluation(BaseModel):
+    """Initial Revaluations - Asset revaluations at period start"""
+    revaluation_number = models.CharField(max_length=50, unique=True)
+    revaluation_date = models.DateField(default=timezone.now)
+    effective_date = models.DateField(help_text="Date when revaluation takes effect")
+    
+    account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='revaluations')
+    asset_description = models.CharField(max_length=500)
+    
+    previous_value = models.DecimalField(max_digits=15, decimal_places=2)
+    new_value = models.DecimalField(max_digits=15, decimal_places=2)
+    revaluation_amount = models.DecimalField(max_digits=15, decimal_places=2, help_text="Difference (new - previous)")
+    
+    revaluation_type = models.CharField(max_length=20, choices=[
+        ('appreciation', 'Appreciation'),
+        ('depreciation', 'Depreciation'),
+        ('write_up', 'Write Up'),
+        ('write_down', 'Write Down'),
+    ])
+    
+    reason = models.TextField()
+    
+    # Accounting
+    journal_entry = models.ForeignKey(AdvancedJournalEntry, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-revaluation_date', '-revaluation_number']
+    
+    def __str__(self):
+        return f"{self.revaluation_number} - {self.account.account_name} - GHS {self.revaluation_amount}"
+    
+    def save(self, *args, **kwargs):
+        if not self.revaluation_number:
+            self.revaluation_number = self.generate_revaluation_number()
+        
+        # Calculate revaluation amount
+        self.revaluation_amount = self.new_value - self.previous_value
+        
+        # Determine revaluation type
+        if self.revaluation_amount > 0:
+            self.revaluation_type = 'appreciation'
+        else:
+            self.revaluation_type = 'depreciation'
+        
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_revaluation_number():
+        """Generate unique revaluation number"""
+        today = timezone.now()
+        prefix = f"RV{today.strftime('%Y%m')}"
+        
+        last_reval = InitialRevaluation.objects.filter(
+            revaluation_number__startswith=prefix
+        ).order_by('-revaluation_number').first()
+        
+        if last_reval:
+            try:
+                last_num = int(last_reval.revaluation_number[-6:])
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}{new_num:06d}"
 

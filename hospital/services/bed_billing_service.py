@@ -15,6 +15,16 @@ class BedBillingService:
     
     # Bed pricing configuration
     DAILY_BED_RATE = Decimal('120.00')  # GHS 120 per day
+    VIP_BED_RATE = Decimal('300.00')    # VIP ward rate per day
+    
+    @staticmethod
+    def _get_daily_rate(admission):
+        """Return appropriate daily rate based on ward."""
+        if admission and admission.ward:
+            ward_name = (admission.ward.name or '').lower()
+            if 'vip' in ward_name:
+                return BedBillingService.VIP_BED_RATE
+        return BedBillingService.DAILY_BED_RATE
     
     @staticmethod
     def create_admission_bill(admission, days=1):
@@ -37,7 +47,7 @@ class BedBillingService:
                 encounter = admission.encounter
                 
                 # Calculate charge based on days
-                daily_rate = BedBillingService.DAILY_BED_RATE
+                daily_rate = BedBillingService._get_daily_rate(admission)
                 total_charge = daily_rate * days
                 
                 # Get or create invoice for this encounter
@@ -146,7 +156,7 @@ class BedBillingService:
         if days < 1:
             days = 1
         
-        daily_rate = BedBillingService.DAILY_BED_RATE
+        daily_rate = BedBillingService._get_daily_rate(admission)
         total_charge = daily_rate * days
         
         return {

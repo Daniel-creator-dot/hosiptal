@@ -16,3 +16,9 @@ def auto_link_receipt(sender, instance, created, **kwargs):
 
 
 
+
+
+
+
+
+

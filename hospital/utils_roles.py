@@ -300,15 +300,15 @@ def get_user_role(user):
         return 'staff'  # Default fallback
 
 
-def get_user_dashboard_url(user):
+def get_user_dashboard_url(user, role=None):
     """
     Get the appropriate dashboard URL for a user based on their role
     """
-    role = get_user_role(user)
+    role = role or get_user_role(user)
     
     role_urls = {
         'admin': '/hms/admin-dashboard/',
-        'accountant': '/hms/accounting-dashboard/',
+        'accountant': '/hms/accountant/comprehensive-dashboard/',
         'hr_manager': '/hms/hr/worldclass/',
         'doctor': '/hms/medical-dashboard/',
         'nurse': '/hms/triage/',
@@ -356,6 +356,10 @@ def user_has_role_access(user, required_role):
 
 def get_role_navigation(user):
     """
+    Get navigation items for a user based on their role
+    Returns list of dicts with 'title', 'url', 'icon'
+    """
+    """
     Get navigation items for user based on their role
     """
     role = get_user_role(user)
@@ -375,14 +379,28 @@ def get_role_navigation(user):
             {'title': 'Settings', 'url': '/hms/settings/', 'icon': 'gear'},
         ],
         'accountant': [
-            {'title': 'Accounting Dashboard', 'url': '/hms/accounting-dashboard/', 'icon': 'speedometer2'},
+            {'title': 'Comprehensive Dashboard', 'url': '/hms/accountant/comprehensive-dashboard/', 'icon': 'speedometer2'},
+            {'title': 'Cashbook', 'url': '/hms/accountant/cashbook/', 'icon': 'journal-text'},
+            {'title': 'Bank Reconciliation', 'url': '/hms/accountant/bank-reconciliation/', 'icon': 'bank'},
+            {'title': 'Insurance Receivable', 'url': '/hms/accountant/insurance-receivable/', 'icon': 'file-earmark-medical'},
+            {'title': 'Procurement Purchases', 'url': '/hms/accountant/procurement-purchases/', 'icon': 'cart'},
+            {'title': 'Payroll', 'url': '/hms/accountant/payroll/', 'icon': 'people'},
+            {'title': 'Doctor Commissions', 'url': '/hms/accountant/doctor-commissions/', 'icon': 'person-badge'},
+            {'title': 'Profit & Loss', 'url': '/hms/accountant/profit-loss/', 'icon': 'graph-up'},
+            {'title': 'Detailed Financial Report', 'url': '/hms/accountant/detailed-financial-report/', 'icon': 'file-earmark-spreadsheet'},
+            {'title': 'Registration Fees', 'url': '/hms/accountant/registration-fees/', 'icon': 'cash-coin'},
+            {'title': 'Cash Sales', 'url': '/hms/accountant/cash-sales/', 'icon': 'currency-dollar'},
+            {'title': 'Corporate Accounts', 'url': '/hms/accountant/corporate-accounts/', 'icon': 'building'},
+            {'title': 'Withholding Receivable', 'url': '/hms/accountant/withholding-receivable/', 'icon': 'file-earmark-lock'},
+            {'title': 'Deposits', 'url': '/hms/accountant/deposits/', 'icon': 'arrow-down-circle'},
+            {'title': 'Revaluations', 'url': '/hms/accountant/revaluations/', 'icon': 'arrow-repeat'},
+            {'title': 'Chart of Accounts', 'url': '/hms/accountant/chart-of-accounts/', 'icon': 'list-ul'},
+            {'title': 'Payment Vouchers', 'url': '/hms/accounting/payment-vouchers/', 'icon': 'receipt-cutoff'},
+            {'title': 'Cheques', 'url': '/hms/accounting/cheques/', 'icon': 'file-earmark-check'},
+            {'title': 'Journal Entries', 'url': '/hms/accounting/general-ledger/', 'icon': 'journal'},
+            {'title': 'Financial Reports', 'url': '/hms/accounting/reports/', 'icon': 'graph-up'},
             {'title': 'Invoices', 'url': '/hms/invoices/', 'icon': 'receipt'},
             {'title': 'Payments', 'url': '/hms/payments/', 'icon': 'credit-card'},
-            {'title': 'Revenue Streams', 'url': '/hms/accounting/revenue-streams/', 'icon': 'graph-up-arrow'},
-            {'title': 'Procurement Approvals', 'url': '/hms/procurement/accounts/pending/', 'icon': 'clipboard-check'},
-            {'title': 'Cashier Sessions', 'url': '/hms/cashier-sessions/', 'icon': 'cash-stack'},
-            {'title': 'Accounts', 'url': '/hms/accounts/', 'icon': 'wallet2'},
-            {'title': 'Financial Reports', 'url': '/hms/accounting/reports/', 'icon': 'graph-up'},
         ],
         'hr_manager': [
             {'title': 'HR Dashboard', 'url': '/hms/hr/worldclass/', 'icon': 'speedometer2'},
@@ -448,6 +466,7 @@ def get_role_navigation(user):
     
     return navigation.get(role, [
         {'title': 'My Dashboard', 'url': '/hms/staff/dashboard/', 'icon': 'speedometer2'},
+        {'title': 'Staff Portal', 'url': '/hms/staff/portal/', 'icon': 'person-badge'},
     ])
 
 

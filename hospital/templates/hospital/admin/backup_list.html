@@ -1,0 +1,145 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Database Backups - Admin{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h4 class="mb-1">Database Backups</h4>
+                    <p class="text-muted mb-0">Manage automated database backups</p>
+                </div>
+                <button id="createBackupBtn" class="btn btn-primary">
+                    <i class="bi bi-database-add"></i> Create Backup Now
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Backup List -->
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Backup File</th>
+                            <th>Size</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for backup in backups %}
+                        <tr>
+                            <td><code>{{ backup.filename }}</code></td>
+                            <td>{{ backup.size|filesizeformat }}</td>
+                            <td>{{ backup.created|date:"Y-m-d H:i:s" }}</td>
+                            <td>
+                                <a href="{% url 'hospital:download_backup' backup.filename %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-download"></i> Download
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-5">
+                                No backups found. Create your first backup using the button above.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) {
+        return parts.pop().split(';').shift();
+    }
+    return null;
+}
+
+document.getElementById('createBackupBtn').addEventListener('click', function() {
+    const btn = this;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Creating Backup...';
+    
+    const csrfToken = getCookie('csrftoken');
+    if (!csrfToken) {
+        alert('Unable to locate CSRF token. Please refresh the page and try again.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-database-add"></i> Create Backup Now';
+        return;
+    }
+    
+fetch('{% url "hospital:create_backup" %}', {
+    method: 'POST',
+        credentials: 'same-origin',
+    headers: {
+            'X-CSRFToken': csrfToken,
+        'X-Requested-With': 'XMLHttpRequest',
+    },
+})
+.then(async (response) => {
+    const raw = await response.text();
+    const contentType = response.headers.get('content-type') || '';
+    const isJson = contentType.includes('application/json');
+    let data = null;
+    const looksLikeHtml = /^\s*</.test((raw || '').trimStart());
+
+    if (isJson) {
+        try {
+            data = JSON.parse(raw);
+        } catch (parseError) {
+            console.warn('Failed to parse JSON response:', parseError);
+        }
+    }
+
+    if (!response.ok) {
+        if (!isJson && looksLikeHtml) {
+            console.warn('Backup request returned HTML (possibly login or error page):', raw);
+        }
+        throw new Error(
+            (data && data.message) ||
+            (looksLikeHtml ? `Backup failed (HTTP ${response.status}). Please check server logs.` : raw) ||
+            `Backup failed (HTTP ${response.status})`
+        );
+    }
+
+    if (!data || !data.success) {
+        if (!isJson && looksLikeHtml) {
+            console.warn('Backup request returned HTML (possibly login or error page):', raw);
+        }
+        throw new Error(
+            (data && data.message) ||
+            (looksLikeHtml ? 'Backup failed. Please check server logs.' : raw) ||
+            'Backup failed'
+        );
+    }
+
+    alert(data.message || 'Backup created successfully!');
+    location.reload();
+})
+.catch(error => {
+    alert('Error creating backup: ' + error.message);
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-database-add"></i> Create Backup Now';
+});
+});
+</script>
+{% endblock %}
+
+
+
+
+
+

@@ -5,6 +5,7 @@ Allows doctors to review past consultations and patient visit history
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Q, Count, Prefetch
 from django.utils import timezone
 from datetime import timedelta
@@ -87,15 +88,114 @@ def encounter_full_record(request, encounter_id):
     """
     encounter = get_object_or_404(Encounter, pk=encounter_id, is_deleted=False)
     
+    # Resolve current staff profile (if any)
+    staff_member = None
+    if request.user.is_authenticated:
+        try:
+            staff_member = Staff.objects.get(user=request.user, is_active=True, is_deleted=False)
+        except Staff.DoesNotExist:
+            staff_member = None
+    
+    def _safe_dispensing_record(prescription_obj):
+        """Safely fetch dispensing record without raising when missing."""
+        try:
+            return prescription_obj.dispensing_record
+        except ObjectDoesNotExist:
+            return None
+    
+    # Allow inline actions from the encounter record (e.g., delete prescription)
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'delete_prescription':
+            if not staff_member and not request.user.is_superuser:
+                messages.error(request, 'Only clinical staff can delete prescriptions.')
+                return redirect('hospital:encounter_full_record', encounter_id=encounter_id)
+            
+            prescription_id = request.POST.get('prescription_id')
+            if not prescription_id:
+                messages.error(request, 'Prescription ID is required.')
+                return redirect('hospital:encounter_full_record', encounter_id=encounter_id)
+            
+            try:
+                prescription = Prescription.objects.get(
+                    pk=prescription_id,
+                    order__encounter=encounter,
+                    is_deleted=False
+                )
+            except Prescription.DoesNotExist:
+                messages.error(request, 'Prescription not found or already removed.')
+                return redirect('hospital:encounter_full_record', encounter_id=encounter_id)
+            
+            user_can_delete = request.user.is_superuser
+            if not user_can_delete and staff_member:
+                user_can_delete = (
+                    staff_member == prescription.prescribed_by or
+                    staff_member == encounter.provider
+                )
+            
+            if not user_can_delete:
+                messages.error(request, 'You can only delete prescriptions you authored for this encounter.')
+                return redirect('hospital:encounter_full_record', encounter_id=encounter_id)
+            
+            dispensing_record = _safe_dispensing_record(prescription)
+            blocking_reason = ''
+            if dispensing_record:
+                quantity_dispensed = getattr(dispensing_record, 'quantity_dispensed', 0) or 0
+                payment_in_progress = getattr(dispensing_record, 'payment_receipt_id', None) or getattr(dispensing_record, 'payment_verified_at', None)
+                is_dispensed = getattr(dispensing_record, 'is_dispensed', False)
+                
+                if is_dispensed or quantity_dispensed > 0:
+                    blocking_reason = 'Medication has already been dispensed.'
+                elif payment_in_progress:
+                    blocking_reason = 'Payment has already been registered for this prescription.'
+                elif getattr(dispensing_record, 'dispensing_status', '') not in ['pending_payment']:
+                    blocking_reason = 'Dispensing is already in progress.'
+            
+            if blocking_reason:
+                messages.error(request, blocking_reason)
+                return redirect('hospital:encounter_full_record', encounter_id=encounter_id)
+            
+            prescription.is_deleted = True
+            prescription.save(update_fields=['is_deleted'])
+            messages.success(request, f'Prescription for {prescription.drug.name} deleted successfully.')
+            return redirect('hospital:encounter_full_record', encounter_id=encounter_id)
+    
     # Get all related data
     vitals = encounter.vitals.filter(is_deleted=False).order_by('-recorded_at')
     orders = encounter.orders.filter(is_deleted=False).order_by('order_type', '-created')
     
-    # Get prescriptions
-    prescriptions = Prescription.objects.filter(
+    # Get prescriptions and enrich with user permissions
+    prescriptions_qs = Prescription.objects.filter(
         order__encounter=encounter,
         is_deleted=False
     ).select_related('drug', 'prescribed_by__user')
+    prescriptions = list(prescriptions_qs)
+    
+    def _get_prescription_block_reason(prescription):
+        dispensing_record = _safe_dispensing_record(prescription)
+        if not dispensing_record:
+            return ''
+        quantity_dispensed = getattr(dispensing_record, 'quantity_dispensed', 0) or 0
+        if getattr(dispensing_record, 'is_dispensed', False) or quantity_dispensed > 0:
+            return 'Dispensing already completed.'
+        if getattr(dispensing_record, 'payment_receipt_id', None) or getattr(dispensing_record, 'payment_verified_at', None):
+            return 'Payment already verified.'
+        if getattr(dispensing_record, 'dispensing_status', '') not in ['pending_payment']:
+            return 'Dispensing already in progress.'
+        return ''
+    
+    can_delete_any_prescription = False
+    for rx in prescriptions:
+        rx.dispensing_record_obj = _safe_dispensing_record(rx)
+        rx.delete_block_reason = _get_prescription_block_reason(rx)
+        rx.can_user_delete = False
+        if request.user.is_superuser:
+            rx.can_user_delete = not bool(rx.delete_block_reason)
+        elif staff_member:
+            if staff_member == rx.prescribed_by or staff_member == encounter.provider:
+                rx.can_user_delete = not bool(rx.delete_block_reason)
+        if rx.can_user_delete:
+            can_delete_any_prescription = True
     
     # Get lab results
     lab_results = LabResult.objects.filter(
@@ -144,6 +244,38 @@ def encounter_full_record(request, encounter_id):
     except ImportError:
         referrals = []
     
+    # Patient flow stages for enhanced timeline
+    flow_stages = []
+    flow_summary = {
+        'total': 0,
+        'completed': 0,
+        'percent': 0,
+        'current': None,
+        'next': None,
+    }
+    try:
+        from .models_workflow import PatientFlowStage
+        flow_qs = PatientFlowStage.objects.filter(
+            encounter=encounter,
+            is_deleted=False
+        ).select_related('completed_by__user').order_by('created')
+        flow_stages = list(flow_qs)
+        flow_summary['total'] = len(flow_stages)
+        flow_summary['completed'] = sum(1 for stage in flow_stages if stage.status == 'completed')
+        if flow_summary['total']:
+            flow_summary['percent'] = (flow_summary['completed'] / flow_summary['total']) * 100
+            flow_summary['current'] = next(
+                (stage for stage in flow_stages if stage.status in ['in_progress', 'pending']),
+                None
+            )
+            if flow_summary['completed'] < flow_summary['total']:
+                try:
+                    flow_summary['next'] = flow_stages[flow_summary['completed']]
+                except IndexError:
+                    flow_summary['next'] = None
+    except ImportError:
+        pass
+    
     # Calculate duration
     duration_minutes = encounter.get_duration_minutes()
     
@@ -160,6 +292,9 @@ def encounter_full_record(request, encounter_id):
         'imaging_studies': imaging_studies,
         'referrals': referrals,
         'duration_minutes': duration_minutes,
+        'flow_stages': flow_stages,
+        'flow_summary': flow_summary,
+        'can_delete_any_prescription': can_delete_any_prescription,
     }
     return render(request, 'hospital/encounter_full_record.html', context)
 

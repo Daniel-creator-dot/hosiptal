@@ -122,7 +122,7 @@ class Command(BaseCommand):
             message = f"Happy Birthday! Your birthday is coming up on {birthday_date.strftime('%B %d')}. We wish you a wonderful year ahead!"
             
             # Send SMS
-            success = self.send_sms(phone, message)
+            success = self.send_sms(phone, message, recipient_name=staff.user.get_full_name())
             
             if success:
                 reminder.notified = True
@@ -157,31 +157,19 @@ class Command(BaseCommand):
             self.stdout.write(self.style.ERROR(f'Error sending reminder to {staff.user.get_full_name()}: {str(e)}'))
             return False
 
-    def send_sms(self, phone_number, message):
-        """Send SMS using Hubtel API"""
+    def send_sms(self, phone_number, message, recipient_name=''):
+        """Send SMS using the centralized SMS service"""
         try:
-            api_key = getattr(settings, 'SMS_API_KEY', '')
-            api_secret = getattr(settings, 'SMS_API_SECRET', '')
-            api_url = getattr(settings, 'SMS_API_URL', 'https://devapi.hubtel.com/v1/messages/send')
-            sender_id = getattr(settings, 'SMS_SENDER_ID', 'HMS')
+            from hospital.services.sms_service import sms_service
             
-            if not api_key or not api_secret:
-                self.stdout.write(self.style.WARNING('SMS credentials not configured. Skipping SMS send.'))
-                return False
+            sms_log = sms_service.send_sms(
+                phone_number=phone_number,
+                message=message,
+                message_type='birthday_reminder',
+                recipient_name=recipient_name
+            )
             
-            # Clean phone number (remove +, spaces, etc.)
-            phone = phone_number.replace('+', '').replace(' ', '').replace('-', '')
-            if not phone.startswith('233'):  # Ghana country code
-                if phone.startswith('0'):
-                    phone = '233' + phone[1:]
-                else:
-                    phone = '233' + phone
-            
-            data = {
-                'From': sender_id,
-                'To': phone,
-                'Content': message,
-            }
+            return sms_log.status == 'sent'
             
             response = requests.post(
                 api_url,

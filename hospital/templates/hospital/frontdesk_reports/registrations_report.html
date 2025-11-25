@@ -1,0 +1,117 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}{{ title }} - Front Desk Reports{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div style="background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%); color: white; border-radius: 20px; padding: 40px; margin-bottom: 32px; box-shadow: 0 10px 40px rgba(20, 184, 166, 0.3);">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1 class="mb-2"><i class="bi bi-person-plus me-3"></i>{{ title }} Report</h1>
+                <p class="mb-0" style="opacity: 0.95; font-size: 16px;">{{ start_date|date:"F d, Y" }} to {{ end_date|date:"F d, Y" }}</p>
+            </div>
+            <div>
+                <a href="{% url 'hospital:frontdesk_reports_dashboard' %}" class="btn btn-light">
+                    <i class="bi bi-arrow-left me-2"></i>Back to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-4">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 36px; font-weight: 800; color: #14b8a6;">{{ summary.total_registrations }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Total Registrations</div>
+            </div>
+        </div>
+        <div class="col-md-8">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h6 class="mb-3">Registrations by Gender</h6>
+                {% for item in summary.by_gender %}
+                <div class="d-flex justify-content-between mb-2">
+                    <span>{{ item.gender|default:"N/A" }}</span>
+                    <strong>{{ item.count }}</strong>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Buttons -->
+    <div class="mb-3">
+        <a href="?report_type={{ report_type }}&start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}&export=csv" 
+           class="btn btn-success">
+            <i class="bi bi-file-earmark-spreadsheet me-2"></i>Export CSV
+        </a>
+    </div>
+
+    <!-- Report Table -->
+    <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Registration Date</th>
+                        <th>Time</th>
+                        <th>MRN</th>
+                        <th>Full Name</th>
+                        <th>Gender</th>
+                        <th>Date of Birth</th>
+                        <th>Phone</th>
+                        <th>Email</th>
+                        <th>Address</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in page_obj %}
+                    <tr>
+                        <td>{{ item.registration_date|date:"M d, Y" }}</td>
+                        <td>{{ item.registration_time|time:"H:i" }}</td>
+                        <td><strong>{{ item.mrn }}</strong></td>
+                        <td>{{ item.full_name }}</td>
+                        <td>{{ item.gender }}</td>
+                        <td>{{ item.date_of_birth|date:"M d, Y" }}</td>
+                        <td>{{ item.phone_number }}</td>
+                        <td>{{ item.email }}</td>
+                        <td>{{ item.address|truncatewords:5 }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="9" class="text-center text-muted py-4">No registrations found for the selected date range.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        {% if page_obj.has_other_pages %}
+        <nav aria-label="Page navigation">
+            <ul class="pagination justify-content-center">
+                {% if page_obj.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?report_type={{ report_type }}&start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}&page={{ page_obj.previous_page_number }}">Previous</a>
+                </li>
+                {% endif %}
+                
+                <li class="page-item active">
+                    <span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+                </li>
+                
+                {% if page_obj.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?report_type={{ report_type }}&start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}&page={{ page_obj.next_page_number }}">Next</a>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+

@@ -1,0 +1,255 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Staff Portal{% endblock %}
+
+{% block page_title %}Staff Portal{% endblock %}
+{% block page_subtitle %}Welcome, {{ staff_info.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Staff Information Card -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="modern-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0"><i class="bi bi-person-circle me-2"></i>My Information</h5>
+                </div>
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="mb-2">
+                            <small class="text-muted">Employee ID</small>
+                            <div class="fw-bold">{{ staff_info.employee_id }}</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="mb-2">
+                            <small class="text-muted">Department</small>
+                            <div class="fw-bold">{{ staff_info.department }}</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="mb-2">
+                            <small class="text-muted">Profession</small>
+                            <div class="fw-bold">{{ staff_info.profession }}</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="mb-2">
+                            <small class="text-muted">Email</small>
+                            <div class="fw-bold">{{ staff_info.email }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <a href="{% url 'hospital:staff_leave_request' %}" class="modern-card text-decoration-none d-block text-center" style="padding: 24px;">
+                <i class="bi bi-calendar-plus" style="font-size: 32px; color: var(--primary);"></i>
+                <h6 class="mt-2 mb-0">Apply for Leave</h6>
+                <small class="text-muted">Request time off</small>
+            </a>
+        </div>
+        <div class="col-md-3">
+            <a href="{% url 'hospital:staff_leave_history' %}" class="modern-card text-decoration-none d-block text-center" style="padding: 24px;">
+                <i class="bi bi-calendar-check" style="font-size: 32px; color: var(--success);"></i>
+                <h6 class="mt-2 mb-0">Leave History</h6>
+                <small class="text-muted">View past requests</small>
+            </a>
+        </div>
+        <div class="col-md-3">
+            <a href="{% url 'hospital:staff_activities' %}" class="modern-card text-decoration-none d-block text-center" style="padding: 24px;">
+                <i class="bi bi-activity" style="font-size: 32px; color: var(--info);"></i>
+                <h6 class="mt-2 mb-0">My Activities</h6>
+                <small class="text-muted">View activity log</small>
+            </a>
+        </div>
+        <div class="col-md-3">
+            <a href="{% url 'hospital:staff_notifications' %}" class="modern-card text-decoration-none d-block text-center" style="padding: 24px; position: relative;">
+                <i class="bi bi-bell" style="font-size: 32px; color: var(--warning);"></i>
+                {% if unread_notifications > 0 %}
+                <span class="badge bg-danger position-absolute top-0 start-100 translate-middle">{{ unread_notifications }}</span>
+                {% endif %}
+                <h6 class="mt-2 mb-0">Notifications</h6>
+                <small class="text-muted">{{ unread_notifications }} unread</small>
+            </a>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Recent Notifications -->
+        <div class="col-md-6">
+            <div class="modern-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0"><i class="bi bi-bell me-2"></i>Recent Notifications</h5>
+                    <a href="{% url 'hospital:staff_notifications' %}" class="btn btn-sm btn-outline-primary">View All</a>
+                </div>
+                {% if recent_notifications %}
+                <div class="list-group list-group-flush">
+                    {% for notification in recent_notifications %}
+                    <div class="list-group-item border-0 px-0 {% if not notification.is_read %}bg-light{% endif %}">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div class="flex-grow-1">
+                                <h6 class="mb-1">
+                                    {% if not notification.is_read %}
+                                    <span class="badge bg-primary me-2">New</span>
+                                    {% endif %}
+                                    {{ notification.title }}
+                                </h6>
+                                <p class="mb-1 small">{{ notification.message|truncatewords:20 }}</p>
+                                <small class="text-muted">{{ notification.created|naturaltime }}</small>
+                            </div>
+                            {% if not notification.is_read %}
+                            <button class="btn btn-sm btn-outline-secondary mark-read-btn" data-notification-id="{{ notification.id }}">
+                                <i class="bi bi-check"></i>
+                            </button>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-muted text-center py-4">No notifications</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Pending Leave Requests -->
+        <div class="col-md-6">
+            <div class="modern-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0"><i class="bi bi-calendar-x me-2"></i>Pending Leave Requests</h5>
+                    <a href="{% url 'hospital:staff_leave_request' %}" class="btn btn-sm btn-primary">Apply</a>
+                </div>
+                {% if pending_leaves %}
+                <div class="list-group list-group-flush">
+                    {% for leave in pending_leaves %}
+                    <div class="list-group-item border-0 px-0">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">{{ leave.get_leave_type_display }}</h6>
+                                <p class="mb-1 small">{{ leave.start_date|date:"M d" }} - {{ leave.end_date|date:"M d, Y" }}</p>
+                                <small class="text-muted">Status: 
+                                    <span class="badge bg-{% if leave.status == 'approved' %}success{% elif leave.status == 'rejected' %}danger{% else %}warning{% endif %}">
+                                        {{ leave.get_status_display }}
+                                    </span>
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-muted text-center py-4">No pending leave requests</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Upcoming Approved Leaves -->
+    {% if upcoming_leaves %}
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="modern-card">
+                <h5 class="mb-3"><i class="bi bi-calendar-check me-2"></i>Upcoming Approved Leaves</h5>
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Leave Type</th>
+                                <th>Start Date</th>
+                                <th>End Date</th>
+                                <th>Duration</th>
+                                <th>Reason</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for leave in upcoming_leaves %}
+                            <tr>
+                                <td>{{ leave.get_leave_type_display }}</td>
+                                <td>{{ leave.start_date|date:"M d, Y" }}</td>
+                                <td>{{ leave.end_date|date:"M d, Y" }}</td>
+                                <td>
+                                    {% if leave.days_requested %}
+                                        {{ leave.days_requested }} day{{ leave.days_requested|pluralize }}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                                <td>{{ leave.reason|truncatewords:10|default:"No reason provided" }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Recent Activities -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="modern-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0"><i class="bi bi-activity me-2"></i>Recent Activities</h5>
+                    <a href="{% url 'hospital:staff_activities' %}" class="btn btn-sm btn-outline-primary">View All</a>
+                </div>
+                {% if recent_activities %}
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Activity</th>
+                                <th>Description</th>
+                                <th>IP Address</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for activity in recent_activities %}
+                            <tr>
+                                <td><small>{{ activity.created|date:"M d, H:i" }}</small></td>
+                                <td><span class="badge bg-info">{{ activity.activity_type }}</span></td>
+                                <td>{{ activity.description|truncatewords:15 }}</td>
+                                <td><small>{{ activity.ip_address|default:"-" }}</small></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted text-center py-4">No recent activities</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Mark notification as read
+document.querySelectorAll('.mark-read-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const notificationId = this.getAttribute('data-notification-id');
+        fetch(`/hms/staff/notifications/${notificationId}/read/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': window.getCsrfToken(),
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            }
+        });
+    });
+});
+</script>
+{% endblock %}
+

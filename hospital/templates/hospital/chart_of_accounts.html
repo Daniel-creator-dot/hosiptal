@@ -1,0 +1,151 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Chart of Accounts - HMS{% endblock %}
+{% block page_title %}Chart of Accounts{% endblock %}
+
+{% block content %}
+{% if not pv_accounts_setup %}
+<div class="alert alert-warning alert-dismissible fade show" role="alert">
+    <i class="bi bi-exclamation-triangle me-2"></i>
+    <strong>Account Setup Needed:</strong> Some accounts for Payment Vouchers and Cheques are missing. 
+    <a href="{% url 'hospital:pv_account_setup' %}" class="alert-link">Setup accounts now</a>
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+</div>
+{% endif %}
+<div class="modern-card mb-3">
+    <form method="get" class="row g-3">
+        <div class="col-md-3">
+            <label class="form-label">Account Type</label>
+            <select name="type" class="form-select form-control-modern">
+                <option value="">All Types</option>
+                {% for value, label in account_types %}
+                <option value="{{ value }}" {% if selected_type == value %}selected{% endif %}>
+                    {{ label }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-5">
+            <label class="form-label">Search</label>
+            <input type="text" name="search" value="{{ search_query }}" placeholder="Search by code, name, or description" class="form-control form-control-modern">
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">&nbsp;</label>
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary-modern flex-fill">Filter</button>
+                <a href="{% url 'hospital:chart_of_accounts' %}" class="btn btn-outline-secondary">Clear</a>
+            </div>
+        </div>
+    </form>
+</div>
+
+{% if type_totals %}
+<div class="modern-card mb-3">
+    <h6 class="mb-3">Summary by Account Type</h6>
+    <div class="row">
+        {% for value, label in account_types %}
+            {% if value in type_totals %}
+            <div class="col-md-2 mb-2">
+                <div class="card border-primary">
+                    <div class="card-body p-2 text-center">
+                        <small class="text-muted d-block">{{ label }}</small>
+                        <strong class="text-primary">
+                            GHS 
+                            {% for key, total in type_totals.items %}
+                                {% if key == value %}
+                                    {{ total|floatformat:2|intcomma }}
+                                {% endif %}
+                            {% endfor %}
+                        </strong>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<div class="modern-card">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 class="mb-0">All Accounts ({{ accounts|length }})</h6>
+        <div>
+            <a href="{% url 'hospital:pv_account_setup' %}" class="btn btn-sm btn-success me-2">
+                <i class="bi bi-gear"></i> Setup PV & Cheque Accounts
+            </a>
+            <a href="{% url 'admin:hospital_account_changelist' %}" class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-pencil"></i> Manage in Admin
+            </a>
+        </div>
+    </div>
+    
+    <div class="table-responsive">
+        <table class="table modern-table">
+            <thead>
+                <tr>
+                    <th>Account Code</th>
+                    <th>Account Name</th>
+                    <th>Type</th>
+                    <th>Parent Account</th>
+                    <th class="text-end">Total Debits</th>
+                    <th class="text-end">Total Credits</th>
+                    <th class="text-end">Balance</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in accounts %}
+                <tr>
+                    <td><strong>{{ item.account.account_code }}</strong></td>
+                    <td>
+                        <a href="{% url 'hospital:general_ledger_old' %}?account={{ item.account.id }}" class="text-decoration-none">
+                            {{ item.account.account_name }}
+                        </a>
+                        {% if item.account.description %}
+                        <br><small class="text-muted">{{ item.account.description|truncatewords:10 }}</small>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge bg-{% if item.account.account_type == 'asset' %}primary{% elif item.account.account_type == 'liability' %}warning{% elif item.account.account_type == 'equity' %}info{% elif item.account.account_type == 'revenue' %}success{% else %}danger{% endif %}">
+                            {{ item.account.get_account_type_display }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if item.account.parent_account %}
+                            <small>{{ item.account.parent_account.account_code }} - {{ item.account.parent_account.account_name }}</small>
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">GHS {{ item.total_debits|floatformat:2|intcomma }}</td>
+                    <td class="text-end">GHS {{ item.total_credits|floatformat:2|intcomma }}</td>
+                    <td class="text-end">
+                        <strong class="{% if item.balance >= 0 %}text-success{% else %}text-danger{% endif %}">
+                            GHS {{ item.balance|floatformat:2|intcomma }}
+                        </strong>
+                    </td>
+                    <td>
+                        {% if item.account.is_active %}
+                            <span class="badge bg-success">Active</span>
+                        {% else %}
+                            <span class="badge bg-secondary">Inactive</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="8" class="text-center text-muted py-4">
+                        No accounts found. <a href="{% url 'admin:hospital_account_add' %}">Create your first account</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            {% if accounts %}
+            {% endif %}
+        </table>
+    </div>
+</div>
+
+{% endblock %}
+

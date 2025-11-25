@@ -82,21 +82,27 @@ Visit us: {hospital_name}"""
             bool: Success status
         """
         try:
-            # Check if department has notifications enabled
-            from hospital.models_queue import QueueConfiguration
-            
-            try:
-                config = QueueConfiguration.objects.get(department=queue_entry.department)
-                if not config.send_check_in_sms:
-                    self.logger.info(f"Check-in SMS disabled for {queue_entry.department.name}")
-                    return False
-            except QueueConfiguration.DoesNotExist:
-                pass
+            # Check if department has notifications enabled (only if department exists)
+            if queue_entry.department:
+                from hospital.models_queue import QueueConfiguration
+                
+                try:
+                    config = QueueConfiguration.objects.get(department=queue_entry.department)
+                    if not config.send_check_in_sms:
+                        self.logger.info(f"Check-in SMS disabled for {queue_entry.department.name}")
+                        return False
+                except QueueConfiguration.DoesNotExist:
+                    # No config exists - enable by default
+                    pass
             
             # Get patient phone number
             phone = self._get_patient_phone(queue_entry.patient)
             if not phone:
-                self.logger.warning(f"No phone number for patient {queue_entry.patient.mrn}")
+                self.logger.warning(
+                    f"No phone number for patient {queue_entry.patient.mrn} "
+                    f"({queue_entry.patient.full_name}). "
+                    f"Patient phone_number field: '{queue_entry.patient.phone_number}'"
+                )
                 return False
             
             # Get queue position
@@ -104,17 +110,25 @@ Visit us: {hospital_name}"""
             position = queue_service.get_position_in_queue(queue_entry)
             
             # Format message
+            department_name = queue_entry.department.name if queue_entry.department else 'General'
             message = self.TEMPLATES['check_in'].format(
                 hospital_name=self.hospital_name,
                 queue_number=queue_entry.queue_number,
-                department=queue_entry.department.name if queue_entry.department else 'General',
+                department=department_name,
                 position=position,
-                wait_time=queue_entry.estimated_wait_minutes,
+                wait_time=queue_entry.estimated_wait_minutes or 0,
                 date=queue_entry.queue_date.strftime('%b %d, %Y')
             )
             
             # Send SMS
-            success = self._send_sms(phone, message)
+            success = self._send_sms(
+                phone, 
+                message, 
+                recipient_name=queue_entry.patient.full_name,
+                message_type='queue_check_in',
+                related_object_id=queue_entry.id,
+                related_object_type='QueueEntry'
+            )
             
             if success:
                 # Log notification
@@ -130,14 +144,19 @@ Visit us: {hospital_name}"""
                 queue_entry.sms_sent_at = timezone.now()
                 queue_entry.notification_count += 1
                 queue_entry.last_notification_sent = timezone.now()
-                queue_entry.save()
+                queue_entry.save(update_fields=['sms_sent', 'sms_sent_at', 'notification_count', 'last_notification_sent', 'modified'])
                 
-                self.logger.info(f"✅ Check-in SMS sent to {queue_entry.patient.full_name}")
+                self.logger.info(f"✅ Check-in SMS sent to {queue_entry.patient.full_name} at {phone}")
+            else:
+                self.logger.warning(f"⚠️ SMS send returned False for {queue_entry.patient.full_name} at {phone}")
             
             return success
             
         except Exception as e:
-            self.logger.error(f"Error sending check-in notification: {str(e)}", exc_info=True)
+            self.logger.error(
+                f"❌ Error sending check-in notification for queue {queue_entry.queue_number}: {str(e)}", 
+                exc_info=True
+            )
             return False
     
     def send_progress_update(self, queue_entry):
@@ -183,7 +202,12 @@ Visit us: {hospital_name}"""
             )
             
             # Send SMS
-            success = self._send_sms(phone, message)
+            success = self._send_sms(
+                phone, 
+                message, 
+                recipient_name=queue_entry.patient.full_name,
+                message_type='queue_progress_update'
+            )
             
             if success:
                 self._log_notification(queue_entry, 'progress_update', 'sms', message)
@@ -227,7 +251,12 @@ Visit us: {hospital_name}"""
             )
             
             # Send SMS
-            success = self._send_sms(phone, message)
+            success = self._send_sms(
+                phone, 
+                message, 
+                recipient_name=queue_entry.patient.full_name,
+                message_type='queue_ready'
+            )
             
             if success:
                 self._log_notification(queue_entry, 'ready', 'sms', message)
@@ -264,7 +293,12 @@ Visit us: {hospital_name}"""
             )
             
             # Send SMS
-            success = self._send_sms(phone, message)
+            success = self._send_sms(
+                phone, 
+                message, 
+                recipient_name=queue_entry.patient.full_name,
+                message_type='queue_no_show_warning'
+            )
             
             if success:
                 self._log_notification(queue_entry, 'no_show_warning', 'sms', message)
@@ -310,7 +344,12 @@ Visit us: {hospital_name}"""
             )
             
             # Send SMS
-            success = self._send_sms(phone, message)
+            success = self._send_sms(
+                phone, 
+                message, 
+                recipient_name=queue_entry.patient.full_name,
+                message_type='queue_completed'
+            )
             
             if success:
                 self._log_notification(queue_entry, 'completed', 'sms', message)
@@ -393,30 +432,65 @@ Visit us: {hospital_name}"""
     
     def _get_patient_phone(self, patient):
         """Extract and format patient phone number"""
-        phone = patient.phone_number or patient.phone
+        # Get phone from patient model
+        phone = getattr(patient, 'phone_number', None) or getattr(patient, 'phone', None)
+        
+        if not phone:
+            self.logger.debug(f"No phone number found for patient {patient.mrn}")
+            return None
+        
+        # Convert to string and clean
+        phone = str(phone).strip()
+        
+        # Remove spaces, dashes, parentheses, dots
+        phone = phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '').replace('.', '')
+        
+        # If empty after cleaning, return None
         if not phone:
             return None
         
-        # Basic phone formatting (adjust based on your needs)
-        phone = str(phone).strip().replace(' ', '').replace('-', '')
+        # Format for SMS service (it expects 233XXXXXXXXX format)
+        # The SMS service will handle formatting, so just ensure we have a valid number
+        # Remove + if present
+        if phone.startswith('+'):
+            phone = phone[1:]
         
-        # Ensure it starts with country code or add default
-        if not phone.startswith('+'):
-            if not phone.startswith('0'):
-                phone = '0' + phone
-            # Add Ghana country code if needed
-            if len(phone) == 10:
-                phone = '+233' + phone[1:]  # Remove leading 0, add +233
+        # Handle local numbers (starting with 0)
+        if phone.startswith('0') and len(phone) == 10:
+            phone = '233' + phone[1:]
+        # Handle numbers without country code (9 digits)
+        elif len(phone) == 9:
+            phone = '233' + phone
+        # Handle 00233 prefix
+        elif phone.startswith('00233'):
+            phone = phone[2:]
+        
+        # Validate format (should start with 233 and have 12 total digits)
+        if phone.startswith('233') and len(phone) == 12 and phone[3:].isdigit():
+            return phone
+        elif phone.startswith('233'):
+            # If it starts with 233 but wrong length, log warning but try anyway
+            self.logger.warning(f"Phone number format unusual: {phone} (length: {len(phone)})")
+            return phone
+        
+        # If doesn't start with 233, try to add it
+        if not phone.startswith('233'):
+            phone = '233' + phone.lstrip('0')
         
         return phone
     
-    def _send_sms(self, phone, message):
+    def _send_sms(self, phone, message, recipient_name='', message_type='queue_notification', 
+                 related_object_id=None, related_object_type=''):
         """
         Send SMS via configured provider
         
         Args:
             phone: Phone number
             message: Message content
+            recipient_name: Name of recipient (optional)
+            message_type: Type of message (optional)
+            related_object_id: Related object UUID (optional)
+            related_object_type: Related object type (optional)
         
         Returns:
             bool: Success status
@@ -425,11 +499,31 @@ Visit us: {hospital_name}"""
             # Use the existing SMS service
             from .sms_service import sms_service
             
-            result = sms_service.send_sms(phone, message)
-            return result.get('success', False)
+            self.logger.info(f"📱 Attempting to send SMS to {phone} for {recipient_name}")
+            
+            result = sms_service.send_sms(
+                phone_number=phone,
+                message=message,
+                message_type=message_type,
+                recipient_name=recipient_name,
+                related_object_id=related_object_id,
+                related_object_type=related_object_type
+            )
+            
+            is_sent = result.status == 'sent'
+            
+            if is_sent:
+                self.logger.info(f"✅ SMS sent successfully to {phone}")
+            else:
+                self.logger.warning(
+                    f"⚠️ SMS send failed to {phone}. Status: {result.status}, "
+                    f"Error: {getattr(result, 'error_message', 'No error message')}"
+                )
+            
+            return is_sent
             
         except Exception as e:
-            self.logger.error(f"Error sending SMS: {str(e)}", exc_info=True)
+            self.logger.error(f"❌ Exception sending SMS to {phone}: {str(e)}", exc_info=True)
             return False
     
     def _log_notification(self, queue_entry, notification_type, channel, message):

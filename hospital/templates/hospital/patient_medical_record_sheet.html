@@ -597,10 +597,12 @@
                 <div class="stat-value">{{ total_encounters }}</div>
                 <div class="stat-label">Total Encounters</div>
             </div>
+            {% if can_view_vitals|default:True %}
             <div class="stat-card">
                 <div class="stat-value">{{ total_vitals }}</div>
                 <div class="stat-label">Vital Signs Recorded</div>
             </div>
+            {% endif %}
             <div class="stat-card">
                 <div class="stat-value">{{ total_lab_tests }}</div>
                 <div class="stat-label">Lab Tests</div>
@@ -621,9 +623,11 @@
         <li class="record-tab active" data-section="encounters" onclick="showSection('encounters', this)">
             <i class="bi bi-hospital me-2"></i>Encounters ({{ encounters|length }})
         </li>
+        {% if can_view_vitals|default:True %}
         <li class="record-tab" data-section="vitals" onclick="showSection('vitals', this)">
             <i class="bi bi-activity me-2"></i>Vital Signs ({{ all_vitals|length }})
         </li>
+        {% endif %}
         <li class="record-tab" data-section="lab" onclick="showSection('lab', this)">
             <i class="bi bi-capsule me-2"></i>Lab Results ({{ all_lab_results|length }})
         </li>
@@ -715,6 +719,7 @@
     </div>
 
     <!-- Vital Signs Section -->
+    {% if can_view_vitals|default:True %}
     <div class="record-section" id="section-vitals">
         <h3 style="margin-bottom: 20px; color: #1F2937;">
             <i class="bi bi-activity me-2"></i>Vital Signs History
@@ -782,6 +787,7 @@
         </div>
         {% endif %}
     </div>
+    {% endif %}
 
     <!-- Lab Results Section -->
     <div class="record-section" id="section-lab">
@@ -848,11 +854,12 @@
                     <th>Duration</th>
                     <th>Prescribed By</th>
                     <th>Encounter</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for prescription in all_prescriptions %}
-                <tr>
+                <tr id="prescription-row-{{ prescription.id }}">
                     <td>
                         <strong>{{ prescription.created|date:"M d, Y" }}</strong><br>
                         <small style="color: #6B7280;">{{ prescription.created|date:"H:i" }}</small>
@@ -864,6 +871,20 @@
                     <td>{{ prescription.prescribed_by.user.get_full_name|default:"-" }}</td>
                     <td>
                         <small>{{ prescription.order.encounter.started_at|date:"M d, Y" }}</small>
+                    </td>
+                    <td>
+                        {% if user.is_authenticated %}
+                            {% if prescription.prescribed_by.user == user or user.is_staff %}
+                            <button 
+                                class="btn btn-sm btn-outline-danger delete-prescription-btn" 
+                                data-prescription-id="{{ prescription.id }}"
+                                data-drug-name="{{ prescription.drug.name }}"
+                                title="Delete prescription"
+                                style="padding: 4px 8px; min-width: 32px;">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                            {% endif %}
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
@@ -1198,8 +1219,96 @@ function getCookie(name) {
             }
         }
     }
+    if (!cookieValue && name === 'csrftoken') {
+        const metaToken = document.querySelector('meta[name=\"csrf-token\"]');
+        if (metaToken && metaToken.content) {
+            cookieValue = metaToken.content;
+        } else {
+            const inputToken = document.querySelector('input[name=\"csrfmiddlewaretoken\"]');
+            if (inputToken) {
+                cookieValue = inputToken.value;
+            }
+        }
+    }
     return cookieValue;
 }
+
+// Prescription deletion handler
+document.addEventListener('DOMContentLoaded', function() {
+    const deleteButtons = document.querySelectorAll('.delete-prescription-btn');
+    
+    deleteButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const prescriptionId = this.getAttribute('data-prescription-id');
+            const drugName = this.getAttribute('data-drug-name');
+            
+            if (!confirm(`Are you sure you want to delete the prescription for ${drugName}? This action cannot be undone.`)) {
+                return;
+            }
+            
+            // Disable button during request
+            this.disabled = true;
+            this.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+            
+            // Get CSRF token
+            const csrftoken = getCookie('csrftoken');
+            
+            // Send delete request
+            fetch(`/hms/prescription/${prescriptionId}/delete/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrftoken,
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'same-origin',
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Remove row with fade animation
+                    const row = document.getElementById(`prescription-row-${prescriptionId}`);
+                    if (row) {
+                        row.style.transition = 'opacity 0.3s, transform 0.3s';
+                        row.style.opacity = '0';
+                        row.style.transform = 'translateX(-20px)';
+                        setTimeout(() => {
+                            row.remove();
+                            // Check if table is empty
+                            const tbody = row.closest('tbody');
+                            if (tbody && tbody.children.length === 0) {
+                                const table = tbody.closest('table');
+                                if (table) {
+                                    table.insertAdjacentHTML('afterend', 
+                                        '<div class="empty-state"><i class="bi bi-prescription2"></i><p>No prescriptions on record</p></div>'
+                                    );
+                                    table.remove();
+                                }
+                            }
+                        }, 300);
+                    }
+                    
+                    // Show success message
+                    if (typeof showNotification === 'function') {
+                        showNotification(data.message || 'Prescription deleted successfully', 'success');
+                    } else {
+                        alert(data.message || 'Prescription deleted successfully');
+                    }
+                } else {
+                    alert(data.error || 'Error deleting prescription');
+                    this.disabled = false;
+                    this.innerHTML = '<i class="bi bi-trash"></i>';
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error deleting prescription. Please try again.');
+                this.disabled = false;
+                this.innerHTML = '<i class="bi bi-trash"></i>';
+            });
+        });
+    });
+});
 </script>
 {% endblock %}
 

@@ -1,0 +1,696 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Active Sessions - Admin{% endblock %}
+
+{% block page_title %}Active User Sessions{% endblock %}
+{% block page_subtitle %}Manage and monitor active user sessions{% endblock %}
+
+{% block extra_css %}
+<style>
+    .session-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 16px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        transition: all 0.3s ease;
+        border-left: 4px solid #3b82f6;
+    }
+    
+    .session-card:hover {
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+        transform: translateY(-2px);
+    }
+    
+    .session-card.blocked {
+        border-left-color: #ef4444;
+        background: #fef2f2;
+        opacity: 0.8;
+    }
+    
+    .user-avatar {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 600;
+        font-size: 18px;
+    }
+    
+    .user-avatar.blocked {
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    }
+    
+    .status-badge {
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    
+    .status-active {
+        background: #d1fae5;
+        color: #065f46;
+    }
+    
+    .status-blocked {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+    
+    .action-btn {
+        padding: 6px 16px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        transition: all 0.2s;
+        border: none;
+        cursor: pointer;
+    }
+    
+    .action-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+    
+    .btn-logout {
+        background: #fef3c7;
+        color: #92400e;
+    }
+    
+    .btn-logout:hover {
+        background: #fde68a;
+        color: #78350f;
+    }
+    
+    .btn-block {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+    
+    .btn-block:hover {
+        background: #fecaca;
+        color: #7f1d1d;
+    }
+    
+    .btn-unblock {
+        background: #10b981 !important;
+        color: white !important;
+        border: none !important;
+        font-weight: 600 !important;
+    }
+    
+    .btn-unblock:hover {
+        background: #059669 !important;
+        color: white !important;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    }
+    
+    .btn-unblock:active {
+        transform: translateY(0);
+    }
+    
+    .stats-card {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+    
+    .info-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #6b7280;
+        font-size: 14px;
+        margin-top: 8px;
+    }
+    
+    .info-item i {
+        color: #8b5cf6;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Stats Header -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-8">
+            <div class="stats-card">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h3 class="mb-2"><i class="bi bi-people-fill me-2"></i>Active Sessions</h3>
+                        <p class="mb-0" style="opacity: 0.9;">Currently logged-in users: <strong style="font-size: 24px;">{{ total_active }}</strong></p>
+                    </div>
+                    <div>
+                        <button 
+                            class="btn btn-light" 
+                            id="logoutAllBtn"
+                            onclick="logoutAllUsers()"
+                            title="Logout all users except yourself">
+                            <i class="bi bi-box-arrow-right me-2"></i>Logout All Users
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div style="background: linear-gradient(135deg, {% if total_blocked > 0 %}#ef4444 0%, #dc2626 100%{% else %}#10b981 0%, #059669 100%{% endif %}); color: white; border-radius: 16px; padding: 24px; cursor: pointer; transition: transform 0.2s;" 
+                 onclick="document.getElementById('blocked-section').scrollIntoView({behavior: 'smooth', block: 'start'});"
+                 onmouseover="this.style.transform='scale(1.02)'"
+                 onmouseout="this.style.transform='scale(1)'"
+                 title="Click to view blocked users section">
+                <h5 class="mb-2"><i class="bi bi-{% if total_blocked > 0 %}lock-fill{% else %}unlock-fill{% endif %} me-2"></i>Blocked Users</h5>
+                <p class="mb-0" style="opacity: 0.9;">Locked accounts: <strong style="font-size: 24px;">{{ total_blocked }}</strong></p>
+                {% if total_blocked > 0 %}
+                <small style="opacity: 0.9; display: block; margin-top: 8px; font-weight: 500;"><i class="bi bi-arrow-down me-1"></i>Click to view & unblock</small>
+                {% else %}
+                <small style="opacity: 0.8; display: block; margin-top: 8px;"><i class="bi bi-check-circle me-1"></i>All accounts active</small>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    {% if active_sessions %}
+    <div class="row">
+        <div class="col-12">
+            {% for session in active_sessions %}
+            <div class="session-card {% if not session.user_is_active %}blocked{% endif %}" id="session-card-{{ session.session_key|slice:':8' }}">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="d-flex align-items-start" style="flex: 1;">
+                        <div class="user-avatar {% if not session.user_is_active %}blocked{% endif %} me-3">
+                            {{ session.user.get_full_name|first|default:session.user.username|first|upper }}
+                        </div>
+                        <div style="flex: 1;">
+                            <div class="d-flex align-items-center gap-2 mb-2">
+                                <h5 class="mb-0">{{ session.user.get_full_name|default:session.user.username }}</h5>
+                                {% if not session.user_is_active %}
+                                <span class="status-badge status-blocked">
+                                    <i class="bi bi-lock-fill me-1"></i>Blocked
+                                </span>
+                                {% else %}
+                                <span class="status-badge status-active">
+                                    <i class="bi bi-check-circle-fill me-1"></i>Active
+                                </span>
+                                {% endif %}
+                                <span class="badge bg-primary">
+                                    {% if session.user.is_superuser %}Superuser
+                                    {% elif session.user.is_staff %}Staff
+                                    {% else %}User
+                                    {% endif %}
+                                </span>
+                            </div>
+                            
+                            <div class="info-item">
+                                <i class="bi bi-envelope"></i>
+                                <span>{{ session.user.email|default:"No email" }}</span>
+                            </div>
+                            
+                            <div class="info-item">
+                                <i class="bi bi-clock"></i>
+                                <span>Logged in {{ session.login_time|timesince }} ago</span>
+                                <small class="text-muted ms-2">({{ session.login_time|date:"M d, Y H:i" }})</span>
+                            </div>
+                            
+                            {% if session.ip_address %}
+                            <div class="info-item">
+                                <i class="bi bi-geo-alt"></i>
+                                <code>{{ session.ip_address }}</code>
+                            </div>
+                            {% endif %}
+                            
+                            {% if session.user_agent %}
+                            <div class="info-item">
+                                <i class="bi bi-device-hdd"></i>
+                                <small>{{ session.user_agent|truncatewords:10 }}</small>
+                            </div>
+                            {% endif %}
+                            
+                            <div class="info-item">
+                                <i class="bi bi-key"></i>
+                                <code style="font-size: 11px; background: #f3f4f6; padding: 2px 6px; border-radius: 4px;">{{ session.session_key|slice:":16" }}...</code>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="d-flex flex-column gap-2" style="min-width: 200px;">
+                        {% if session.user_is_active %}
+                        <button 
+                            class="action-btn btn-logout logout-session-btn" 
+                            data-session-key="{{ session.session_key }}"
+                            data-username="{{ session.user.username }}"
+                            onclick="logoutSession('{{ session.session_key|escapejs }}', '{{ session.user.username|escapejs }}', this)"
+                            title="Force logout this session">
+                            <i class="bi bi-box-arrow-right me-1"></i> Logout Session
+                        </button>
+                        <button 
+                            class="action-btn btn-logout logout-user-btn" 
+                            data-user-id="{{ session.user.id }}"
+                            data-username="{{ session.user.username }}"
+                            onclick="logoutUser({{ session.user.id }}, '{{ session.user.username|escapejs }}', this)"
+                            title="Logout all sessions for this user">
+                            <i class="bi bi-person-x me-1"></i> Logout User
+                        </button>
+                        <button 
+                            class="action-btn btn-block" 
+                            data-user-id="{{ session.user.id }}"
+                            data-username="{{ session.user.username }}"
+                            onclick="blockUser({{ session.user.id }}, '{{ session.user.username|escapejs }}', this)"
+                            title="Block this user account">
+                            <i class="bi bi-lock-fill me-1"></i> Block Account
+                        </button>
+                        {% else %}
+                        <button 
+                            class="action-btn btn-unblock" 
+                            data-user-id="{{ session.user.id }}"
+                            data-username="{{ session.user.username }}"
+                            onclick="unblockUser({{ session.user.id }}, '{{ session.user.username|escapejs }}', this)"
+                            title="Unblock this user account">
+                            <i class="bi bi-unlock-fill me-1"></i> Unblock Account
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% else %}
+    <div class="row">
+        <div class="col-12">
+            <div class="alert alert-info" style="border-radius: 12px;">
+                <i class="bi bi-info-circle me-2"></i>
+                No active sessions found.
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Blocked Users Section - Always Visible -->
+    <div class="row mt-5 mb-4" id="blocked-section" style="scroll-margin-top: 20px;">
+        <div class="col-12">
+            <div style="background: {% if total_blocked > 0 %}#fef2f2{% else %}#f0f9ff{% endif %}; border-left: 4px solid {% if total_blocked > 0 %}#ef4444{% else %}#3b82f6{% endif %}; border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h3 class="mb-2"><i class="bi bi-lock-fill me-2 {% if total_blocked > 0 %}text-danger{% else %}text-primary{% endif %}"></i>Blocked/Locked Accounts</h3>
+                        {% if total_blocked > 0 %}
+                        <p class="text-muted mb-0" style="font-size: 15px;">Quickly unblock locked accounts below. Click <strong style="color: #10b981;">"Unblock & Restore Access"</strong> to restore login access immediately.</p>
+                        {% else %}
+                        <p class="text-muted mb-0" style="font-size: 15px;">No blocked accounts. Use the <strong>"Block Account"</strong> button on active sessions above to block users.</p>
+                        {% endif %}
+                    </div>
+                    <div>
+                        <span class="badge {% if total_blocked > 0 %}bg-danger{% else %}bg-success{% endif %}" style="font-size: 18px; padding: 10px 20px; font-weight: 600;">{{ total_blocked }} Blocked</span>
+                    </div>
+                </div>
+            </div>
+            
+            {% if total_blocked > 0 %}
+            <div class="row g-3">
+                {% for blocked in blocked_users %}
+                <div class="col-md-6 col-lg-4">
+                    <div class="session-card blocked" style="margin-bottom: 0; border: 2px solid #ef4444;">
+                        <div class="d-flex align-items-start">
+                            <div class="user-avatar blocked me-3" style="flex-shrink: 0;">
+                                {{ blocked.user.get_full_name|first|default:blocked.user.username|first|upper }}
+                            </div>
+                            <div style="flex: 1; min-width: 0;">
+                                <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                                    <h6 class="mb-0" style="word-break: break-word;">{{ blocked.user.get_full_name|default:blocked.user.username }}</h6>
+                                    <span class="status-badge status-blocked" style="flex-shrink: 0;">
+                                        <i class="bi bi-lock-fill me-1"></i>Locked
+                                    </span>
+                                </div>
+                                
+                                <div class="info-item">
+                                    <i class="bi bi-envelope"></i>
+                                    <span style="word-break: break-all;">{{ blocked.user.email|default:"No email" }}</span>
+                                </div>
+                                
+                                {% if blocked.last_login %}
+                                <div class="info-item">
+                                    <i class="bi bi-clock-history"></i>
+                                    <span>Last login: {{ blocked.last_login|timesince }} ago</span>
+                                </div>
+                                {% else %}
+                                <div class="info-item">
+                                    <i class="bi bi-info-circle"></i>
+                                    <span class="text-muted">Never logged in</span>
+                                </div>
+                                {% endif %}
+                                
+                                {% if blocked.last_ip %}
+                                <div class="info-item">
+                                    <i class="bi bi-geo-alt"></i>
+                                    <code>{{ blocked.last_ip }}</code>
+                                </div>
+                                {% endif %}
+                                
+                                <div class="mt-3">
+                                    <button 
+                                        class="action-btn btn-unblock w-100" 
+                                        style="font-weight: 600; padding: 12px 20px; font-size: 14px; background: #10b981; color: white; border: none;"
+                                        data-user-id="{{ blocked.user.id }}"
+                                        data-username="{{ blocked.user.username }}"
+                                        onclick="unblockUser({{ blocked.user.id }}, '{{ blocked.user.username|escapejs }}', this)"
+                                        title="Click to unblock and restore access for this user - They will be able to login immediately"
+                                        onmouseover="this.style.background='#059669'"
+                                        onmouseout="this.style.background='#10b981'">
+                                        <i class="bi bi-unlock-fill me-2"></i> Unblock & Restore Access
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="col-12">
+                    <div class="alert alert-warning" style="border-radius: 12px;">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        Blocked users count shows {{ total_blocked }}, but no users found in the list. Please refresh the page.
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="row">
+                <div class="col-12">
+                    <div class="alert alert-info" style="border-radius: 12px;">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <strong>No blocked accounts.</strong> All user accounts are currently active. To block a user, use the "Block Account" button on their active session card above.
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+function logoutSession(sessionKey, username, buttonElement) {
+    if (!confirm(`Are you sure you want to logout session for ${username}?`)) {
+        return;
+    }
+    
+    const btn = buttonElement || (event ? event.target.closest('button') : document.querySelector(`[data-session-key="${sessionKey}"][onclick*="logoutSession"]`));
+    if (!btn) {
+        alert('Error: Could not find button element');
+        return;
+    }
+    const originalHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i> Logging out...';
+    
+    fetch(`/hms/admin/sessions/${sessionKey}/logout/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': window.getCsrfToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        credentials: 'same-origin',
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const card = document.getElementById(`session-card-${sessionKey.slice(0, 8)}`);
+            if (card) {
+                card.style.transition = 'opacity 0.3s, transform 0.3s';
+                card.style.opacity = '0';
+                card.style.transform = 'translateX(-20px)';
+                setTimeout(() => {
+                    card.remove();
+                    updateCount();
+                }, 300);
+            }
+            showNotification(data.message || 'Session logged out successfully', 'success');
+        } else {
+            alert(data.error || 'Error logging out session');
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error logging out session. Please try again.');
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+    });
+}
+
+function logoutUser(userId, username, buttonElement) {
+    if (!confirm(`Are you sure you want to logout ALL sessions for ${username}?`)) {
+        return;
+    }
+    
+    const btn = buttonElement || (event ? event.target.closest('button') : document.querySelector(`[data-user-id="${userId}"][onclick*="logoutUser"]`));
+    if (!btn) {
+        alert('Error: Could not find button element');
+        return;
+    }
+    const originalHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i> Logging out...';
+    
+    fetch(`/hms/admin/users/${userId}/logout/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': window.getCsrfToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        credentials: 'same-origin',
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            document.querySelectorAll(`[data-user-id="${userId}"]`).forEach(btn => {
+                const card = btn.closest('.session-card');
+                if (card) {
+                    card.style.transition = 'opacity 0.3s, transform 0.3s';
+                    card.style.opacity = '0';
+                    card.style.transform = 'translateX(-20px)';
+                    setTimeout(() => {
+                        card.remove();
+                        updateCount();
+                    }, 300);
+                }
+            });
+            showNotification(data.message || 'User logged out successfully', 'success');
+        } else {
+            alert(data.error || 'Error logging out user');
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error logging out user. Please try again.');
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+    });
+}
+
+function blockUser(userId, username, buttonElement) {
+    if (!confirm(`⚠️ WARNING: This will block ${username} and logout all their sessions.\n\nThey will not be able to login until unblocked.\n\nContinue?`)) {
+        return;
+    }
+    
+    const btn = buttonElement || (event ? event.target.closest('button') : document.querySelector(`[data-user-id="${userId}"][onclick*="blockUser"]`));
+    if (!btn) {
+        alert('Error: Could not find button element');
+        return;
+    }
+    const originalHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i> Blocking...';
+    
+    fetch(`/hms/admin/users/${userId}/block/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': window.getCsrfToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        credentials: 'same-origin',
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(data.message || 'User blocked successfully', 'warning');
+            setTimeout(() => {
+                location.reload();
+            }, 1000);
+        } else {
+            alert(data.error || 'Error blocking user');
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error blocking user. Please try again.');
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+    });
+}
+
+function unblockUser(userId, username, buttonElement) {
+    if (!confirm(`🔓 Unblock ${username}?\n\nThis will restore their login access immediately.\n\nContinue?`)) {
+        return;
+    }
+    
+    const btn = buttonElement || (event ? event.target.closest('button') : document.querySelector(`[data-user-id="${userId}"][onclick*="unblockUser"]`));
+    if (!btn) {
+        alert('Error: Could not find button element');
+        return;
+    }
+    const originalHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i> Unblocking...';
+    
+    fetch(`/hms/admin/users/${userId}/unblock/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': window.getCsrfToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        credentials: 'same-origin',
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(`✅ ${data.message || 'User unblocked successfully. They can now login.'}`, 'success');
+            
+            // If it's a blocked user card, remove it with animation
+            const card = btn.closest('.session-card');
+            if (card && card.classList.contains('blocked')) {
+                card.style.transition = 'opacity 0.3s, transform 0.3s';
+                card.style.opacity = '0';
+                card.style.transform = 'translateY(-10px)';
+                setTimeout(() => {
+                    card.remove();
+                    updateBlockedCount();
+                }, 300);
+            } else {
+                // If it's an active session, reload to show updated status
+                setTimeout(() => {
+                    location.reload();
+                }, 1000);
+            }
+        } else {
+            alert(data.error || 'Error unblocking user');
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error unblocking user. Please try again.');
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+    });
+}
+
+function updateBlockedCount() {
+    const blockedCards = document.querySelectorAll('.session-card.blocked');
+    const count = blockedCards.length;
+    const countElement = document.querySelector('.badge.bg-danger');
+    if (countElement) {
+        countElement.textContent = `${count} Blocked`;
+    }
+    
+    // If no blocked users left, show success message
+    if (count === 0) {
+        const blockedSection = document.querySelector('.row.mt-4');
+        if (blockedSection) {
+            blockedSection.innerHTML = `
+                <div class="col-12">
+                    <div class="alert alert-success" style="border-radius: 12px;">
+                        <i class="bi bi-check-circle me-2"></i>
+                        <strong>Great!</strong> No blocked users found. All accounts are active and can login.
+                    </div>
+                </div>
+            `;
+        }
+    }
+}
+
+function logoutAllUsers() {
+    if (!confirm('⚠️ WARNING: This will logout ALL users except yourself. Are you absolutely sure?')) {
+        return;
+    }
+    
+    if (!confirm('This action cannot be undone. Continue?')) {
+        return;
+    }
+    
+    const btn = document.getElementById('logoutAllBtn');
+    const originalHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Logging out all users...';
+    
+    fetch('/hms/admin/sessions/logout-all/', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': window.getCsrfToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        credentials: 'same-origin',
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(data.message || 'All users logged out successfully', 'warning');
+            setTimeout(() => {
+                location.reload();
+            }, 1000);
+        } else {
+            alert(data.error || 'Error logging out users');
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error logging out users. Please try again.');
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+    });
+}
+
+function updateCount() {
+    const cards = document.querySelectorAll('.session-card');
+    const count = cards.length;
+    const countElement = document.querySelector('.stats-card strong');
+    if (countElement) {
+        countElement.textContent = count;
+    }
+}
+
+function showNotification(message, type) {
+    const notification = document.createElement('div');
+    notification.className = `alert alert-${type === 'success' ? 'success' : type === 'warning' ? 'warning' : 'danger'} alert-dismissible fade show`;
+    notification.style.position = 'fixed';
+    notification.style.top = '20px';
+    notification.style.right = '20px';
+    notification.style.zIndex = '10000';
+    notification.style.minWidth = '300px';
+    notification.style.boxShadow = '0 4px 16px rgba(0,0,0,0.2)';
+    notification.innerHTML = `
+        <i class="bi bi-${type === 'success' ? 'check-circle' : type === 'warning' ? 'exclamation-triangle' : 'x-circle'}-fill me-2"></i>
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    document.body.appendChild(notification);
+    setTimeout(() => {
+        notification.remove();
+    }, 5000);
+}
+</script>
+{% endblock %}

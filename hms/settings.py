@@ -28,7 +28,60 @@ SECRET_KEY = config('SECRET_KEY', default='e77uf3k0c3!53--4jid)7%08=n(8vf)^)#utg
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='*', cast=lambda v: [s.strip() for s in v.split(',')]) if DEBUG else config('ALLOWED_HOSTS', cast=lambda v: [s.strip() for s in v.split(',')])
+# Allow all hosts in DEBUG mode, or use configured hosts in production
+# For Docker/network access, include local network IPs
+if DEBUG:
+    # In DEBUG mode, allow all hosts for network access
+    # This allows access from any device on the network
+    default_hosts = '*'
+else:
+    default_hosts = 'localhost,127.0.0.1'
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default=default_hosts, cast=lambda v: [s.strip() for s in v.split(',') if s.strip()])
+
+# Django validates the Host header, but doesn't include port numbers
+# So '192.168.2.97:8000' is validated as '192.168.2.97'
+# In DEBUG mode, we need to ensure IP addresses work properly
+if DEBUG:
+    # Add common local IPs if not already present
+    # Also add common private network ranges for easier network access
+    common_hosts = [
+        '192.168.0.102', '192.168.2.97', '127.0.0.1', 'localhost', '0.0.0.0',
+        '192.168.233.1', '192.168.64.1', '172.20.112.1',
+        '192.168.1.1', '192.168.0.1', '10.0.0.1'
+    ]
+    for host in common_hosts:
+        if host not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS.append(host)
+    
+    # In DEBUG mode, allow all private network IPs dynamically
+    # This ensures any device on the network can access
+    import ipaddress
+    def is_private_ip(host):
+        """Check if host is a private IP address"""
+        try:
+            ip = ipaddress.ip_address(host.split(':')[0])  # Remove port if present
+            return ip.is_private
+        except:
+            return False
+    
+    # Allow any private IP address in DEBUG mode
+    # This is safe for local network access
+    if '*' not in ALLOWED_HOSTS:
+        # Add wildcard to allow all hosts in DEBUG mode
+        ALLOWED_HOSTS.append('*')
+    
+    # In DEBUG mode, be more permissive - allow any 192.168.x.x, 10.x.x.x, 172.16-31.x.x
+    # This is a workaround for network access - in production, specify exact hosts
+    import re
+    def is_local_ip(host):
+        """Check if host is a local/private IP address"""
+        if not host or host in ['localhost', '127.0.0.1', '0.0.0.0']:
+            return True
+        # Match private IP ranges: 192.168.x.x, 10.x.x.x, 172.16-31.x.x
+        private_ip_pattern = r'^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)'
+        return bool(re.match(private_ip_pattern, host))
+    
+    # Note: We can't use wildcards, but we allow common private IP ranges above
 
 
 # Application definition
@@ -86,15 +139,21 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django_prometheus.middleware.PrometheusBeforeMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'hms.middleware.PermissiveHostMiddleware',  # Allow private IPs in DEBUG mode
+    'hospital.middleware_autosave.AutoSaveMiddleware',  # Auto-save support
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',  # Must come after SessionMiddleware and AuthenticationMiddleware
+    'hospital.middleware_session_timeout.SessionTimeoutMiddleware',  # Auto-logout after 2 hours idle
+    'hospital.middleware_audit.AuditMiddleware',  # Audit logging for compliance
+    'hospital.middleware_accountant_restriction.AccountantRestrictionMiddleware',  # Restrict accountants to accounting features only
+    'hospital.middleware_hr_restriction.HRRestrictionMiddleware',  # Restrict HR staff to HR features only
     'allauth.account.middleware.AccountMiddleware',  # Required by allauth
     # 'django_otp.middleware.OTPMiddleware',  # Disabled for performance
-    'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     # 'auditlog.middleware.AuditlogMiddleware',  # Temporarily disabled
     'simple_history.middleware.HistoryRequestMiddleware',
@@ -106,6 +165,11 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'hms.urls'
+
+# Custom error handlers
+handler404 = 'hms.views.handler404'
+handler500 = 'hms.views.handler500'
+handler403 = 'hms.views.handler403'
 
 TEMPLATES = [
     {
@@ -120,6 +184,7 @@ TEMPLATES = [
                 'django.contrib.messages.context_processors.messages',
                 'django.template.context_processors.media',
                 'django.template.context_processors.static',
+                'hospital.context_processors.global_csrf_token',
             ],
             # Use CACHED loaders for MUCH better performance
             'loaders': [
@@ -128,6 +193,10 @@ TEMPLATES = [
                     'django.template.loaders.app_directories.Loader',
                 ]),
             ],
+            # Performance optimizations
+            'debug': DEBUG,
+            'string_if_invalid': '' if not DEBUG else 'INVALID',  # Fail silently in production
+            'autoescape': True,
         },
     },
 ]
@@ -156,10 +225,10 @@ db_engine = DATABASES['default'].get('ENGINE', '')
 if db_engine == 'django.db.backends.postgresql':
     DATABASES['default'].setdefault('OPTIONS', {})
     
-    # Base options for all PostgreSQL connections
+    # Base options for all PostgreSQL connections - OPTIMIZED FOR PERFORMANCE
     base_options = {
         'connect_timeout': config('DATABASE_TIMEOUT', default=10, cast=int),
-        'options': '-c statement_timeout=30000',  # 30 second query timeout
+        'options': '-c statement_timeout=30000 -c work_mem=16MB',  # Optimized query settings (shared_buffers requires server restart, set in postgresql.conf)
         'keepalives': 1,
         'keepalives_idle': 30,
         'keepalives_interval': 10,
@@ -184,9 +253,12 @@ if db_engine == 'django.db.backends.postgresql':
             base_options['sslkey'] = ssl_key
     
     DATABASES['default']['OPTIONS'].update(base_options)
-    DATABASES['default']['ATOMIC_REQUESTS'] = True
+    DATABASES['default']['ATOMIC_REQUESTS'] = False  # Disable for better performance (use transactions explicitly)
+    # Increased connection pool for better performance
     DATABASES['default']['CONN_MAX_AGE'] = config('DATABASE_CONN_MAX_AGE', default=600, cast=int)
     DATABASES['default']['AUTOCOMMIT'] = True
+    # Performance optimizations
+    DATABASES['default']['OPTIONS']['connect_timeout'] = 10
 
 # MySQL Performance Optimizations (for managed servers)
 elif db_engine == 'django.db.backends.mysql':
@@ -207,10 +279,14 @@ elif db_engine == 'django.db.backends.mysql':
 elif db_engine == 'django.db.backends.sqlite3' or 'sqlite' in str(db_engine):
     DATABASES['default'].setdefault('OPTIONS', {})
     DATABASES['default']['OPTIONS'].update({
-        'timeout': 20,
-        'check_same_thread': False,
+        'timeout': 60,  # Increased timeout to 60 seconds for better concurrent access handling
+        'check_same_thread': False,  # Allow access from different threads
     })
-    DATABASES['default']['ATOMIC_REQUESTS'] = True
+    # SQLite doesn't handle persistent connections well - disable connection pooling
+    DATABASES['default']['CONN_MAX_AGE'] = 0  # Always close connections immediately for SQLite
+    DATABASES['default']['ATOMIC_REQUESTS'] = False  # Disable atomic requests to reduce lock contention
+    
+    # Enable WAL mode via database signal (see hospital/apps.py)
 
 
 # Password validation
@@ -289,13 +365,57 @@ SIMPLE_JWT = {
 CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='http://localhost:3000,http://127.0.0.1:3000', cast=lambda v: [s.strip() for s in v.split(',')])
 CORS_ALLOW_CREDENTIALS = True
 
-# Cache Configuration - Redis for High Performance (with fallback)
-REDIS_URL = config('REDIS_URL', default='redis://127.0.0.1:6379/1')
-USE_REDIS_CACHE = config('USE_REDIS_CACHE', default=False, cast=bool)
+# Cache Configuration - Redis for High Performance (ENABLED BY DEFAULT)
+# Auto-detect Redis URL based on environment
+# In Docker: use 'redis://redis:6379/0'
+# Locally: use 'redis://127.0.0.1:6379/0' (if Redis is exposed from Docker)
+import os
+import socket
+
+def get_redis_url():
+    """Auto-detect the best Redis URL based on environment"""
+    # Check if REDIS_URL is explicitly set
+    explicit_url = os.environ.get('REDIS_URL')
+    if explicit_url:
+        return explicit_url
+    
+    # Check if we're in Docker by looking for Docker-specific environment
+    # Docker Compose sets COMPOSE_PROJECT_NAME, or we can check hostname
+    if os.path.exists('/.dockerenv') or os.environ.get('COMPOSE_PROJECT_NAME'):
+        return 'redis://redis:6379/0'  # Docker internal network
+    
+    # Try to resolve 'redis' hostname (works in Docker network)
+    try:
+        socket.gethostbyname('redis')
+        return 'redis://redis:6379/0'  # Docker internal network
+    except (socket.gaierror, OSError):
+        # Not in Docker, use localhost (Redis exposed from Docker on port 6379)
+        return 'redis://127.0.0.1:6379/0'
+
+REDIS_URL = config('REDIS_URL', default=get_redis_url())
+# Enable Redis by default for maximum performance
+USE_REDIS_CACHE = config('USE_REDIS_CACHE', default=True, cast=bool)
 REDIS_MAX_CONNECTIONS = config('REDIS_MAX_CONNECTIONS', default=200, cast=int)
 REDIS_SOCKET_TIMEOUT = config('REDIS_SOCKET_TIMEOUT', default=5, cast=int)
 
+# Test Redis connection and fallback to local memory if unavailable
+redis_available = False
 if USE_REDIS_CACHE:
+    try:
+        import redis
+        # Try to connect to Redis with short timeout
+        redis_client = redis.from_url(REDIS_URL, socket_connect_timeout=2, socket_timeout=2)
+        redis_client.ping()
+        redis_available = True
+    except Exception as e:
+        # Redis not available, fallback to local memory cache
+        redis_available = False
+        USE_REDIS_CACHE = False
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Redis not available at {REDIS_URL}: {e}. Falling back to local memory cache.")
+
+if USE_REDIS_CACHE and redis_available:
     # Redis Cache (Best Performance)
     CACHES = {
         'default': {
@@ -313,11 +433,30 @@ if USE_REDIS_CACHE:
                 'SERIALIZER': 'django_redis.serializers.json.JSONSerializer',
             },
             'KEY_PREFIX': 'hms',
-            'TIMEOUT': 300,  # 5 minutes default cache timeout
+            'TIMEOUT': 600,  # 10 minutes default cache timeout for better performance
+            'VERSION': 1,
+        },
+        # Separate cache for sessions
+        'sessions': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': REDIS_URL.replace('/0', '/1'),  # Use different DB for sessions
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                'SOCKET_CONNECT_TIMEOUT': REDIS_SOCKET_TIMEOUT,
+                'SOCKET_TIMEOUT': REDIS_SOCKET_TIMEOUT,
+                'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
+                'CONNECTION_POOL_KWARGS': {
+                    'max_connections': REDIS_MAX_CONNECTIONS,
+                    'retry_on_timeout': True,
+                },
+                'SERIALIZER': 'django_redis.serializers.json.JSONSerializer',
+            },
+            'KEY_PREFIX': 'hms_sessions',
+            'TIMEOUT': 86400,  # 24 hours for sessions
         },
     }
     SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
-    SESSION_CACHE_ALIAS = 'default'
+    SESSION_CACHE_ALIAS = 'sessions'
 else:
     # Local Memory Cache (Fallback - Still Fast)
     CACHES = {
@@ -334,7 +473,8 @@ else:
     SESSION_ENGINE = 'django.contrib.sessions.backends.db'
 
 # Celery Configuration
-CELERY_BROKER_URL = config('REDIS_URL', default='redis://127.0.0.1:6379/0')
+# Use the same Redis URL detection logic
+CELERY_BROKER_URL = config('CELERY_BROKER_URL', default=REDIS_URL)
 CELERY_RESULT_BACKEND = 'django-db'
 CELERY_CACHE_BACKEND = 'django-cache'
 CELERY_ACCEPT_CONTENT = ['json']
@@ -342,8 +482,8 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 
-# Cacheops Configuration
-CACHEOPS_REDIS = config('REDIS_URL', default='redis://127.0.0.1:6379/2')
+# Cacheops Configuration (if used)
+CACHEOPS_REDIS = config('CACHEOPS_REDIS', default=REDIS_URL.replace('/0', '/2') if '/0' in REDIS_URL else f'{REDIS_URL}/2')
 
 # Authentication settings
 # Use custom HMS login instead of admin login
@@ -351,10 +491,24 @@ LOGIN_URL = '/hms/login/'
 LOGIN_REDIRECT_URL = '/hms/'
 LOGOUT_REDIRECT_URL = '/hms/'
 
-# Static files (CSS, JavaScript, Images)
+# Static files (CSS, JavaScript, Images) - Optimized for Performance
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+# WhiteNoise with compression and caching for maximum performance
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# WhiteNoise Configuration for Maximum Performance
+WHITENOISE_USE_FINDERS = False  # Use collected static files only
+WHITENOISE_AUTOREFRESH = DEBUG  # Only auto-refresh in DEBUG mode
+WHITENOISE_MAX_AGE = 31536000 if not DEBUG else 0  # 1 year cache in production
+WHITENOISE_MANIFEST_STRICT = False  # Don't fail on missing files
+WHITENOISE_ADD_HEADERS_FUNCTION = None  # Use default headers
+
+# Static files finders optimization
+STATICFILES_FINDERS = [
+    'django.contrib.staticfiles.finders.FileSystemFinder',
+    'django.contrib.staticfiles.finders.AppDirectoriesFinder',
+]
 
 # Media files
 MEDIA_URL = '/media/'
@@ -377,7 +531,7 @@ ACCOUNT_AUTHENTICATION_METHOD = 'email'
 ACCOUNT_EMAIL_VERIFICATION = 'mandatory'
 
 # SMS Configuration - SMS Notify GH
-SMS_API_KEY = config('SMS_API_KEY', default='3316dce1-fd2a-4b4e-b6b2-60b30be375bb')
+SMS_API_KEY = config('SMS_API_KEY', default='84c879bb-f9f9-4666-84a8-9f70a9b238cc')
 SMS_SENDER_ID = config('SMS_SENDER_ID', default='PrimeCare')
 SMS_API_URL = config('SMS_API_URL', default='https://sms.smsnotifygh.com/smsapi')
 
@@ -500,12 +654,23 @@ SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
 
+# Cross-Origin-Opener-Policy (COOP)
+# Only set in production with HTTPS to avoid browser warnings
+# In development, browsers ignore COOP on non-HTTPS/non-localhost origins
+if not DEBUG:
+    # In production, set COOP for security
+    SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
+else:
+    # In development, don't set COOP to avoid browser warnings
+    # The warning is harmless but can be annoying
+    SECURE_CROSS_ORIGIN_OPENER_POLICY = None
+
 # Production Security Settings (Conditional)
 if not DEBUG:
     # Force HTTPS
     SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=True, cast=bool)
     SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
+    # CSRF_COOKIE_SECURE is set below in CSRF Security section
     
     # HSTS Settings
     SECURE_HSTS_SECONDS = 31536000  # 1 year
@@ -520,21 +685,77 @@ if not DEBUG:
     
     # Rate limiting
     RATELIMIT_ENABLE = True
+else:
+    # Explicitly disable HTTPS redirect in DEBUG mode
+    SECURE_SSL_REDIRECT = False
+    SESSION_COOKIE_SECURE = False
     
 # Session Security
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_AGE = 86400  # 24 hours
+SESSION_COOKIE_SECURE = not DEBUG  # Set to True in production with HTTPS
+# Don't set cookie domain for IP addresses to work properly
+SESSION_COOKIE_DOMAIN = None
+# Ensure session cookies work with IP addresses in Docker
+SESSION_SAVE_EVERY_REQUEST = False  # Only save session when modified
 
 # CSRF Security
-CSRF_COOKIE_HTTPONLY = True
-CSRF_COOKIE_SAMESITE = 'Lax'
-CSRF_USE_SESSIONS = False
+# Use cookies for CSRF tokens (more reliable than sessions, especially in Docker)
+CSRF_COOKIE_HTTPONLY = False  # Must be False for JavaScript to read the token
+CSRF_COOKIE_SAMESITE = 'Lax'  # Allows same-site and top-level navigation requests
+CSRF_USE_SESSIONS = False  # Use cookies instead of sessions for better Docker compatibility
 CSRF_COOKIE_AGE = 31449600  # 1 year
+CSRF_COOKIE_SECURE = not DEBUG  # Set to True in production with HTTPS
+# Don't set cookie domain for IP addresses to work properly
+CSRF_COOKIE_DOMAIN = None
+
+# CSRF_TRUSTED_ORIGINS - Allow localhost and local network IPs
+# In Docker, this should include the host machine's IP address
+# Also includes common local network IPs for development
+default_csrf_origins = 'http://localhost:8000,http://127.0.0.1:8000,http://0.0.0.0:8000,http://192.168.0.102:8000,http://192.168.0.*:8000,http://192.168.1.*:8000,http://192.168.2.*:8000'
+CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS', default=default_csrf_origins, cast=lambda v: [s.strip() for s in v.split(',') if s.strip()])
+
+# In DEBUG mode, add additional common development origins
+if DEBUG:
+    additional_origins = [
+        'http://0.0.0.0:8000',
+        'http://localhost:8000',
+        'http://127.0.0.1:8000',
+        'http://localhost',
+        'http://127.0.0.1',
+        'http://192.168.2.97',
+        'http://192.168.233.1',
+        'http://192.168.64.1',
+        'http://172.20.112.1',
+    ]
+    for origin in additional_origins:
+        if origin not in CSRF_TRUSTED_ORIGINS:
+            CSRF_TRUSTED_ORIGINS.append(origin)
 
 # Password Security
 # Relax password rules so admins can pick any password (even short/simple)
 AUTH_PASSWORD_VALIDATORS = []
+
+# Performance Optimizations
+# Disable database query logging in production for better performance
+if not DEBUG:
+    if 'loggers' in LOGGING:
+        LOGGING['loggers']['django.db.backends'] = {
+            'handlers': ['console'],
+            'level': 'ERROR',  # Only log errors, not all queries
+            'propagate': False,
+        }
+
+# Optimize file uploads for better performance
+FILE_UPLOAD_MAX_MEMORY_SIZE = 2621440  # 2.5 MB - use disk for larger files
+DATA_UPLOAD_MAX_MEMORY_SIZE = 2621440  # 2.5 MB
+# DATA_UPLOAD_MAX_NUMBER_FIELDS already set to 20000 above
+
+# Enable connection pooling optimizations
+if db_engine == 'django.db.backends.postgresql':
+    # Increase connection pool size for better performance
+    DATABASES['default']['CONN_MAX_AGE'] = config('DATABASE_CONN_MAX_AGE', default=600, cast=int)
 
 # Content Security Policy (if django-csp is installed)
 CSP_DEFAULT_SRC = ("'self'",)

@@ -62,6 +62,54 @@
         </div>
     </div>
 
+    {% if flow_stages %}
+    <div class="card shadow-sm mb-4">
+        <div class="card-header bg-light d-flex justify-content-between align-items-center">
+            <div>
+                <h5 class="mb-0"><i class="bi bi-diagram-3 me-2"></i>Patient Flow Status</h5>
+                {% if flow_summary.current %}
+                    <small class="text-muted">Current stage: {{ flow_summary.current.get_stage_type_display }}</small>
+                {% elif flow_summary.next %}
+                    <small class="text-muted">Next stage: {{ flow_summary.next.get_stage_type_display }}</small>
+                {% else %}
+                    <small class="text-muted">All stages completed</small>
+                {% endif %}
+            </div>
+            <div class="text-end">
+                <span class="badge bg-success mb-1">{{ flow_summary.completed }} / {{ flow_summary.total }} completed</span>
+                <div class="progress" style="height: 6px; width: 180px;">
+                    <div class="progress-bar bg-success" role="progressbar"
+                         style="width: {{ flow_summary.percent|floatformat:'0' }}%;"
+                         aria-valuenow="{{ flow_summary.percent|floatformat:'0' }}" aria-valuemin="0" aria-valuemax="100"></div>
+                </div>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="flow-timeline">
+                {% for stage in flow_stages %}
+                <div class="flow-stage {% if stage.status == 'completed' %}completed{% elif stage.status == 'in_progress' %}current{% endif %}">
+                    <div class="flow-stage-dot"></div>
+                    <div>
+                        <div class="fw-semibold">{{ stage.get_stage_type_display }}</div>
+                        <div class="small text-muted">
+                            {{ stage.get_status_display }}
+                            {% if stage.completed_at %}
+                                • {{ stage.completed_at|date:"M d, H:i" }}
+                            {% elif stage.started_at %}
+                                • Started {{ stage.started_at|date:"M d, H:i" }}
+                            {% endif %}
+                        </div>
+                        {% if stage.notes %}
+                            <div class="small">{{ stage.notes }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <div class="row">
         <!-- Left Column -->
         <div class="col-md-8">
@@ -143,34 +191,80 @@
                             <thead>
                                 <tr>
                                     <th>Medication</th>
-                                    <th>Strength</th>
-                                    <th>Quantity</th>
-                                    <th>Dosage</th>
-                                    <th>Status</th>
+                                    <th>Directions</th>
+                                    <th class="text-center">Qty</th>
+                                    <th>Dispensing</th>
+                                    {% if can_delete_any_prescription %}
+                                    <th class="text-end">Actions</th>
+                                    {% endif %}
                                 </tr>
                             </thead>
                             <tbody>
                                 {% for rx in prescriptions %}
                                 <tr>
-                                    <td>{{ rx.drug.name }}</td>
-                                    <td>{{ rx.drug.strength }}</td>
-                                    <td>{{ rx.quantity }}</td>
-                                    <td>{{ rx.dosage_instructions|default:"As directed" }}</td>
                                     <td>
-                                        <span class="badge 
-                                            {% if rx.status == 'dispensed' %}bg-success
-                                            {% elif rx.status == 'pending' %}bg-warning
-                                            {% elif rx.status == 'cancelled' %}bg-secondary
-                                            {% else %}bg-primary
-                                            {% endif %}">
-                                            {{ rx.get_status_display }}
-                                        </span>
+                                        <div class="fw-semibold">{{ rx.drug.name }}</div>
+                                        <div class="text-muted small">{{ rx.drug.strength }} · {{ rx.drug.form }}</div>
+                                        <div class="small text-muted">
+                                            Prescribed by {{ rx.prescribed_by.user.get_full_name }} • {{ rx.created|naturaltime }}
+                                        </div>
                                     </td>
+                                    <td>
+                                        <div><strong>Dose:</strong> {{ rx.dose|default:"—" }}</div>
+                                        <div><strong>Route:</strong> {{ rx.route|upper }}</div>
+                                        <div><strong>Frequency:</strong> {{ rx.frequency|default:"—" }}</div>
+                                        <div><strong>Duration:</strong> {{ rx.duration|default:"—" }}</div>
+                                        {% if rx.instructions %}
+                                            <div class="small text-muted mt-1">{{ rx.instructions }}</div>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        <span class="badge bg-dark">{{ rx.quantity }}</span>
+                                    </td>
+                                    <td>
+                                        {% if rx.dispensing_record_obj %}
+                                            {% with status=rx.dispensing_record_obj.dispensing_status %}
+                                            <span class="badge 
+                                                {% if status == 'fully_dispensed' %}bg-success
+                                                {% elif status == 'partially_dispensed' %}bg-info text-dark
+                                                {% elif status == 'ready_to_dispense' %}bg-primary
+                                                {% elif status == 'pending_payment' %}bg-warning text-dark
+                                                {% else %}bg-secondary
+                                                {% endif %}">
+                                                {{ rx.dispensing_record_obj.get_dispensing_status_display }}
+                                            </span>
+                                            {% endwith %}
+                                            <div class="small text-muted">
+                                                {{ rx.dispensing_record_obj.quantity_dispensed|default:0 }}/{{ rx.dispensing_record_obj.quantity_ordered|default:rx.quantity }} dispensed
+                                            </div>
+                                        {% else %}
+                                            <span class="badge bg-secondary">Not sent to pharmacy</span>
+                                        {% endif %}
+                                    </td>
+                                    {% if can_delete_any_prescription %}
+                                    <td class="text-end">
+                                        {% if rx.can_user_delete %}
+                                        <form method="post" style="display: inline;" onsubmit="return confirm('Delete this prescription?');">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="delete_prescription">
+                                            <input type="hidden" name="prescription_id" value="{{ rx.id }}">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        </form>
+                                        {% elif rx.delete_block_reason %}
+                                            <span class="badge bg-light text-muted" title="{{ rx.delete_block_reason }}">
+                                                <i class="bi bi-info-circle"></i>
+                                            </span>
+                                        {% endif %}
+                                    </td>
+                                    {% endif %}
                                 </tr>
                                 {% endfor %}
                             </tbody>
                         </table>
                     </div>
+                    <p class="small text-muted mb-0">Only prescriptions that have not moved to payment or dispensing can be removed.</p>
                 </div>
             </div>
             {% endif %}
@@ -305,6 +399,9 @@
                     <h6 class="mb-0"><i class="bi bi-clipboard-check me-2"></i>Summary</h6>
                 </div>
                 <div class="card-body">
+                    {% if flow_summary.total %}
+                    <p class="mb-2"><i class="bi bi-diagram-3 me-1"></i> {{ flow_summary.completed }} / {{ flow_summary.total }} Flow Stages</p>
+                    {% endif %}
                     <p class="mb-2"><i class="bi bi-prescription2 me-1"></i> {{ prescriptions|length }} Prescriptions</p>
                     <p class="mb-2"><i class="bi bi-clipboard-pulse me-1"></i> {{ lab_results|length }} Lab Results</p>
                     <p class="mb-2"><i class="bi bi-journal-medical me-1"></i> {{ clinical_notes|length }} Clinical Notes</p>
@@ -321,6 +418,45 @@
     .btn, .navbar, .sidebar, .breadcrumb { display: none !important; }
     .card { border: 1px solid #dee2e6 !important; box-shadow: none !important; }
     .card-header { background: #f8f9fa !important; color: #000 !important; }
+}
+.flow-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+.flow-stage {
+    display: flex;
+    gap: 1rem;
+    padding-left: 1.5rem;
+    position: relative;
+}
+.flow-stage::before {
+    content: '';
+    position: absolute;
+    left: 0.5rem;
+    top: 0;
+    bottom: -1rem;
+    width: 2px;
+    background: #e5e7eb;
+}
+.flow-stage:last-child::before {
+    bottom: 0;
+}
+.flow-stage-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #9ca3af;
+    position: absolute;
+    left: 0;
+    top: 6px;
+}
+.flow-stage.completed .flow-stage-dot {
+    background: #10b981;
+}
+.flow-stage.current .flow-stage-dot {
+    background: #3b82f6;
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2);
 }
 </style>
 {% endblock %}

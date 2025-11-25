@@ -1,17 +1,96 @@
 """
 World-Class Admission and Bed Management Views
 """
+from collections import defaultdict
+from datetime import timedelta
+import logging
+
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db.models import Q, Count, F
 from django.utils import timezone
 from django.http import JsonResponse
-from datetime import timedelta
-import logging
 
 from .models import Patient, Encounter, Bed, Ward, Admission, Staff, Department
 from .forms import AdmissionForm
+
+
+def ensure_beds_for_ward(ward, desired_count, prefix):
+    """Ensure a ward has at least the desired number of beds."""
+    existing_beds = Bed.objects.filter(ward=ward, is_deleted=False)
+    current_count = existing_beds.count()
+    if current_count >= desired_count:
+        return
+    
+    existing_numbers = set(existing_beds.values_list('bed_number', flat=True))
+    next_index = 1
+    while current_count < desired_count:
+        bed_number = f"{prefix}-{next_index:02d}"
+        next_index += 1
+        if bed_number in existing_numbers:
+            continue
+        
+        Bed.objects.create(
+            ward=ward,
+            bed_number=bed_number,
+            bed_type='general',
+            status='available',
+            is_active=True
+        )
+        existing_numbers.add(bed_number)
+        current_count += 1
+
+
+def ensure_default_bed_structure():
+    """
+    Ensure core wards (Emergency, Female, Male, Children, VIP) exist so the bed dashboard always shows them
+    and seed a baseline number of beds per ward.
+    Also guarantees there is at least one active department to attach these wards to.
+    """
+    # Ensure we have a fallback department
+    default_department, _ = Department.objects.get_or_create(
+        name='General Medicine',
+        defaults={
+            'code': 'GEN',
+            'description': 'Auto-generated department for bed management setup.',
+            'is_active': True,
+        }
+    )
+    if not default_department.is_active:
+        default_department.is_active = True
+        default_department.save(update_fields=['is_active'])
+    
+    default_wards = [
+        {'name': 'Emergency Ward', 'code': 'ER', 'ward_type': 'emergency', 'capacity': 12, 'bed_prefix': 'ER', 'bed_count': 12},
+        {'name': 'Female Ward', 'code': 'FEM', 'ward_type': 'female', 'capacity': 16, 'bed_prefix': 'FEM', 'bed_count': 12},
+        {'name': 'Male Ward', 'code': 'MAL', 'ward_type': 'male', 'capacity': 16, 'bed_prefix': 'MAL', 'bed_count': 8},
+        {'name': "Children's Ward", 'code': 'PED', 'ward_type': 'paediatric', 'capacity': 14, 'bed_prefix': 'PED', 'bed_count': 10},
+        {'name': 'VIP Ward', 'code': 'VIP', 'ward_type': 'general', 'capacity': 20, 'bed_prefix': 'VIP', 'bed_count': 20},
+    ]
+    
+    for spec in default_wards:
+        ward = Ward.objects.filter(
+            ward_type=spec['ward_type'],
+            is_deleted=False
+        ).first()
+        
+        if not ward:
+            code = spec['code']
+            suffix = 2
+            while Ward.objects.filter(code=code).exists():
+                code = f"{spec['code']}{suffix}"
+                suffix += 1
+            
+            ward = Ward.objects.create(
+                name=spec['name'],
+                code=code,
+                ward_type=spec['ward_type'],
+                department=default_department,
+                capacity=spec['capacity'],
+                is_active=True
+            )
+        ensure_beds_for_ward(ward, spec['bed_count'], spec['bed_prefix'])
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +98,30 @@ logger = logging.getLogger(__name__)
 @login_required
 def bed_management_worldclass(request):
     """World-class bed management dashboard"""
+    ensure_default_bed_structure()
+    
     # Get filters
     ward_filter = request.GET.get('ward', '')
     status_filter = request.GET.get('status', '')
     
     # Get all wards
-    all_wards = Ward.objects.filter(
+    ward_queryset = Ward.objects.filter(
         is_active=True,
         is_deleted=False
     ).select_related('department')
+    
+    ward_type_order = [
+        'emergency', 'female', 'male', 'paediatric',
+        'maternity', 'icu', 'hdu', 'surgery', 'other'
+    ]
+    
+    all_wards = list(ward_queryset)
+    all_wards.sort(
+        key=lambda w: (
+            ward_type_order.index(w.ward_type) if w.ward_type in ward_type_order else len(ward_type_order),
+            w.name.lower()
+        )
+    )
     
     # Get beds
     beds = Bed.objects.filter(
@@ -53,6 +147,9 @@ def bed_management_worldclass(request):
     
     # Convert queryset to list to work with
     beds_list = list(beds)
+    beds_by_ward = defaultdict(list)
+    for bed in beds_list:
+        beds_by_ward[bed.ward_id].append(bed)
     
     # Enhance beds with patient info
     for bed in beds_list:
@@ -67,7 +164,7 @@ def bed_management_worldclass(request):
     # Calculate ward statistics separately (since regroup doesn't preserve dynamic attributes)
     ward_stats = {}
     for ward in all_wards:
-        ward_beds = [b for b in beds_list if b.ward_id == ward.pk]
+        ward_beds = beds_by_ward.get(ward.pk, [])
         occupied = sum(1 for b in ward_beds if b.status == 'occupied')
         available = sum(1 for b in ward_beds if b.status == 'available')
         occupancy = round((occupied / ward.capacity * 100) if ward.capacity > 0 else 0, 1)
@@ -86,10 +183,44 @@ def bed_management_worldclass(request):
     reserved_beds = sum(1 for b in beds_list if b.status == 'reserved')
     occupancy_rate = round((occupied_beds / total_beds * 100) if total_beds > 0 else 0, 1)
     
+    # Build ward sections so even wards without beds display
+    ward_sections = []
+    for ward in all_wards:
+        if ward_filter and str(ward.pk) != ward_filter:
+            continue
+        
+        section_stats = ward_stats.get(str(ward.pk), {
+            'occupied_count': 0,
+            'available_count': 0,
+            'occupancy_percentage': 0,
+        })
+        
+        ward_sections.append({
+            'ward': ward,
+            'beds': beds_by_ward.get(ward.pk, []),
+            'stats': section_stats,
+        })
+    
+    if not ward_sections and ward_filter:
+        # ward filter applied but ward has no beds; still show placeholder
+        for ward in all_wards:
+            if str(ward.pk) == ward_filter:
+                ward_sections.append({
+                    'ward': ward,
+                    'beds': [],
+                    'stats': ward_stats.get(str(ward.pk), {
+                        'occupied_count': 0,
+                        'available_count': 0,
+                        'occupancy_percentage': 0,
+                    }),
+                })
+                break
+    
     context = {
         'beds': beds_list,
         'all_wards': all_wards,
         'ward_stats': ward_stats,
+        'ward_sections': ward_sections,
         'total_beds': total_beds,
         'available_beds': available_beds,
         'occupied_beds': occupied_beds,
