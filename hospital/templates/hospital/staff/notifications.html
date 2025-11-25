@@ -1,0 +1,121 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}My Notifications{% endblock %}
+
+{% block page_title %}My Notifications{% endblock %}
+{% block page_subtitle %}{{ unread_count }} unread notification{{ unread_count|pluralize }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-3">
+        <div class="col-12">
+            <a href="{% url 'hospital:staff_portal' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-2"></i>Back to Portal
+            </a>
+            {% if unread_count > 0 %}
+            <button id="markAllReadBtn" class="btn btn-primary">
+                <i class="bi bi-check-all me-2"></i>Mark All as Read
+            </button>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="modern-card">
+        {% if notifications %}
+        <div class="list-group list-group-flush">
+            {% for notification in notifications %}
+            <div class="list-group-item border-0 px-0 {% if not notification.is_read %}bg-light border-start border-4 border-primary{% endif %}" id="notification-{{ notification.id }}">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <h6 class="mb-2">
+                            {% if not notification.is_read %}
+                            <span class="badge bg-primary me-2">New</span>
+                            {% endif %}
+                            {{ notification.title }}
+                        </h6>
+                        <p class="mb-2">{{ notification.message }}</p>
+                        <div class="d-flex align-items-center gap-3">
+                            <small class="text-muted">
+                                <i class="bi bi-clock me-1"></i>{{ notification.created|naturaltime }}
+                            </small>
+                            <small class="text-muted">
+                                <i class="bi bi-tag me-1"></i>{{ notification.get_notification_type_display }}
+                            </small>
+                            {% if notification.related_object_id %}
+                            <a href="#" class="small text-primary">View Details</a>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% if not notification.is_read %}
+                    <button class="btn btn-sm btn-outline-secondary mark-read-btn" data-notification-id="{{ notification.id }}">
+                        <i class="bi bi-check"></i> Mark Read
+                    </button>
+                    {% else %}
+                    <span class="badge bg-success">Read</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center text-muted py-5">
+            <i class="bi bi-bell-slash" style="font-size: 48px;"></i>
+            <p class="mt-3">No notifications</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+// Mark individual notification as read
+document.querySelectorAll('.mark-read-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const notificationId = this.getAttribute('data-notification-id');
+        fetch(`/hms/staff/notifications/${notificationId}/read/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': window.getCsrfToken(),
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const notification = document.getElementById(`notification-${notificationId}`);
+                if (notification) {
+                    notification.classList.remove('bg-light', 'border-start', 'border-4', 'border-primary');
+                    this.remove();
+                }
+            }
+        });
+    });
+});
+
+// Mark all as read
+const markAllReadBtn = document.getElementById('markAllReadBtn');
+if (markAllReadBtn) {
+    markAllReadBtn.addEventListener('click', function() {
+        fetch('/hms/staff/notifications/mark-all-read/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': window.getCsrfToken(),
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success || response.ok) {
+                location.reload();
+            }
+        });
+    });
+}
+</script>
+{% endblock %}
+
+
+
+
+
+

@@ -130,23 +130,27 @@ class PaperlessReceiptService:
             )
             
             # Send SMS
-            sms_sent = sms_service.send_sms(
+            sms_log = sms_service.send_sms(
                 phone_number=patient.phone_number,
                 message=message,
-                sms_type='payment_receipt',
-                patient=patient
+                message_type='payment_receipt',
+                recipient_name=patient.full_name,
+                related_object_id=receipt.id if hasattr(receipt, 'id') else None,
+                related_object_type='PaymentReceipt'
             )
             
-            if sms_sent:
+            if sms_log.status == 'sent':
                 logger.info(f"✅ SMS receipt sent to {patient.phone_number}")
                 return {
                     'sent': True,
                     'message': f'Receipt sent via SMS to {patient.phone_number}'
                 }
             else:
+                error_msg = sms_log.error_message or 'Unknown error'
+                logger.warning(f"⚠️ SMS receipt failed: {error_msg}")
                 return {
                     'sent': False,
-                    'message': 'SMS service unavailable'
+                    'message': f'SMS send failed: {error_msg}'
                 }
                 
         except Exception as e:
@@ -261,6 +265,9 @@ __all__ = [
     'PaperlessReceiptService',
     'DigitalReceiptPreferences',
 ]
+
+
+
 
 
 

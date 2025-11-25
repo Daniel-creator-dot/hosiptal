@@ -337,3 +337,9 @@ To activate additional biometric types:
 
 
 
+
+
+
+
+
+

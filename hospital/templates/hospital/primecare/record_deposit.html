@@ -1,0 +1,167 @@
+{% extends "hospital/base.html" %}
+{% load static %}
+
+{% block title %}Record Deposit - Primecare Accounting{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h4 class="mb-0">
+                        <i class="fas fa-university me-2"></i>Record Deposit
+                    </h4>
+                    <p class="mb-0 small">Move funds from Undeposited Funds to Bank Account</p>
+                </div>
+                <div class="card-body">
+                    <form method="post" id="depositForm">
+                        {% csrf_token %}
+                        
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="deposit_date" class="form-label">Deposit Date <span class="text-danger">*</span></label>
+                                <input type="date" class="form-control" id="deposit_date" name="deposit_date" 
+                                       value="{{ today|date:'Y-m-d' }}" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="bank_account" class="form-label">Bank Account <span class="text-danger">*</span></label>
+                                <select class="form-select" id="bank_account" name="bank_account" required>
+                                    <option value="">Select Bank Account</option>
+                                    {% for bank in bank_accounts %}
+                                    <option value="{{ bank.id }}">{{ bank.account_name }} ({{ bank.account_number }})</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="deposit_reference" class="form-label">Deposit Reference</label>
+                                <input type="text" class="form-control" id="deposit_reference" name="deposit_reference" 
+                                       placeholder="e.g., Deposit Slip #12345">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="notes" class="form-label">Notes</label>
+                                <textarea class="form-control" id="notes" name="notes" rows="2" 
+                                          placeholder="Additional notes about this deposit"></textarea>
+                            </div>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <h5 class="mb-3">
+                            <i class="fas fa-list me-2"></i>Pending Undeposited Funds
+                            <span class="badge bg-warning text-dark ms-2">{{ pending_funds.count }}</span>
+                        </h5>
+
+                        {% if pending_funds %}
+                        <div class="table-responsive">
+                            <table class="table table-hover table-striped">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>
+                                            <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
+                                        </th>
+                                        <th>Entry #</th>
+                                        <th>Date</th>
+                                        <th>Amount</th>
+                                        <th>Revenue Breakdown</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for fund in pending_funds %}
+                                    <tr>
+                                        <td>
+                                            <input type="checkbox" name="entry_ids" value="{{ fund.id }}" 
+                                                   class="entry-checkbox" onchange="updateTotal()">
+                                        </td>
+                                        <td><code>{{ fund.entry_number }}</code></td>
+                                        <td>{{ fund.entry_date|date:"M d, Y" }}</td>
+                                        <td class="text-end">
+                                            <strong>GHS {{ fund.total_amount|floatformat:2 }}</strong>
+                                        </td>
+                                        <td>
+                                            <small class="text-muted">
+                                                Reg: {{ fund.registration_amount|floatformat:2 }} | 
+                                                Consult: {{ fund.consultation_amount|floatformat:2 }} | 
+                                                Lab: {{ fund.laboratory_amount|floatformat:2 }} | 
+                                                Pharm: {{ fund.pharmacy_amount|floatformat:2 }}
+                                            </small>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                                <tfoot class="table-light">
+                                    <tr>
+                                        <td colspan="3" class="text-end"><strong>Total Selected:</strong></td>
+                                        <td class="text-end">
+                                            <strong class="text-primary" id="selectedTotal">GHS 0.00</strong>
+                                        </td>
+                                        <td></td>
+                                    </tr>
+                                    <tr>
+                                        <td colspan="3" class="text-end"><strong>Total Pending:</strong></td>
+                                        <td class="text-end">
+                                            <strong>GHS {{ total_pending|floatformat:2 }}</strong>
+                                        </td>
+                                        <td></td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                        {% else %}
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>No pending undeposited funds found.
+                        </div>
+                        {% endif %}
+
+                        <div class="mt-4">
+                            <button type="submit" class="btn btn-primary btn-lg" id="submitBtn" disabled>
+                                <i class="fas fa-save me-2"></i>Record Deposit
+                            </button>
+                            <a href="{% url 'accounting_dashboard' %}" class="btn btn-secondary btn-lg ms-2">
+                                <i class="fas fa-times me-2"></i>Cancel
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleSelectAll() {
+    const selectAll = document.getElementById('selectAll');
+    const checkboxes = document.querySelectorAll('.entry-checkbox');
+    checkboxes.forEach(cb => cb.checked = selectAll.checked);
+    updateTotal();
+}
+
+function updateTotal() {
+    const checkboxes = document.querySelectorAll('.entry-checkbox:checked');
+    let total = 0;
+    checkboxes.forEach(cb => {
+        const row = cb.closest('tr');
+        const amountText = row.querySelector('td:nth-child(4) strong').textContent;
+        const amount = parseFloat(amountText.replace('GHS ', '').replace(/,/g, ''));
+        total += amount;
+    });
+    
+    document.getElementById('selectedTotal').textContent = 'GHS ' + total.toFixed(2);
+    document.getElementById('submitBtn').disabled = checkboxes.length === 0;
+}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+    updateTotal();
+});
+</script>
+{% endblock %}
+
+
+
+
+
+

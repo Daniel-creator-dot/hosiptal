@@ -9,6 +9,9 @@ from django.db.models import Q, Count, Sum, Avg
 from django.utils import timezone
 from django.http import JsonResponse
 from datetime import timedelta, date
+from pathlib import Path
+import os
+from django.conf import settings
 from .models import Patient, Encounter, Staff, Department, Ward
 from .models_advanced import (
     Queue, Triage, ImagingStudy, TheatreSchedule,
@@ -16,12 +19,14 @@ from .models_advanced import (
     TheatreSchedule, ProviderSchedule
 )
 # Also import QueueEntry from models_queue (they might be different models)
+# Support both Queue (old) and QueueEntry (new) models
 try:
-    from .models_queue import QueueEntry
-    # Use QueueEntry if it exists, otherwise fall back to Queue
-    QueueModel = QueueEntry
+    from .models_queue import QueueEntry, HealthTip
+    HAS_QUEUE_ENTRY = True
 except ImportError:
-    QueueModel = Queue
+    QueueEntry = None
+    HealthTip = None
+    HAS_QUEUE_ENTRY = False
 from .reports_advanced import get_comprehensive_report
 
 
@@ -31,13 +36,45 @@ def queue_display(request):
     department_id = request.GET.get('department', '').strip()
     location = request.GET.get('location', '').strip()
     
-    # Use QueueEntry model (not Queue from models_advanced)
-    queues = QueueModel.objects.filter(
-        is_deleted=False,
-        status__in=['checked_in', 'waiting', 'in_consultation']  # QueueEntry statuses
-    ).select_related(
-        'encounter__patient', 'department'
-    ).order_by('priority', 'sequence_number')
+    today = timezone.now().date()
+    
+    # Use QueueEntry if available and has data, otherwise fall back to Queue
+    if HAS_QUEUE_ENTRY and QueueEntry.objects.filter(is_deleted=False, queue_date=today).exists():
+        # Use new QueueEntry model
+        queues = QueueEntry.objects.filter(
+            is_deleted=False,
+            queue_date=today
+        ).select_related(
+            'patient', 'encounter__patient', 'department', 'assigned_doctor'
+        ).order_by('priority', 'sequence_number')
+        use_queue_entry = True
+    elif Queue.objects.filter(is_deleted=False, checked_in_at__date=today).exists():
+        # Use old Queue model (has data)
+        queues = Queue.objects.filter(
+            is_deleted=False,
+            checked_in_at__date=today
+        ).select_related(
+            'encounter__patient', 'department'
+        ).order_by('queue_number')
+        use_queue_entry = False
+    elif HAS_QUEUE_ENTRY:
+        # No data yet, but use QueueEntry for new entries
+        queues = QueueEntry.objects.filter(
+            is_deleted=False,
+            queue_date=today
+        ).select_related(
+            'patient', 'encounter__patient', 'department', 'assigned_doctor'
+        ).order_by('priority', 'sequence_number')
+        use_queue_entry = True
+    else:
+        # Fallback to Queue
+        queues = Queue.objects.filter(
+            is_deleted=False,
+            checked_in_at__date=today
+        ).select_related(
+            'encounter__patient', 'department'
+        ).order_by('queue_number')
+        use_queue_entry = False
     
     # Filter by department - only if valid and not 'None'/'null'/empty
     selected_department_id = None
@@ -50,24 +87,216 @@ def queue_display(request):
             selected_department_id = None
     
     # Filter by location - only if valid and not 'None'/'null'/empty
+    # Note: QueueEntry doesn't have a location field, only Queue (old model) does
     selected_location = None
     if location and location.lower() not in ['none', 'null', '']:
-        queues = queues.filter(location=location)
+        if not use_queue_entry:
+            # Only filter by location for old Queue model
+            queues = queues.filter(location=location)
+        # For QueueEntry, location filtering is not available
         selected_location = location
     
     # Group by status and priority for proper ordering
-    # Priority ordering: 1=Emergency, 2=Urgent, 3=Normal, 4=Follow-up (lower number = higher priority)
+    if use_queue_entry:
+        # QueueEntry statuses: 'checked_in', 'called', 'in_progress', 'completed', 'no_show', 'cancelled'
+        waiting_statuses = ['checked_in', 'called']
+        waiting = list(queues.filter(status__in=waiting_statuses).order_by('priority', 'sequence_number'))
+        in_progress = list(queues.filter(status='in_progress').order_by('called_time', 'priority'))
+        # Get completed entries for today
+        completed_queues = QueueEntry.objects.filter(
+            is_deleted=False,
+            queue_date=today,
+            status='completed'
+        )
+        if department_id and department_id.lower() not in ['none', 'null', '']:
+            try:
+                department = Department.objects.get(pk=department_id, is_deleted=False)
+                completed_queues = completed_queues.filter(department=department)
+            except (Department.DoesNotExist, ValueError):
+                pass
+        # Note: QueueEntry doesn't have a location field, so we skip location filtering here
+        # Location filtering is only available for the old Queue model
+        completed_today = completed_queues.count()
+    else:
+        # Queue statuses: 'waiting', 'in_progress', 'completed', 'skipped'
+        waiting_statuses = ['waiting']
+        waiting = list(queues.filter(status__in=waiting_statuses).order_by('queue_number'))
+        in_progress = list(queues.filter(status='in_progress').order_by('called_at', 'queue_number'))
+        # Get completed entries for today
+        completed_queues = Queue.objects.filter(
+            is_deleted=False,
+            checked_in_at__date=today,
+            status='completed'
+        )
+        if department_id and department_id.lower() not in ['none', 'null', '']:
+            try:
+                department = Department.objects.get(pk=department_id, is_deleted=False)
+                completed_queues = completed_queues.filter(department=department)
+            except (Department.DoesNotExist, ValueError):
+                pass
+        if location and location.lower() not in ['none', 'null', '']:
+            completed_queues = completed_queues.filter(location=location)
+        completed_today = completed_queues.count()
     
-    # QueueEntry uses different status names: checked_in, waiting, in_consultation, completed
-    waiting = list(queues.filter(status__in=['checked_in', 'waiting']).order_by('priority', 'sequence_number'))
-    in_progress = list(queues.filter(status='in_consultation').order_by('priority', 'sequence_number'))
+    now_serving = in_progress[0] if in_progress else (waiting[0] if waiting else None)
     
+    health_tips = []
+    try:
+        tips_qs = HealthTip.objects.filter(is_active=True).order_by('display_order')[:8]
+        today_date = timezone.now().date()
+        health_tips = [tip for tip in tips_qs if tip.is_visible(today_date)]
+    except (NameError, AttributeError, Exception) as e:
+        # HealthTip model not available or table doesn't exist
+        health_tips = []
+    
+    # Calculate average wait time
+    avg_wait_minutes = 0
+    if use_queue_entry:
+        completed_with_wait = QueueEntry.objects.filter(
+            is_deleted=False,
+            queue_date=today,
+            status='completed',
+            actual_wait_minutes__isnull=False
+        )
+        if completed_with_wait.exists():
+            from django.db.models import Avg
+            avg_wait = completed_with_wait.aggregate(avg=Avg('actual_wait_minutes'))
+            avg_wait_minutes = int(avg_wait['avg'] or 0)
+    else:
+        # For Queue model, calculate from checked_in_at to completed_at
+        completed_with_times = Queue.objects.filter(
+            is_deleted=False,
+            checked_in_at__date=today,
+            status='completed',
+            checked_in_at__isnull=False,
+            completed_at__isnull=False
+        )
+        if completed_with_times.exists():
+            total_wait = 0
+            count = 0
+            for q in completed_with_times:
+                if q.checked_in_at and q.completed_at:
+                    wait_seconds = (q.completed_at - q.checked_in_at).total_seconds()
+                    total_wait += wait_seconds / 60  # Convert to minutes
+                    count += 1
+            if count > 0:
+                avg_wait_minutes = int(total_wait / count)
+    
+    # Ensure completed_today is always a number, never None
+    if completed_today is None:
+        completed_today = 0
+    else:
+        completed_today = int(completed_today)
+    
+    # Ensure avg_wait_minutes is a number
+    if avg_wait_minutes is None:
+        avg_wait_minutes = 0
+    
+    # Collect slideshow images - SIMPLIFIED DIRECT APPROACH
+    slideshow_images = []
+    allowed_ext = ('.jpg', '.jpeg', '.png', '.webp', '.gif')
+    media_root = Path(settings.MEDIA_ROOT)
+    media_url = settings.MEDIA_URL.rstrip('/') + '/'
+    
+    # Priority folders to check
+    priority_folders = [
+        'queue_display',
+        'waiting_room_slides', 
+        'reception_slides',
+        'slideshow',
+        'imaging_studies',
+    ]
+    
+    # Method 1: Check priority folders first
+    for folder_name in priority_folders:
+        folder_path = media_root / folder_name
+        if folder_path.exists() and folder_path.is_dir():
+            try:
+                # Get all image files recursively
+                for img_file in folder_path.rglob('*'):
+                    if img_file.is_file() and img_file.suffix.lower() in allowed_ext:
+                        try:
+                            rel_path = img_file.relative_to(media_root).as_posix()
+                            image_url = f"{media_url}{rel_path}"
+                            slideshow_images.append({
+                                'url': image_url,
+                                'caption': img_file.stem.replace('_', ' ').replace('-', ' ').title(),
+                                'mtime': img_file.stat().st_mtime,
+                            })
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+    
+    # Method 2: If still no images, check media root directly (first 10 image files only)
+    if not slideshow_images:
+        try:
+            root_images = []
+            for img_file in media_root.glob('*'):
+                if img_file.is_file() and img_file.suffix.lower() in allowed_ext:
+                    try:
+                        image_url = f"{media_url}{img_file.name}"
+                        root_images.append({
+                            'url': image_url,
+                            'caption': img_file.stem.replace('_', ' ').replace('-', ' ').title(),
+                            'mtime': img_file.stat().st_mtime,
+                        })
+                    except Exception:
+                        continue
+            # Take first 10 from root
+            slideshow_images.extend(root_images[:10])
+        except Exception:
+            pass
+    
+    # Sort by modification time and limit to 20
+    slideshow_images.sort(key=lambda x: x.get('mtime', 0), reverse=True)
+    slideshow_images = slideshow_images[:20]
+    
+    # Debug: Print results to console (for immediate debugging)
+    print(f"\n{'='*60}")
+    print(f"SLIDESHOW IMAGES DEBUG")
+    print(f"{'='*60}")
+    print(f"MEDIA_ROOT: {media_root}")
+    print(f"MEDIA_ROOT exists: {media_root.exists()}")
+    print(f"MEDIA_URL: {media_url}")
+    print(f"Images found: {len(slideshow_images)}")
+    if slideshow_images:
+        print(f"First 3 image URLs:")
+        for i, img in enumerate(slideshow_images[:3], 1):
+            print(f"  {i}. {img['url']}")
+    else:
+        print("⚠️ NO IMAGES FOUND!")
+        print(f"Searched in:")
+        for name, search_dir, recursive in search_dirs:
+            exists = search_dir.exists()
+            is_dir = search_dir.is_dir() if exists else False
+            print(f"  - {name}: exists={exists}, is_dir={is_dir}")
+    print(f"{'='*60}\n")
+    
+    # Also log to logger
+    import logging
+    logger = logging.getLogger(__name__)
+    if slideshow_images:
+        logger.info(f"✅ Found {len(slideshow_images)} slideshow images")
+        if slideshow_images:
+            logger.info(f"First image URL: {slideshow_images[0]['url']}")
+    else:
+        logger.warning(f"⚠️ No slideshow images found")
+        logger.warning(f"MEDIA_ROOT: {media_root}, exists: {media_root.exists()}")
+
     context = {
         'waiting': waiting,
         'in_progress': in_progress,
+        'now_serving': now_serving,
+        'completed_today': completed_today,
+        'avg_wait_minutes': avg_wait_minutes,
         'departments': Department.objects.filter(is_active=True, is_deleted=False),
         'selected_department': selected_department_id,  # None or string ID
         'selected_location': selected_location,  # None or valid location
+        'health_tips': health_tips,
+        'use_queue_entry': use_queue_entry,  # Flag to indicate which model is being used
+        'slideshow_images': slideshow_images,
+        'today': timezone.now(),  # Add today for calendar widget
     }
     return render(request, 'hospital/queue_display_worldclass.html', context)
 
@@ -425,52 +654,100 @@ def queue_create(request):
 @login_required
 def queue_action(request, queue_id, action):
     """Perform actions on queue items: call, complete, skip"""
-    queue = get_object_or_404(QueueModel, pk=queue_id, is_deleted=False)
+    # Try to find in QueueEntry first, then Queue
+    queue = None
+    use_queue_entry = False
+    
+    if HAS_QUEUE_ENTRY:
+        try:
+            queue = QueueEntry.objects.get(pk=queue_id, is_deleted=False)
+            use_queue_entry = True
+        except QueueEntry.DoesNotExist:
+            pass
+    
+    if not queue:
+        try:
+            queue = Queue.objects.get(pk=queue_id, is_deleted=False)
+            use_queue_entry = False
+        except Queue.DoesNotExist:
+            from django.http import Http404
+            raise Http404("Queue entry not found")
     
     if action == 'call':
-        # Call next patient - move to in_consultation
-        if queue.status in ['checked_in', 'waiting']:
-            queue.status = 'in_consultation'
-            # QueueEntry uses: called_time and started_time
-            if hasattr(queue, 'called_time'):
-                queue.called_time = timezone.now()
-            if hasattr(queue, 'started_time'):
-                queue.started_time = timezone.now()
-            queue.save()
-            messages.success(request, f'Called patient #{queue.queue_number} - {queue.encounter.patient.full_name}')
+        # Call next patient - move to in_progress
+        if use_queue_entry:
+            # QueueEntry statuses: 'checked_in', 'called', 'in_progress'
+            if queue.status in ['checked_in', 'called']:
+                queue.status = 'in_progress'
+                if hasattr(queue, 'called_time'):
+                    queue.called_time = timezone.now()
+                if hasattr(queue, 'started_time'):
+                    queue.started_time = timezone.now()
+                queue.save()
+                patient_name = queue.patient.full_name if hasattr(queue, 'patient') else queue.encounter.patient.full_name
+                messages.success(request, f'Called patient #{queue.queue_number} - {patient_name}')
+            else:
+                messages.warning(request, 'Patient is already in consultation.')
         else:
-            messages.warning(request, 'Patient is already in consultation.')
+            # Queue statuses: 'waiting', 'in_progress'
+            if queue.status == 'waiting':
+                queue.status = 'in_progress'
+                queue.called_at = timezone.now()
+                queue.save()
+                messages.success(request, f'Called patient #{queue.queue_number} - {queue.encounter.patient.full_name}')
+            else:
+                messages.warning(request, 'Patient is already in consultation.')
     
     elif action == 'complete':
         # Complete - move to completed
         queue.status = 'completed'
-        # QueueEntry uses: completed_time
-        if hasattr(queue, 'completed_time'):
-            queue.completed_time = timezone.now()
-        # Calculate actual wait time
-        if hasattr(queue, 'check_in_time') and hasattr(queue, 'started_time'):
-            if queue.check_in_time and queue.started_time:
-                wait_seconds = (queue.started_time - queue.check_in_time).total_seconds()
-                queue.actual_wait_minutes = int(wait_seconds / 60)
+        if use_queue_entry:
+            # QueueEntry uses: completed_time
+            if hasattr(queue, 'completed_time'):
+                queue.completed_time = timezone.now()
+            # Calculate actual wait time
+            if hasattr(queue, 'check_in_time') and hasattr(queue, 'started_time'):
+                if queue.check_in_time and queue.started_time:
+                    wait_seconds = (queue.started_time - queue.check_in_time).total_seconds()
+                    if hasattr(queue, 'actual_wait_minutes'):
+                        queue.actual_wait_minutes = int(wait_seconds / 60)
+        else:
+            # Queue uses: completed_at
+            queue.completed_at = timezone.now()
         queue.save()
         messages.success(request, f'Completed queue entry #{queue.queue_number}')
     
     elif action == 'skip':
-        # Skip patient - move to skipped
-        queue.status = 'skipped'
+        # Skip patient
+        if use_queue_entry:
+            queue.status = 'no_show'
+        else:
+            queue.status = 'skipped'
         queue.save()
         messages.info(request, f'Skipped queue entry #{queue.queue_number}')
     
     elif action == 'recall':
         # Put back to waiting
-        if queue.status in ['skipped', 'completed']:
-            queue.status = 'checked_in'
-            queue.called_at = None
-            queue.completed_at = None
-            queue.save(update_fields=['status', 'called_at', 'completed_at', 'modified'])
-            messages.success(request, f'Patient #{queue.queue_number} returned to waiting queue')
+        if use_queue_entry:
+            if queue.status in ['no_show', 'completed', 'cancelled']:
+                queue.status = 'checked_in'
+                if hasattr(queue, 'called_time'):
+                    queue.called_time = None
+                if hasattr(queue, 'completed_time'):
+                    queue.completed_time = None
+                queue.save()
+                messages.success(request, f'Patient #{queue.queue_number} returned to waiting queue')
+            else:
+                messages.warning(request, 'Can only recall completed, no-show, or cancelled patients.')
         else:
-            messages.warning(request, 'Can only recall completed or skipped patients.')
+            if queue.status in ['skipped', 'completed']:
+                queue.status = 'waiting'
+                queue.called_at = None
+                queue.completed_at = None
+                queue.save(update_fields=['status', 'called_at', 'completed_at', 'modified'])
+                messages.success(request, f'Patient #{queue.queue_number} returned to waiting queue')
+            else:
+                messages.warning(request, 'Can only recall completed or skipped patients.')
     
     else:
         messages.error(request, 'Invalid action.')
@@ -507,10 +784,17 @@ def queue_call_next(request):
     location = request.GET.get('location', '') or request.POST.get('location', '')
     
     # Find next patient in waiting queue - use QueueEntry model
-    queues = QueueModel.objects.filter(
-        is_deleted=False,
-        status__in=['checked_in', 'waiting']
-    ).order_by('priority', 'sequence_number')
+    # Use QueueEntry if available, otherwise Queue
+    if HAS_QUEUE_ENTRY and QueueEntry.objects.filter(is_deleted=False).exists():
+        queues = QueueEntry.objects.filter(
+            is_deleted=False,
+            status__in=['checked_in', 'called']
+        ).order_by('priority', 'sequence_number')
+    else:
+        queues = Queue.objects.filter(
+            is_deleted=False,
+            status='waiting'
+        ).order_by('queue_number')
     
     if department_id and department_id != 'None':
         queues = queues.filter(department_id=department_id)
@@ -521,19 +805,28 @@ def queue_call_next(request):
     next_queue = queues.first()
     
     if next_queue:
-        next_queue.status = 'in_consultation'
-        # QueueEntry uses: called_time and started_time
-        if hasattr(next_queue, 'called_time'):
-            next_queue.called_time = timezone.now()
-        if hasattr(next_queue, 'started_time'):
-            next_queue.started_time = timezone.now()
+        # Update status based on model type
+        if HAS_QUEUE_ENTRY and isinstance(next_queue, QueueEntry):
+            next_queue.status = 'in_progress'
+            if hasattr(next_queue, 'called_time'):
+                next_queue.called_time = timezone.now()
+            if hasattr(next_queue, 'started_time'):
+                next_queue.started_time = timezone.now()
+        else:
+            next_queue.status = 'in_progress'
+            if hasattr(next_queue, 'called_at'):
+                next_queue.called_at = timezone.now()
         next_queue.save()
         
         # Send SMS notification to patient
         sms_sent = False
         sms_message = ''
         try:
-            patient = next_queue.encounter.patient
+            # Get patient - QueueEntry has patient directly, Queue has it through encounter
+            if hasattr(next_queue, 'patient'):
+                patient = next_queue.patient
+            else:
+                patient = next_queue.encounter.patient if next_queue.encounter else None
             department_name = next_queue.department.name if next_queue.department else 'clinic'
             location_display = 'clinic'  # Simplified - QueueEntry may not have location
             
@@ -597,12 +890,21 @@ def queue_data_api(request):
     location = request.GET.get('location', '')
     
     # Use QueueEntry model
-    queues = QueueModel.objects.filter(
-        is_deleted=False,
-        status__in=['checked_in', 'waiting', 'in_consultation']
-    ).select_related(
-        'encounter__patient', 'department'
-    )
+    # Use QueueEntry if available, otherwise Queue
+    if HAS_QUEUE_ENTRY and QueueEntry.objects.filter(is_deleted=False).exists():
+        queues = QueueEntry.objects.filter(
+            is_deleted=False,
+            status__in=['checked_in', 'called', 'in_progress']
+        ).select_related(
+            'patient', 'encounter__patient', 'department', 'assigned_doctor'
+        )
+    else:
+        queues = Queue.objects.filter(
+            is_deleted=False,
+            status__in=['waiting', 'in_progress']
+        ).select_related(
+            'encounter__patient', 'department'
+        )
     
     if department_id and department_id != 'None':
         queues = queues.filter(department_id=department_id)
@@ -610,23 +912,71 @@ def queue_data_api(request):
         queues = queues.filter(location=location)
     
     # Order by priority (1=highest) and sequence_number
-    waiting = list(queues.filter(status__in=['checked_in', 'waiting']).order_by('priority', 'sequence_number'))
-    in_progress = list(queues.filter(status='in_consultation').order_by('priority', 'sequence_number'))
+    if HAS_QUEUE_ENTRY and QueueEntry.objects.filter(is_deleted=False).exists():
+        waiting = list(queues.filter(status__in=['checked_in', 'called']).order_by('priority', 'sequence_number'))
+        in_progress = list(queues.filter(status='in_progress').order_by('priority', 'sequence_number'))
+        # Get completed count for today
+        completed_queues = QueueEntry.objects.filter(
+            is_deleted=False,
+            queue_date=timezone.now().date(),
+            status='completed'
+        )
+        if department_id and department_id != 'None':
+            completed_queues = completed_queues.filter(department_id=department_id)
+        if location and location != 'None' and location != '':
+            completed_queues = completed_queues.filter(location=location)
+        completed_today = completed_queues.count()
+        # Calculate average wait time
+        from django.db.models import Avg
+        avg_wait = completed_queues.filter(actual_wait_minutes__isnull=False).aggregate(avg=Avg('actual_wait_minutes'))
+        avg_wait_minutes = int(avg_wait['avg'] or 0) if avg_wait['avg'] else 0
+    else:
+        waiting = list(queues.filter(status='waiting').order_by('queue_number'))
+        in_progress = list(queues.filter(status='in_progress').order_by('queue_number'))
+        # Get completed count for today
+        completed_queues = Queue.objects.filter(
+            is_deleted=False,
+            checked_in_at__date=timezone.now().date(),
+            status='completed'
+        )
+        if department_id and department_id != 'None':
+            completed_queues = completed_queues.filter(department_id=department_id)
+        if location and location != 'None' and location != '':
+            completed_queues = completed_queues.filter(location=location)
+        completed_today = completed_queues.count()
+        # Calculate average wait time
+        total_wait = 0
+        count = 0
+        for q in completed_queues.filter(checked_in_at__isnull=False, completed_at__isnull=False):
+            if q.checked_in_at and q.completed_at:
+                wait_seconds = (q.completed_at - q.checked_in_at).total_seconds()
+                total_wait += wait_seconds / 60
+                count += 1
+        avg_wait_minutes = int(total_wait / count) if count > 0 else 0
     
     # Serialize queue data
     def serialize_queue(q):
-        # QueueEntry uses: check_in_time, called_time, started_time, completed_time
-        checked_in = getattr(q, 'check_in_time', None)
-        called = getattr(q, 'called_time', None) or getattr(q, 'started_time', None)
-        wait_time = getattr(q, 'estimated_wait_minutes', 0)
+        # Handle both QueueEntry and Queue models
+        if HAS_QUEUE_ENTRY and isinstance(q, QueueEntry):
+            # QueueEntry uses: check_in_time, called_time, started_time, completed_time
+            checked_in = getattr(q, 'check_in_time', None) or getattr(q, 'created', None)
+            called = getattr(q, 'called_time', None) or getattr(q, 'started_time', None)
+            wait_time = getattr(q, 'estimated_wait_minutes', 0)
+            patient = q.patient if hasattr(q, 'patient') else (q.encounter.patient if q.encounter else None)
+        else:
+            # Queue uses: checked_in_at, called_at, completed_at
+            checked_in = getattr(q, 'checked_in_at', None)
+            called = getattr(q, 'called_at', None)
+            wait_time = getattr(q, 'estimated_wait_time', 0)
+            patient = q.encounter.patient if q.encounter else None
         
         return {
             'id': str(q.id),
             'queue_number': q.queue_number,
-            'patient_name': q.encounter.patient.full_name if q.encounter and q.encounter.patient else 'Unknown',
-            'mrn': q.encounter.patient.mrn if q.encounter and q.encounter.patient else '',
-            'priority': q.priority,
-            'priority_display': q.get_priority_display(),
+            'patient_name': patient.full_name if patient else 'Unknown',
+            'mrn': patient.mrn if patient else '',
+            'priority': getattr(q, 'priority', 'normal'),
+            'priority_display': q.get_priority_display() if hasattr(q, 'get_priority_display') else str(getattr(q, 'priority', 'normal')),
             'department': q.department.name if q.department else '',
             'checked_in_at': checked_in.isoformat() if checked_in else timezone.now().isoformat(),
             'called_at': called.isoformat() if called else None,
@@ -639,6 +989,8 @@ def queue_data_api(request):
         'in_progress': [serialize_queue(q) for q in in_progress],
         'waiting_count': len(waiting),
         'in_progress_count': len(in_progress),
+        'completed_today': completed_today,
+        'avg_wait_minutes': avg_wait_minutes,
         'timestamp': timezone.now().isoformat()
     })
 

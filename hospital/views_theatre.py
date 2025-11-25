@@ -160,3 +160,9 @@ def get_patient_encounters_api(request, patient_id):
 
 
 
+
+
+
+
+
+

@@ -1,9 +1,115 @@
 """
 Utility functions for automatic billing and charge capture
 """
+import logging
 from decimal import Decimal
 from django.utils import timezone
 from datetime import timedelta
+
+from .models import Invoice, InvoiceLine, ServiceCode, Payer, Patient
+from .models_pricing import DefaultPrice, PayerPrice
+from .services.pricing_engine_service import pricing_engine
+from hospital.models_enterprise_billing import ServicePricing
+
+
+logger = logging.getLogger(__name__)
+
+
+def _ensure_consultation_pricing(service_code):
+    """
+    Ensure the standard pricing tiers for consultations are enforced:
+    Cash = 120, Insurance = 150. Corporate defaults to cash.
+    """
+    today = timezone.now().date()
+    desired_cash = Decimal('120.00')
+    desired_insurance = Decimal('150.00')
+    
+    pricing, created = ServicePricing.objects.get_or_create(
+        service_code=service_code,
+        payer__isnull=True,
+        defaults={
+            'is_active': True,
+            'effective_from': today,
+            'cash_price': desired_cash,
+            'corporate_price': desired_cash,
+            'insurance_price': desired_insurance,
+        }
+    )
+    
+    updated = False
+    if pricing.cash_price != desired_cash:
+        pricing.cash_price = desired_cash
+        updated = True
+    if pricing.corporate_price != desired_cash:
+        pricing.corporate_price = desired_cash
+        updated = True
+    if pricing.insurance_price != desired_insurance:
+        pricing.insurance_price = desired_insurance
+        updated = True
+    if pricing.effective_from > today:
+        pricing.effective_from = today
+        updated = True
+    if not pricing.is_active:
+        pricing.is_active = True
+        updated = True
+    
+    if updated:
+        pricing.save()
+
+
+def _record_locum_consultation_service(encounter, service_amount, consultation_type, invoice_line):
+    """Automatically create locum service entry when a locum doctor consults."""
+    provider = getattr(encounter, 'provider', None)
+    patient = getattr(encounter, 'patient', None)
+    if not provider or not patient or not getattr(provider, 'is_locum', False):
+        return
+    
+    try:
+        from .models_locum_doctors import LocumDoctorService
+    except ImportError:
+        logger.warning("Locum module not available; skipping locum consultation tracking.")
+        return
+    
+    service_label = f"{consultation_type.title()} Consultation"
+    existing = LocumDoctorService.objects.filter(
+        encounter=encounter,
+        service_type=service_label,
+        is_deleted=False
+    ).first()
+    
+    description = (
+        f"{service_label} automatically captured from consultation billing. "
+        f"Invoice #{getattr(invoice_line.invoice, 'invoice_number', '') or invoice_line.invoice.pk}"
+    )
+    
+    service_date = encounter.started_at.date() if getattr(encounter, 'started_at', None) else timezone.now().date()
+    
+    if existing:
+        if existing.service_charge != service_amount:
+            existing.service_charge = service_amount
+            existing.service_description = description
+            existing.save()
+        return existing
+    
+    locum_service = LocumDoctorService.objects.create(
+        doctor=provider,
+        patient=patient,
+        encounter=encounter,
+        service_date=service_date,
+        service_type=service_label,
+        service_description=description,
+        service_charge=service_amount,
+        payment_method='bank_transfer',
+        notes='Auto-generated from consultation billing.'
+    )
+    logger.info(
+        "Locum consultation recorded: %s -> %s (%s, GHS %s)",
+        provider.user.get_full_name(),
+        patient.full_name,
+        service_label,
+        service_amount
+    )
+    return locum_service
 
 
 def add_consultation_charge(encounter, consultation_type='general'):
@@ -12,9 +118,6 @@ def add_consultation_charge(encounter, consultation_type='general'):
     Uses intelligent pricing engine for multi-tier pricing
     consultation_type: 'general' or 'specialist'
     """
-    from .models import Invoice, InvoiceLine, ServiceCode, Payer, Patient
-    from .models_pricing import DefaultPrice, PayerPrice
-    from .services.pricing_engine_service import pricing_engine
     
     # Get patient's payer - ensure payer is not None
     patient = encounter.patient
@@ -53,6 +156,9 @@ def add_consultation_charge(encounter, consultation_type='general'):
         }
     )
     
+    if consultation_type == 'general':
+        _ensure_consultation_pricing(service_code)
+    
     # 💰 USE NEW PRICING ENGINE: Get intelligent price based on patient type
     try:
         consultation_price = pricing_engine.get_service_price(
@@ -62,8 +168,6 @@ def add_consultation_charge(encounter, consultation_type='general'):
         )
         
         # Log which price tier was used
-        import logging
-        logger = logging.getLogger(__name__)
         logger.info(
             f"💰 Consultation price for {patient.full_name}: "
             f"GHS {consultation_price} (Payer: {payer.name})"
@@ -103,9 +207,10 @@ def add_consultation_charge(encounter, consultation_type='general'):
         is_deleted=False
     ).first()
     
+    invoice_line = existing_line
     if not existing_line:
         # Add consultation fee line
-        InvoiceLine.objects.create(
+        invoice_line = InvoiceLine.objects.create(
             invoice=invoice,
             service_code=service_code,
             description=description,
@@ -116,8 +221,8 @@ def add_consultation_charge(encounter, consultation_type='general'):
         
         # Update invoice totals
         invoice.update_totals()
-        return invoice
     
+    _record_locum_consultation_service(encounter, consultation_price, consultation_type, invoice_line)
     return invoice
 
 

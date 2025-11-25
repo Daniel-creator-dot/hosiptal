@@ -225,7 +225,8 @@ class CashierSession(BaseModel):
         ('closed', 'Closed'),
     ], default='open')
     
-    notes = models.TextField(blank=True)
+    notes = models.TextField(blank=True, help_text="General session notes")
+    daily_cash_notes = models.TextField(blank=True, help_text="Notes to match cash sales - updated throughout the day")
     
     class Meta:
         ordering = ['-opened_at']

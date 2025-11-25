@@ -2,7 +2,9 @@
 Login Tracking Admin
 """
 from django.contrib import admin
+from django.utils import timezone
 from .models_login_tracking import LoginHistory, SecurityAlert, TrustedLocation, TrustedDevice
+from .models_login_attempts import LoginAttempt
 
 
 @admin.register(LoginHistory)
@@ -89,6 +91,50 @@ class TrustedDeviceAdmin(admin.ModelAdmin):
     list_filter = ['is_active', 'device_type', 'os']
     search_fields = ['user__username', 'device_name', 'device_fingerprint']
     readonly_fields = ['created', 'modified', 'first_seen', 'last_seen', 'device_fingerprint']
+
+
+@admin.register(LoginAttempt)
+class LoginAttemptAdmin(admin.ModelAdmin):
+    list_display = ['username', 'failed_attempts', 'is_locked', 'locked_until', 'manually_blocked', 'block_expires_at', 'last_attempt_at']
+    list_filter = ['is_locked', 'manually_blocked', 'blocked_by']
+    search_fields = ['username', 'ip_address']
+    readonly_fields = ['created', 'modified', 'last_attempt_at', 'blocked_by', 'blocked_at', 'unblocked_by', 'unblocked_at']
+    fieldsets = (
+        ('Account', {
+            'fields': ('username', 'failed_attempts', 'is_locked', 'locked_until', 'last_attempt_at')
+        }),
+        ('Manual Block', {
+            'fields': ('manually_blocked', 'block_reason', 'block_expires_at', 'blocked_by', 'blocked_at', 'unblocked_by', 'unblocked_at', 'unblock_note')
+        }),
+        ('Request Metadata', {
+            'fields': ('ip_address', 'user_agent'),
+            'classes': ('collapse',)
+        }),
+    )
+    actions = ['block_accounts', 'unblock_accounts', 'reset_attempts']
+
+    @admin.action(description="Block selected accounts")
+    def block_accounts(self, request, queryset):
+        count = 0
+        for attempt in queryset:
+            attempt.block(blocked_by=request.user, reason=attempt.block_reason or "Blocked via admin action")
+            count += 1
+        self.message_user(request, f"{count} account(s) blocked and prevented from logging in.")
+
+    @admin.action(description="Unblock selected accounts")
+    def unblock_accounts(self, request, queryset):
+        count = 0
+        for attempt in queryset:
+            if attempt.manually_blocked or attempt.is_locked:
+                attempt.unblock(unblocked_by=request.user, note="Unblocked via admin action")
+                count += 1
+        self.message_user(request, f"{count} account(s) reactivated.")
+
+    @admin.action(description="Reset failed attempt counters")
+    def reset_attempts(self, request, queryset):
+        for attempt in queryset:
+            attempt.reset_attempts()
+        self.message_user(request, f"{queryset.count()} login attempt record(s) reset.")
 
 
 

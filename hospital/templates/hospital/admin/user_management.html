@@ -1,0 +1,322 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}User Management - Admin{% endblock %}
+
+{% block page_title %}All Users & Sessions{% endblock %}
+{% block page_subtitle %}Force logout and unlock any account in one place{% endblock %}
+
+{% block extra_css %}
+<style>
+    .stats-card {
+        border-radius: 18px;
+        padding: 24px;
+        color: white;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+    }
+    .user-card {
+        background: white;
+        border-radius: 16px;
+        padding: 18px;
+        margin-bottom: 16px;
+        box-shadow: 0 4px 18px rgba(15, 23, 42, 0.08);
+        border-left: 4px solid #2563eb;
+        transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .user-card.blocked {
+        border-left-color: #ef4444;
+        background: #fef2f2;
+    }
+    .user-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+    }
+    .status-badge {
+        padding: 4px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    .status-active { background: #d1fae5; color: #065f46; }
+    .status-blocked { background: #fee2e2; color: #991b1b; }
+    .status-locked { background: #fef3c7; color: #92400e; }
+    .action-btn {
+        border: none;
+        border-radius: 10px;
+        padding: 8px 16px;
+        font-weight: 600;
+        font-size: 13px;
+        transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .action-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+    .btn-end-session { background: #fef3c7; color: #92400e; }
+    .btn-end-session:hover { background: #fde68a; }
+    .btn-unlock { background: #10b981; color: white; }
+    .btn-unlock:hover { background: #059669; }
+    .search-bar input, .search-bar select {
+        border-radius: 10px;
+        border: 1px solid #e5e7eb;
+        padding: 10px 14px;
+        font-size: 14px;
+        width: 100%;
+    }
+    .badge-role {
+        background: #e0e7ff;
+        color: #1e3a8a;
+        border-radius: 8px;
+        padding: 4px 10px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Stats -->
+    <div class="row g-3 mb-4">
+        <div class="col-lg-3 col-md-6">
+            <div class="stats-card" style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);">
+                <p class="mb-1 text-uppercase" style="opacity: .8; letter-spacing: 1px;">Total Users</p>
+                <h2 class="mb-0">{{ total_users|intcomma }}</h2>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6">
+            <div class="stats-card" style="background: linear-gradient(135deg, #059669 0%, #047857 100%);">
+                <p class="mb-1 text-uppercase" style="opacity: .8;">Active Users</p>
+                <h2 class="mb-0">{{ active_users|intcomma }}</h2>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6">
+            <div class="stats-card" style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);">
+                <p class="mb-1 text-uppercase" style="opacity: .8;">Users With Sessions</p>
+                <h2 class="mb-0">{{ users_with_sessions|intcomma }}</h2>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6">
+            <div class="stats-card" style="background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);">
+                <p class="mb-1 text-uppercase" style="opacity: .8;">Blocked Users</p>
+                <h2 class="mb-0">{{ blocked_users|intcomma }}</h2>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3 align-items-end search-bar">
+                <div class="col-md-6">
+                    <label class="form-label">Search</label>
+                    <input type="text" name="search" placeholder="Search by name, username, or email" value="{{ search_query }}">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Status</label>
+                    <select name="status">
+                        <option value="">All statuses</option>
+                        <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Active Only</option>
+                        <option value="blocked" {% if status_filter == 'blocked' %}selected{% endif %}>Blocked Only</option>
+                        <option value="has_sessions" {% if status_filter == 'has_sessions' %}selected{% endif %}>Currently Logged In</option>
+                    </select>
+                </div>
+                <div class="col-md-2 d-grid">
+                    <button class="btn btn-primary" type="submit">
+                        <i class="bi bi-search me-2"></i>Filter
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {% if users %}
+    <div class="row">
+        <div class="col-12">
+            {% for entry in users %}
+            {% with entry.user as user %}
+            <div class="user-card {% if not user.is_active or entry.is_locked %}blocked{% endif %}" id="user-card-{{ user.id }}">
+                <div class="d-flex flex-wrap justify-content-between">
+                    <div class="flex-grow-1 pe-3">
+                        <div class="d-flex align-items-center gap-3 mb-2 flex-wrap">
+                            <div>
+                                <h5 class="mb-0">{{ user.get_full_name|default:user.username }}</h5>
+                                <small class="text-muted">@{{ user.username }}</small>
+                            </div>
+                            <span class="badge-role">{{ entry.role|default:"User" }}</span>
+                            {% if user.is_staff %}<span class="badge bg-primary">Staff</span>{% endif %}
+                            {% if user.is_superuser %}<span class="badge bg-danger">Superuser</span>{% endif %}
+                            <span class="status-badge {% if user.is_active %}status-active{% else %}status-blocked{% endif %}">
+                                {% if user.is_active %}<i class="bi bi-check2-circle me-1"></i>Active
+                                {% else %}<i class="bi bi-lock-fill me-1"></i>Blocked{% endif %}
+                            </span>
+                            {% if entry.is_locked %}
+                            <span class="status-badge status-locked">
+                                <i class="bi bi-exclamation-triangle me-1"></i>Locked ({{ entry.lock_reason }})
+                            </span>
+                            {% endif %}
+                        </div>
+                        <div class="text-muted mb-2">
+                            <i class="bi bi-envelope me-1"></i>{{ user.email|default:"No email" }}
+                        </div>
+                        <div class="d-flex flex-wrap gap-3">
+                            <div class="text-muted"><i class="bi bi-clock-history me-1"></i>
+                                {% if entry.last_login %}Last login {{ entry.last_login|timesince }} ago{% else %}Never logged in{% endif %}
+                            </div>
+                            {% if entry.last_ip %}
+                            <div class="text-muted"><i class="bi bi-geo-alt me-1"></i>{{ entry.last_ip }}</div>
+                            {% endif %}
+                            <div class="text-muted"><i class="bi bi-hdd-network me-1"></i>{{ entry.total_sessions }} active session(s)</div>
+                        </div>
+                    </div>
+                    <div class="d-flex flex-column gap-2 mt-3 mt-md-0" style="min-width: 200px;">
+                        <button class="action-btn btn-end-session" data-user-id="{{ user.id }}" onclick="endUserSessions({{ user.id }}, '{{ user.username|escapejs }}', this)">
+                            <i class="bi bi-box-arrow-right me-1"></i>End Sessions
+                        </button>
+                        <button class="action-btn btn-unlock" data-user-id="{{ user.id }}" onclick="unlockUser({{ user.id }}, '{{ user.username|escapejs }}', this)">
+                            <i class="bi bi-unlock me-1"></i>Unlock Account
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {% endwith %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Pagination -->
+    {% if page_obj.paginator.num_pages > 1 %}
+    <nav aria-label="User pagination" class="mt-4">
+        <ul class="pagination pagination-rounded justify-content-center">
+            {% if page_obj.has_previous %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.previous_page_number }}&search={{ search_query }}&status={{ status_filter }}">Previous</a>
+            </li>
+            {% else %}
+            <li class="page-item disabled"><span class="page-link">Previous</span></li>
+            {% endif %}
+
+            <li class="page-item disabled">
+                <span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+            </li>
+
+            {% if page_obj.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.next_page_number }}&search={{ search_query }}&status={{ status_filter }}">Next</a>
+            </li>
+            {% else %}
+            <li class="page-item disabled"><span class="page-link">Next</span></li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+
+    {% else %}
+    <div class="alert alert-info">
+        <i class="bi bi-info-circle me-2"></i>No users found with the current filters.
+    </div>
+    {% endif %}
+</div>
+
+<script>
+function endUserSessions(userId, username, buttonEl) {
+    if (!confirm(`End ALL active sessions for ${username}?`)) {
+        return;
+    }
+    const btn = buttonEl;
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Ending...';
+
+    fetch(`/hms/admin/users/${userId}/end-session/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': window.getCsrfToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        credentials: 'same-origin',
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            showToast(data.message || 'Sessions ended successfully', 'warning');
+        } else {
+            alert(data.error || 'Failed to end sessions');
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('Error ending sessions. Please try again.');
+    })
+    .finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    });
+}
+
+function unlockUser(userId, username, buttonEl) {
+    if (!confirm(`Unlock ${username}? They will regain login access.`)) {
+        return;
+    }
+    const btn = buttonEl;
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Unlocking...';
+
+    fetch(`/hms/admin/users/${userId}/unlock/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': window.getCsrfToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        credentials: 'same-origin',
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            const card = document.getElementById(`user-card-${userId}`);
+            if (card) {
+                card.classList.remove('blocked');
+                card.querySelectorAll('.status-badge').forEach(el => {
+                    el.classList.remove('status-blocked', 'status-locked');
+                    el.classList.add('status-active');
+                    el.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Active';
+                });
+            }
+            showToast(data.message || 'User unlocked', 'success');
+        } else {
+            alert(data.error || 'Failed to unlock user');
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('Error unlocking user. Please try again.');
+    })
+    .finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    });
+}
+
+function showToast(message, type='success') {
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${type === 'success' ? 'success' : type === 'warning' ? 'warning' : 'info'} alert-dismissible fade show`;
+    alert.style.position = 'fixed';
+    alert.style.top = '20px';
+    alert.style.right = '20px';
+    alert.style.zIndex = '1050';
+    alert.innerHTML = `
+        <i class="bi bi-${type === 'success' ? 'check-circle' : 'exclamation-triangle'} me-2"></i>
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    document.body.appendChild(alert);
+    setTimeout(() => alert.remove(), 5000);
+}
+</script>
+{% endblock %}
+
+
+
+
+

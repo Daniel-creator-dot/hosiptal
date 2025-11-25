@@ -152,7 +152,7 @@ SMS_API_KEY
 ```
 **RIGHT FIELD (Value):**
 ```
-3316dce1-fd2a-4b4e-b6b2-60b30be375bb
+84c879bb-f9f9-4666-84a8-9f70a9b238cc
 ```
 ⚠️ **If this is NOT your API key**, replace with YOUR SMS Notify GH API key from: https://sms.smsnotifygh.com/
 

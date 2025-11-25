@@ -326,32 +326,33 @@
 </div>
 
 <!-- Ward Sections -->
-{% regroup beds by ward as beds_by_ward %}
-{% for ward_group in beds_by_ward %}
+{% if ward_sections %}
+{% for ward_section in ward_sections %}
+{% with ward=ward_section.ward stats=ward_section.stats beds=ward_section.beds %}
 <div class="ward-section">
     <div class="ward-header">
         <div class="ward-name">
             <div class="ward-icon">
                 <i class="bi bi-hospital"></i>
             </div>
-            <span>{{ ward_group.grouper.name }}</span>
-            <span class="badge bg-info">{{ ward_group.grouper.get_ward_type_display }}</span>
+            <span>{{ ward.name }}</span>
+            <span class="badge bg-info">{{ ward.get_ward_type_display }}</span>
         </div>
         
         <div class="ward-stats">
             <div class="ward-stat">
-                <div class="ward-stat-value" style="color: #1F2937;">{{ ward_group.grouper.capacity }}</div>
+                <div class="ward-stat-value" style="color: #1F2937;">{{ ward.capacity }}</div>
                 <div class="ward-stat-label">Capacity</div>
             </div>
             <div class="ward-stat">
                 <div class="ward-stat-value" style="color: #10B981;">
-                    {{ ward_stats|get_item:ward_group.grouper.pk|get_item:"available_count" }}
+                    {{ stats.available_count }}
                 </div>
                 <div class="ward-stat-label">Available</div>
             </div>
             <div class="ward-stat">
                 <div class="ward-stat-value" style="color: #EF4444;">
-                    {{ ward_stats|get_item:ward_group.grouper.pk|get_item:"occupied_count" }}
+                    {{ stats.occupied_count }}
                 </div>
                 <div class="ward-stat-label">Occupied</div>
             </div>
@@ -360,7 +361,7 @@
     
     <!-- Occupancy Bar -->
     <div class="occupancy-bar">
-        {% with occupancy=ward_stats|get_item:ward_group.grouper.pk|get_item:"occupancy_percentage" %}
+        {% with occupancy=stats.occupancy_percentage %}
         <div class="occupancy-fill {% if occupancy > 90 %}critical{% elif occupancy > 75 %}high{% endif %}" style="width: {{ occupancy }}%;">
             {{ occupancy|floatformat:0 }}% Occupied
         </div>
@@ -368,36 +369,52 @@
     </div>
     
     <!-- Bed Grid -->
+    {% if beds %}
     <div class="bed-grid mt-4">
-        {% for bed in ward_group.list %}
-        <div class="bed-card {{ bed.status }}" onclick="selectBed('{{ bed.pk }}', '{{ bed.bed_number }}', '{{ bed.status }}')" data-bed-id="{{ bed.pk }}">
-            <div class="bed-number">{{ bed.bed_number }}</div>
-            <span class="bed-status-badge bed-status-{{ bed.status }}">
-                {{ bed.get_status_display }}
-            </span>
-            
-            {% if bed.status == 'occupied' and bed.current_patient %}
-            <div class="bed-patient-info">
-                <strong>{{ bed.current_patient.full_name|truncatewords:3 }}</strong><br>
-                <small>{{ bed.current_patient.mrn }}</small><br>
-                <small>{{ bed.admission_days }} days</small>
+        {% for bed in beds %}
+            <div class="bed-card {{ bed.status }}" onclick="selectBed('{{ bed.pk }}', '{{ bed.bed_number }}', '{{ bed.status }}')" data-bed-id="{{ bed.pk }}">
+                <div class="bed-number">{{ bed.bed_number }}</div>
+                <span class="bed-status-badge bed-status-{{ bed.status }}">
+                    {{ bed.get_status_display }}
+                </span>
+                
+                {% if bed.status == 'occupied' and bed.current_patient %}
+                <div class="bed-patient-info">
+                    <strong>{{ bed.current_patient.full_name|truncatewords:3 }}</strong><br>
+                    <small>{{ bed.current_patient.mrn }}</small><br>
+                    <small>{{ bed.admission_days }} days</small>
+                </div>
+                {% elif bed.status == 'maintenance' %}
+                <div class="bed-patient-info">
+                    <i class="bi bi-tools"></i><br>
+                    <small>Under maintenance</small>
+                </div>
+                {% elif bed.status == 'reserved' %}
+                <div class="bed-patient-info">
+                    <i class="bi bi-bookmark"></i><br>
+                    <small>Reserved</small>
+                </div>
+                {% endif %}
             </div>
-            {% elif bed.status == 'maintenance' %}
-            <div class="bed-patient-info">
-                <i class="bi bi-tools"></i><br>
-                <small>Under maintenance</small>
-            </div>
-            {% elif bed.status == 'reserved' %}
-            <div class="bed-patient-info">
-                <i class="bi bi-bookmark"></i><br>
-                <small>Reserved</small>
-            </div>
-            {% endif %}
-        </div>
         {% endfor %}
     </div>
+    {% else %}
+    <div class="text-center py-4 text-muted">
+        <i class="bi bi-inbox" style="font-size: 2.5rem;"></i>
+        <p class="mt-2 mb-0">No beds configured yet for {{ ward.name }}</p>
+        <small>Add beds from the administration panel to manage this ward.</small>
+    </div>
+    {% endif %}
 </div>
+{% endwith %}
 {% endfor %}
+{% else %}
+<div class="text-center py-5">
+    <i class="bi bi-inbox" style="font-size: 80px; color: #ddd;"></i>
+    <h4 class="mt-3">No Wards Found</h4>
+    <p class="text-muted">Create wards and beds to begin tracking occupancy.</p>
+</div>
+{% endif %}
 
 <!-- Empty State -->
 {% if not beds %}

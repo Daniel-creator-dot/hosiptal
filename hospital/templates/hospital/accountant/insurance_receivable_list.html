@@ -1,0 +1,102 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Insurance Receivable - HMS{% endblock %}
+{% block page_title %}Insurance Receivable{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Status</label>
+                    <select name="status" class="form-select">
+                        <option value="">All</option>
+                        <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
+                        <option value="submitted" {% if status_filter == 'submitted' %}selected{% endif %}>Submitted</option>
+                        <option value="approved" {% if status_filter == 'approved' %}selected{% endif %}>Approved</option>
+                        <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Insurance Company</label>
+                    <select name="insurance" class="form-select">
+                        <option value="">All</option>
+                        {% for company in insurance_companies %}
+                        <option value="{{ company.id }}" {% if request.GET.insurance == company.id|stringformat:"s" %}selected{% endif %}>
+                            {{ company.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">&nbsp;</label>
+                    <div>
+                        <button type="submit" class="btn btn-primary w-100"><i class="bi bi-funnel"></i> Filter</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header d-flex justify-content-between">
+            <h5><i class="bi bi-file-earmark-medical"></i> Insurance Receivables</h5>
+            <a href="{% url 'admin:hospital_insurancereceivable_add' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> Add Receivable
+            </a>
+        </div>
+        <div class="card-body">
+            {% if receivables %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Receivable #</th>
+                            <th>Insurance Company</th>
+                            <th>Patient</th>
+                            <th>Claim #</th>
+                            <th>Total Amount</th>
+                            <th>Amount Paid</th>
+                            <th>Balance Due</th>
+                            <th>Status</th>
+                            <th>Due Date</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for receivable in receivables %}
+                        <tr>
+                            <td><strong>{{ receivable.receivable_number }}</strong></td>
+                            <td>{{ receivable.insurance_company.name }}</td>
+                            <td>{{ receivable.patient.full_name }}</td>
+                            <td>{{ receivable.claim_number|default:"-" }}</td>
+                            <td>GHS {{ receivable.total_amount|floatformat:2|intcomma }}</td>
+                            <td>GHS {{ receivable.amount_paid|floatformat:2|intcomma }}</td>
+                            <td><strong>GHS {{ receivable.balance_due|floatformat:2|intcomma }}</strong></td>
+                            <td>
+                                <span class="badge bg-{% if receivable.status == 'paid' %}success{% elif receivable.status == 'approved' %}info{% else %}warning{% endif %}">
+                                    {{ receivable.get_status_display }}
+                                </span>
+                            </td>
+                            <td>{{ receivable.due_date|date:"M d, Y" }}</td>
+                            <td>
+                                <a href="{% url 'admin:hospital_insurancereceivable_change' receivable.id %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert alert-info">No insurance receivables found.</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+

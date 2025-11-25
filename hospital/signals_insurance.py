@@ -24,6 +24,10 @@ def create_insurance_claim_item(sender, instance, created, **kwargs):
     if not invoice:
         return
     
+    if instance.is_insurance_excluded:
+        # Respect exclusion rules - never push to insurer
+        return
+    
     # Check if patient has insurance
     if not invoice.payer:
         return
@@ -82,6 +86,8 @@ def update_insurance_claim_items_on_invoice_update(sender, instance, created, **
             claim_status='reversed',
             notes=f"Claim reversed due to invoice cancellation: {instance.invoice_number}"
         )
+
+
 
 
 

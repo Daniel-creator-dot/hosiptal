@@ -6,7 +6,12 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
 from django.db.models import Count
-from .models_insurance_companies import InsuranceCompany, InsurancePlan, PatientInsurance
+from .models_insurance_companies import (
+    InsuranceCompany,
+    InsurancePlan,
+    InsuranceExclusionRule,
+    PatientInsurance,
+)
 
 
 @admin.register(InsuranceCompany)
@@ -229,6 +234,63 @@ class PatientInsuranceAdmin(admin.ModelAdmin):
         queryset.update(status='expired')
         self.message_user(request, f'{queryset.count()} insurance(s) marked as expired.')
     mark_as_expired.short_description = 'Mark as expired'
+
+
+@admin.register(InsuranceExclusionRule)
+class InsuranceExclusionRuleAdmin(admin.ModelAdmin):
+    list_display = [
+        'insurance_company',
+        'insurance_plan',
+        'rule_type',
+        'enforcement_action',
+        'describe_target',
+        'is_active',
+        'effective_from',
+        'effective_to',
+    ]
+    list_filter = ['insurance_company', 'rule_type', 'enforcement_action', 'is_active']
+    search_fields = [
+        'insurance_company__name',
+        'insurance_plan__plan_name',
+        'service_category',
+        'drug_generic_name',
+        'drug__name',
+    ]
+    readonly_fields = ['created', 'modified']
+    fieldsets = (
+        ('Scope', {
+            'fields': (
+                'insurance_company',
+                'insurance_plan',
+                'apply_to_all_plans',
+                'rule_type',
+                'enforcement_action',
+                'is_active',
+            )
+        }),
+        ('Targets', {
+            'fields': (
+                'service_code',
+                'service_category',
+                'drug',
+                'drug_generic_name',
+                'drug_category',
+            )
+        }),
+        ('Messaging', {
+            'fields': ('reason', 'notes'),
+            'classes': ('collapse',)
+        }),
+        ('Validity', {
+            'fields': ('effective_from', 'effective_to')
+        }),
+        ('System Info', {
+            'fields': ('created', 'modified'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
 
 
 

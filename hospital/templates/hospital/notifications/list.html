@@ -1,0 +1,116 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Notifications{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h4 class="mb-1">Notifications</h4>
+                    <p class="text-muted mb-0">Stay updated with system alerts and messages</p>
+                </div>
+                {% if unread_count > 0 %}
+                <button id="markAllReadBtn" class="btn btn-outline-primary">
+                    <i class="bi bi-check-all"></i> Mark All Read
+                </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Notifications List -->
+    <div class="card">
+        <div class="card-body">
+            {% for notification in notifications %}
+            <div class="alert alert-{% if notification.notification_type == 'error' %}danger{% elif notification.notification_type == 'warning' %}warning{% elif notification.notification_type == 'success' %}success{% else %}info{% endif %} {% if not notification.is_read %}border-start border-4{% endif %}" 
+                 role="alert" id="notification-{{ notification.id }}">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <h6 class="alert-heading mb-2">
+                            {% if not notification.is_read %}
+                            <span class="badge bg-primary me-2">New</span>
+                            {% endif %}
+                            {{ notification.title }}
+                        </h6>
+                        <p class="mb-2">{{ notification.message }}</p>
+                        <small class="text-muted">{{ notification.created|naturaltime }}</small>
+                        {% if notification.action_url %}
+                        <div class="mt-2">
+                            <a href="{{ notification.action_url }}" class="btn btn-sm btn-outline-primary">
+                                {{ notification.action_text|default:"View Details" }}
+                            </a>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% if not notification.is_read %}
+                    <button class="btn btn-sm btn-outline-secondary mark-read-btn" data-notification-id="{{ notification.id }}">
+                        <i class="bi bi-check"></i>
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+            {% empty %}
+            <div class="text-center text-muted py-5">
+                <i class="bi bi-bell-slash" style="font-size: 48px;"></i>
+                <p class="mt-3">No notifications</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<script>
+// Mark individual notification as read
+document.querySelectorAll('.mark-read-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const notificationId = this.getAttribute('data-notification-id');
+        fetch(`/hms/notifications/${notificationId}/read/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': window.getCsrfToken(),
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const notification = document.getElementById(`notification-${notificationId}`);
+                if (notification) {
+                    notification.classList.remove('border-start', 'border-4');
+                    this.remove();
+                }
+            }
+        });
+    });
+});
+
+// Mark all as read
+const markAllReadBtn = document.getElementById('markAllReadBtn');
+if (markAllReadBtn) {
+    markAllReadBtn.addEventListener('click', function() {
+        fetch('/hms/notifications/mark-all-read/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': window.getCsrfToken(),
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            }
+        });
+    });
+}
+</script>
+{% endblock %}
+
+
+
+
+
+

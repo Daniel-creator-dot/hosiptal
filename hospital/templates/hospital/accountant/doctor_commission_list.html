@@ -1,0 +1,221 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Doctor Commissions - HMS{% endblock %}
+{% block page_title %}Doctor Commissions{% endblock %}
+{% block page_subtitle %}Track doctor commission splits (30% doctor, 10% operational, 60% hospital){% endblock %}
+
+{% block extra_css %}
+<style>
+    .commission-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+        border: 1px solid #e0e0e0;
+        transition: all 0.3s;
+    }
+    
+    .commission-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    
+    .stat-badge {
+        display: inline-block;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-weight: 600;
+        font-size: 14px;
+    }
+    
+    .badge-paid {
+        background: #d4edda;
+        color: #155724;
+    }
+    
+    .badge-unpaid {
+        background: #fff3cd;
+        color: #856404;
+    }
+    
+    .filter-section {
+        background: #f8f9fa;
+        padding: 20px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Filters -->
+    <div class="filter-section">
+        <form method="get" class="row g-3">
+            <div class="col-md-4">
+                <label for="is_paid" class="form-label">Payment Status</label>
+                <select name="is_paid" id="is_paid" class="form-select">
+                    <option value="">All</option>
+                    <option value="true" {% if is_paid_filter == 'true' %}selected{% endif %}>Paid</option>
+                    <option value="false" {% if is_paid_filter == 'false' %}selected{% endif %}>Unpaid</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label for="doctor" class="form-label">Doctor</label>
+                <select name="doctor" id="doctor" class="form-select">
+                    <option value="">All Doctors</option>
+                    {% for doctor in doctors %}
+                    <option value="{{ doctor.id }}" {% if request.GET.doctor == doctor.id|stringformat:"s" %}selected{% endif %}>
+                        {{ doctor.user.get_full_name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">&nbsp;</label>
+                <div>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-funnel"></i> Filter</button>
+                    <a href="{% url 'hospital:doctor_commission_list' %}" class="btn btn-secondary"><i class="bi bi-x-circle"></i> Clear</a>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="commission-card text-center">
+                <h3 class="text-primary">{{ total_commissions }}</h3>
+                <p class="text-muted mb-0">Total Commissions</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="commission-card text-center">
+                <h3 class="text-success">{{ paid_count }}</h3>
+                <p class="text-muted mb-0">Paid</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="commission-card text-center">
+                <h3 class="text-warning">{{ unpaid_count }}</h3>
+                <p class="text-muted mb-0">Unpaid</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="commission-card text-center">
+                <h3 class="text-info">GHS {{ unpaid_total|floatformat:2|intcomma }}</h3>
+                <p class="text-muted mb-0">Total Unpaid</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Commissions Table -->
+    <div class="commission-card">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h4><i class="bi bi-person-badge"></i> Doctor Commissions</h4>
+            <div>
+                <a href="{% url 'admin:hospital_doctorcommission_add' %}" class="btn btn-primary">
+                    <i class="bi bi-plus-circle"></i> Add Commission
+                </a>
+            </div>
+        </div>
+
+        {% if commissions %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Commission #</th>
+                        <th>Doctor</th>
+                        <th>Service Type</th>
+                        <th>Service Date</th>
+                        <th>Total Fee</th>
+                        <th>Doctor Share (30%)</th>
+                        <th>Operational (10%)</th>
+                        <th>Hospital (60%)</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for commission in commissions %}
+                    <tr>
+                        <td><strong>{{ commission.commission_number }}</strong></td>
+                        <td>{{ commission.doctor.user.get_full_name }}</td>
+                        <td>
+                            <span class="badge bg-info">{{ commission.get_service_type_display }}</span>
+                        </td>
+                        <td>{{ commission.service_date|date:"M d, Y" }}</td>
+                        <td><strong>GHS {{ commission.total_fee|floatformat:2|intcomma }}</strong></td>
+                        <td class="text-primary"><strong>GHS {{ commission.doctor_share|floatformat:2|intcomma }}</strong></td>
+                        <td class="text-warning">GHS {{ commission.operational_share|floatformat:2|intcomma }}</td>
+                        <td class="text-success">GHS {{ commission.hospital_share|floatformat:2|intcomma }}</td>
+                        <td>
+                            {% if commission.is_paid %}
+                                <span class="stat-badge badge-paid">
+                                    <i class="bi bi-check-circle"></i> Paid
+                                </span>
+                                {% if commission.paid_date %}
+                                    <br><small class="text-muted">{{ commission.paid_date|date:"M d, Y" }}</small>
+                                {% endif %}
+                            {% else %}
+                                <span class="stat-badge badge-unpaid">
+                                    <i class="bi bi-clock"></i> Unpaid
+                                </span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{% url 'admin:hospital_doctorcommission_change' commission.id %}" class="btn btn-sm btn-outline-primary" title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                            <a href="{% url 'admin:hospital_doctorcommission_change' commission.id %}" class="btn btn-sm btn-outline-info" title="View">
+                                <i class="bi bi-eye"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        {% if commissions.has_other_pages %}
+        <nav aria-label="Page navigation">
+            <ul class="pagination justify-content-center">
+                {% if commissions.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?page=1{% if is_paid_filter %}&is_paid={{ is_paid_filter }}{% endif %}{% if request.GET.doctor %}&doctor={{ request.GET.doctor }}{% endif %}">First</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ commissions.previous_page_number }}{% if is_paid_filter %}&is_paid={{ is_paid_filter }}{% endif %}{% if request.GET.doctor %}&doctor={{ request.GET.doctor }}{% endif %}">Previous</a>
+                </li>
+                {% endif %}
+                
+                <li class="page-item active">
+                    <span class="page-link">Page {{ commissions.number }} of {{ commissions.paginator.num_pages }}</span>
+                </li>
+                
+                {% if commissions.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ commissions.next_page_number }}{% if is_paid_filter %}&is_paid={{ is_paid_filter }}{% endif %}{% if request.GET.doctor %}&doctor={{ request.GET.doctor }}{% endif %}">Next</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ commissions.paginator.num_pages }}{% if is_paid_filter %}&is_paid={{ is_paid_filter }}{% endif %}{% if request.GET.doctor %}&doctor={{ request.GET.doctor }}{% endif %}">Last</a>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+        {% else %}
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i> No doctor commissions found.
+            <a href="{% url 'admin:hospital_doctorcommission_add' %}" class="btn btn-sm btn-primary ms-2">
+                <i class="bi bi-plus-circle"></i> Add First Commission
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+

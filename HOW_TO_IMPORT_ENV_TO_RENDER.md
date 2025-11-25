@@ -33,7 +33,7 @@ EMAIL_HOST_PASSWORD=YOUR_GMAIL_APP_PASSWORD  # ← CHANGE THIS
 
 ```env
 # SMS API Key - Keep this or use your own
-SMS_API_KEY=3316dce1-fd2a-4b4e-b6b2-60b30be375bb
+SMS_API_KEY=84c879bb-f9f9-4666-84a8-9f70a9b238cc
 
 # Hospital name - Change to your hospital
 HOSPITAL_NAME=PrimeCare Hospital
@@ -194,6 +194,9 @@ After importing and redeploying, your HMS should be fully configured and ready t
 ---
 
 **🎉 Much faster than adding variables one by one!**
+
+
+
 
 
 

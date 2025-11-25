@@ -1,0 +1,134 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Apply for Leave{% endblock %}
+
+{% block page_title %}Apply for Leave{% endblock %}
+{% block page_subtitle %}Submit a leave request for HR approval{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="modern-card">
+                <form method="post">
+                    {% csrf_token %}
+                    
+                    <div class="mb-3">
+                        <label class="form-label" for="leave_type">Leave Type <span class="text-danger">*</span></label>
+                        <select class="form-select" id="leave_type" name="leave_type" required>
+                            {% for value, label in leave_types %}
+                            <option value="{{ value }}" {% if value == 'annual' %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        <small class="text-muted">Select the type of leave you're requesting</small>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="start_date">Start Date <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" id="start_date" name="start_date" required>
+                            <small class="text-muted">First day of your leave</small>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="end_date">End Date <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" id="end_date" name="end_date" required>
+                            <small class="text-muted">Last day of your leave</small>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <div class="alert alert-info" id="days-calculator" style="display: none;">
+                            <i class="bi bi-calculator me-2"></i>
+                            <strong>Duration:</strong> <span id="days-count">0</span> working day(s)
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label" for="reason">Reason <span class="text-danger">*</span></label>
+                        <textarea class="form-control" id="reason" name="reason" rows="4" required placeholder="Please provide a reason for your leave request..."></textarea>
+                        <small class="text-muted">This information will be reviewed by HR.</small>
+                    </div>
+                    
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <strong>Note:</strong> Your leave request will be sent to HR for approval. You will receive a notification once it's reviewed.
+                    </div>
+                    
+                    <div class="d-flex justify-content-between">
+                        <a href="{% url 'hospital:staff_portal' %}" class="btn btn-outline-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary">Submit Leave Request</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Set minimum date to today
+const today = new Date().toISOString().split('T')[0];
+document.getElementById('start_date').setAttribute('min', today);
+document.getElementById('end_date').setAttribute('min', today);
+
+// Calculate working days
+function calculateWorkingDays(start, end) {
+    if (!start || !end) return 0;
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    let days = 0;
+    const current = new Date(startDate);
+    
+    while (current <= endDate) {
+        const dayOfWeek = current.getDay();
+        if (dayOfWeek !== 0 && dayOfWeek !== 6) { // Not Sunday (0) or Saturday (6)
+            days++;
+        }
+        current.setDate(current.getDate() + 1);
+    }
+    return days;
+}
+
+// Update days calculator
+function updateDaysCalculator() {
+    const startDate = document.getElementById('start_date').value;
+    const endDate = document.getElementById('end_date').value;
+    const calculator = document.getElementById('days-calculator');
+    const daysCount = document.getElementById('days-count');
+    
+    if (startDate && endDate) {
+        const days = calculateWorkingDays(startDate, endDate);
+        if (days > 0) {
+            daysCount.textContent = days;
+            calculator.style.display = 'block';
+        } else {
+            calculator.style.display = 'none';
+        }
+    } else {
+        calculator.style.display = 'none';
+    }
+}
+
+// Validate end date is after start date
+document.getElementById('start_date').addEventListener('change', function() {
+    const startDate = this.value;
+    const endDateInput = document.getElementById('end_date');
+    if (startDate) {
+        endDateInput.setAttribute('min', startDate);
+        if (endDateInput.value && endDateInput.value < startDate) {
+            endDateInput.value = startDate;
+        }
+        updateDaysCalculator();
+    }
+});
+
+document.getElementById('end_date').addEventListener('change', function() {
+    const startDate = document.getElementById('start_date').value;
+    if (this.value && startDate && this.value < startDate) {
+        alert('End date must be after start date');
+        this.value = startDate;
+    }
+    updateDaysCalculator();
+});
+</script>
+{% endblock %}
+

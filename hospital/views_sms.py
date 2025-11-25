@@ -7,8 +7,11 @@ from django.contrib import messages
 from django.http import JsonResponse
 from django.db.models import Q
 from django.core.paginator import Paginator
+from django.utils import timezone
+from datetime import timedelta
 from .models import Patient, LabResult, Invoice, Appointment
 from .models_reminders import SMSNotification
+from .models_advanced import SMSLog
 from .services.sms_service import sms_service
 
 
@@ -57,29 +60,61 @@ def send_sms(request):
         
         # Send SMS
         try:
+            # Determine related object ID and type
+            related_object_id = None
+            related_object_type = ''
+            if recipient_type == 'patient' and recipient:
+                related_object_id = recipient.id
+                related_object_type = 'Patient'
+            elif recipient_type == 'lab_result' and recipient_id:
+                related_object_id = recipient_id
+                related_object_type = 'LabResult'
+            elif recipient_type == 'invoice' and recipient_id:
+                related_object_id = recipient_id
+                related_object_type = 'Invoice'
+            elif recipient_type == 'appointment' and recipient_id:
+                related_object_id = recipient_id
+                related_object_type = 'Appointment'
+            
             sms_log = sms_service.send_sms(
                 phone_number=phone,
                 message=message_text,
                 message_type=msg_type,
                 recipient_name=recipient_name or request.POST.get('recipient_name', ''),
+                related_object_id=related_object_id,
+                related_object_type=related_object_type,
             )
             
             if sms_log.status == 'sent':
                 messages.success(request, f'SMS sent successfully to {phone}')
                 # Create SMS notification record
-                SMSNotification.objects.create(
-                    notification_type=msg_type,
-                    recipient_number=phone,
-                    recipient_name=recipient_name or request.POST.get('recipient_name', ''),
-                    message=message_text,
-                    status='sent',
-                    sent_at=sms_log.sent_at,
-                    patient=recipient if recipient_type == 'patient' else None,
-                )
+                try:
+                    SMSNotification.objects.create(
+                        notification_type=msg_type,
+                        recipient_number=phone,
+                        recipient_name=recipient_name or request.POST.get('recipient_name', ''),
+                        message=message_text,
+                        status='sent',
+                        sent_at=sms_log.sent_at,
+                        patient=recipient if recipient_type == 'patient' else None,
+                    )
+                except Exception as notify_error:
+                    # Log but don't fail if notification record creation fails
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"Failed to create SMSNotification record: {notify_error}")
             else:
-                messages.error(request, f'Failed to send SMS: {sms_log.error_message}')
+                error_msg = sms_log.error_message or 'Unknown error'
+                messages.error(request, f'Failed to send SMS: {error_msg}')
+                # Log the error for debugging
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"SMS send failed to {phone}: {error_msg}")
                 
         except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Exception sending SMS to {phone}: {str(e)}", exc_info=True)
             messages.error(request, f'Error sending SMS: {str(e)}')
         
         return redirect('hospital:sms_notifications')
@@ -320,11 +355,17 @@ def send_bulk_sms(request):
                     first_name = name.split()[0] if name else 'Valued'
                     personalized_msg = personalized_msg.replace('{first_name}', first_name)
                 
+                # Determine related object ID and type
+                related_object_id = recipient.id if recipient else None
+                related_object_type = recipient_type.title()  # 'staff' -> 'Staff', 'patient' -> 'Patient'
+                
                 sms_log = sms_service.send_sms(
                     phone_number=phone,
                     message=personalized_msg,
                     message_type=msg_type,
                     recipient_name=name,
+                    related_object_id=related_object_id,
+                    related_object_type=related_object_type,
                 )
                 
                 if sms_log.status == 'sent':
@@ -342,10 +383,12 @@ def send_bulk_sms(request):
                     success_count += 1
                 else:
                     fail_count += 1
-                    failed_recipients.append(name)
+                    error_reason = sms_log.error_message or 'Unknown error'
+                    failed_recipients.append(f"{name} ({error_reason[:30]})")
             except Exception as e:
                 fail_count += 1
-                failed_recipients.append(f"ID: {recipient_id}")
+                error_msg = str(e)[:50] if str(e) else 'Unknown error'
+                failed_recipients.append(f"{name if 'name' in locals() else 'ID: ' + str(recipient_id)} ({error_msg})")
         
         if success_count > 0:
             messages.success(request, f'Bulk SMS completed: {success_count} sent successfully{fail_count > 0 and f", {fail_count} failed" or ""}')
@@ -353,7 +396,47 @@ def send_bulk_sms(request):
             messages.error(request, f'Bulk SMS failed: All {fail_count} messages failed to send.')
         
         if failed_recipients:
-            messages.warning(request, f'Failed recipients: {", ".join(failed_recipients[:5])}{"..." if len(failed_recipients) > 5 else ""}')
+            # Get error details for better messaging
+            error_details = []
+            for name_with_error in failed_recipients[:5]:
+                error_details.append(name_with_error)
+            
+            error_msg = f'Failed recipients: {", ".join(error_details)}{"..." if len(failed_recipients) > 5 else ""}'
+            
+            # Check for API key errors in recent failures
+            try:
+                # Extract names from error messages (format: "Name (error)")
+                recipient_names = []
+                for name_with_error in failed_recipients[:5]:
+                    if ' (' in name_with_error:
+                        recipient_names.append(name_with_error.split(' (')[0])
+                    else:
+                        recipient_names.append(name_with_error)
+                
+                if recipient_names:
+                    recent_failures = SMSLog.objects.filter(
+                        recipient_name__in=recipient_names,
+                        status='failed',
+                        created__gte=timezone.now() - timedelta(minutes=5)
+                    )
+                    api_key_errors = recent_failures.filter(
+                        Q(error_message__icontains='API key') | 
+                        Q(error_message__icontains='1004') |
+                        Q(error_message__icontains='INVALID API KEY')
+                    )
+                    if api_key_errors.exists():
+                        error_msg += ' ⚠ Invalid API key! Run: python manage.py update_sms_api_key YOUR_KEY'
+                        messages.error(request, 'SMS API Key is invalid! Update SMS_API_KEY to send messages.')
+                    else:
+                        messages.warning(request, error_msg)
+                else:
+                    messages.warning(request, error_msg)
+            except Exception as e:
+                # Don't fail if error checking fails
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Error checking API key status: {str(e)}")
+                messages.warning(request, error_msg)
         
         return redirect('hospital:bulk_sms_dashboard')
     

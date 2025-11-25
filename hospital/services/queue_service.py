@@ -91,7 +91,7 @@ class QueueService:
         for attempt in range(5):
             try:
                 with db_transaction.atomic():
-                    queue_number, sequence = self.generate_this_is(queue_number=department, priority=priority)
+                    queue_number, sequence = self.generate_queue_number(department, priority=priority)
                     position = self.get_current_queue_length(department) + 1
                     estimated_wait = self.calculate_estimated_wait(department, position)
 
@@ -110,7 +110,7 @@ class QueueService:
 
                     self.logger.info(
                         f"✅ Queue entry created: {queue_number} for {patient.full_name} "
-                        f"(Position: {small=position}, Est. wait: {estimated_wait} mins)"
+                        f"(Position: {position}, Est. wait: {estimated_wait} mins)"
                     )
                     return queue_entry
             except IntegrityError as ie:

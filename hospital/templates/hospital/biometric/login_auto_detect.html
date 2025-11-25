@@ -340,14 +340,42 @@ async function detectDevices() {
     
     statusMsg.innerHTML = '<i class="bi bi-radar"></i> <span class="spinner-grow spinner-grow-sm"></span> Detecting devices...';
     
-    // Check for camera
+    // Check for camera - enumerate all cameras to detect newly added ones
     try {
+        // Request permission first to get device labels
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        devices.camera = true;
-        stream.getTracks().forEach(track => track.stop()); // Stop test stream
+        stream.getTracks().forEach(track => track.stop());
+        
+        // Enumerate devices to get all cameras
+        const deviceList = await navigator.mediaDevices.enumerateDevices();
+        const cameras = deviceList.filter(device => device.kind === 'videoinput');
+        
+        if (cameras.length > 0) {
+            devices.camera = true;
+            console.log(`Detected ${cameras.length} camera(s):`, cameras.map(c => c.label || c.deviceId));
+        } else {
+            devices.camera = false;
+        }
     } catch (e) {
         devices.camera = false;
         console.log('Camera not available:', e);
+    }
+    
+    // Listen for device changes to detect newly added cameras
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+        navigator.mediaDevices.addEventListener('devicechange', async function() {
+            console.log('Device change detected - checking for new cameras...');
+            try {
+                const deviceList = await navigator.mediaDevices.enumerateDevices();
+                const cameras = deviceList.filter(device => device.kind === 'videoinput');
+                if (cameras.length > 0 && !devices.camera) {
+                    devices.camera = true;
+                    detectDevices(); // Re-run detection to update UI
+                }
+            } catch (e) {
+                console.error('Error detecting new cameras:', e);
+            }
+        });
     }
     
     // Check for fingerprint (Web Authentication API)
@@ -467,7 +495,19 @@ async function startFaceScanning() {
         
     } catch (error) {
         statusMsg.className = 'status-message status-error';
-        statusMsg.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> Camera error. Please check permissions and try again.';
+        let errorMsg = 'Camera error. ';
+        
+        if (error.name === 'NotAllowedError' || error.message.includes('permission')) {
+            errorMsg += 'Please allow camera permissions in your browser settings and refresh the page.';
+        } else if (error.name === 'NotFoundError' || error.message.includes('No camera')) {
+            errorMsg += 'No camera found. Please connect a camera device.';
+        } else if (error.name === 'NotReadableError' || error.message.includes('busy')) {
+            errorMsg += 'Camera is busy or in use by another application. Please close other apps using the camera.';
+        } else {
+            errorMsg += 'Please check permissions and try again.';
+        }
+        
+        statusMsg.innerHTML = `<i class="bi bi-exclamation-triangle-fill"></i> ${errorMsg}`;
         startBtn.disabled = false;
         deviceSelector.style.display = 'flex';
         console.error('Camera error:', error);
@@ -519,9 +559,37 @@ async function performFaceAuth() {
             setTimeout(() => {
                 window.location.href = data.redirect_url;
             }, 2000);
+        } else {
+            // Authentication failed - show helpful error message
+            const statusMsg = document.getElementById('statusMessage');
+            statusMsg.className = 'status-message status-error';
+            let errorMsg = data.message || 'Face not recognized';
+            
+            // Provide helpful error messages
+            if (errorMsg.includes('No face detected') || errorMsg.includes('face detection')) {
+                errorMsg += '. Please ensure your face is clearly visible and well-lit.';
+            } else if (errorMsg.includes('quality')) {
+                errorMsg += ' Please improve lighting and ensure your face is clearly visible.';
+            } else if (errorMsg.includes('liveness')) {
+                errorMsg += ' Please use a live camera feed, not a photo.';
+            }
+            
+            statusMsg.innerHTML = `
+                <i class="bi bi-x-circle-fill" style="font-size: 48px; color: #dc3545;"></i>
+                <h4 class="mt-3 text-danger">Authentication Failed</h4>
+                <p>${errorMsg}</p>
+                <small class="text-muted">Make sure you are enrolled in the system and try again.</small>
+            `;
         }
     } catch (error) {
         console.error('Auth error:', error);
+        const statusMsg = document.getElementById('statusMessage');
+        statusMsg.className = 'status-message status-error';
+        statusMsg.innerHTML = `
+            <i class="bi bi-exclamation-triangle-fill" style="font-size: 48px; color: #dc3545;"></i>
+            <h4 class="mt-3 text-danger">Error</h4>
+            <p>An error occurred during authentication. Please try again.</p>
+        `;
     }
 }
 
@@ -595,6 +663,12 @@ window.addEventListener('beforeunload', () => {
 </script>
 </body>
 </html>
+
+
+
+
+
+
 
 
 

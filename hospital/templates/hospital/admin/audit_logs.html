@@ -1,0 +1,161 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Audit Logs - Admin{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h4 class="mb-1">Audit Logs</h4>
+                    <p class="text-muted mb-0">Comprehensive audit trail of all system activities</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Action Type</label>
+                    <select class="form-select" name="action_type">
+                        <option value="">All Actions</option>
+                        {% for action in action_types %}
+                        <option value="{{ action }}" {% if filters.action_type == action %}selected{% endif %}>{{ action|title }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Severity</label>
+                    <select class="form-select" name="severity">
+                        <option value="">All</option>
+                        {% for sev in severities %}
+                        <option value="{{ sev }}" {% if filters.severity == sev %}selected{% endif %}>{{ sev|title }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Model</label>
+                    <select class="form-select" name="model_name">
+                        <option value="">All Models</option>
+                        {% for model in model_names %}
+                        <option value="{{ model }}" {% if filters.model_name == model %}selected{% endif %}>{{ model }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Date From</label>
+                    <input type="date" class="form-control" name="date_from" value="{{ filters.date_from }}">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Date To</label>
+                    <input type="date" class="form-control" name="date_to" value="{{ filters.date_to }}">
+                </div>
+                <div class="col-md-12">
+                    <label class="form-label">Search</label>
+                    <input type="text" class="form-control" name="q" placeholder="Search description, user, IP..." value="{{ filters.search }}">
+                </div>
+                <div class="col-md-12">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-filter"></i> Apply Filters
+                    </button>
+                    <a href="{% url 'hospital:audit_logs' %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-x-circle"></i> Clear
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Audit Logs Table -->
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>User</th>
+                            <th>Action</th>
+                            <th>Model</th>
+                            <th>Object</th>
+                            <th>Severity</th>
+                            <th>Status</th>
+                            <th>IP Address</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for log in logs %}
+                        <tr>
+                            <td>
+                                <small>{{ log.created|date:"Y-m-d H:i:s" }}</small>
+                            </td>
+                            <td>{{ log.user.username|default:"System" }}</td>
+                            <td>
+                                <span class="badge bg-{% if log.action_type == 'create' %}success{% elif log.action_type == 'update' %}info{% elif log.action_type == 'delete' %}danger{% else %}secondary{% endif %}">
+                                    {{ log.get_action_type_display }}
+                                </span>
+                            </td>
+                            <td>{{ log.model_name|default:"-" }}</td>
+                            <td>
+                                <small>{{ log.object_repr|truncatewords:5|default:"-" }}</small>
+                            </td>
+                            <td>
+                                <span class="badge bg-{% if log.severity == 'critical' %}danger{% elif log.severity == 'error' %}danger{% elif log.severity == 'warning' %}warning{% else %}info{% endif %}">
+                                    {{ log.get_severity_display }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if log.success %}
+                                <span class="badge bg-success">Success</span>
+                                {% else %}
+                                <span class="badge bg-danger">Failed</span>
+                                {% endif %}
+                            </td>
+                            <td><small>{{ log.ip_address|default:"-" }}</small></td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="8" class="text-center text-muted py-5">
+                                No audit logs found for the selected filters.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            {% if page_obj.has_other_pages %}
+            <nav aria-label="Page navigation">
+                <ul class="pagination justify-content-center">
+                    {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% for key, value in filters.items %}{% if value %}&{{ key }}={{ value }}{% endif %}{% endfor %}">Previous</a>
+                    </li>
+                    {% endif %}
+                    <li class="page-item active">
+                        <span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+                    </li>
+                    {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.next_page_number }}{% for key, value in filters.items %}{% if value %}&{{ key }}={{ value }}{% endif %}{% endfor %}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+

@@ -1,0 +1,187 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Create Payment Voucher{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-lg-8 mx-auto">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white border-0 py-3">
+                    <h4 class="mb-0"><i class="bi bi-receipt-cutoff me-2"></i>Create Payment Voucher</h4>
+                </div>
+                <div class="card-body">
+                    <form method="post" id="pvForm">
+                        {% csrf_token %}
+                        
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Voucher Date <span class="text-danger">*</span></label>
+                                {{ form.voucher_date }}
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Payment Type <span class="text-danger">*</span></label>
+                                {{ form.payment_type }}
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-8">
+                                <label class="form-label">Payee Name <span class="text-danger">*</span></label>
+                                {{ form.payee_name }}
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Payee Type</label>
+                                {{ form.payee_type }}
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="form-label">Description <span class="text-danger">*</span></label>
+                            {{ form.description }}
+                        </div>
+
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Amount <span class="text-danger">*</span></label>
+                                {{ form.amount }}
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Payment Method <span class="text-danger">*</span></label>
+                                {{ form.payment_method }}
+                            </div>
+                        </div>
+
+                        <!-- Cheque Details (shown when payment method is cheque) -->
+                        <div id="chequeDetails" style="display: none;" class="mb-4 p-3 bg-light rounded">
+                            <h6 class="mb-3"><i class="bi bi-bank me-2"></i>Cheque Details</h6>
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="createCheque" name="create_cheque" value="yes">
+                                <label class="form-check-label" for="createCheque">
+                                    Create Cheque for this Payment Voucher
+                                </label>
+                            </div>
+                            <div id="chequeFields" style="display: none;">
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">Cheque Number <span class="text-danger">*</span></label>
+                                        <input type="text" name="cheque_number" class="form-control" placeholder="Enter cheque number">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Cheque Date <span class="text-danger">*</span></label>
+                                        <input type="date" name="cheque_date" class="form-control">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Bank Account <span class="text-danger">*</span></label>
+                                        <select name="bank_account" class="form-select">
+                                            <option value="">Select Bank Account</option>
+                                            {% for bank in bank_accounts %}
+                                            <option value="{{ bank.id }}">{{ bank.account_name }} - {{ bank.account_number }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Bank Details (for bank transfer) -->
+                        <div id="bankDetails" style="display: none;" class="mb-4">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Bank Name</label>
+                                    {{ form.bank_name }}
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Account Number</label>
+                                    {{ form.account_number }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Expense Account <span class="text-danger">*</span></label>
+                                {{ form.expense_account }}
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Payment Account <span class="text-danger">*</span></label>
+                                {{ form.payment_account }}
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Invoice Number</label>
+                                {{ form.invoice_number }}
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">PO Number</label>
+                                {{ form.po_number }}
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="form-label">Notes</label>
+                            {{ form.notes }}
+                        </div>
+
+                        <div class="d-flex justify-content-between">
+                            <a href="{% url 'hospital:pv_list' %}" class="btn btn-secondary">
+                                <i class="bi bi-arrow-left me-2"></i>Cancel
+                            </a>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check-circle me-2"></i>Create Payment Voucher
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const paymentMethod = document.getElementById('id_payment_method');
+    const chequeDetails = document.getElementById('chequeDetails');
+    const bankDetails = document.getElementById('bankDetails');
+    const createCheque = document.getElementById('createCheque');
+    const chequeFields = document.getElementById('chequeFields');
+
+    function togglePaymentDetails() {
+        const method = paymentMethod.value;
+        
+        if (method === 'cheque') {
+            chequeDetails.style.display = 'block';
+            bankDetails.style.display = 'none';
+        } else if (method === 'bank_transfer') {
+            chequeDetails.style.display = 'none';
+            bankDetails.style.display = 'block';
+        } else {
+            chequeDetails.style.display = 'none';
+            bankDetails.style.display = 'none';
+        }
+    }
+
+    paymentMethod.addEventListener('change', togglePaymentDetails);
+    togglePaymentDetails();
+
+    createCheque.addEventListener('change', function() {
+        if (this.checked) {
+            chequeFields.style.display = 'block';
+            chequeFields.querySelectorAll('input, select').forEach(field => {
+                field.required = true;
+            });
+        } else {
+            chequeFields.style.display = 'none';
+            chequeFields.querySelectorAll('input, select').forEach(field => {
+                field.required = false;
+                field.value = '';
+            });
+        }
+    });
+});
+</script>
+{% endblock %}
+

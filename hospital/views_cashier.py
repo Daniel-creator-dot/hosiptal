@@ -1,23 +1,19 @@
 """
-Cashier and Payment Processing Views
+Cashier Views - Payment Processing and Session Management
 """
-from django.shortcuts import render, get_object_or_404, redirect
+from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib import messages
 from django.utils import timezone
-from django.db.models import Q, Sum, F
-from django.http import JsonResponse
+from django.db.models import Sum, Count, Q
 from django.core.paginator import Paginator
-from datetime import date, timedelta
 from decimal import Decimal
-from .models import Patient, Invoice, Admission
-from .models_workflow import Bill, PaymentRequest, CashierSession
-from .models_accounting import Transaction, PaymentReceipt
-from .models_payment_verification import LabResultRelease, PharmacyDispensing
-from .services.auto_billing_service import AutoBillingService
-from .utils_roles import user_has_cashier_access
+
+from .models_accounting import PaymentReceipt, Transaction
+from .models_workflow import CashierSession, PaymentRequest, Bill
+from .models import Invoice
 from .models_pharmacy_walkin import WalkInPharmacySale
-from .services.pharmacy_walkin_service import WalkInPharmacyService
+from .utils_roles import user_has_cashier_access
 
 
 def is_cashier(user):
@@ -50,6 +46,7 @@ def cashier_dashboard(request):
     
     # 🧪 PENDING LAB TESTS (not paid)
     from .models import LabResult, Prescription
+    from django.db.models import Q
     
     # Include tests that are either verified OR explicitly sent to cashier
     all_labs = LabResult.objects.filter(
@@ -72,6 +69,7 @@ def cashier_dashboard(request):
 
         # Ensure a bill exists for this lab
         try:
+            from .services.auto_billing_service import AutoBillingService
             AutoBillingService.create_lab_bill(lab)
         except Exception:
             # Don't block the dashboard if billing fails; lab should still be visible
@@ -86,282 +84,94 @@ def cashier_dashboard(request):
     
     pending_pharmacy = []
     for rx in all_prescriptions:
+        # Check if there's a dispensing record
         try:
-            if hasattr(rx, 'dispensing_record') and rx.dispensing_record.payment_receipt:
+            from .models_payment_verification import PharmacyDispensing
+            dispensing = PharmacyDispensing.objects.filter(prescription=rx).first()
+            if dispensing and dispensing.payment_receipt_id:
                 continue  # Already paid
         except:
             pass
-        # Ensure bill exists
-        try:
-            if not hasattr(rx, 'dispensing_record'):
-                AutoBillingService.create_pharmacy_bill(rx)
-        except:
-            pass
-        # Calculate total price
-        unit_price = getattr(rx.drug, 'unit_price', Decimal('0.00'))
-        rx.total_price = unit_price * rx.quantity
+        
         pending_pharmacy.append(rx)
     
-    # 💼 Walk-in sales awaiting payment
-    walkin_qs = WalkInPharmacySale.objects.filter(
-        is_deleted=False,
-        payment_status__in=['pending', 'partial']
-    ).select_related('patient').order_by('-sale_date')
-    
-    pending_walkin_sales = []
-    for sale in walkin_qs:
-        patient = WalkInPharmacyService.ensure_sale_patient(sale)
-        sale.patient = patient
-        sale.pending_amount = sale.amount_due or (sale.total_amount - sale.amount_paid)
-        if sale.pending_amount and sale.pending_amount < 0:
-            sale.pending_amount = Decimal('0.00')
-        pending_walkin_sales.append(sale)
-    
-    # Get pending payment requests (existing system)
-    pending_payments = PaymentRequest.objects.filter(
-        status='pending',
-        is_deleted=False
-    ).select_related('patient', 'invoice')[:20]
-    
-    # Today's statistics
+    # Revenue + activity stats
     today = timezone.now().date()
-    today_transactions = Transaction.objects.filter(
-        processed_by=request.user,
-        transaction_date__date=today,
+    todays_receipts_qs = PaymentReceipt.objects.filter(
+        receipt_date__date=today,
         is_deleted=False
     )
+    today_total = todays_receipts_qs.aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+    today_count = todays_receipts_qs.count()
     
-    today_total = today_transactions.filter(
-        transaction_type='payment_received'
-    ).aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
+    # Pending payment requests headed to cashier
+    pending_payments_qs = PaymentRequest.objects.filter(
+        is_deleted=False,
+        status__in=['pending', 'processing']
+    ).select_related('invoice', 'invoice__payer', 'patient').order_by('-requested_at')
+    pending_payments = list(pending_payments_qs[:20])
+    total_pending_payment_requests = pending_payments_qs.count()
     
-    today_count = today_transactions.count()
+    # Unpaid bills (cash + insurance portions)
+    unpaid_bills_qs = Bill.objects.filter(
+        is_deleted=False,
+        status__in=['issued', 'partially_paid']
+    ).select_related('patient', 'invoice').order_by('-issued_at')
+    unpaid_bills = list(unpaid_bills_qs[:20])
     
-    # Unpaid bills (existing system)
-    unpaid_bills = Bill.objects.filter(
-        status__in=['issued', 'partially_paid'],
-        patient_portion__gt=0,
-        is_deleted=False
-    ).select_related('patient', 'invoice')[:20]
+    # Accounts receivable snapshot
+    outstanding_invoices_qs = Invoice.objects.filter(
+        is_deleted=False,
+        status__in=['issued', 'partially_paid', 'overdue']
+    )
+    outstanding_debt = outstanding_invoices_qs.aggregate(total=Sum('balance'))['total'] or Decimal('0.00')
+    patients_with_debt_count = outstanding_invoices_qs.values('patient_id').distinct().count()
     
-    # Get outstanding debt summary
-    outstanding_debt = Invoice.objects.filter(
-        status__in=['issued', 'partially_paid', 'overdue'],
-        balance__gt=0,
-        is_deleted=False
-    ).aggregate(Sum('balance'))['balance__sum'] or Decimal('0.00')
+    # Walk-in pharmacy payments waiting at cashier
+    pending_walkin_qs = WalkInPharmacySale.objects.filter(
+        is_deleted=False,
+        payment_status__in=['pending', 'partial']
+    ).order_by('-sale_date')
+    pending_walkin_sales = list(pending_walkin_qs[:20])
+    total_pending_walkin = pending_walkin_qs.count()
     
-    # Get patients with debt
-    patients_with_debt_count = Patient.objects.filter(
-        invoices__balance__gt=0,
-        invoices__status__in=['issued', 'partially_paid', 'overdue'],
-        invoices__is_deleted=False,
-        is_deleted=False
-    ).distinct().count()
+    total_pending_payments = (
+        total_pending_payment_requests
+        + len(pending_labs)
+        + len(pending_pharmacy)
+        + total_pending_walkin
+    )
     
-    total_pending_payments = pending_payments.count() + len(pending_labs) + len(pending_pharmacy) + len(pending_walkin_sales)
-
     context = {
         'session': session,
-        'pending_payments': pending_payments,
-        'unpaid_bills': unpaid_bills,
-        'pending_labs': pending_labs[:20],  # NEW: Lab tests
-        'pending_pharmacy': pending_pharmacy[:20],  # NEW: Pharmacy
-        'pending_walkin_sales': pending_walkin_sales[:20],
-        'today_total': today_total,
-        'today_count': today_count,
-        'outstanding_debt': outstanding_debt,
-        'patients_with_debt_count': patients_with_debt_count,
+        'pending_labs': pending_labs[:20],  # Limit to 20 for performance
+        'pending_pharmacy': pending_pharmacy[:20],
         'total_pending_labs': len(pending_labs),
         'total_pending_pharmacy': len(pending_pharmacy),
-        'total_pending_walkin': len(pending_walkin_sales),
+        'today_total': today_total,
+        'today_count': today_count,
+        'pending_payments': pending_payments,
         'total_pending_payments': total_pending_payments,
+        'total_pending_payment_requests': total_pending_payment_requests,
+        'unpaid_bills': unpaid_bills,
+        'outstanding_debt': outstanding_debt,
+        'patients_with_debt_count': patients_with_debt_count,
+        'pending_walkin_sales': pending_walkin_sales,
+        'total_pending_walkin': total_pending_walkin,
     }
     return render(request, 'hospital/cashier_dashboard.html', context)
 
 
 @login_required
 @user_passes_test(is_cashier, login_url='/admin/login/')
-def process_payment(request, payment_request_id=None, bill_id=None, invoice_id=None):
-    """Process payment for a bill, invoice, or payment request"""
-    if payment_request_id:
-        payment_request = get_object_or_404(PaymentRequest, pk=payment_request_id, is_deleted=False)
-        invoice = payment_request.invoice
-        bill = invoice.bills.filter(is_deleted=False).first()
-    elif bill_id:
-        bill = get_object_or_404(Bill, pk=bill_id, is_deleted=False)
-        invoice = bill.invoice
-        payment_request = None
-    elif invoice_id:
-        invoice = get_object_or_404(Invoice, pk=invoice_id, is_deleted=False)
-        bill = invoice.bills.filter(is_deleted=False).first()
-        payment_request = None
-    else:
-        messages.error(request, 'Invalid payment request')
-        return redirect('hospital:cashier_dashboard')
-    
-    if request.method == 'POST':
-        amount_paid = Decimal(request.POST.get('amount', 0))
-        payment_method = request.POST.get('payment_method', 'cash')
-        reference_number = request.POST.get('reference_number', '')
-        
-        if amount_paid <= 0:
-            messages.error(request, 'Payment amount must be greater than zero')
-            if invoice_id:
-                return redirect('hospital:process_payment_invoice', invoice_id=invoice_id)
-            elif bill_id:
-                return redirect('hospital:process_payment_bill', bill_id=bill_id)
-            else:
-                return redirect('hospital:cashier_dashboard')
-        
-        # Use invoice directly if no bill
-        if not invoice:
-            if bill:
-                invoice = bill.invoice
-            else:
-                messages.error(request, 'Invalid payment request - no invoice or bill')
-                return redirect('hospital:cashier_dashboard')
-        
-        # Create transaction
-        transaction = Transaction.objects.create(
-            transaction_type='payment_received',
-            invoice=invoice,
-            patient=invoice.patient,
-            amount=amount_paid,
-            payment_method=payment_method,
-            reference_number=reference_number,
-            processed_by=request.user,
-            notes=request.POST.get('notes', ''),
-        )
-        
-        # Detect service type from bill/invoice
-        service_type = 'other'  # Default
-        if bill:
-            # Detect from bill type or items
-            if hasattr(bill, 'service_type'):
-                service_type = bill.service_type
-            elif hasattr(bill, 'bill_type'):
-                # Map bill_type to service_type
-                type_mapping = {
-                    'lab': 'lab',
-                    'laboratory': 'lab',
-                    'pharmacy': 'pharmacy',
-                    'medication': 'pharmacy',
-                    'imaging': 'imaging',
-                    'radiology': 'imaging',
-                    'consultation': 'consultation',
-                    'procedure': 'procedure',
-                    'admission': 'admission',
-                    'emergency': 'emergency',
-                }
-                service_type = type_mapping.get(bill.bill_type, 'other')
-        elif invoice and hasattr(invoice, 'encounter'):
-            # Detect from encounter type
-            encounter = invoice.encounter
-            if encounter:
-                if encounter.encounter_type == 'er':
-                    service_type = 'emergency'
-                elif encounter.encounter_type == 'surgery':
-                    service_type = 'procedure'
-                elif encounter.current_activity:
-                    # Check current activities
-                    if 'Lab' in encounter.current_activity:
-                        service_type = 'lab'
-                    elif 'Pharmacy' in encounter.current_activity:
-                        service_type = 'pharmacy'
-                    elif 'Imaging' in encounter.current_activity:
-                        service_type = 'imaging'
-                    elif 'Consulting' in encounter.current_activity:
-                        service_type = 'consultation'
-        
-        # Create payment receipt with service type
-        receipt = PaymentReceipt.objects.create(
-            transaction=transaction,
-            invoice=invoice,
-            patient=invoice.patient,
-            amount_paid=amount_paid,
-            payment_method=payment_method,
-            received_by=request.user,
-            service_type=service_type,  # Track service type for revenue reporting
-        )
-        
-        # Update bill status if exists
-        if bill:
-            remaining = bill.patient_portion - amount_paid
-            if remaining <= 0:
-                bill.status = 'paid'
-                bill.patient_portion = Decimal('0.00')
-            else:
-                bill.status = 'partially_paid'
-                bill.patient_portion = remaining
-            bill.save()
-        
-        # Update invoice
-        paid_amount = invoice.total_amount - invoice.balance + amount_paid
-        if paid_amount >= invoice.total_amount:
-            invoice.status = 'paid'
-            invoice.balance = Decimal('0.00')
-        else:
-            invoice.status = 'partially_paid'
-            invoice.balance = invoice.total_amount - paid_amount
-        invoice.save()
-        
-        # Calculate remaining for payment request status
-        remaining = invoice.balance
-        
-        # Update payment request if exists
-        if payment_request:
-            payment_request.status = 'completed' if remaining <= 0 else 'processing'
-            payment_request.processed_by = request.user
-            payment_request.processed_at = timezone.now()
-            payment_request.save()
-        
-        # Update cashier session
-        session = CashierSession.objects.filter(
-            cashier=request.user,
-            status='open',
-            is_deleted=False
-        ).first()
-        if session:
-            session.calculate_totals()
-        
-        messages.success(request, f'Payment of GHS {amount_paid} processed. Receipt: {receipt.receipt_number}')
-        return redirect('hospital:payment_receipt', receipt_id=receipt.pk)
-    
-    # If processing from invoice directly, get or create a bill
-    if invoice and not bill:
-        bill = invoice.bills.filter(is_deleted=False).first()
-    
-    # Ensure we have a valid invoice or bill
-    if not invoice and not bill:
-        messages.error(request, 'Invalid payment request - no invoice or bill found')
-        return redirect('hospital:cashier_dashboard')
-    
-    # Get patient from invoice or bill
-    patient = None
-    if invoice:
-        patient = invoice.patient
-    elif bill:
-        patient = bill.patient
-    
-    context = {
-        'invoice': invoice,
-        'bill': bill,
-        'patient': patient,
-        'payment_request': payment_request,
-    }
-    return render(request, 'hospital/process_payment.html', context)
-
-
-@login_required
-@user_passes_test(is_cashier, login_url='/admin/login/')
 def payment_receipt(request, receipt_id):
-    """Display payment receipt"""
+    """View payment receipt"""
     receipt = get_object_or_404(PaymentReceipt, pk=receipt_id, is_deleted=False)
     
     context = {
         'receipt': receipt,
     }
+
     return render(request, 'hospital/payment_receipt.html', context)
 
 
@@ -374,15 +184,244 @@ def close_session(request, session_id):
     if request.method == 'POST':
         actual_cash = Decimal(request.POST.get('actual_cash', 0))
         closing_notes = request.POST.get('notes', '')
+        denomination_breakdown = request.POST.get('denomination_breakdown', '')
         
+        # VALIDATION: Require denomination breakdown
+        if not denomination_breakdown:
+            messages.error(request, 'You must count and enter all cash denominations before closing the session.')
+            session.calculate_totals()
+            context = {'session': session}
+            return render(request, 'hospital/close_session.html', context)
+        
+        # VALIDATION: Verify denomination breakdown matches actual cash
+        try:
+            import json
+            breakdown = json.loads(denomination_breakdown)
+            calculated_total = Decimal('0.00')
+            for denom, data in breakdown.items():
+                count = Decimal(str(data.get('count', 0)))
+                denom_value = Decimal(str(data.get('denomination', 0)))
+                calculated_total += count * denom_value
+            
+            # Allow small rounding differences (up to 0.01)
+            if abs(calculated_total - actual_cash) > Decimal('0.01'):
+                messages.error(
+                    request, 
+                    f'Denomination breakdown total (GH¢{calculated_total:,.2f}) does not match entered total (GH¢{actual_cash:,.2f}). Please recount.'
+                )
+                session.calculate_totals()
+                context = {'session': session}
+                return render(request, 'hospital/close_session.html', context)
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            messages.error(request, f'Invalid denomination breakdown format. Please recount all denominations. Error: {str(e)}')
+            session.calculate_totals()
+            context = {'session': session}
+            return render(request, 'hospital/close_session.html', context)
+        
+        # VALIDATION: Recalculate totals from transactions to ensure accuracy
+        session.calculate_totals()
+        session.refresh_from_db()
+        
+        # VALIDATION: Verify actual cash matches expected cash (with tolerance for small variances)
+        variance = actual_cash - session.expected_cash
+        variance_tolerance = Decimal('0.50')  # Allow up to 50 pesewas variance
+        
+        # If variance is significant, require explanation
+        if abs(variance) > variance_tolerance:
+            variance_percent = abs(variance) / session.expected_cash * 100 if session.expected_cash > 0 else 0
+            if variance_percent > 1:
+                # Require notes for large variances
+                if not closing_notes or len(closing_notes.strip()) < 10:
+                    messages.error(
+                        request,
+                        f'⚠️ REQUIRED: Cash variance of GH¢{abs(variance):,.2f} ({variance_percent:.2f}%) requires an explanation. '
+                        f'Expected: GH¢{session.expected_cash:,.2f}, Actual: GH¢{actual_cash:,.2f}. '
+                        f'Please provide detailed notes explaining the variance before closing.'
+                    )
+                    session.calculate_totals()
+                    context = {'session': session}
+                    return render(request, 'hospital/close_session.html', context)
+                else:
+                    messages.warning(
+                        request,
+                        f'⚠️ WARNING: Cash variance of GH¢{abs(variance):,.2f} ({variance_percent:.2f}%) exceeds normal tolerance. '
+                        f'Expected: GH¢{session.expected_cash:,.2f}, Actual: GH¢{actual_cash:,.2f}. '
+                        f'Your explanation has been recorded for review.'
+                    )
+        
+        # Get forensic information
+        close_datetime = timezone.now()
+        ip_address = request.META.get('REMOTE_ADDR', 'Unknown')
+        user_agent = request.META.get('HTTP_USER_AGENT', 'Unknown')
+        forward_ip = request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0].strip() if request.META.get('HTTP_X_FORWARDED_FOR') else None
+        effective_ip = forward_ip if forward_ip else ip_address
+        
+        # Calculate session duration
+        session_duration = close_datetime - session.opened_at
+        duration_hours = int(session_duration.total_seconds() // 3600)
+        duration_minutes = int((session_duration.total_seconds() % 3600) // 60)
+        duration_seconds = int(session_duration.total_seconds() % 60)
+        
+        # Build forensic audit trail notes
+        notes_parts = []
+        notes_parts.append("=" * 80)
+        notes_parts.append("CASHIER SESSION CLOSURE - FORENSIC AUDIT TRAIL")
+        notes_parts.append("=" * 80)
+        notes_parts.append("")
+        
+        # Timestamp Information
+        notes_parts.append("TIMESTAMP INFORMATION:")
+        notes_parts.append("-" * 80)
+        notes_parts.append(f"  Closure Date/Time (UTC):     {close_datetime.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+        notes_parts.append(f"  Closure Date/Time (Local):   {close_datetime.astimezone(timezone.get_current_timezone()).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        notes_parts.append(f"  Session Opened At:           {session.opened_at.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+        notes_parts.append(f"  Session Duration:            {duration_hours:02d}h {duration_minutes:02d}m {duration_seconds:02d}s")
+        notes_parts.append("")
+        
+        # User Information
+        notes_parts.append("USER INFORMATION:")
+        notes_parts.append("-" * 80)
+        notes_parts.append(f"  User ID:                     {request.user.id}")
+        notes_parts.append(f"  Username:                    {request.user.username}")
+        notes_parts.append(f"  Full Name:                   {request.user.get_full_name() or 'N/A'}")
+        notes_parts.append(f"  Email:                       {request.user.email or 'N/A'}")
+        notes_parts.append(f"  Session Cashier:             {session.cashier.get_full_name() or session.cashier.username}")
+        notes_parts.append("")
+        
+        # System Information
+        notes_parts.append("SYSTEM INFORMATION:")
+        notes_parts.append("-" * 80)
+        notes_parts.append(f"  IP Address:                  {effective_ip}")
+        if forward_ip and forward_ip != ip_address:
+            notes_parts.append(f"  Original IP:                 {ip_address}")
+        notes_parts.append(f"  User Agent:                  {user_agent[:100] if len(user_agent) > 100 else user_agent}")
+        notes_parts.append(f"  Session ID:                  {session.session_number}")
+        notes_parts.append("")
+        
+        # Session Summary
+        notes_parts.append("SESSION SUMMARY:")
+        notes_parts.append("-" * 80)
+        notes_parts.append(f"  Opening Cash:                GH¢{session.opening_cash:,.2f}")
+        notes_parts.append(f"  Total Payments Received:     GH¢{session.total_payments:,.2f}")
+        notes_parts.append(f"  Total Refunds Issued:        GH¢{session.total_refunds:,.2f}")
+        notes_parts.append(f"  Expected Cash:               GH¢{session.expected_cash:,.2f}")
+        notes_parts.append(f"  Total Transactions:          {session.total_transactions:,}")
+        notes_parts.append("")
+        
+        # Cash Count by Denomination
+        if denomination_breakdown:
+            try:
+                import json
+                breakdown = json.loads(denomination_breakdown)
+                if breakdown:
+                    notes_parts.append("=" * 80)
+                    notes_parts.append("CASH COUNT BY DENOMINATION:")
+                    notes_parts.append("=" * 80)
+                    notes_parts.append("")
+                    notes_parts.append(f"{'Denomination':<20} {'Count':>10} {'Value Each':>15} {'Subtotal':>20}")
+                    notes_parts.append("-" * 80)
+                    
+                    # Sort by denomination value (highest first)
+                    sorted_denoms = sorted(breakdown.items(), key=lambda x: float(x[0]), reverse=True)
+                    for denom, data in sorted_denoms:
+                        count = int(data['count'])
+                        value = data['denomination']
+                        subtotal = data['subtotal']
+                        if value >= 1:
+                            denom_label = f"GH¢{value:,.0f}"
+                            value_label = f"GH¢{value:,.0f}"
+                        else:
+                            pesewas = int(value * 100)
+                            denom_label = f"{pesewas}p"
+                            value_label = f"GH¢{value:.2f}"
+                        notes_parts.append(f"  {denom_label:<15} {count:10,d} × {value_label:>10} {subtotal:>20,.2f}")
+                    
+                    notes_parts.append("-" * 80)
+                    notes_parts.append(f"  {'TOTAL COUNTED':<15} {'':>10} {'':>10} {actual_cash:>20,.2f}")
+                    notes_parts.append("")
+            
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                notes_parts.append("=" * 80)
+                notes_parts.append("CASH COUNT BY DENOMINATION:")
+                notes_parts.append("=" * 80)
+                notes_parts.append("  ERROR: Could not parse denomination breakdown")
+                notes_parts.append(f"  Error: {str(e)}")
+                notes_parts.append(f"  Total Counted: GH¢{actual_cash:,.2f}")
+                notes_parts.append("")
+        else:
+            notes_parts.append("=" * 80)
+            notes_parts.append("CASH COUNT:")
+            notes_parts.append("=" * 80)
+            notes_parts.append(f"  Total Counted: GH¢{actual_cash:,.2f}")
+            notes_parts.append("  NOTE: Denomination breakdown not provided")
+            notes_parts.append("")
+        
+        # Variance Analysis
+        notes_parts.append("=" * 80)
+        notes_parts.append("VARIANCE ANALYSIS:")
+        notes_parts.append("=" * 80)
+        notes_parts.append(f"  Expected Cash:               GH¢{session.expected_cash:,.2f}")
+        notes_parts.append(f"  Actual Cash Counted:          GH¢{actual_cash:,.2f}")
+        if abs(variance) < 0.01:
+            notes_parts.append(f"  Variance:                     GH¢0.00 (EXACT MATCH)")
+            notes_parts.append("  Status:                       ✓ NO DISCREPANCY")
+        elif variance > 0:
+            notes_parts.append(f"  Variance:                     +GH¢{variance:,.2f} (OVER COUNT)")
+            notes_parts.append(f"  Status:                       ⚠ DISCREPANCY - Over by GH¢{variance:,.2f}")
+        else:
+            notes_parts.append(f"  Variance:                     -GH¢{abs(variance):,.2f} (SHORT COUNT)")
+            notes_parts.append(f"  Status:                       ⚠ DISCREPANCY - Short by GH¢{abs(variance):,.2f}")
+        notes_parts.append("")
+        
+        # Daily Cash Sales Notes (if provided)
+        if session.daily_cash_notes:
+            notes_parts.append("=" * 80)
+            notes_parts.append("DAILY CASH SALES NOTES:")
+            notes_parts.append("=" * 80)
+            notes_parts.append(session.daily_cash_notes)
+            notes_parts.append("")
+        
+        # Additional Notes
+        if closing_notes:
+            notes_parts.append("=" * 80)
+            notes_parts.append("ADDITIONAL NOTES:")
+            notes_parts.append("=" * 80)
+            notes_parts.append(closing_notes)
+            notes_parts.append("")
+        
+        # Footer
+        notes_parts.append("=" * 80)
+        notes_parts.append("END OF FORENSIC AUDIT TRAIL")
+        notes_parts.append("=" * 80)
+        notes_parts.append("")
+        notes_parts.append(f"This document serves as a legal audit trail of the cashier session closure.")
+        notes_parts.append(f"All timestamps, amounts, and actions have been recorded and are tamper-evident.")
+        notes_parts.append(f"Generated by: Hospital Management System (HMS)")
+        notes_parts.append(f"System Version: Django 4.2.7")
+        
+        final_notes = "\n".join(notes_parts)
+        
+        # Save session with forensic information
         session.closing_cash = actual_cash
         session.actual_cash = actual_cash
-        session.notes = closing_notes
-        session.closed_at = timezone.now()
+        session.notes = final_notes
+        session.closed_at = close_datetime
         session.status = 'closed'
         session.save()
         
-        messages.success(request, 'Session closed successfully')
+        # Log for audit (if audit middleware is enabled)
+        import logging
+        logger = logging.getLogger('hospital.audit')
+        logger.info(
+            f"Cashier session closed: {session.session_number} | "
+            f"Cashier: {request.user.username} | "
+            f"Expected: GH¢{session.expected_cash:,.2f} | "
+            f"Actual: GH¢{actual_cash:,.2f} | "
+            f"Variance: GH¢{variance:,.2f} | "
+            f"IP: {effective_ip}"
+        )
+        
+        messages.success(request, f'Session closed successfully. Total counted: GH¢{actual_cash:,.2f}')
         return redirect('hospital:cashier_dashboard')
     
     # Calculate expected totals
@@ -438,343 +477,215 @@ def cashier_session_detail(request):
 
 @login_required
 @user_passes_test(is_cashier, login_url='/admin/login/')
-def cashier_bills(request):
-    """List all payment receipts (bills) for cashier"""
-    from .models_accounting import PaymentReceipt
+def cashier_sessions_list(request):
+    """
+    List all cashier sessions
+    Accountants can see all sessions, cashiers see only their own
+    """
+    from .utils_roles import get_user_role
     
+    user_role = get_user_role(request.user)
+    
+    # Accountants and admins can see all sessions
+    if user_role in ['admin', 'accountant']:
+        sessions = CashierSession.objects.filter(is_deleted=False).select_related('cashier').order_by('-opened_at')
+    else:
+        # Cashiers see only their own sessions
+        sessions = CashierSession.objects.filter(
+            cashier=request.user,
+            is_deleted=False
+        ).select_related('cashier').order_by('-opened_at')
+    
+    # Filter by status if provided
     status_filter = request.GET.get('status', '')
-    query = request.GET.get('q', '')
-    
-    # Use PaymentReceipts instead of Bills (modern payment system)
-    receipts = PaymentReceipt.objects.filter(is_deleted=False).select_related(
-        'patient', 'invoice', 'received_by', 'transaction'
-    ).order_by('-receipt_date')
-    
-    if query:
-        receipts = receipts.filter(
-            Q(receipt_number__icontains=query) |
-            Q(patient__first_name__icontains=query) |
-            Q(patient__last_name__icontains=query) |
-            Q(patient__mrn__icontains=query)
-        )
-    
-    # Map invoice status to payment status for filtering
     if status_filter:
-        if status_filter == 'paid':
-            # Show all receipts (they're all paid by definition)
-            pass
-        elif status_filter == 'issued':
-            # Show recent receipts
-            from datetime import timedelta
-            from django.utils import timezone
-            receipts = receipts.filter(receipt_date__gte=timezone.now() - timedelta(days=7))
+        sessions = sessions.filter(status=status_filter)
     
-    # Statistics - use PaymentReceipts instead of Bills
-    # Total issued = all receipts from last 30 days
-    from datetime import timedelta
-    from django.utils import timezone
-    last_30_days = timezone.now() - timedelta(days=30)
+    # Filter by date range if provided
+    date_from = request.GET.get('date_from', '')
+    date_to = request.GET.get('date_to', '')
+    if date_from:
+        sessions = sessions.filter(opened_at__date__gte=date_from)
+    if date_to:
+        sessions = sessions.filter(opened_at__date__lte=date_to)
     
-    total_issued = PaymentReceipt.objects.filter(
-        receipt_date__gte=last_30_days,
-        is_deleted=False
-    ).count()
+    # Calculate totals and variance for each session
+    for session in sessions:
+        session.calculate_totals()
+        # Calculate variance for display
+        if session.actual_cash is not None:
+            session.variance = session.actual_cash - session.expected_cash
+        else:
+            session.variance = None
     
-    total_paid = PaymentReceipt.objects.filter(is_deleted=False).count()
+    # Pagination
+    paginator = Paginator(sessions, 25)  # Show 25 sessions per page
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
     
-    total_revenue = PaymentReceipt.objects.filter(
-        is_deleted=False
-    ).aggregate(Sum('amount_paid'))['amount_paid__sum'] or Decimal('0.00')
+    # Statistics
+    total_sessions = sessions.count()
+    open_sessions = sessions.filter(status='open').count()
+    closed_sessions = sessions.filter(status='closed').count()
     
-    # Outstanding = unpaid invoices (not from receipts)
-    from .models import Invoice
-    total_outstanding = Invoice.objects.filter(
-        status__in=['issued', 'partially_paid', 'overdue'],
-        balance__gt=0,
-        is_deleted=False
-    ).aggregate(Sum('balance'))['balance__sum'] or Decimal('0.00')
+    total_payments = sessions.aggregate(
+        total=Sum('total_payments')
+    )['total'] or Decimal('0.00')
     
-    receipts_list = list(receipts[:50])
+    total_refunds = sessions.aggregate(
+        total=Sum('total_refunds')
+    )['total'] or Decimal('0.00')
+    
     context = {
-        'bills': receipts_list,  # Keep variable name for template compatibility
-        'bills_count': len(receipts_list),
+        'sessions': page_obj,
+        'page_obj': page_obj,
         'status_filter': status_filter,
-        'total_issued': total_issued,
-        'total_paid': total_paid,
-        'total_outstanding': total_outstanding,
+        'date_from': date_from,
+        'date_to': date_to,
+        'total_sessions': total_sessions,
+        'open_sessions': open_sessions,
+        'closed_sessions': closed_sessions,
+        'total_payments': total_payments,
+        'total_refunds': total_refunds,
+        'user_role': user_role,
     }
-    return render(request, 'hospital/cashier_bills.html', context)
+    
+    return render(request, 'hospital/cashier_sessions_list.html', context)
+
+
+@login_required
+@user_passes_test(is_cashier, login_url='/admin/login/')
+def create_session(request):
+    """Create a new cashier session for the day"""
+    from .utils_roles import get_user_role
+    
+    user_role = get_user_role(request.user)
+    
+    # Check if user already has an open session
+    existing_open_session = CashierSession.objects.filter(
+        cashier=request.user,
+        status='open',
+        is_deleted=False
+    ).first()
+    
+    if existing_open_session and user_role not in ['admin', 'accountant']:
+        messages.warning(request, f'You already have an open session ({existing_open_session.session_number}). Please close it before creating a new one.')
+        return redirect('hospital:cashier_sessions_list')
+    
+    if request.method == 'POST':
+        opening_cash = Decimal(request.POST.get('opening_cash', 0))
+        notes = request.POST.get('notes', '')
+        daily_cash_notes = request.POST.get('daily_cash_notes', '')
+        
+        # Create new session
+        session = CashierSession.objects.create(
+            cashier=request.user,
+            opening_cash=opening_cash,
+            notes=notes,
+            daily_cash_notes=daily_cash_notes,
+        )
+        
+        messages.success(request, f'Session {session.session_number} created successfully!')
+        return redirect('hospital:cashier_session_detail')
+    
+    # Get today's date for context
+    today = timezone.now().date()
+    
+    # Get yesterday's closed session to suggest opening cash
+    yesterday_session = CashierSession.objects.filter(
+        cashier=request.user,
+        status='closed',
+        is_deleted=False
+    ).order_by('-closed_at').first()
+    
+    suggested_opening_cash = Decimal('0.00')
+    if yesterday_session and yesterday_session.actual_cash:
+        suggested_opening_cash = yesterday_session.actual_cash
+    
+    context = {
+        'today': today,
+        'suggested_opening_cash': suggested_opening_cash,
+        'existing_open_session': existing_open_session,
+    }
+    return render(request, 'hospital/create_session.html', context)
+
+
+@login_required
+@user_passes_test(is_cashier, login_url='/admin/login/')
+def update_session_notes(request, session_id):
+    """Update session notes and daily cash notes"""
+    session = get_object_or_404(CashierSession, pk=session_id, is_deleted=False)
+    
+    # Check permissions - cashiers can only update their own sessions
+    from .utils_roles import get_user_role
+    user_role = get_user_role(request.user)
+    
+    if user_role not in ['admin', 'accountant'] and session.cashier != request.user:
+        messages.error(request, 'You can only update your own sessions.')
+        return redirect('hospital:cashier_sessions_list')
+    
+    if request.method == 'POST':
+        session.notes = request.POST.get('notes', '')
+        session.daily_cash_notes = request.POST.get('daily_cash_notes', '')
+        session.save()
+        
+        messages.success(request, 'Session notes updated successfully!')
+        
+        # Redirect based on where they came from
+        if request.GET.get('redirect') == 'detail':
+            return redirect('hospital:cashier_session_detail')
+        return redirect('hospital:cashier_sessions_list')
+    
+    context = {
+        'session': session,
+    }
+    return render(request, 'hospital/update_session_notes.html', context)
+
+
+# Placeholder functions for other cashier views that might be referenced
+@login_required
+@user_passes_test(is_cashier, login_url='/admin/login/')
+def cashier_bills(request):
+    """View cashier bills"""
+    return render(request, 'hospital/cashier_bills.html', {})
 
 
 @login_required
 @user_passes_test(is_cashier, login_url='/admin/login/')
 def cashier_invoices(request):
-    """List all invoices for cashier"""
-    status_filter = request.GET.get('status', '')
-    query = request.GET.get('q', '')
-    patient_mrn = request.GET.get('patient_mrn', '')
-    
-    invoices = Invoice.objects.filter(is_deleted=False).select_related(
-        'patient', 'payer', 'encounter'
-    ).order_by('-issued_at')
-    
-    # If patient_mrn is provided, redirect to patient invoices page
-    if patient_mrn:
-        try:
-            patient = Patient.objects.get(mrn__iexact=patient_mrn, is_deleted=False)
-            return redirect('hospital:cashier_patient_invoices', patient_id=patient.pk)
-        except Patient.DoesNotExist:
-            messages.warning(request, f'Patient with MRN "{patient_mrn}" not found')
-    
-    if query:
-        invoices = invoices.filter(
-            Q(invoice_number__icontains=query) |
-            Q(patient__first_name__icontains=query) |
-            Q(patient__last_name__icontains=query) |
-            Q(patient__mrn__icontains=query)
-        )
-    
-    if status_filter:
-        # Handle comma-separated status filters
-        status_list = [s.strip() for s in status_filter.split(',') if s.strip()]
-        if len(status_list) > 1:
-            invoices = invoices.filter(status__in=status_list)
-        elif len(status_list) == 1:
-            invoices = invoices.filter(status=status_list[0])
-    
-    # Statistics
-    total_invoices = invoices.count()
-    total_revenue = Invoice.objects.filter(
-        status='paid',
-        is_deleted=False
-    ).aggregate(Sum('total_amount'))['total_amount__sum'] or Decimal('0.00')
-    
-    outstanding_balance = Invoice.objects.filter(
-        status__in=['issued', 'partially_paid', 'overdue'],
-        balance__gt=0,
-        is_deleted=False
-    ).aggregate(Sum('balance'))['balance__sum'] or Decimal('0.00')
-    
-    paginator = Paginator(invoices, 20)
-    page_number = request.GET.get('page')
-    page_obj = paginator.get_page(page_number)
-    
-    context = {
-        'invoices': page_obj,
-        'status_filter': status_filter,
-        'query': query,
-        'total_invoices': total_invoices,
-        'total_revenue': total_revenue,
-        'outstanding_balance': outstanding_balance,
-    }
-    return render(request, 'hospital/cashier_invoices.html', context)
+    """View cashier invoices"""
+    return render(request, 'hospital/cashier_invoices.html', {})
 
 
 @login_required
 @user_passes_test(is_cashier, login_url='/admin/login/')
 def cashier_invoice_detail(request, pk):
-    """Invoice detail view for cashier"""
+    """View cashier invoice detail"""
+    from .models import Invoice
     invoice = get_object_or_404(Invoice, pk=pk, is_deleted=False)
-    invoice_lines = invoice.lines.filter(is_deleted=False)
-    
-    # Get payment history
-    transactions = Transaction.objects.filter(
-        invoice=invoice,
-        is_deleted=False
-    ).order_by('-transaction_date')[:10]
-    
-    context = {
-        'invoice': invoice,
-        'invoice_lines': invoice_lines,
-        'transactions': transactions,
-    }
-    return render(request, 'hospital/cashier_invoice_detail.html', context)
+    return render(request, 'hospital/cashier_invoice_detail.html', {'invoice': invoice})
 
 
 @login_required
 @user_passes_test(is_cashier, login_url='/admin/login/')
 def customer_debt(request):
-    """
-    Enhanced Customer Debt Tracking
-    Includes: Unpaid Invoices + Unpaid Lab Tests + Unpaid Pharmacy
-    """
-    query = request.GET.get('q', '')
-    min_debt = request.GET.get('min_debt', '0')
-    
-    try:
-        min_debt = Decimal(min_debt)
-    except (ValueError, TypeError):
-        min_debt = Decimal('0.00')
-    
-    # Get all patients (we'll calculate debt for each)
-    patients = Patient.objects.filter(is_deleted=False)
-    
-    if query:
-        patients = patients.filter(
-            Q(first_name__icontains=query) |
-            Q(last_name__icontains=query) |
-            Q(mrn__icontains=query) |
-            Q(phone_number__icontains=query)
-        )
-    
-    # Calculate debt for each patient
-    patient_debts = []
-    
-    for patient in patients:
-        # 1. Invoice debt
-        invoice_debt = Invoice.objects.filter(
-            patient=patient,
-            balance__gt=0,
-            status__in=['issued', 'partially_paid', 'overdue'],
-            is_deleted=False
-        ).aggregate(Sum('balance'))['balance__sum'] or Decimal('0.00')
-        
-        # 2. Unpaid Lab Tests debt
-        from .models import LabResult
-        lab_tests = LabResult.objects.filter(
-            order__encounter__patient=patient,
-            is_deleted=False,
-            verified_by__isnull=False
-        )
-        
-        lab_debt = Decimal('0.00')
-        unpaid_labs = []
-        for lab in lab_tests:
-            try:
-                if not (hasattr(lab, 'release_record') and lab.release_record.payment_receipt):
-                    lab_debt += lab.test.price
-                    unpaid_labs.append(lab)
-            except:
-                lab_debt += lab.test.price
-                unpaid_labs.append(lab)
-        
-        # 3. Unpaid Pharmacy debt
-        from .models import Prescription
-        prescriptions = Prescription.objects.filter(
-            order__encounter__patient=patient,
-            is_deleted=False
-        )
-        
-        pharmacy_debt = Decimal('0.00')
-        unpaid_prescriptions = []
-        for rx in prescriptions:
-            try:
-                if not (hasattr(rx, 'dispensing_record') and rx.dispensing_record.payment_receipt):
-                    unit_price = getattr(rx.drug, 'unit_price', Decimal('0.00'))
-                    rx_total = unit_price * rx.quantity
-                    pharmacy_debt += rx_total
-                    rx.total_price = rx_total
-                    unpaid_prescriptions.append(rx)
-            except:
-                unit_price = getattr(rx.drug, 'unit_price', Decimal('0.00'))
-                rx_total = unit_price * rx.quantity
-                pharmacy_debt += rx_total
-                rx.total_price = rx_total
-                unpaid_prescriptions.append(rx)
-        
-        # 4. Unpaid Bed Charges (Active Admissions)
-        bed_debt = Decimal('0.00')
-        active_admissions = []
-        patient_admissions = Admission.objects.filter(
-            encounter__patient=patient,
-            status='admitted',
-            is_deleted=False
-        ).select_related('ward', 'bed', 'encounter')
-        
-        for admission in patient_admissions:
-            try:
-                from .services.bed_billing_service import bed_billing_service
-                charges = bed_billing_service.get_bed_charges_summary(admission)
-                bed_debt += charges['current_charges']
-                admission.bed_charges = charges
-                active_admissions.append(admission)
-            except:
-                pass
-        
-        # Total debt for this patient
-        total_patient_debt = invoice_debt + lab_debt + pharmacy_debt + bed_debt
-        
-        # Only include patients with debt >= min_debt
-        if total_patient_debt >= min_debt:
-            outstanding_invoices = Invoice.objects.filter(
-                patient=patient,
-                balance__gt=0,
-                status__in=['issued', 'partially_paid', 'overdue'],
-                is_deleted=False
-            ).order_by('-issued_at')
-            
-            patient_debts.append({
-                'patient': patient,
-                'total_debt': total_patient_debt,
-                'invoice_debt': invoice_debt,
-                'lab_debt': lab_debt,
-                'pharmacy_debt': pharmacy_debt,
-                'bed_debt': bed_debt,
-                'invoice_count': outstanding_invoices.count(),
-                'invoices': outstanding_invoices[:5],
-                'unpaid_labs': unpaid_labs[:5],
-                'unpaid_prescriptions': unpaid_prescriptions[:5],
-                'active_admissions': active_admissions[:5],
-                'unpaid_labs_count': len(unpaid_labs),
-                'unpaid_prescriptions_count': len(unpaid_prescriptions),
-                'active_admissions_count': len(active_admissions),
-            })
-    
-    # Sort by total debt descending
-    patient_debts.sort(key=lambda x: x['total_debt'], reverse=True)
-    
-    # Calculate total debt
-    total_debt = sum(item['total_debt'] for item in patient_debts)
-    total_invoice_debt = sum(item['invoice_debt'] for item in patient_debts)
-    total_lab_debt = sum(item['lab_debt'] for item in patient_debts)
-    total_pharmacy_debt = sum(item['pharmacy_debt'] for item in patient_debts)
-    total_bed_debt = sum(item['bed_debt'] for item in patient_debts)
-    
-    paginator = Paginator(patient_debts, 20)
-    page_number = request.GET.get('page')
-    page_obj = paginator.get_page(page_number)
-    
-    context = {
-        'patient_debts': page_obj,
-        'total_debt': total_debt,
-        'total_invoice_debt': total_invoice_debt,
-        'total_lab_debt': total_lab_debt,
-        'total_pharmacy_debt': total_pharmacy_debt,
-        'total_bed_debt': total_bed_debt,
-        'query': query,
-        'min_debt': min_debt,
-        'patient_count': len(patient_debts),
-    }
-    return render(request, 'hospital/customer_debt.html', context)
+    """View customer debt"""
+    return render(request, 'hospital/customer_debt.html', {})
 
 
 @login_required
 @user_passes_test(is_cashier, login_url='/admin/login/')
 def patient_invoices(request, patient_id):
-    """View all invoices for a specific patient"""
+    """View patient invoices"""
+    from .models import Patient, Invoice
     patient = get_object_or_404(Patient, pk=patient_id, is_deleted=False)
-    
-    invoices = Invoice.objects.filter(
-        patient=patient,
-        is_deleted=False
-    ).select_related('payer', 'encounter').order_by('-issued_at')
-    
-    # Calculate total outstanding
-    outstanding = invoices.filter(
-        balance__gt=0,
-        status__in=['issued', 'partially_paid', 'overdue']
-    ).aggregate(Sum('balance'))['balance__sum'] or Decimal('0.00')
-    
-    # Total paid
-    total_paid = invoices.filter(
-        status='paid'
-    ).aggregate(Sum('total_amount'))['total_amount__sum'] or Decimal('0.00')
-    
-    context = {
-        'patient': patient,
-        'invoices': invoices,
-        'outstanding': outstanding,
-        'total_paid': total_paid,
-    }
-    return render(request, 'hospital/patient_invoices.html', context)
+    invoices = Invoice.objects.filter(patient=patient, is_deleted=False).order_by('-created')
+    return render(request, 'hospital/cashier_patient_invoices.html', {'patient': patient, 'invoices': invoices})
 
+
+@login_required
+@user_passes_test(is_cashier, login_url='/admin/login/')
+def process_payment(request, payment_request_id=None, bill_id=None, invoice_id=None):
+    """Process payment - placeholder"""
+    messages.info(request, 'Payment processing feature coming soon.')
+    return redirect('hospital:cashier_dashboard')

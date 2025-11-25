@@ -20,6 +20,3 @@ class Command(BaseCommand):
             f"Attendance calendar sync complete: {synced}/{total} records processed."
         ))
 
-
-
-

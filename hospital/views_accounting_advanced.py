@@ -34,13 +34,40 @@ def is_accountant(user):
 def accounting_dashboard(request):
     """Main accounting dashboard with KPIs and quick links"""
     
-    # Check if tables exist
+    # Check if tables exist (database-agnostic)
     from django.db import connection
+    from django.core.management.color import no_style
+    from django.db import models
+    
     tables_exist = True
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='hospital_revenue'")
-        if not cursor.fetchone():
-            tables_exist = False
+    try:
+        # Use Django's introspection to check if table exists
+        db_table = Revenue._meta.db_table
+        with connection.cursor() as cursor:
+            if connection.vendor == 'postgresql':
+                cursor.execute(
+                    "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = %s)",
+                    [db_table]
+                )
+                result = cursor.fetchone()
+                if not result or not result[0]:  # EXISTS returns boolean
+                    tables_exist = False
+            elif connection.vendor == 'sqlite':
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", [db_table])
+                if not cursor.fetchone():
+                    tables_exist = False
+            elif connection.vendor == 'mysql':
+                cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = %s", [db_table])
+                if not cursor.fetchone():
+                    tables_exist = False
+            else:
+                # Fallback: try to query the table
+                try:
+                    cursor.execute(f"SELECT 1 FROM {db_table} LIMIT 1")
+                except Exception:
+                    tables_exist = False
+    except Exception:
+        tables_exist = False
     
     # Get current period
     today = timezone.now().date()
@@ -213,9 +240,30 @@ def accounting_reports_hub(request):
     tables_exist = True
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='hospital_revenue'")
-            if not cursor.fetchone():
-                tables_exist = False
+            # Database-agnostic table check
+            db_table = Revenue._meta.db_table
+            if connection.vendor == 'postgresql':
+                cursor.execute(
+                    "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = %s)",
+                    [db_table]
+                )
+                result = cursor.fetchone()
+                if not result or not result[0]:  # EXISTS returns boolean
+                    tables_exist = False
+            elif connection.vendor == 'sqlite':
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", [db_table])
+                if not cursor.fetchone():
+                    tables_exist = False
+            elif connection.vendor == 'mysql':
+                cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = %s", [db_table])
+                if not cursor.fetchone():
+                    tables_exist = False
+            else:
+                # Fallback: try to query the table
+                try:
+                    cursor.execute(f"SELECT 1 FROM {db_table} LIMIT 1")
+                except Exception:
+                    tables_exist = False
     except Exception:
         tables_exist = False
 

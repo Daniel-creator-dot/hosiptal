@@ -67,3 +67,12 @@ def percentage(value, total):
         return round((float(value) / float(total)) * 100, 1)
     except (ValueError, TypeError, ZeroDivisionError):
         return 0
+
+
+@register.filter(name='humanize_label')
+def humanize_label(value):
+    """Convert snake_case or underscored text into human readable form"""
+    if value is None:
+        return ''
+    text = str(value)
+    return text.replace('_', ' ').strip()

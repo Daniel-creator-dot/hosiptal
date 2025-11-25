@@ -6,6 +6,7 @@ from django.db import transaction
 from django.db.models import Q, Count
 from hospital.models import Patient
 from hospital.models_legacy_patients import LegacyPatient
+from difflib import SequenceMatcher
 import re
 
 

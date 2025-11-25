@@ -161,6 +161,21 @@
                         </button>
                     </div>
                     <small class="text-muted">Select your camera device</small>
+                    <div id="permissionHelp" class="mt-2" style="display: none;">
+                        <div class="alert alert-info alert-dismissible fade show" role="alert">
+                            <h6 class="alert-heading"><i class="bi bi-info-circle"></i> Camera Permission Required</h6>
+                            <p class="mb-2">To use facial recognition, please allow camera access:</p>
+                            <ol class="mb-2 small">
+                                <li>Look for the camera icon in your browser's address bar</li>
+                                <li>Click it and select "Allow" or "Always allow"</li>
+                                <li>Or check your browser settings: <strong>Settings → Privacy → Camera</strong></li>
+                            </ol>
+                            <button class="btn btn-sm btn-primary" onclick="requestCameraPermission()">
+                                <i class="bi bi-camera-video"></i> Request Permission
+                            </button>
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                        </div>
+                    </div>
                 </div>
 
                 <div id="statusMessage" class="status-message" style="display: none;">
@@ -248,11 +263,16 @@
         // Load available cameras
         async function loadAvailableCameras() {
             try {
-                // Request permission first
+                cameraSelect.innerHTML = '<option value="">Loading cameras...</option>';
+                
+                // Request permission first (this is required to get device labels)
                 const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
                 tempStream.getTracks().forEach(track => track.stop());
                 
-                // Get devices
+                // Wait a bit for devices to be fully enumerated
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                // Get devices - enumerateDevices() will now return labels after permission
                 const devices = await navigator.mediaDevices.enumerateDevices();
                 availableCameras = devices.filter(device => device.kind === 'videoinput');
                 
@@ -260,25 +280,47 @@
                 cameraSelect.innerHTML = '';
                 if (availableCameras.length === 0) {
                     cameraSelect.innerHTML = '<option value="">No cameras found</option>';
+                    document.getElementById('permissionHelp').style.display = 'block';
+                    console.warn('No cameras detected. Make sure camera is connected and permissions are granted.');
                     return;
+                } else {
+                    document.getElementById('permissionHelp').style.display = 'none';
                 }
+                
+                console.log(`Found ${availableCameras.length} camera(s):`, availableCameras.map(c => c.label || c.deviceId));
                 
                 availableCameras.forEach((camera, index) => {
                     const option = document.createElement('option');
                     option.value = camera.deviceId;
-                    option.textContent = camera.label || `Camera ${index + 1}`;
+                    // Use label if available, otherwise use device ID (first 20 chars)
+                    const label = camera.label || `Camera ${index + 1}`;
+                    option.textContent = label;
                     cameraSelect.appendChild(option);
                 });
                 
-                // Select first camera by default
+                // Select first camera by default (or previously selected one if still available)
                 if (availableCameras.length > 0) {
-                    selectedCameraId = availableCameras[0].deviceId;
-                    cameraSelect.value = selectedCameraId;
+                    // Try to keep the previously selected camera if it still exists
+                    const previousCamera = availableCameras.find(cam => cam.deviceId === selectedCameraId);
+                    if (previousCamera) {
+                        selectedCameraId = previousCamera.deviceId;
+                        cameraSelect.value = selectedCameraId;
+                    } else {
+                        selectedCameraId = availableCameras[0].deviceId;
+                        cameraSelect.value = selectedCameraId;
+                    }
                 }
                 
             } catch (err) {
                 console.error('Error loading cameras:', err);
-                cameraSelect.innerHTML = '<option value="">Camera access denied</option>';
+                let errorMsg = 'Camera access denied';
+                if (err.name === 'NotAllowedError') {
+                    errorMsg = 'Camera permission denied - please allow access';
+                    document.getElementById('permissionHelp').style.display = 'block';
+                } else if (err.name === 'NotFoundError') {
+                    errorMsg = 'No cameras found';
+                }
+                cameraSelect.innerHTML = `<option value="">${errorMsg}</option>`;
             }
         }
 
@@ -295,18 +337,55 @@
             }
         });
 
-        // Refresh cameras button
-        document.getElementById('btnRefreshCameras').addEventListener('click', function() {
+        // Refresh cameras button - improved to detect newly added cameras
+        document.getElementById('btnRefreshCameras').addEventListener('click', async function() {
             const btn = this;
+            const originalHTML = btn.innerHTML;
+            btn.disabled = true;
             btn.innerHTML = '<i class="bi bi-arrow-clockwise" style="animation: spin 1s linear infinite;"></i>';
-            loadAvailableCameras().then(() => {
-                btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i>';
+            
+            try {
+                // Force re-enumeration by requesting permission again
+                await loadAvailableCameras();
+                btn.innerHTML = '<i class="bi bi-check-circle text-success"></i>';
+                
+                // Restart camera if it was running
                 if (stream) {
                     stopCamera();
-                    startCamera();
+                    setTimeout(() => startCamera(), 100);
                 }
-            });
+                
+                // Reset button after 1 second
+                setTimeout(() => {
+                    btn.innerHTML = originalHTML;
+                    btn.disabled = false;
+                }, 1000);
+            } catch (err) {
+                console.error('Error refreshing cameras:', err);
+                btn.innerHTML = originalHTML;
+                btn.disabled = false;
+            }
         });
+        
+        // Auto-detect when cameras are added/removed (if supported)
+        if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+            navigator.mediaDevices.addEventListener('devicechange', function() {
+                console.log('Camera device change detected - new camera may have been added');
+                loadAvailableCameras().then(() => {
+                    // Show notification if camera was added
+                    if (availableCameras.length > 0) {
+                        const statusMsg = document.getElementById('statusMessage');
+                        if (statusMsg) {
+                            statusMsg.style.display = 'block';
+                            statusMsg.innerHTML = `<div class="alert alert-info alert-dismissible fade show" role="alert">
+                                <i class="bi bi-camera-video"></i> New camera detected! Please select it from the dropdown.
+                                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                            </div>`;
+                        }
+                    }
+                });
+            });
+        }
 
         // Stop camera
         function stopCamera() {
@@ -337,16 +416,71 @@
                 stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
             } catch (err) {
-                showStatus('error', 'Camera access denied. Please enable camera permissions.');
+                let errorMsg = 'Camera access denied. ';
+                let detailedHelp = '';
+                
+                if (err.name === 'NotAllowedError') {
+                    errorMsg += 'Please allow camera permissions.';
+                    detailedHelp = `
+                        <div class="alert alert-warning mt-3">
+                            <h6><i class="bi bi-info-circle"></i> How to Enable Camera Permissions:</h6>
+                            <ul class="mb-0 small">
+                                <li><strong>Chrome/Edge:</strong> Click the camera icon in the address bar → Allow</li>
+                                <li><strong>Firefox:</strong> Click the camera icon in the address bar → Allow</li>
+                                <li><strong>Safari:</strong> Safari → Settings → Websites → Camera → Allow</li>
+                                <li><strong>Or:</strong> Check your browser's site settings for this website</li>
+                            </ul>
+                            <button class="btn btn-sm btn-primary mt-2" onclick="requestCameraPermission()">
+                                <i class="bi bi-camera-video"></i> Request Permission Again
+                            </button>
+                        </div>
+                    `;
+                } else if (err.name === 'NotFoundError') {
+                    errorMsg = 'No camera found. Please connect a camera device.';
+                } else if (err.name === 'NotReadableError') {
+                    errorMsg = 'Camera is busy. Please close other apps using the camera.';
+                } else {
+                    errorMsg += err.message || 'Unknown error occurred.';
+                }
+                
+                showStatus('error', errorMsg + detailedHelp);
                 console.error('Camera error:', err);
             }
         }
 
-        // Show status message
+        // Request camera permission explicitly (make it globally accessible)
+        window.requestCameraPermission = async function() {
+            try {
+                showStatus('info', 'Requesting camera permission...', true);
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                stream.getTracks().forEach(track => track.stop());
+                showStatus('success', 'Camera permission granted! Refreshing camera list...');
+                await loadAvailableCameras();
+                setTimeout(() => {
+                    if (availableCameras.length > 0) {
+                        startCamera();
+                    }
+                }, 500);
+            } catch (err) {
+                let errorMsg = 'Permission denied. ';
+                if (err.name === 'NotAllowedError') {
+                    errorMsg += 'Please click "Allow" when your browser asks for camera permission, or enable it in browser settings.';
+                } else {
+                    errorMsg += err.message || 'Unknown error.';
+                }
+                showStatus('error', errorMsg);
+            }
+        };
+        
+        // Show status message (supports HTML)
         function showStatus(type, message, showSpinner = false) {
             statusMessage.style.display = 'block';
             statusMessage.className = 'status-message status-' + type;
-            statusText.textContent = message;
+            if (message.includes('<')) {
+                statusText.innerHTML = message;
+            } else {
+                statusText.textContent = message;
+            }
             spinner.style.display = showSpinner ? 'block' : 'none';
         }
 
@@ -365,6 +499,17 @@
                     if (cookie.substring(0, name.length + 1) === (name + '=')) {
                         cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
                         break;
+                    }
+                }
+            }
+            if (!cookieValue && name === 'csrftoken') {
+                const metaToken = document.querySelector('meta[name="csrf-token"]');
+                if (metaToken && metaToken.content) {
+                    cookieValue = metaToken.content;
+                } else {
+                    const inputToken = document.querySelector('input[name="csrfmiddlewaretoken"]');
+                    if (inputToken) {
+                        cookieValue = inputToken.value;
                     }
                 }
             }

@@ -564,6 +564,39 @@ class PerformanceKPIRating(BaseModel):
         return f"{self.review.review_number} - {self.kpi.kpi_name}: {self.score}"
 
 
+class StaffPerformanceSnapshot(BaseModel):
+    """
+    Aggregated operational analytics per staff member/role over a time window.
+    Used to surface dashboard insights and feed HR performance reviews.
+    """
+    ROLE_CHOICES = Staff.PROFESSION_CHOICES
+    
+    staff = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='performance_snapshots')
+    role = models.CharField(max_length=30, choices=ROLE_CHOICES)
+    period_start = models.DateField()
+    period_end = models.DateField()
+    
+    metrics = models.JSONField(default=dict, blank=True)
+    productivity_score = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    quality_score = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    engagement_score = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    overall_index = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    data_points = models.PositiveIntegerField(default=0)
+    sync_source = models.CharField(max_length=50, default='dashboard_sync')
+    synced_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-period_end', '-created']
+        unique_together = ['staff', 'role', 'period_start', 'period_end']
+    
+    def __str__(self):
+        return f"{self.staff.user.get_full_name()} - {self.role} ({self.period_start} → {self.period_end})"
+    
+    @property
+    def period_label(self):
+        return f"{self.period_start.strftime('%d %b %Y')} — {self.period_end.strftime('%d %b %Y')}"
+
+
 class DisciplinaryAction(BaseModel):
     """Staff disciplinary actions"""
     ACTION_TYPES = [

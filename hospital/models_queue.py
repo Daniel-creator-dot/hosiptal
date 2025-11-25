@@ -357,3 +357,45 @@ class QueueConfiguration(BaseModel):
         time_per_patient = self.average_consultation_minutes + self.buffer_time_minutes
         return time_per_patient * position
 
+
+class HealthTip(BaseModel):
+    """
+    Rotating health tips displayed on the public queue screen.
+    """
+    AUDIENCE_CHOICES = [
+        ('general', 'General'),
+        ('opd', 'Outpatient'),
+        ('pediatrics', 'Pediatrics'),
+        ('maternity', 'Maternity'),
+        ('wellness', 'Wellness'),
+    ]
+
+    title = models.CharField(max_length=120)
+    message = models.TextField()
+    category = models.CharField(max_length=50, blank=True)
+    audience = models.CharField(max_length=20, choices=AUDIENCE_CHOICES, default='general')
+    icon = models.CharField(max_length=50, blank=True, help_text="Optional emoji or icon class")
+    accent_color = models.CharField(max_length=20, default='#10B981')
+    display_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['display_order', 'title']
+        verbose_name = 'Health Tip'
+        verbose_name_plural = 'Health Tips'
+
+    def __str__(self):
+        return self.title
+
+    def is_visible(self, reference_date=None):
+        reference_date = reference_date or timezone.now().date()
+        if not self.is_active:
+            return False
+        if self.start_date and reference_date < self.start_date:
+            return False
+        if self.end_date and reference_date > self.end_date:
+            return False
+        return True
+

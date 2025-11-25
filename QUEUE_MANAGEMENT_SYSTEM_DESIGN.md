@@ -646,3 +646,9 @@ Queue #{queue_number} - Consultation completed
 
 
 
+
+
+
+
+
+

@@ -248,13 +248,20 @@ def pharmacy_walkin_dispense(request, sale_id):
                         f"Your medication has been dispensed: {items_list}. "
                         f"Thank you for choosing our pharmacy. PrimeCare Medical"
                     )
-                    sms_service.send_sms(
+                    sms_log = sms_service.send_sms(
                         phone_number=sale.customer_phone,
                         message=message,
-                        message_type='pharmacy_dispensing'
+                        message_type='pharmacy_dispensing',
+                        recipient_name=sale.customer_name or 'Customer',
+                        related_object_id=sale.id if hasattr(sale, 'id') else None,
+                        related_object_type='WalkInSale'
                     )
+                    if sms_log.status == 'sent':
+                        logger.info(f"✅ SMS sent to {sale.customer_phone}")
+                    else:
+                        logger.warning(f"⚠️ SMS failed: {sms_log.error_message or 'Unknown error'}")
                 except Exception as e:
-                    logger.error(f"Error sending SMS: {str(e)}")
+                    logger.error(f"❌ Error sending SMS: {str(e)}", exc_info=True)
             
             messages.success(
                 request,

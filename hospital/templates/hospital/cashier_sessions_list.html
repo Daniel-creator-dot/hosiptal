@@ -1,0 +1,260 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Cashier Sessions - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    .session-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 16px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+        border-left: 4px solid var(--primary);
+    }
+    
+    .session-card:hover {
+        transform: translateX(5px);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    }
+    
+    .session-card.status-open {
+        border-left-color: #48bb78;
+    }
+    
+    .session-card.status-closed {
+        border-left-color: #a0aec0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 style="font-weight: 700; color: var(--dark);">
+            <i class="bi bi-cash-stack"></i> Cashier Sessions
+        </h1>
+        <p class="text-muted mb-0">View and manage all cashier sessions</p>
+    </div>
+    <div>
+        {% if user_role == 'accountant' or user_role == 'admin' %}
+        <a href="{% url 'hospital:accountant_comprehensive_dashboard' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </a>
+        {% else %}
+        <a href="{% url 'hospital:cashier_dashboard' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </a>
+        {% endif %}
+        <a href="{% url 'hospital:create_session' %}" class="btn btn-success">
+            <i class="bi bi-plus-circle"></i> Create New Session
+        </a>
+        <a href="{% url 'hospital:cashier_session_detail' %}" class="btn btn-primary">
+            <i class="bi bi-clock-history"></i> My Active Session
+        </a>
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="modern-card text-center">
+            <h3 style="font-size: 2rem; margin: 10px 0; font-weight: bold; color: var(--primary);">
+                {{ total_sessions|default:0 }}
+            </h3>
+            <p style="margin: 0; color: var(--gray);">Total Sessions</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center">
+            <h3 style="font-size: 2rem; margin: 10px 0; font-weight: bold; color: var(--success);">
+                {{ open_sessions|default:0 }}
+            </h3>
+            <p style="margin: 0; color: var(--gray);">Open Sessions</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center">
+            <h3 style="font-size: 2rem; margin: 10px 0; font-weight: bold; color: var(--success);">
+                GHS {{ total_payments|floatformat:0|intcomma|default:"0" }}
+            </h3>
+            <p style="margin: 0; color: var(--gray);">Total Payments</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="modern-card text-center">
+            <h3 style="font-size: 2rem; margin: 10px 0; font-weight: bold; color: var(--danger);">
+                GHS {{ total_refunds|floatformat:0|intcomma|default:"0" }}
+            </h3>
+            <p style="margin: 0; color: var(--gray);">Total Refunds</p>
+        </div>
+    </div>
+</div>
+
+<!-- Filter Form -->
+<div class="modern-card mb-4">
+    <form method="get" class="row g-3 align-items-end">
+        <div class="col-md-3">
+            <label class="form-label">Status</label>
+            <select name="status" class="form-control-modern">
+                <option value="">All Statuses</option>
+                <option value="open" {% if status_filter == 'open' %}selected{% endif %}>Open</option>
+                <option value="closed" {% if status_filter == 'closed' %}selected{% endif %}>Closed</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Date From</label>
+            <input type="date" name="date_from" class="form-control-modern" value="{{ date_from }}">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Date To</label>
+            <input type="date" name="date_to" class="form-control-modern" value="{{ date_to }}">
+        </div>
+        <div class="col-md-3">
+            <button type="submit" class="btn btn-primary w-100">
+                <i class="bi bi-search"></i> Filter
+            </button>
+        </div>
+    </form>
+</div>
+
+<!-- Sessions Table -->
+<div class="modern-card">
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>Session Number</th>
+                    <th>Cashier</th>
+                    <th>Opened At</th>
+                    <th>Closed At</th>
+                    <th>Status</th>
+                    <th>Opening Cash</th>
+                    <th>Total Payments</th>
+                    <th>Total Refunds</th>
+                    <th>Expected Cash</th>
+                    <th>Actual Cash</th>
+                    <th>Variance</th>
+                    <th>Transactions</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for session in page_obj %}
+                <tr>
+                    <td>
+                        <strong>{{ session.session_number }}</strong>
+                    </td>
+                    <td>{{ session.cashier.get_full_name|default:session.cashier.username }}</td>
+                    <td>{{ session.opened_at|date:"M d, Y H:i" }}</td>
+                    <td>
+                        {% if session.closed_at %}
+                            {{ session.closed_at|date:"M d, Y H:i" }}
+                        {% else %}
+                            <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if session.status == 'open' %}
+                            <span class="badge bg-success">Open</span>
+                        {% else %}
+                            <span class="badge bg-secondary">Closed</span>
+                        {% endif %}
+                    </td>
+                    <td>GHS {{ session.opening_cash|floatformat:2|intcomma }}</td>
+                    <td class="text-success">GHS {{ session.total_payments|floatformat:2|intcomma }}</td>
+                    <td class="text-danger">GHS {{ session.total_refunds|floatformat:2|intcomma }}</td>
+                    <td class="text-primary">GHS {{ session.expected_cash|floatformat:2|intcomma }}</td>
+                    <td>
+                        {% if session.actual_cash %}
+                            GHS {{ session.actual_cash|floatformat:2|intcomma }}
+                        {% else %}
+                            <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if session.variance is not None %}
+                            {% if session.variance > 0 %}
+                                <span class="text-success">+GHS {{ session.variance|floatformat:2|intcomma }}</span>
+                            {% elif session.variance < 0 %}
+                                <span class="text-danger">GHS {{ session.variance|floatformat:2|intcomma }}</span>
+                            {% else %}
+                                <span class="text-muted">GHS 0.00</span>
+                            {% endif %}
+                        {% else %}
+                            <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ session.total_transactions }}</td>
+                    <td>
+                        {% if session.status == 'open' and session.cashier == user %}
+                            <a href="{% url 'hospital:cashier_session_detail' %}" class="btn btn-sm btn-primary">
+                                <i class="bi bi-eye"></i> View
+                            </a>
+                            <a href="{% url 'hospital:close_session' session.id %}" class="btn btn-sm btn-danger">
+                                <i class="bi bi-lock"></i> Close
+                            </a>
+                        {% elif session.status == 'open' %}
+                            <a href="{% url 'hospital:cashier_session_detail' %}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-eye"></i> View
+                            </a>
+                        {% else %}
+                            <span class="text-muted">Closed</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="13" class="text-center text-muted py-4">
+                        <i class="bi bi-inbox" style="font-size: 2rem;"></i>
+                        <p class="mt-2 mb-0">No cashier sessions found.</p>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Pagination -->
+    {% if page_obj.has_other_pages %}
+    <nav aria-label="Page navigation" class="mt-4">
+        <ul class="pagination justify-content-center">
+            {% if page_obj.has_previous %}
+            <li class="page-item">
+                <a class="page-link" href="?page=1{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">First</a>
+            </li>
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Previous</a>
+            </li>
+            {% endif %}
+            
+            <li class="page-item active">
+                <span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+            </li>
+            
+            {% if page_obj.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Next</a>
+            </li>
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Last</a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Calculate variance using JavaScript if template filter doesn't work
+document.addEventListener('DOMContentLoaded', function() {
+    // The variance calculation is handled in the template
+    // This is just a placeholder for any additional JS if needed
+});
+</script>
+{% endblock %}
+

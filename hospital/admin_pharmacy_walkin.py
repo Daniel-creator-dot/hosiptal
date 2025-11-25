@@ -166,3 +166,9 @@ class WalkInPharmacySaleItemAdmin(admin.ModelAdmin):
 
 
 
+
+
+
+
+
+

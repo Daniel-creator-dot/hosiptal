@@ -148,3 +148,9 @@ class BloodCompatibilityMatrixAdmin(admin.ModelAdmin):
 
 
 
+
+
+
+
+
+

@@ -1,9 +1,10 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
 # Update package lists and install required system dependencies
 # Core compilation tools, PostgreSQL client, and PDF generation libraries
+# Using latest package versions
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         postgresql-client \
@@ -15,12 +16,14 @@ RUN apt-get update && \
         libmagic1 \
         pkg-config \
         libcairo2-dev \
-        libgirepository1.0-dev && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+        libgirepository1.0-dev \
+        && apt-get clean \
+        && rm -rf /var/lib/apt/lists/* \
+        && rm -rf /tmp/* \
+        && rm -rf /var/tmp/*
 
-# Upgrade pip
-RUN pip install --upgrade pip
+# Upgrade pip, setuptools, and wheel to latest versions
+RUN pip install --upgrade pip setuptools wheel
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .

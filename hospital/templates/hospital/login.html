@@ -17,19 +17,65 @@
 
             <form method="post" novalidate>
                 {% csrf_token %}
+                
+                {% if request.GET.timeout %}
+                    <div class="alert alert-warning" role="alert">
+                        <i class="bi bi-clock-history me-2"></i>
+                        <strong>Session Timeout</strong><br>
+                        You were automatically logged out due to 2 hours of inactivity. Please log in again.
+                    </div>
+                {% endif %}
+                
+                {% if is_locked %}
+                    <div class="alert alert-danger" role="alert">
+                        <i class="bi bi-shield-lock-fill me-2"></i>
+                        <strong>Account Locked</strong><br>
+                        Too many failed login attempts. Account locked until {{ locked_until|date:"g:i A" }}.
+                        Please try again later.
+                    </div>
+                {% elif remaining_attempts and remaining_attempts < max_attempts %}
+                    <div class="alert alert-warning" role="alert">
+                        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                        <strong>Warning:</strong> {{ remaining_attempts }} of {{ max_attempts }} login attempt(s) remaining.
+                    </div>
+                {% endif %}
+                
+                {# Show login attempt info even if not in context yet #}
+                {% if not remaining_attempts %}
+                    <div class="alert alert-info" role="alert" style="display: none;" id="login-attempts-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <strong>Login Security:</strong> You have {{ max_attempts|default:3 }} login attempts before account lockout.
+                    </div>
+                {% endif %}
+                
                 {% if form.non_field_errors %}
                     <div class="alert alert-danger">
                         {{ form.non_field_errors }}
                     </div>
                 {% endif %}
+                
+                {% if messages %}
+                    {% for message in messages %}
+                        <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                    {% endfor %}
+                {% endif %}
 
                 <div class="mb-3">
-                    <label class="form-label">Username</label>
+                    <label class="form-label" for="id_username">Username</label>
                     {{ form.username }}
+                    {% if form.username.errors %}
+                        <div class="text-danger small">{{ form.username.errors }}</div>
+                    {% endif %}
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Password</label>
+                    <label class="form-label" for="id_password">Password</label>
                     {{ form.password }}
+                    {% if form.password.errors %}
+                        <div class="text-danger small">{{ form.password.errors }}</div>
+                    {% endif %}
                 </div>
 
                 <button type="submit" class="btn btn-primary-modern btn-modern w-100">
@@ -115,6 +161,69 @@
 
 {% block extra_js %}
 <script>
+// Ensure CSRF token is available for form submission
+(function() {
+    // Get CSRF token from cookie, meta tag, or form input
+    function getCSRFToken() {
+        // Try cookie first
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, 'csrftoken'.length + 1) === ('csrftoken' + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring('csrftoken'.length + 1));
+                    break;
+                }
+            }
+        }
+        
+        // Fallback to meta tag
+        if (!cookieValue) {
+            const metaToken = document.querySelector('meta[name="csrf-token"]');
+            if (metaToken && metaToken.content) {
+                cookieValue = metaToken.content;
+            }
+        }
+        
+        // Fallback to form input
+        if (!cookieValue) {
+            const inputToken = document.querySelector('input[name="csrfmiddlewaretoken"]');
+            if (inputToken) {
+                cookieValue = inputToken.value;
+            }
+        }
+        
+        return cookieValue;
+    }
+    
+    // Ensure form has CSRF token before submission
+    document.addEventListener('DOMContentLoaded', function() {
+        const form = document.querySelector('form[method="post"]');
+        if (form) {
+            form.addEventListener('submit', function(e) {
+                const token = getCSRFToken();
+                if (!token) {
+                    console.warn('CSRF token not found, reloading page...');
+                    location.reload();
+                    e.preventDefault();
+                    return false;
+                }
+                
+                // Ensure hidden input exists with correct token
+                let csrfInput = form.querySelector('input[name="csrfmiddlewaretoken"]');
+                if (!csrfInput) {
+                    csrfInput = document.createElement('input');
+                    csrfInput.type = 'hidden';
+                    csrfInput.name = 'csrfmiddlewaretoken';
+                    form.appendChild(csrfInput);
+                }
+                csrfInput.value = token;
+            });
+        }
+    });
+})();
+
 function toggleAssistant() {
     const panel = document.getElementById('login-assistant-panel');
     if (panel.style.display === 'none' || !panel.style.display) {

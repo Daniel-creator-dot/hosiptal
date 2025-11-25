@@ -1,0 +1,394 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}HR Manager Dashboard - HMS{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; border-radius: 20px; padding: 40px; margin-bottom: 32px; box-shadow: 0 10px 40px rgba(139, 92, 246, 0.3);">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1 class="mb-2"><i class="bi bi-people-fill me-3"></i>HR Manager Dashboard</h1>
+                <p class="mb-0" style="opacity: 0.95; font-size: 16px;">Comprehensive Human Resources Management Overview</p>
+            </div>
+            <div class="text-end">
+                <div style="font-size: 18px; font-weight: 600;">{{ today|date:"l" }}</div>
+                <div style="font-size: 14px; opacity: 0.9;">{{ today|date:"F d, Y" }}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alerts -->
+    {% if alerts %}
+    <div class="row mb-4">
+        <div class="col-12">
+            {% for alert in alerts %}
+            <div class="alert alert-{{ alert.type }} alert-dismissible fade show" role="alert">
+                <i class="bi bi-exclamation-triangle me-2"></i>{{ alert.message }}
+                <a href="{% url alert.url %}" class="alert-link ms-2">View Details</a>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Key Metrics Row 1 -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-3">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div style="font-size: 36px; font-weight: 800; color: #8b5cf6;">{{ total_staff }}</div>
+                    <div style="width: 50px; height: 50px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center;">
+                        <i class="bi bi-people-fill text-white" style="font-size: 24px;"></i>
+                    </div>
+                </div>
+                <div style="color: #6b7280; font-size: 14px;">Total Active Staff</div>
+                <div style="color: #10b981; font-size: 12px; margin-top: 4px;">
+                    <i class="bi bi-arrow-up"></i> {{ new_hires_this_month }} new this month
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div style="font-size: 36px; font-weight: 800; color: #f59e0b;">{{ staff_on_leave }}</div>
+                    <div style="width: 50px; height: 50px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center;">
+                        <i class="bi bi-calendar-x text-white" style="font-size: 24px;"></i>
+                    </div>
+                </div>
+                <div style="color: #6b7280; font-size: 14px;">Staff on Leave Today</div>
+                <div style="color: #ef4444; font-size: 12px; margin-top: 4px;">
+                    <i class="bi bi-exclamation-circle"></i> {{ pending_leaves_count }} pending requests
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div style="font-size: 36px; font-weight: 800; color: #10b981;">{{ present_today }}</div>
+                    <div style="width: 50px; height: 50px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center;">
+                        <i class="bi bi-check-circle text-white" style="font-size: 24px;"></i>
+                    </div>
+                </div>
+                <div style="color: #6b7280; font-size: 14px;">Present Today</div>
+                <div style="color: #6b7280; font-size: 12px; margin-top: 4px;">
+                    {{ attendance_rate_this_month }}% attendance rate this month
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div style="font-size: 36px; font-weight: 800; color: #3b82f6;">{{ active_contracts }}</div>
+                    <div style="width: 50px; height: 50px; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center;">
+                        <i class="bi bi-file-earmark-text text-white" style="font-size: 24px;"></i>
+                    </div>
+                </div>
+                <div style="color: #6b7280; font-size: 14px;">Active Contracts</div>
+                {% if contracts_expiring_soon %}
+                <div style="color: #f59e0b; font-size: 12px; margin-top: 4px;">
+                    <i class="bi bi-exclamation-triangle"></i> {{ contracts_expiring_soon|length }} expiring soon
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Key Metrics Row 2 -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-3">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 28px; font-weight: 800; color: #10b981;">₵{{ total_payroll_this_month|floatformat:2|intcomma }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Payroll This Month</div>
+                {% if total_payroll_last_month %}
+                <div style="color: #6b7280; font-size: 12px; margin-top: 4px;">
+                    Last month: ₵{{ total_payroll_last_month|floatformat:2|intcomma }}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 28px; font-weight: 800; color: #ef4444;">{{ pending_payroll_count }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Pending Payroll</div>
+                {% if current_period %}
+                <div style="color: #6b7280; font-size: 12px; margin-top: 4px;">
+                    Period: {{ current_period.name }}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 28px; font-weight: 800; color: #f59e0b;">{{ reviews_due }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Reviews Due</div>
+                <div style="color: #6b7280; font-size: 12px; margin-top: 4px;">
+                    No review in 12+ months
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div style="font-size: 28px; font-weight: 800; color: #8b5cf6;">{{ upcoming_trainings|length }}</div>
+                <div style="color: #6b7280; font-size: 14px;">Upcoming Trainings</div>
+                <div style="color: #6b7280; font-size: 12px; margin-top: 4px;">
+                    Next 30 days
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div style="background: white; border-radius: 16px; padding: 32px; margin-bottom: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+        <h5 class="mb-4"><i class="bi bi-lightning-charge me-2"></i>Quick Actions</h5>
+        <div class="row g-3">
+            <div class="col-md-3 col-lg-2">
+                <a href="{% url 'hospital:staff_list' %}" class="btn btn-primary w-100">
+                    <i class="bi bi-people me-2"></i>Staff List
+                </a>
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <a href="{% url 'hospital:leave_request_list' %}" class="btn btn-warning w-100">
+                    <i class="bi bi-calendar-check me-2"></i>Leave Requests
+                </a>
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <a href="{% url 'hospital:attendance_calendar' %}" class="btn btn-success w-100">
+                    <i class="bi bi-calendar-check me-2"></i>Attendance
+                </a>
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <a href="{% url 'hospital:payroll_list' %}" class="btn btn-info w-100">
+                    <i class="bi bi-cash-stack me-2"></i>Payroll
+                </a>
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <a href="{% url 'hospital:hr_reports_dashboard' %}" class="btn btn-secondary w-100">
+                    <i class="bi bi-graph-up me-2"></i>Reports
+                </a>
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <a href="{% url 'hospital:leave_calendar' %}" class="btn btn-outline-primary w-100">
+                    <i class="bi bi-calendar3 me-2"></i>Leave Calendar
+                </a>
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <a href="{% url 'hospital:shift_calendar' %}" class="btn btn-outline-success w-100">
+                    <i class="bi bi-clock-history me-2"></i>Shift Calendar
+                </a>
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <a href="{% url 'hospital:contracts_dashboard' %}" class="btn btn-outline-info w-100">
+                    <i class="bi bi-file-earmark-text me-2"></i>Contracts
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <!-- Pending Leave Requests -->
+        <div class="col-md-6">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0"><i class="bi bi-calendar-x me-2 text-warning"></i>Pending Leave Requests</h5>
+                    <a href="{% url 'hospital:leave_request_list' %}" class="btn btn-sm btn-outline-primary">View All</a>
+                </div>
+                {% if pending_leave_requests %}
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Staff</th>
+                                <th>Department</th>
+                                <th>Start Date</th>
+                                <th>Days</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for leave in pending_leave_requests %}
+                            <tr>
+                                <td>{{ leave.staff.user.get_full_name|default:leave.staff.user.username }}</td>
+                                <td>{{ leave.staff.department.name|default:"N/A" }}</td>
+                                <td>{{ leave.start_date|date:"M d" }}</td>
+                                <td>{{ leave.total_days|default:"N/A" }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted text-center py-3">No pending leave requests</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Staff by Department -->
+        <div class="col-md-6">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-3"><i class="bi bi-building me-2 text-primary"></i>Staff by Department</h5>
+                {% if staff_by_department %}
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Department</th>
+                                <th class="text-end">Count</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for dept in staff_by_department %}
+                            <tr>
+                                <td>{{ dept.department__name|default:"Unassigned" }}</td>
+                                <td class="text-end"><strong>{{ dept.count }}</strong></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted text-center py-3">No department data available</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mt-2">
+        <!-- Birthdays This Month -->
+        <div class="col-md-6">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-3"><i class="bi bi-gift me-2 text-danger"></i>Birthdays This Month</h5>
+                {% if birthdays_this_month %}
+                <div class="list-group list-group-flush">
+                    {% for staff in birthdays_this_month %}
+                    <div class="list-group-item border-0 px-0">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>{{ staff.user.get_full_name|default:staff.user.username }}</strong>
+                                <br>
+                                <small class="text-muted">{{ staff.department.name|default:"N/A" }}</small>
+                            </div>
+                            <div class="text-end">
+                                <span class="badge bg-danger">{{ staff.date_of_birth|date:"M d" }}</span>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-muted text-center py-3">No birthdays this month</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Work Anniversaries -->
+        <div class="col-md-6">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-3"><i class="bi bi-trophy me-2 text-warning"></i>Work Anniversaries This Month</h5>
+                {% if work_anniversaries %}
+                <div class="list-group list-group-flush">
+                    {% for staff in work_anniversaries %}
+                    <div class="list-group-item border-0 px-0">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>{{ staff.user.get_full_name|default:staff.user.username }}</strong>
+                                <br>
+                                <small class="text-muted">{{ staff.department.name|default:"N/A" }}</small>
+                            </div>
+                            <div class="text-end">
+                                <span class="badge bg-warning">{{ staff.years_of_service }} year{{ staff.years_of_service|pluralize }}</span>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-muted text-center py-3">No work anniversaries this month</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mt-2">
+        <!-- Recent Payrolls -->
+        <div class="col-md-6">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0"><i class="bi bi-cash-stack me-2 text-success"></i>Recent Payrolls</h5>
+                    <a href="{% url 'hospital:payroll_list' %}" class="btn btn-sm btn-outline-primary">View All</a>
+                </div>
+                {% if recent_payrolls %}
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Staff</th>
+                                <th>Period</th>
+                                <th class="text-end">Net Pay</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for payroll in recent_payrolls %}
+                            <tr>
+                                <td>{{ payroll.staff.user.get_full_name|default:payroll.staff.user.username }}</td>
+                                <td>{{ payroll.period.name|default:"N/A" }}</td>
+                                <td class="text-end">₵{{ payroll.net_pay|floatformat:2|intcomma }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted text-center py-3">No recent payrolls</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Contracts Expiring Soon -->
+        <div class="col-md-6">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0"><i class="bi bi-exclamation-triangle me-2 text-warning"></i>Contracts Expiring Soon</h5>
+                    <a href="{% url 'hospital:contracts_dashboard' %}" class="btn btn-sm btn-outline-primary">View All</a>
+                </div>
+                {% if contracts_expiring_soon %}
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Staff</th>
+                                <th>End Date</th>
+                                <th>Days Left</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for contract in contracts_expiring_soon %}
+                            <tr>
+                                <td>{{ contract.staff.user.get_full_name|default:contract.staff.user.username }}</td>
+                                <td>{{ contract.contract.end_date|date:"M d, Y" }}</td>
+                                <td>
+                                    {% if contract.contract.end_date %}
+                                        {% if contract.contract.end_date >= today %}
+                                            <span class="badge bg-warning">{{ contract.contract.end_date|timesince:today }}</span>
+                                        {% else %}
+                                            <span class="badge bg-danger">Expired</span>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="badge bg-secondary">N/A</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted text-center py-3">No contracts expiring soon</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

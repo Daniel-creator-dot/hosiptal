@@ -1,0 +1,134 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Cashbook - HMS{% endblock %}
+{% block page_title %}Cashbook{% endblock %}
+{% block page_subtitle %}Receipts and Payments (Held until next day){% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Status</label>
+                    <select name="status" class="form-select">
+                        <option value="">All</option>
+                        <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
+                        <option value="classified" {% if status_filter == 'classified' %}selected{% endif %}>Classified</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Type</label>
+                    <select name="entry_type" class="form-select">
+                        <option value="">All</option>
+                        <option value="receipt" {% if entry_type_filter == 'receipt' %}selected{% endif %}>Receipt</option>
+                        <option value="payment" {% if entry_type_filter == 'payment' %}selected{% endif %}>Payment</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">From Date</label>
+                    <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">To Date</label>
+                    <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">&nbsp;</label>
+                    <div>
+                        <button type="submit" class="btn btn-primary w-100"><i class="bi bi-funnel"></i> Filter</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Cashbook Entries -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5><i class="bi bi-journal-text"></i> Cashbook Entries</h5>
+            <a href="{% url 'admin:hospital_cashbook_add' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> Add Entry
+            </a>
+        </div>
+        <div class="card-body">
+            {% if entries %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Entry #</th>
+                            <th>Date</th>
+                            <th>Type</th>
+                            <th>Payee/Payer</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                            <th>Held Until</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for entry in entries %}
+                        <tr>
+                            <td><strong>{{ entry.entry_number }}</strong></td>
+                            <td>{{ entry.entry_date|date:"M d, Y" }}</td>
+                            <td>
+                                <span class="badge bg-{% if entry.entry_type == 'receipt' %}success{% else %}danger{% endif %}">
+                                    {{ entry.get_entry_type_display }}
+                                </span>
+                            </td>
+                            <td>{{ entry.payee_or_payer }}</td>
+                            <td><strong>GHS {{ entry.amount|floatformat:2|intcomma }}</strong></td>
+                            <td>
+                                {% if entry.status == 'pending' %}
+                                    <span class="badge bg-warning">Pending</span>
+                                {% elif entry.status == 'classified' %}
+                                    <span class="badge bg-success">Classified</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ entry.get_status_display }}</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ entry.held_until|date:"M d, Y" }}</td>
+                            <td>
+                                <a href="{% url 'hospital:cashbook_detail' entry.id %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-eye"></i> View
+                                </a>
+                                {% if entry.status == 'pending' and entry.can_classify %}
+                                <a href="{% url 'hospital:cashbook_classify' entry.id %}" class="btn btn-sm btn-outline-success">
+                                    <i class="bi bi-check-circle"></i> Classify
+                                </a>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            {% if entries.has_other_pages %}
+            <nav aria-label="Page navigation">
+                <ul class="pagination justify-content-center">
+                    {% if entries.has_previous %}
+                    <li class="page-item"><a class="page-link" href="?page={{ entries.previous_page_number }}">Previous</a></li>
+                    {% endif %}
+                    <li class="page-item active"><span class="page-link">Page {{ entries.number }} of {{ entries.paginator.num_pages }}</span></li>
+                    {% if entries.has_next %}
+                    <li class="page-item"><a class="page-link" href="?page={{ entries.next_page_number }}">Next</a></li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i> No cashbook entries found.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+

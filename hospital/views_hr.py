@@ -22,6 +22,7 @@ from .forms_hr import (
     PerformanceReviewForm, TrainingRecordForm,
     AllowanceTypeForm, DeductionTypeForm, TaxBracketForm, PayrollConfigurationForm
 )
+from .services.performance_analytics import performance_analytics_service
 
 
 def is_hr_or_admin(user):
@@ -32,6 +33,19 @@ def is_hr_or_admin(user):
 def is_manager_or_admin(user):
     """Check if user is Manager or Admin"""
     return user.groups.filter(name__in=['Admin', 'HR', 'Manager']).exists() or user.is_staff
+
+
+def _suggest_rating_from_score(score: float) -> str:
+    """Map numeric performance index to HR rating choices."""
+    if score >= 4.5:
+        return 'outstanding'
+    if score >= 3.5:
+        return 'excellent'
+    if score >= 2.5:
+        return 'good'
+    if score >= 1.5:
+        return 'satisfactory'
+    return 'needs_improvement'
 
 
 @login_required
@@ -704,6 +718,8 @@ def staff_shift_create(request):
 def performance_review_create(request, staff_id):
     """Create performance review"""
     staff = get_object_or_404(Staff, pk=staff_id, is_deleted=False)
+    latest_snapshot = performance_analytics_service.ensure_recent_snapshot(staff)
+    snapshot_history = performance_analytics_service.get_recent_snapshots(staff, limit=4)
     
     if request.method == 'POST':
         form = PerformanceReviewForm(request.POST)
@@ -716,14 +732,19 @@ def performance_review_create(request, staff_id):
             messages.success(request, 'Performance review created successfully')
             return redirect('hospital:staff_detail', pk=staff.pk)
     else:
-        form = PerformanceReviewForm(initial={
+        initial = {
             'review_date': timezone.now().date(),
-        })
+        }
+        if latest_snapshot:
+            initial['overall_rating'] = _suggest_rating_from_score(float(latest_snapshot.overall_index))
+        form = PerformanceReviewForm(initial=initial)
     
     context = {
         'form': form,
         'staff': staff,
         'title': 'Create Performance Review',
+        'performance_snapshot': latest_snapshot,
+        'performance_snapshot_history': snapshot_history,
     }
     return render(request, 'hospital/performance_review_form.html', context)
 

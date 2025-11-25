@@ -237,7 +237,7 @@ Scheduled → Confirmed → Completed
 ### Required Settings (already configured)
 ```python
 # SMS Notify GH API Configuration
-SMS_API_KEY = '3316dce1-fd2a-4b4e-b6b2-60b30be375bb'
+SMS_API_KEY = '84c879bb-f9f9-4666-84a8-9f70a9b238cc'
 SMS_SENDER_ID = 'PrimeCare'
 SMS_API_URL = 'https://sms.smsnotifygh.com/smsapi'
 ```
@@ -282,6 +282,9 @@ When reporting issues, include:
 **System Version**: 1.0  
 **Last Updated**: November 6, 2025  
 **Module**: Front Desk Appointment Management with SMS Notifications
+
+
+
 
 
 

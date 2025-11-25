@@ -74,3 +74,9 @@ class HospitalSettingsAdmin(admin.ModelAdmin):
 
 
 
+
+
+
+
+
+

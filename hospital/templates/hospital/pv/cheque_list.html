@@ -1,0 +1,148 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Cheques{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-bank me-2"></i>Cheque Management</h2>
+        <a href="{% url 'hospital:cheque_create' %}" class="btn btn-primary">
+            <i class="bi bi-plus-circle me-2"></i>Create Cheque
+        </a>
+    </div>
+
+    <!-- Statistics -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Total Cheques</h6>
+                    <h3 class="mb-0">{{ stats.total }}</h3>
+                    <small class="text-muted">GHS {{ stats.total_amount|floatformat:2 }}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm border-start border-warning border-3">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Outstanding</h6>
+                    <h3 class="mb-0 text-warning">{{ stats.issued }}</h3>
+                    <small class="text-muted">GHS {{ stats.outstanding_amount|floatformat:2 }}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm border-start border-success border-3">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Cleared</h6>
+                    <h3 class="mb-0 text-success">{{ stats.cleared }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm border-start border-danger border-3">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Bounced</h6>
+                    <h3 class="mb-0 text-danger">{{ stats.bounced }}</h3>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Status</label>
+                    <select name="status" class="form-select">
+                        <option value="">All Statuses</option>
+                        <option value="issued" {% if status_filter == 'issued' %}selected{% endif %}>Issued</option>
+                        <option value="cleared" {% if status_filter == 'cleared' %}selected{% endif %}>Cleared</option>
+                        <option value="bounced" {% if status_filter == 'bounced' %}selected{% endif %}>Bounced</option>
+                        <option value="void" {% if status_filter == 'void' %}selected{% endif %}>Void</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Bank Account</label>
+                    <select name="bank" class="form-select">
+                        <option value="">All Banks</option>
+                        {% for bank in bank_accounts %}
+                        <option value="{{ bank.id }}" {% if bank_filter == bank.id|stringformat:"s" %}selected{% endif %}>{{ bank.account_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Search</label>
+                    <input type="text" name="search" class="form-control" placeholder="Search by cheque number, payee..." value="{{ search }}">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">&nbsp;</label>
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-search me-2"></i>Filter
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Cheques Table -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Cheque #</th>
+                            <th>Issue Date</th>
+                            <th>Cheque Date</th>
+                            <th>Payee</th>
+                            <th>Bank Account</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for cheque in cheques %}
+                        <tr>
+                            <td><strong>{{ cheque.cheque_number }}</strong></td>
+                            <td>{{ cheque.issue_date|date:"M d, Y" }}</td>
+                            <td>{{ cheque.cheque_date|date:"M d, Y" }}</td>
+                            <td>{{ cheque.payee_name }}</td>
+                            <td>{{ cheque.bank_account.account_name }}</td>
+                            <td><strong>GHS {{ cheque.amount|floatformat:2 }}</strong></td>
+                            <td>
+                                {% if cheque.status == 'issued' %}
+                                    <span class="badge bg-warning">Issued</span>
+                                {% elif cheque.status == 'cleared' %}
+                                    <span class="badge bg-success">Cleared</span>
+                                {% elif cheque.status == 'bounced' %}
+                                    <span class="badge bg-danger">Bounced</span>
+                                {% elif cheque.status == 'void' %}
+                                    <span class="badge bg-secondary">Void</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:cheque_detail' cheque.id %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-eye"></i> View
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="8" class="text-center text-muted py-4">
+                                <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+                                No cheques found
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

@@ -1,0 +1,127 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}{{ title }} - HMS{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1 class="mb-2"><i class="bi bi-list-ul me-3"></i>{{ title }}</h1>
+                    {% if doctor %}
+                    <p class="text-muted">Services by {{ doctor.user.get_full_name }}</p>
+                    {% endif %}
+                </div>
+                <div>
+                    <a href="{% url 'hospital:locum_doctor_service_create' %}" class="btn btn-success me-2">
+                        <i class="bi bi-plus-circle me-2"></i>Add Service
+                    </a>
+                    <a href="{% url 'hospital:locum_doctors_dashboard' %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left me-2"></i>Back to Dashboard
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label for="start_date" class="form-label">Start Date</label>
+                    <input type="date" class="form-control" id="start_date" name="start_date" value="{{ start_date|date:'Y-m-d' }}">
+                </div>
+                <div class="col-md-3">
+                    <label for="end_date" class="form-label">End Date</label>
+                    <input type="date" class="form-control" id="end_date" name="end_date" value="{{ end_date|date:'Y-m-d' }}">
+                </div>
+                <div class="col-md-3">
+                    <label for="payment_status" class="form-label">Payment Status</label>
+                    <select class="form-select" id="payment_status" name="payment_status">
+                        <option value="">All Statuses</option>
+                        <option value="pending" {% if payment_status == 'pending' %}selected{% endif %}>Pending</option>
+                        <option value="processed" {% if payment_status == 'processed' %}selected{% endif %}>Processed</option>
+                        <option value="paid" {% if payment_status == 'paid' %}selected{% endif %}>Paid</option>
+                    </select>
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-search me-2"></i>Filter
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Services Table -->
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Doctor</th>
+                            <th>Patient</th>
+                            <th>Service Type</th>
+                            <th class="text-end">Service Charge</th>
+                            <th class="text-end">Doctor Payment (50%)</th>
+                            <th class="text-end">Tax</th>
+                            <th class="text-end">Net Payment</th>
+                            <th>Payment Method</th>
+                            <th>Status</th>
+                            <th class="text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for service in services %}
+                        <tr>
+                            <td>{{ service.service_date|date:"M d, Y" }}</td>
+                            <td>{{ service.doctor.user.get_full_name }}</td>
+                            <td>{{ service.patient.full_name }}</td>
+                            <td>{{ service.service_type }}</td>
+                            <td class="text-end">₵{{ service.service_charge|floatformat:2|intcomma }}</td>
+                            <td class="text-end">₵{{ service.doctor_payment|floatformat:2|intcomma }}</td>
+                            <td class="text-end">
+                                {% if service.tax_amount > 0 %}
+                                <span class="text-warning">₵{{ service.tax_amount|floatformat:2|intcomma }}</span>
+                                {% else %}
+                                ₵0.00
+                                {% endif %}
+                            </td>
+                            <td class="text-end"><strong>₵{{ service.net_payment|floatformat:2|intcomma }}</strong></td>
+                            <td>{{ service.get_payment_method_display }}</td>
+                            <td>
+                                {% if service.payment_status == 'paid' %}
+                                <span class="badge bg-success">Paid</span>
+                                {% elif service.payment_status == 'processed' %}
+                                <span class="badge bg-info">Processed</span>
+                                {% else %}
+                                <span class="badge bg-warning">Pending</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                <a href="{% url 'hospital:locum_doctor_service_detail' service_id=service.id %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="11" class="text-center text-muted py-4">
+                                <i class="bi bi-inbox" style="font-size: 2rem;"></i>
+                                <p class="mb-0 mt-2">No services found</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

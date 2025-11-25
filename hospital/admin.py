@@ -38,6 +38,12 @@ from .admin_revenue_streams import *
 # Department Budgeting System
 from .admin_department_budgeting import *
 
+# Locum Doctor Management
+from .admin_locum_doctors import *
+
+# Audit Logging
+from .admin_audit import *
+
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User
 from django.utils.html import format_html
@@ -149,11 +155,14 @@ class PatientAdmin(admin.ModelAdmin):
         total = obj.get_total_invoice_amount()
         balance = obj.get_outstanding_balance()
         if balance > 0:
+            balance_str = f"{float(balance):.2f}"
+            total_str = f"{float(total):.2f}"
             return format_html(
-                '<span style="color: #f56565;">Outstanding: GHS {:.2f}</span><br><small>Total: GHS {:.2f}</small>',
-                float(balance), float(total)
+                '<span style="color: #f56565;">Outstanding: GHS {}</span><br><small>Total: GHS {}</small>',
+                balance_str, total_str
             )
-        return format_html('<span style="color: #48bb78;">Total: GHS {:.2f}</span>', float(total))
+        total_str = f"{float(total):.2f}"
+        return format_html('<span style="color: #48bb78;">Total: GHS {}</span>', total_str)
     financial_summary.short_description = 'Financial Summary'
 
 
@@ -318,15 +327,15 @@ class DepartmentAdmin(admin.ModelAdmin):
 
 @admin.register(Staff)
 class StaffAdmin(admin.ModelAdmin):
-    list_display = ['user_link', 'employee_id', 'profession_badge', 'department', 'age_display', 'phone_number', 'employment_status', 'is_active']
-    list_filter = ['profession', 'department', 'employment_status', 'is_active', 'gender', 'blood_group']
+    list_display = ['user_link', 'employee_id', 'profession_badge', 'department', 'locum_badge', 'age_display', 'phone_number', 'employment_status', 'is_active']
+    list_filter = ['profession', 'department', 'employment_status', 'is_locum', 'is_active', 'gender', 'blood_group']
     search_fields = ['user__first_name', 'user__last_name', 'employee_id', 'phone_number', 'personal_email']
     ordering = ['user__last_name', 'user__first_name']
     readonly_fields = ['employee_id', 'age_display', 'years_of_service_display', 'retirement_date_display']
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('user', 'employee_id', 'profession', 'department', 'employment_status', 'is_active')
+            'fields': ('user', 'employee_id', 'profession', 'department', 'employment_status', 'is_locum', 'is_active')
         }),
         ('Professional Details', {
             'fields': ('specialization', 'registration_number', 'license_number')
@@ -388,6 +397,12 @@ class StaffAdmin(admin.ModelAdmin):
         color = colors.get(obj.profession, 'secondary')
         return format_html('<span class="badge badge-{}">{}</span>', color, obj.get_profession_display())
     profession_badge.short_description = 'Profession'
+    
+    def locum_badge(self, obj):
+        color = 'success' if obj.is_locum else 'secondary'
+        label = 'Locum' if obj.is_locum else 'Staff'
+        return format_html('<span class="badge badge-{}">{}</span>', color, label)
+    locum_badge.short_description = 'Locum'
     
     def age_display(self, obj):
         if obj.age:
@@ -1190,9 +1205,10 @@ class InvoiceAdmin(admin.ModelAdmin):
     status_badge.short_description = 'Status'
     
     def balance_display(self, obj):
+        balance_str = f"{float(obj.balance):.2f}"
         if obj.balance > 0:
-            return format_html('<span style="color: #f56565; font-weight: bold;">GHS {:.2f}</span>', float(obj.balance))
-        return format_html('<span style="color: #48bb78;">GHS {:.2f}</span>', float(obj.balance))
+            return format_html('<span style="color: #f56565; font-weight: bold;">GHS {}</span>', balance_str)
+        return format_html('<span style="color: #48bb78;">GHS {}</span>', balance_str)
     balance_display.short_description = 'Balance'
     
     def due_date_warning(self, obj):

@@ -2,11 +2,15 @@
 SMS Service Integration
 Handles SMS sending via API providers (Hubtel, Twilio, etc.)
 """
+import os
 import requests
 import json
+import logging
 from django.conf import settings
 from django.utils import timezone
 from ..models_advanced import SMSLog
+
+logger = logging.getLogger(__name__)
 
 
 class SMSService:
@@ -14,9 +18,16 @@ class SMSService:
     
     def __init__(self):
         # SMS Notify GH API configuration
-        self.api_key = getattr(settings, 'SMS_API_KEY', '3316dce1-fd2a-4b4e-b6b2-60b30be375bb')
-        self.sender_id = getattr(settings, 'SMS_SENDER_ID', 'PrimeCare')
-        self.base_url = getattr(settings, 'SMS_API_URL', 'https://sms.smsnotifygh.com/smsapi')
+        # IMPORTANT: Set SMS_API_KEY in environment or settings
+        # Default key may be invalid - always use your own API key
+        default_key = '84c879bb-f9f9-4666-84a8-9f70a9b238cc'
+        self.api_key = getattr(settings, 'SMS_API_KEY', None) or os.environ.get('SMS_API_KEY', default_key)
+        self.sender_id = getattr(settings, 'SMS_SENDER_ID', None) or os.environ.get('SMS_SENDER_ID', 'PrimeCare')
+        self.base_url = getattr(settings, 'SMS_API_URL', None) or os.environ.get('SMS_API_URL', 'https://sms.smsnotifygh.com/smsapi')
+        
+        # Warn if using default API key
+        if self.api_key == default_key:
+            logger.warning("Using default SMS API key. This may be invalid. Set SMS_API_KEY in settings or environment.")
     
     def send_sms(self, phone_number, message, message_type='general', recipient_name='', 
                  related_object_id=None, related_object_type=''):
@@ -54,7 +65,8 @@ class SMSService:
                 return sms_log
             
             # Format phone number for Ghana (233XXXXXXXXX format)
-            phone = phone_number.replace('+', '').replace(' ', '').replace('-', '').replace('(', '').replace(')', '').strip()
+            original_phone = phone_number
+            phone = phone_number.replace('+', '').replace(' ', '').replace('-', '').replace('(', '').replace(')', '').replace('.', '').strip()
             
             # Remove leading zeros or country code prefix
             if phone.startswith('0'):
@@ -64,13 +76,44 @@ class SMSService:
                     phone = phone[2:]  # Remove 00 prefix
                 elif len(phone) == 9:  # Assume it's a local number without country code
                     phone = '233' + phone
+                elif len(phone) == 10 and phone.startswith('0'):
+                    phone = '233' + phone[1:]
                 elif not phone.startswith('233'):
                     phone = '233' + phone
             
             # Validate final phone number format
-            if not phone.startswith('233') or len(phone) != 12:
+            if not phone.startswith('233'):
                 sms_log.status = 'failed'
-                sms_log.error_message = f"Invalid phone number format: {phone_number} (formatted: {phone})"
+                sms_log.error_message = f"Invalid phone number format: {original_phone} (formatted: {phone}). Must start with 233 for Ghana."
+                sms_log.provider_response = {
+                    'original_phone': original_phone,
+                    'formatted_phone': phone,
+                    'validation_error': 'Must start with 233'
+                }
+                sms_log.save()
+                return sms_log
+            
+            if len(phone) != 12:
+                sms_log.status = 'failed'
+                sms_log.error_message = f"Invalid phone number length: {original_phone} (formatted: {phone}, length: {len(phone)}). Expected 12 digits (233XXXXXXXXX)."
+                sms_log.provider_response = {
+                    'original_phone': original_phone,
+                    'formatted_phone': phone,
+                    'length': len(phone),
+                    'validation_error': f'Expected 12 digits, got {len(phone)}'
+                }
+                sms_log.save()
+                return sms_log
+            
+            # Additional validation: check if all digits after 233 are numeric
+            if not phone[3:].isdigit():
+                sms_log.status = 'failed'
+                sms_log.error_message = f"Invalid phone number: {original_phone} contains non-numeric characters after country code."
+                sms_log.provider_response = {
+                    'original_phone': original_phone,
+                    'formatted_phone': phone,
+                    'validation_error': 'Contains non-numeric characters'
+                }
                 sms_log.save()
                 return sms_log
             
@@ -118,13 +161,26 @@ class SMSService:
                         error_code = response_json.get('code', 'unknown')
                         error_msg = response_json.get('message', response_text)
                         sms_log.status = 'failed'
-                        sms_log.error_message = f"API Error (code {error_code}): {error_msg}"
+                        
+                        # Provide more helpful error messages
+                        if error_code == 1004:
+                            sms_log.error_message = f"INVALID API KEY (code {error_code}): {error_msg}. Please update SMS_API_KEY in settings or environment variables."
+                        elif error_code == 1707:
+                            sms_log.error_message = f"INSUFFICIENT BALANCE (code {error_code}): {error_msg}. Please top up your SMS account."
+                        elif error_code == 1704:
+                            sms_log.error_message = f"INVALID PHONE NUMBER (code {error_code}): {error_msg}. Phone: {phone}"
+                        elif error_code == 1706:
+                            sms_log.error_message = f"INVALID SENDER ID (code {error_code}): {error_msg}. Check SMS_SENDER_ID setting."
+                        else:
+                            sms_log.error_message = f"API Error (code {error_code}): {error_msg}"
+                        
                         sms_log.provider_response = {
                             'status': 'failed',
                             'status_code': response.status_code,
                             'response': response_text,
                             'parsed_response': response_json,
-                            'phone_attempted': phone
+                            'phone_attempted': phone,
+                            'api_key_used': self.api_key[:10] + '...' if len(self.api_key) > 10 else self.api_key
                         }
                 except (json.JSONDecodeError, ValueError):
                     # Not JSON - try old format (plain text status codes)

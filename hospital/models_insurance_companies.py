@@ -7,7 +7,7 @@ from django.db import models
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
 from decimal import Decimal
-from .models import BaseModel, Patient
+from .models import BaseModel, Patient, ServiceCode, Drug
 
 
 class InsuranceCompany(BaseModel):
@@ -253,6 +253,158 @@ class InsurancePlan(BaseModel):
         return (insurance_pays, patient_pays)
 
 
+class InsuranceExclusionRule(BaseModel):
+    """
+    Declarative exclusion rules for services/drugs that a plan or company will not cover.
+    """
+    RULE_TYPES = [
+        ('service_code', 'Specific Service Code'),
+        ('service_category', 'Service Category'),
+        ('drug', 'Specific Drug'),
+        ('drug_generic', 'Drug Generic Name'),
+        ('drug_category', 'Drug Category'),
+    ]
+    
+    ENFORCEMENT_CHOICES = [
+        ('block', 'Block billing'),
+        ('patient_pay', 'Charge patient/self-pay'),
+        ('warn', 'Warn only'),
+    ]
+    
+    insurance_company = models.ForeignKey(
+        InsuranceCompany,
+        on_delete=models.CASCADE,
+        related_name='exclusion_rules',
+        help_text="Which insurance company provided this exclusion list"
+    )
+    insurance_plan = models.ForeignKey(
+        InsurancePlan,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='exclusion_rules',
+        help_text="Limit rule to a specific plan (optional)"
+    )
+    apply_to_all_plans = models.BooleanField(
+        default=False,
+        help_text="If checked, this rule applies to every plan for the insurance company"
+    )
+    
+    rule_type = models.CharField(max_length=30, choices=RULE_TYPES)
+    service_code = models.ForeignKey(
+        ServiceCode,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='insurance_exclusion_rules'
+    )
+    service_category = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Category name to match ServiceCode.category (case-insensitive)"
+    )
+    drug = models.ForeignKey(
+        Drug,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='insurance_exclusion_rules'
+    )
+    drug_generic_name = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Matches Drug.generic_name (case-insensitive)"
+    )
+    drug_category = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Custom grouping for drugs (e.g., antibiotics, antimalarials)"
+    )
+    
+    enforcement_action = models.CharField(
+        max_length=20,
+        choices=ENFORCEMENT_CHOICES,
+        default='block',
+        help_text="What the billing team should do when this rule hits"
+    )
+    reason = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Short reason the front desk sees"
+    )
+    notes = models.TextField(blank=True)
+    
+    effective_from = models.DateField(null=True, blank=True)
+    effective_to = models.DateField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['insurance_company', 'rule_type', 'created']
+        indexes = [
+            models.Index(fields=['insurance_company', 'rule_type']),
+            models.Index(fields=['rule_type', 'enforcement_action']),
+        ]
+        verbose_name = "Insurance Exclusion Rule"
+        verbose_name_plural = "Insurance Exclusion Rules"
+    
+    def __str__(self):
+        target = self.describe_target()
+        plan = f" - {self.insurance_plan.plan_name}" if self.insurance_plan else ''
+        return f"{self.insurance_company.name}{plan}: {target}"
+    
+    def describe_target(self):
+        if self.rule_type == 'service_code' and self.service_code:
+            return f"Service {self.service_code.code}"
+        if self.rule_type == 'service_category' and self.service_category:
+            return f"Category {self.service_category}"
+        if self.rule_type == 'drug' and self.drug:
+            return f"Drug {self.drug.name}"
+        if self.rule_type == 'drug_generic' and self.drug_generic_name:
+            return f"Generic {self.drug_generic_name}"
+        if self.rule_type == 'drug_category' and self.drug_category:
+            return f"Drug Category {self.drug_category}"
+        return "Unspecified target"
+    
+    def is_effective(self, reference_date=None):
+        from django.utils import timezone
+        if not self.is_active:
+            return False
+        reference_date = reference_date or timezone.now().date()
+        if self.effective_from and reference_date < self.effective_from:
+            return False
+        if self.effective_to and reference_date > self.effective_to:
+            return False
+        return True
+    
+    def matches_target(self, service_code=None, drug=None):
+        if self.rule_type == 'service_code' and service_code:
+            return self.service_code_id == service_code.id
+        if self.rule_type == 'service_category' and service_code:
+            if not self.service_category:
+                return False
+            return (service_code.category or '').lower() == self.service_category.lower()
+        if self.rule_type == 'drug' and drug:
+            return self.drug_id == drug.id
+        if self.rule_type == 'drug_generic' and drug:
+            if not self.drug_generic_name:
+                return False
+            return (drug.generic_name or '').lower() == self.drug_generic_name.lower()
+        if self.rule_type == 'drug_category' and drug:
+            if not self.drug_category:
+                return False
+            return (drug.form or '').lower() == self.drug_category.lower()
+        return False
+    
+    def formatted_reason(self, service_code=None, drug=None):
+        if self.reason:
+            return self.reason
+        target = service_code.description if service_code and self.rule_type.startswith('service') else ''
+        if drug and self.rule_type.startswith('drug'):
+            target = drug.name
+        target = target or self.describe_target()
+        return f"{self.insurance_company.name} does not cover {target}"
+
+
 class PatientInsurance(BaseModel):
     """
     Patient Insurance Enrollment - Track which patients are enrolled in which plans
@@ -410,6 +562,8 @@ class PatientInsurance(BaseModel):
         self.last_verified_date = timezone.now().date()
         self.verification_status = status
         self.save(update_fields=['last_verified_date', 'verification_status'])
+
+
 
 
 

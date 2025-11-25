@@ -1,0 +1,103 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Profit & Loss Reports - HMS{% endblock %}
+{% block page_title %}Profit & Loss Reports{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Period</label>
+                    <select name="period" class="form-select">
+                        <option value="">All</option>
+                        <option value="monthly" {% if period_filter == 'monthly' %}selected{% endif %}>Monthly</option>
+                        <option value="quarterly" {% if period_filter == 'quarterly' %}selected{% endif %}>Quarterly</option>
+                        <option value="yearly" {% if period_filter == 'yearly' %}selected{% endif %}>Yearly</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Fiscal Year</label>
+                    <select name="fiscal_year" class="form-select">
+                        <option value="">All</option>
+                        {% for fy in fiscal_years %}
+                        <option value="{{ fy.id }}" {% if request.GET.fiscal_year == fy.id|stringformat:"s" %}selected{% endif %}>
+                            {{ fy.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">&nbsp;</label>
+                    <div>
+                        <button type="submit" class="btn btn-primary w-100"><i class="bi bi-funnel"></i> Filter</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header d-flex justify-content-between">
+            <h5><i class="bi bi-graph-up"></i> Profit & Loss Reports</h5>
+            <a href="{% url 'hospital:profit_loss_create' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> Generate Report
+            </a>
+        </div>
+        <div class="card-body">
+            {% if reports %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Report #</th>
+                            <th>Period</th>
+                            <th>Start Date</th>
+                            <th>End Date</th>
+                            <th>Total Revenue</th>
+                            <th>Total Expenses</th>
+                            <th>Net Profit</th>
+                            <th>Profit %</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for report in reports %}
+                        <tr>
+                            <td><strong>{{ report.report_number }}</strong></td>
+                            <td>{{ report.get_report_period_display }}</td>
+                            <td>{{ report.period_start|date:"M d, Y" }}</td>
+                            <td>{{ report.period_end|date:"M d, Y" }}</td>
+                            <td>GHS {{ report.total_revenue|floatformat:2|intcomma }}</td>
+                            <td>GHS {{ report.total_expenses|floatformat:2|intcomma }}</td>
+                            <td>
+                                <strong class="text-{% if report.net_profit >= 0 %}success{% else %}danger{% endif %}">
+                                    GHS {{ report.net_profit|floatformat:2|intcomma }}
+                                </strong>
+                            </td>
+                            <td>
+                                <span class="badge bg-{% if report.profit_percentage >= 0 %}success{% else %}danger{% endif %}">
+                                    {{ report.profit_percentage|floatformat:2 }}%
+                                </span>
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:profit_loss_edit' report.id %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-pencil"></i> Edit
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert alert-info">No profit & loss reports found.</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
