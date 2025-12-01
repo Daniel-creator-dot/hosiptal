@@ -79,12 +79,24 @@ DEBUG = config('DEBUG', default=True, cast=bool)
 
 # Allow all hosts in DEBUG mode, or use configured hosts in production
 # For Docker/network access, include local network IPs
+# In production, ALLOWED_HOSTS must be explicitly set via environment variable
 if DEBUG:
     # In DEBUG mode, allow common development hosts and IP addresses
     # Include all common local network IPs for easier access from other devices
     default_hosts = 'localhost,127.0.0.1,0.0.0.0,192.168.2.97,192.168.233.1,192.168.64.1,172.20.112.1,192.168.1.1,192.168.0.1,10.0.0.1,10.132.245.143'
 else:
-    default_hosts = 'localhost,127.0.0.1'
+    # In production, require explicit ALLOWED_HOSTS configuration
+    # Default to localhost only if not set (will fail in production - user must configure)
+    default_hosts = config('ALLOWED_HOSTS', default='localhost,127.0.0.1')
+    # Warn if using default in production
+    if default_hosts == 'localhost,127.0.0.1':
+        import warnings
+        warnings.warn(
+            "⚠️ WARNING: Using default ALLOWED_HOSTS in production. "
+            "Please set ALLOWED_HOSTS environment variable with your domain(s).",
+            UserWarning
+        )
+
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default=default_hosts, cast=lambda v: [s.strip() for s in v.split(',') if s.strip()])
 
 # Django validates the Host header, but doesn't include port numbers
@@ -545,7 +557,8 @@ CRISPY_TEMPLATE_PACK = "bootstrap5"
 
 # Django Allauth
 AUTHENTICATION_BACKENDS = [
-    'django.contrib.auth.backends.ModelBackend',
+    'hospital.backends.EmailOrUsernameModelBackend',  # Custom: supports username OR email
+    'django.contrib.auth.backends.ModelBackend',  # Fallback to standard backend
     'guardian.backends.ObjectPermissionBackend',
     'allauth.account.auth_backends.AuthenticationBackend',
 ]
@@ -771,8 +784,41 @@ CSRF_HEADER_NAME = 'HTTP_X_CSRFTOKEN'
 # CSRF_TRUSTED_ORIGINS - Allow localhost and local network IPs
 # In Docker, this should include the host machine's IP address
 # Also includes common local network IPs for development
+# In production, automatically add HTTPS origins based on ALLOWED_HOSTS
 default_csrf_origins = 'http://localhost:8000,http://127.0.0.1:8000,http://0.0.0.0:8000,http://192.168.2.97:8000,http://192.168.233.1:8000,http://192.168.64.1:8000,http://172.20.112.1:8000,http://10.132.245.143:8000'
 CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS', default=default_csrf_origins, cast=lambda v: [s.strip() for s in v.split(',') if s.strip()])
+
+# In production (non-DEBUG), automatically add HTTPS origins for all ALLOWED_HOSTS
+if not DEBUG:
+    # Get SITE_URL from settings or construct from ALLOWED_HOSTS
+    site_url = config('SITE_URL', default='')
+    if site_url:
+        # Add the site URL to CSRF trusted origins
+        if site_url not in CSRF_TRUSTED_ORIGINS:
+            CSRF_TRUSTED_ORIGINS.append(site_url)
+        # Also add without trailing slash
+        site_url_no_slash = site_url.rstrip('/')
+        if site_url_no_slash not in CSRF_TRUSTED_ORIGINS and site_url_no_slash != site_url:
+            CSRF_TRUSTED_ORIGINS.append(site_url_no_slash)
+    
+    # Add HTTPS origins for all ALLOWED_HOSTS (for production domains)
+    for host in ALLOWED_HOSTS:
+        if host and host not in ['localhost', '127.0.0.1', '0.0.0.0']:
+            # Add both HTTP and HTTPS (some deployments may not have SSL initially)
+            http_origin = f'http://{host}'
+            https_origin = f'https://{host}'
+            if http_origin not in CSRF_TRUSTED_ORIGINS:
+                CSRF_TRUSTED_ORIGINS.append(http_origin)
+            if https_origin not in CSRF_TRUSTED_ORIGINS:
+                CSRF_TRUSTED_ORIGINS.append(https_origin)
+            # Also add with common ports
+            for port in [80, 443, 8000, 8080]:
+                http_port_origin = f'http://{host}:{port}'
+                https_port_origin = f'https://{host}:{port}'
+                if http_port_origin not in CSRF_TRUSTED_ORIGINS:
+                    CSRF_TRUSTED_ORIGINS.append(http_port_origin)
+                if https_port_origin not in CSRF_TRUSTED_ORIGINS:
+                    CSRF_TRUSTED_ORIGINS.append(https_port_origin)
 
 # In DEBUG mode, add additional common development origins
 if DEBUG:
