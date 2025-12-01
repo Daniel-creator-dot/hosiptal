@@ -49,13 +49,30 @@ def main():
     print("🚀 Starting import...")
     print()
     
-    # Import the tables
+    # Get the correct SQL directory path
+    sql_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'import', 'legacy')
+    
+    print(f"📁 SQL Directory: {sql_dir}")
+    print()
+    
+    # First, import the raw SQL tables
+    print("Step 1: Importing raw SQL tables...")
     call_command(
         'import_legacy_database',
         '--tables',
         *patient_tables,
         '--skip-drop',
-        sql_dir=r'C:\Users\user\Videos\DS'
+        sql_dir=sql_dir
+    )
+    
+    print()
+    print("Step 2: Creating Patient model records from imported data...")
+    # Then, create Patient model records from the imported data
+    call_command(
+        'import_legacy_patients',
+        '--sql-dir',
+        sql_dir,
+        '--patients-only'
     )
     
     print()

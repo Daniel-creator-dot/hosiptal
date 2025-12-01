@@ -46,56 +46,91 @@ class Command(BaseCommand):
         )
     
     def handle(self, *args, **options):
-        sql_dir = options['sql_dir']
-        dry_run = options['dry_run']
-        patients_only = options['patients_only']
-        insurance_only = options['insurance_only']
-        limit = options['limit']
-        
-        if not os.path.exists(sql_dir):
-            raise CommandError(f'SQL directory does not exist: {sql_dir}')
-        
-        if dry_run:
-            self.stdout.write(self.style.WARNING('DRY RUN MODE - No data will be imported'))
-        
-        self.stdout.write(self.style.SUCCESS('Starting legacy data import...'))
-        
-        # Import patients first
-        if not insurance_only:
-            patient_file = os.path.join(sql_dir, 'patient_data.sql')
-            if os.path.exists(patient_file):
-                patient_map = self.import_patients(patient_file, dry_run, limit)
+        try:
+            # Force output to be written immediately
+            import sys
+            sys.stdout.flush()
+            sys.stderr.flush()
+            
+            sql_dir = options['sql_dir']
+            dry_run = options['dry_run']
+            patients_only = options['patients_only']
+            insurance_only = options['insurance_only']
+            limit = options['limit']
+            
+            # Write initial output
+            self.stdout.write('')
+            self.stdout.write('=' * 60)
+            self.stdout.write('Legacy Patient Import Command')
+            self.stdout.write('=' * 60)
+            self.stdout.write(f'SQL Directory: {sql_dir}')
+            self.stdout.write(f'Patients Only: {patients_only}')
+            self.stdout.write(f'Insurance Only: {insurance_only}')
+            self.stdout.write(f'Dry Run: {dry_run}')
+            self.stdout.write(f'Limit: {limit}')
+            self.stdout.write('=' * 60)
+            
+            if not os.path.exists(sql_dir):
+                raise CommandError(f'SQL directory does not exist: {sql_dir}')
+            
+            if dry_run:
+                self.stdout.write(self.style.WARNING('DRY RUN MODE - No data will be imported'))
+            
+            self.stdout.write(self.style.SUCCESS('Starting legacy data import...'))
+            
+            # Import patients first
+            if not insurance_only:
+                patient_file = os.path.join(sql_dir, 'patient_data.sql')
+                self.stdout.write(f'Looking for patient file: {patient_file}')
+                if os.path.exists(patient_file):
+                    self.stdout.write(f'Found patient file: {patient_file}')
+                    patient_map = self.import_patients(patient_file, dry_run, limit)
+                else:
+                    self.stdout.write(self.style.WARNING(f'File not found: {patient_file}'))
+                    patient_map = {}
             else:
-                self.stdout.write(self.style.WARNING(f'File not found: {patient_file}'))
-                patient_map = {}
-        else:
-            # Build map from existing patients
-            patient_map = self.build_patient_map_from_db()
-        
-        # Import insurance mappings
-        if not patients_only:
-            insurance_file = os.path.join(sql_dir, 'insurance_data.sql')
-            if os.path.exists(insurance_file):
-                self.import_insurance_data(insurance_file, patient_map, dry_run, limit)
-            else:
-                self.stdout.write(self.style.WARNING(f'File not found: {insurance_file}'))
-        
-        self.stdout.write(self.style.SUCCESS('✓ Legacy data import completed!'))
+                # Build map from existing patients
+                patient_map = self.build_patient_map_from_db()
+            
+            # Import insurance mappings
+            if not patients_only:
+                insurance_file = os.path.join(sql_dir, 'insurance_data.sql')
+                if os.path.exists(insurance_file):
+                    self.import_insurance_data(insurance_file, patient_map, dry_run, limit)
+                else:
+                    self.stdout.write(self.style.WARNING(f'File not found: {insurance_file}'))
+            
+            self.stdout.write(self.style.SUCCESS('[OK] Legacy data import completed!'))
+        except Exception as e:
+            import traceback
+            self.stdout.write(self.style.ERROR(f'Error in handle: {str(e)}'))
+            self.stdout.write(self.style.ERROR(traceback.format_exc()))
+            raise
     
     def import_patients(self, file_path, dry_run=False, limit=None):
         """Import patients from patient_data.sql"""
         self.stdout.write('Importing patients...')
         
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
-        
-        # Extract INSERT statements
-        insert_pattern = r'INSERT INTO patient_data VALUES\((.*?)\);'
-        matches = re.findall(insert_pattern, content, re.DOTALL)
-        
-        if limit:
-            matches = matches[:limit]
-            self.stdout.write(f'  Limited to first {limit} records')
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            self.stdout.write(f'  File read successfully. Size: {len(content)} characters')
+            
+            # Extract INSERT statements
+            insert_pattern = r'INSERT INTO patient_data VALUES\((.*?)\);'
+            matches = re.findall(insert_pattern, content, re.DOTALL)
+            
+            self.stdout.write(f'  Found {len(matches)} INSERT statements')
+            
+            if limit:
+                matches = matches[:limit]
+                self.stdout.write(f'  Limited to first {limit} records')
+        except Exception as e:
+            import traceback
+            self.stdout.write(self.style.ERROR(f'Error reading file: {str(e)}'))
+            self.stdout.write(self.style.ERROR(traceback.format_exc()))
+            raise
         
         created_count = 0
         updated_count = 0

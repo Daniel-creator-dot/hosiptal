@@ -178,12 +178,29 @@ def hr_reports_dashboard(request):
 @login_required
 def staff_list_report(request):
     """Staff List Report"""
+    from django.db.models import OuterRef, Subquery
+    
     department_filter = request.GET.get('department', '')
     profession_filter = request.GET.get('profession', '')
     status_filter = request.GET.get('status', 'active')
     export_format = request.GET.get('export', '')
     
-    staff = Staff.objects.filter(is_deleted=False).select_related('user', 'department')
+    # Get the most recent staff record ID for each user to avoid duplicates
+    from django.db.models import OuterRef, Subquery
+    latest_staff = Staff.objects.filter(
+        is_deleted=False,
+        user=OuterRef('user')
+    ).order_by('-created')[:1]
+    latest_staff_ids = Staff.objects.filter(
+        is_deleted=False
+    ).annotate(
+        latest_id=Subquery(latest_staff.values('id'))
+    ).values_list('latest_id', flat=True).distinct()
+    
+    staff = Staff.objects.filter(
+        id__in=latest_staff_ids,
+        is_deleted=False
+    ).select_related('user', 'department')
     
     if status_filter == 'active':
         staff = staff.filter(is_active=True)
@@ -704,7 +721,19 @@ def performance_report(request):
     
     # Statistics
     total_reviews = reviews.count()
-    avg_score = reviews.aggregate(avg=Avg('overall_rating'))['avg'] or 0
+    
+    # Map text ratings to numeric values for averaging
+    rating_map = {
+        'outstanding': 5,
+        'excellent': 4,
+        'good': 3,
+        'satisfactory': 2,
+        'needs_improvement': 1,
+    }
+    
+    # Calculate average rating in Python (since overall_rating is CharField)
+    ratings_list = [rating_map.get(review.overall_rating, 0) for review in reviews if review.overall_rating]
+    avg_score = sum(ratings_list) / len(ratings_list) if ratings_list else 0
     
     if export_format == 'csv':
         return export_performance_csv(reviews)

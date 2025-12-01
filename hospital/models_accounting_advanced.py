@@ -349,10 +349,14 @@ class PaymentVoucher(BaseModel):
     payment_date = models.DateField(null=True, blank=True)
     
     # Bank details
-    bank_name = models.CharField(max_length=200, blank=True)
-    account_number = models.CharField(max_length=50, blank=True)
+    bank_account = models.ForeignKey('BankAccount', on_delete=models.SET_NULL, null=True, blank=True, related_name='payment_vouchers', help_text="Bank account used for payment")
+    bank_name = models.CharField(max_length=200, blank=True, help_text="Legacy field - use bank_account instead")
+    account_number = models.CharField(max_length=50, blank=True, help_text="Legacy field - use bank_account instead")
     cheque_number = models.CharField(max_length=50, blank=True)
     cheque = models.ForeignKey('Cheque', on_delete=models.SET_NULL, null=True, blank=True, related_name='payment_vouchers')
+    
+    # Payment details
+    memo = models.TextField(blank=True, help_text="Memo/details for the payment")
     
     # Approval workflow
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
@@ -411,12 +415,42 @@ class PaymentVoucher(BaseModel):
         self.approved_date = timezone.now()
         self.save()
     
-    def mark_paid(self, user, payment_date=None):
-        """Mark voucher as paid and create journal entry"""
+    def mark_paid(self, user, payment_date=None, apply_withholding_tax=True):
+        """
+        Mark voucher as paid and create journal entry
+        If AP has withholding tax, pays net amount (97% for 3% WHT) and creates WHT Payable
+        
+        Args:
+            user: User processing the payment
+            payment_date: Date of payment (defaults to today)
+            apply_withholding_tax: Whether to apply withholding tax if AP has WHT
+        """
         if self.status != 'approved':
             raise ValueError("Only approved vouchers can be marked as paid")
         
         with transaction.atomic():
+            # Check if this is a supplier payment with AP
+            ap = None
+            withholding_tax = None
+            net_payment_amount = self.amount
+            
+            if self.payment_type == 'supplier':
+                # Find associated AP
+                ap = AccountsPayable.objects.filter(
+                    payment_voucher=self
+                ).first()
+                
+                if ap and apply_withholding_tax and not ap.supplier_is_exempted:
+                    # Get withholding tax for this AP
+                    withholding_tax = WithholdingTaxPayable.objects.filter(
+                        accounts_payable=ap
+                    ).first()
+                    
+                    if withholding_tax:
+                        # Pay net amount (gross - WHT)
+                        net_payment_amount = withholding_tax.net_amount_paid
+                        print(f"[PAYMENT] Applying WHT: Gross GHS {self.amount:,.2f}, WHT GHS {withholding_tax.withholding_amount:,.2f}, Net GHS {net_payment_amount:,.2f}")
+            
             # Create journal entry
             je = AdvancedJournalEntry.objects.create(
                 journal=Journal.objects.get(journal_type='payment'),
@@ -426,29 +460,56 @@ class PaymentVoucher(BaseModel):
                 created_by=user,
             )
             
-            # Debit expense account
-            AdvancedJournalEntryLine.objects.create(
-                journal_entry=je,
-                line_number=1,
-                account=self.expense_account,
-                description=self.description,
-                debit_amount=self.amount,
-                credit_amount=0,
-            )
+            line_number = 1
+            
+            # If AP exists, debit AP (not expense account)
+            if ap:
+                # Debit Accounts Payable
+                ap_account, _ = Account.objects.get_or_create(
+                    account_code='2100',
+                    defaults={'account_name': 'Accounts Payable', 'account_type': 'liability'}
+                )
+                
+                AdvancedJournalEntryLine.objects.create(
+                    journal_entry=je,
+                    line_number=line_number,
+                    account=ap_account,
+                    description=f"Payment to {self.payee_name}",
+                    debit_amount=net_payment_amount,
+                    credit_amount=0,
+                )
+                line_number += 1
+                
+                # Update AP
+                ap.amount_paid += net_payment_amount
+                ap.balance_due = ap.amount - ap.amount_paid
+                ap.save(update_fields=['amount_paid', 'balance_due'])
+            else:
+                # Debit expense account (for non-AP payments)
+                AdvancedJournalEntryLine.objects.create(
+                    journal_entry=je,
+                    line_number=line_number,
+                    account=self.expense_account,
+                    description=self.description,
+                    debit_amount=self.amount,
+                    credit_amount=0,
+                )
+                line_number += 1
             
             # Credit payment account (cash/bank)
             AdvancedJournalEntryLine.objects.create(
                 journal_entry=je,
-                line_number=2,
+                line_number=line_number,
                 account=self.payment_account,
                 description=self.description,
                 debit_amount=0,
-                credit_amount=self.amount,
+                credit_amount=net_payment_amount,
             )
+            line_number += 1
             
             # Update totals
-            je.total_debit = self.amount
-            je.total_credit = self.amount
+            je.total_debit = net_payment_amount
+            je.total_credit = net_payment_amount
             je.save()
             
             # Post journal entry
@@ -460,6 +521,8 @@ class PaymentVoucher(BaseModel):
             self.paid_by = user
             self.journal_entry = je
             self.save()
+            
+            print(f"[PAYMENT] ✅ Payment processed: {self.voucher_number} - GHS {net_payment_amount:,.2f}")
 
 
 class Cheque(BaseModel):
@@ -860,7 +923,10 @@ class AdvancedAccountsReceivable(BaseModel):
 
 
 class AccountsPayable(BaseModel):
-    """Accounts Payable Tracking"""
+    """
+    Accounts Payable Tracking
+    According to accrual accounting: ALL purchases (cash or credit) must first create liabilities
+    """
     bill_number = models.CharField(max_length=50, unique=True)
     vendor_name = models.CharField(max_length=200)
     vendor_invoice = models.CharField(max_length=100)
@@ -868,7 +934,7 @@ class AccountsPayable(BaseModel):
     bill_date = models.DateField()
     due_date = models.DateField()
     
-    amount = models.DecimalField(max_digits=15, decimal_places=2)
+    amount = models.DecimalField(max_digits=15, decimal_places=2, help_text="Gross amount from invoice")
     amount_paid = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     balance_due = models.DecimalField(max_digits=15, decimal_places=2)
     
@@ -876,6 +942,23 @@ class AccountsPayable(BaseModel):
     
     is_overdue = models.BooleanField(default=False)
     days_overdue = models.IntegerField(default=0)
+    
+    # 3-Way Matching Fields
+    purchase_order_number = models.CharField(max_length=100, blank=True, help_text="Purchase Order number")
+    invoice_amount = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True, help_text="Amount from supplier invoice")
+    grn_amount = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True, help_text="Amount from Goods Received Note")
+    grn_number = models.CharField(max_length=100, blank=True, help_text="Goods Received Note number")
+    is_matched = models.BooleanField(default=False, help_text="Whether 3-way matching is complete (PO, Invoice, GRN)")
+    
+    # Purchase Classification (for WHT calculation)
+    SUPPLY_TYPES = [
+        ('goods', 'Goods (3% WHT)'),
+        ('works', 'Works (5% WHT)'),
+        ('local_services', 'Local Services (7.5% WHT)'),
+        ('foreign_services', 'Foreign Services (20% WHT)'),
+    ]
+    supply_type = models.CharField(max_length=20, choices=SUPPLY_TYPES, default='goods', help_text="Type of supply for WHT calculation")
+    supplier_is_exempted = models.BooleanField(default=False, help_text="Whether supplier is exempted from WHT")
     
     # Links
     payment_voucher = models.ForeignKey(PaymentVoucher, on_delete=models.SET_NULL, null=True, blank=True)
@@ -887,6 +970,24 @@ class AccountsPayable(BaseModel):
     
     def __str__(self):
         return f"{self.bill_number} - {self.vendor_name} - GHS {self.balance_due}"
+    
+    def validate_3_way_match(self):
+        """
+        Validate 3-way matching: PO, Invoice, GRN amounts must match
+        Returns (is_valid, error_message)
+        """
+        if not self.invoice_amount or not self.grn_amount:
+            return False, "Invoice amount and GRN amount must be set for 3-way matching"
+        
+        if abs(self.invoice_amount - self.grn_amount) > Decimal('0.01'):  # Allow small rounding differences
+            return False, f"Invoice amount (GHS {self.invoice_amount}) does not match GRN amount (GHS {self.grn_amount})"
+        
+        if abs(self.invoice_amount - self.amount) > Decimal('0.01'):
+            return False, f"Invoice amount (GHS {self.invoice_amount}) does not match AP amount (GHS {self.amount})"
+        
+        self.is_matched = True
+        self.save(update_fields=['is_matched'])
+        return True, "3-way matching validated successfully"
 
 
 # ==================== BANK & CASH MANAGEMENT ====================
@@ -2056,6 +2157,117 @@ class WithholdingReceivable(BaseModel):
             new_num = 1
         
         return f"{prefix}{new_num:06d}"
+
+
+# ==================== WITHHOLDING TAX PAYABLE ====================
+
+class WithholdingTaxPayable(BaseModel):
+    """
+    Withholding Tax Payable - Tax withheld from supplier payments
+    According to Ghana tax laws:
+    - Goods: 3%
+    - Works: 5%
+    - Local Services: 7.5%
+    - Foreign Services: 20%
+    """
+    withholding_number = models.CharField(max_length=50, unique=True)
+    withholding_date = models.DateField(default=timezone.now)
+    
+    supplier_name = models.CharField(max_length=200, help_text="Supplier/vendor name")
+    supplier_tin = models.CharField(max_length=50, blank=True, help_text="Supplier TIN number")
+    is_exempted = models.BooleanField(default=False, help_text="Whether supplier is exempted from WHT")
+    
+    # Source transaction
+    accounts_payable = models.ForeignKey(AccountsPayable, on_delete=models.CASCADE, related_name='withholding_taxes', null=True, blank=True)
+    payment_voucher = models.ForeignKey(PaymentVoucher, on_delete=models.SET_NULL, null=True, blank=True, related_name='withholding_taxes')
+    
+    # Amounts
+    gross_amount = models.DecimalField(max_digits=15, decimal_places=2, help_text="Gross amount before WHT")
+    withholding_rate = models.DecimalField(max_digits=5, decimal_places=2, help_text="WHT rate as percentage (3, 5, 7.5, or 20)")
+    withholding_amount = models.DecimalField(max_digits=15, decimal_places=2, help_text="Amount withheld")
+    net_amount_paid = models.DecimalField(max_digits=15, decimal_places=2, help_text="Net amount paid to supplier (gross - WHT)")
+    
+    # Classification
+    SUPPLY_TYPES = [
+        ('goods', 'Goods (3%)'),
+        ('works', 'Works (5%)'),
+        ('local_services', 'Local Services (7.5%)'),
+        ('foreign_services', 'Foreign Services (20%)'),
+    ]
+    supply_type = models.CharField(max_length=20, choices=SUPPLY_TYPES, default='goods')
+    
+    # Payment status
+    amount_paid = models.DecimalField(max_digits=15, decimal_places=2, default=0, help_text="Amount of WHT paid to GRA")
+    balance_due = models.DecimalField(max_digits=15, decimal_places=2, help_text="Balance due to GRA")
+    
+    # Dates
+    due_date = models.DateField(null=True, blank=True, help_text="Due date for WHT payment to GRA")
+    paid_date = models.DateField(null=True, blank=True)
+    
+    # Accounting
+    payable_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='withholding_tax_payables', help_text="WHT Payable account (Current Liability)")
+    journal_entry = models.ForeignKey(AdvancedJournalEntry, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    description = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['-withholding_date', '-withholding_number']
+        verbose_name_plural = 'Withholding Tax Payable'
+    
+    def __str__(self):
+        return f"{self.withholding_number} - {self.supplier_name} - GHS {self.withholding_amount}"
+    
+    def save(self, *args, **kwargs):
+        if not self.withholding_number:
+            self.withholding_number = self.generate_withholding_number()
+        
+        # Auto-calculate if not set
+        if self.gross_amount and self.withholding_rate and not self.withholding_amount:
+            if not self.is_exempted:
+                self.withholding_amount = (self.gross_amount * self.withholding_rate / 100)
+            else:
+                self.withholding_amount = Decimal('0.00')
+        
+        if self.gross_amount and self.withholding_amount and not self.net_amount_paid:
+            self.net_amount_paid = self.gross_amount - self.withholding_amount
+        
+        # Calculate balance
+        self.balance_due = self.withholding_amount - self.amount_paid
+        
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_withholding_number():
+        """Generate unique withholding tax payable number"""
+        today = timezone.now()
+        prefix = f"WTP{today.strftime('%Y%m')}"
+        
+        last_wtp = WithholdingTaxPayable.objects.filter(
+            withholding_number__startswith=prefix
+        ).order_by('-withholding_number').first()
+        
+        if last_wtp:
+            try:
+                last_num = int(last_wtp.withholding_number[-6:])
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}{new_num:06d}"
+    
+    @staticmethod
+    def get_rate_for_supply_type(supply_type):
+        """Get WHT rate based on supply type"""
+        rates = {
+            'goods': Decimal('3.00'),
+            'works': Decimal('5.00'),
+            'local_services': Decimal('7.5'),
+            'foreign_services': Decimal('20.00'),
+        }
+        return rates.get(supply_type, Decimal('3.00'))
 
 
 # ==================== DEPOSITS ====================

@@ -28,8 +28,6 @@ from . import views_blood_bank
 from . import views_login_tracking
 from . import views_medical_records
 from . import views_insurance
-from . import views_session_management
-from . import views_user_management
 from . import views_insurance_management
 from . import views_flexible_pricing
 from . import views_theatre
@@ -78,14 +76,13 @@ from . import views_system_health
 from . import views_it_operations
 from . import views_pv_cheque
 from . import views_audit_logs
-from . import views_primecare_accounting
-from . import views_primecare_reports
 from . import views_backup_management
 from . import views_data_validation
 from . import views_performance
 from . import views_notifications
 from . import views_staff_portal
 from . import views_queue
+from . import views_user_management
 app_name = 'hospital'
 
 urlpatterns = [
@@ -115,16 +112,12 @@ urlpatterns = [
     
     # Admin Session Management
     path('admin/sessions/', views_session_management.active_sessions_view, name='active_sessions'),
+    path('admin/sessions/unlock-all/', views_session_management.unlock_all_accounts, name='unlock_all_accounts'),
     path('admin/users/<int:user_id>/logout/', views_session_management.force_logout_user, name='force_logout_user'),
     path('admin/users/<int:user_id>/block/', views_session_management.block_user, name='block_user'),
     path('admin/users/<int:user_id>/unblock/', views_session_management.unblock_user, name='unblock_user'),
     path('admin/sessions/<str:session_key>/logout/', views_session_management.force_logout_session, name='force_logout_session'),
     path('admin/sessions/logout-all/', views_session_management.force_logout_all, name='force_logout_all'),
-    
-    # Comprehensive User Management
-    path('admin/users/', views_user_management.user_management_view, name='user_management'),
-    path('admin/users/<int:user_id>/end-session/', views_user_management.end_user_session, name='end_user_session'),
-    path('admin/users/<int:user_id>/unlock/', views_user_management.unlock_user_account, name='unlock_user_account'),
     
     # System Health Monitoring
     path('admin/system-health/', views_system_health.system_health_dashboard, name='system_health'),
@@ -133,6 +126,9 @@ urlpatterns = [
     # IT Operations Center
     path('admin/it-operations/', views_it_operations.it_operations_dashboard, name='it_operations_dashboard'),
     path('admin/it-operations/api/', views_it_operations.it_operations_api, name='it_operations_api'),
+    
+    # User Management
+    path('admin/users/', views_user_management.user_management_view, name='user_management'),
     
     # User Management (IT Operations)
     path('admin/users/create/', views_it_operations.create_user, name='create_user'),
@@ -178,6 +174,8 @@ urlpatterns = [
     path('patients/', views.patient_list, name='patient_list'),
     path('patients/new/', views.patient_create, name='patient_create'),
     path('patient-registration/', views.patient_create, name='patient_registration'),
+    # Handle invalid patient IDs gracefully
+    path('patients/INVALID/', lambda request: redirect('hospital:patient_list'), name='patient_invalid_redirect'),
     path('patients/<uuid:pk>/', views.patient_detail, name='patient_detail'),
     path('patients/<uuid:pk>/edit/', views.patient_edit, name='patient_edit'),
     path('patients/<uuid:patient_pk>/quick-visit/', views.patient_quick_visit_create, name='patient_quick_visit_create'),
@@ -394,6 +392,7 @@ urlpatterns = [
     path('hr/manager-dashboard/', views_hr_manager.hr_manager_dashboard, name='hr_manager_dashboard'),
     
     # World-Class HR Management
+    path('hr/service-desk/', views_hr_worldclass.hr_services_dashboard, name='hr_services_dashboard'),
     path('hr/worldclass/', views_hr_worldclass.hr_worldclass_dashboard, name='hr_worldclass_dashboard'),
     path('hr/leave-calendar/', views_hr_worldclass.leave_calendar, name='leave_calendar'),
     path('hr/shift-calendar/', views_hr_worldclass.shift_calendar, name='shift_calendar'),
@@ -582,9 +581,7 @@ urlpatterns = [
     path('cashier/payments/process-invoice/<uuid:invoice_id>/', views_cashier.process_payment, name='process_payment_invoice'),
     path('cashier/receipt/<uuid:receipt_id>/', views_cashier.payment_receipt, name='payment_receipt'),
     path('cashier/session/', views_cashier.cashier_session_detail, name='cashier_session_detail'),
-    path('cashier/session/create/', views_cashier.create_session, name='create_session'),
     path('cashier/session/<uuid:session_id>/close/', views_cashier.close_session, name='close_session'),
-    path('cashier/session/<uuid:session_id>/update-notes/', views_cashier.update_session_notes, name='update_session_notes'),
     path('cashier-sessions/', views_cashier.cashier_sessions_list, name='cashier_sessions_list'),
     path('cashier/bills/', views_cashier.cashier_bills, name='cashier_bills'),
     path('cashier/invoices/', views_cashier.cashier_invoices, name='cashier_invoices'),
@@ -902,15 +899,6 @@ urlpatterns = [
     path('accounting/revenue-streams/', views_revenue_monitoring.revenue_streams_dashboard, name='revenue_streams_dashboard'),
     path('accounting/revenue-by-department/', views_revenue_monitoring.revenue_by_department_report, name='revenue_by_department'),
     path('accounting/api/revenue-streams/', views_revenue_monitoring.revenue_streams_api, name='revenue_streams_api'),
-    
-    # Primecare Medical Centre Accounting
-    path('primecare/record-deposit/', views_primecare_accounting.record_deposit, name='primecare_record_deposit'),
-    path('primecare/received-payment/', views_primecare_accounting.received_payment, name='primecare_received_payment'),
-    path('primecare/receivable-details/<int:receivable_id>/', views_primecare_accounting.get_receivable_details, name='primecare_receivable_details'),
-    
-    # Primecare Financial Reports
-    path('primecare/balance-sheet/', views_primecare_reports.primecare_balance_sheet, name='primecare_balance_sheet'),
-    path('primecare/profit-loss/', views_primecare_reports.primecare_profit_loss, name='primecare_profit_loss'),
     
     # Locum Doctor Payment Management (Accountants)
     path('locum/doctors/', views_locum_doctors.locum_doctors_dashboard, name='locum_doctors_dashboard'),

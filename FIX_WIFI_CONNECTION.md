@@ -73,3 +73,11 @@ You mentioned changing the port, but I see port **8000** is still configured.
 - View logs: `docker-compose logs web`
 - Test local first: http://localhost:8000
 
+
+
+
+
+
+
+
+

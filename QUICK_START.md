@@ -142,3 +142,11 @@ All Docker services connect to PostgreSQL Desktop via `host.docker.internal:5432
 
 
 
+
+
+
+
+
+
+
+

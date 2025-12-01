@@ -3,6 +3,11 @@
 import os
 import sys
 
+# Fix for Windows colorama OSError: [Errno 22] Invalid argument
+if sys.platform == 'win32':
+    os.environ.setdefault('COLORAMA_DISABLE_AUTOWRAP', '1')
+    os.environ.setdefault('FORCE_COLOR', '0')
+
 
 def main():
     """Run administrative tasks."""

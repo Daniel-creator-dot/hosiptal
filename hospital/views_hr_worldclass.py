@@ -19,7 +19,7 @@ from .decorators import role_required
 
 
 @login_required
-@role_required('hr_manager')
+@role_required('hr_manager', 'hr')
 def hr_worldclass_dashboard(request):
     """World-class HR dashboard with comprehensive features"""
     today = timezone.now().date()
@@ -126,14 +126,14 @@ def hr_worldclass_dashboard(request):
         is_active=True,
         is_deleted=False,
         date_of_birth__month=current_month
-    ).order_by('date_of_birth__day')[:10]
+    ).distinct().order_by('date_of_birth__day')[:10]
     
     # Work anniversaries this month
     work_anniversaries = Staff.objects.filter(
         is_active=True,
         is_deleted=False,
         date_of_joining__month=current_month
-    ).exclude(date_of_joining__year=today.year).order_by('date_of_joining__day')[:10]
+    ).exclude(date_of_joining__year=today.year).distinct().order_by('date_of_joining__day')[:10]
     
     # Calculate years for each anniversary
     for staff in work_anniversaries:
@@ -146,7 +146,7 @@ def hr_worldclass_dashboard(request):
         is_active=True,
         is_deleted=False,
         date_of_joining__gte=probation_cutoff
-    ).select_related('user', 'department').order_by('date_of_joining')
+    ).select_related('user', 'department').distinct().order_by('date_of_joining')
     
     # Calculate probation progress
     for staff in staff_on_probation:
@@ -175,7 +175,7 @@ def hr_worldclass_dashboard(request):
         is_deleted=False
     ).filter(
         Q(emergency_contact_name='') | Q(emergency_contact_phone='')
-    )[:5]
+    ).distinct()[:5]
     
     # Recent activities
     recent_leaves = LeaveRequest.objects.filter(
@@ -226,7 +226,218 @@ def hr_worldclass_dashboard(request):
 
 
 @login_required
-@role_required('hr_manager')
+@role_required('hr_manager', 'hr')
+def hr_services_dashboard(request):
+    """Focused HR services dashboard for day-to-day operations"""
+    today = timezone.now().date()
+
+    def safe_value(default, func, label):
+        try:
+            return func()
+        except Exception as exc:
+            print(f"[hr-services] Failed to compute {label}: {exc}")
+            return default
+
+    total_staff = safe_value(
+        0,
+        lambda: Staff.objects.filter(is_active=True, is_deleted=False).count(),
+        'total_staff'
+    )
+
+    pending_leaves = safe_value(
+        0,
+        lambda: LeaveRequest.objects.filter(status='pending', is_deleted=False).count(),
+        'pending_leaves'
+    )
+
+    approved_leaves_this_month = safe_value(
+        0,
+        lambda: LeaveRequest.objects.filter(
+            status='approved',
+            is_deleted=False,
+            start_date__month=today.month,
+            start_date__year=today.year
+        ).count(),
+        'approved_leaves_this_month'
+    )
+
+    payroll_pending = safe_value(
+        0,
+        lambda: Payroll.objects.filter(payment_status='pending', is_deleted=False).count(),
+        'payroll_pending'
+    )
+
+    contracts_expiring_60 = safe_value(
+        0,
+        lambda: StaffEmploymentContract.objects.filter(
+            is_current=True,
+            is_deleted=False,
+            contract__end_date__gte=today,
+            contract__end_date__lte=today + timedelta(days=60)
+        ).count(),
+        'contracts_expiring_60'
+    )
+
+    attendance_present = 0
+    attendance_absent = 0
+    try:
+        today_attendance = AttendanceCalendar.objects.filter(
+            attendance_date=today,
+            is_deleted=False
+        )
+        if today_attendance.exists():
+            attendance_present = today_attendance.filter(status='present').count()
+            attendance_absent = today_attendance.filter(status='absent').count()
+        else:
+            attendance_present = max(0, total_staff - pending_leaves)
+            attendance_absent = 0
+    except Exception as exc:
+        print(f"[hr-services] Attendance snapshot failed: {exc}")
+        attendance_present = max(0, total_staff - pending_leaves)
+
+    last_30_days = today - timedelta(days=30)
+    new_hires = safe_value(
+        [],
+        lambda: list(
+            Staff.objects.filter(
+                is_active=True,
+                is_deleted=False,
+                date_of_joining__isnull=False,
+                date_of_joining__gte=last_30_days
+            ).select_related('user', 'department').distinct().order_by('-date_of_joining')[:6]
+        ),
+        'new_hires'
+    )
+
+    pending_leave_requests = safe_value(
+        [],
+        lambda: list(
+            LeaveRequest.objects.filter(
+                status='pending',
+                is_deleted=False
+            ).select_related('staff__user').order_by('start_date')[:6]
+        ),
+        'pending_leave_requests'
+    )
+
+    upcoming_birthdays = safe_value(
+        [],
+        lambda: list(
+            Staff.objects.filter(
+                is_active=True,
+                is_deleted=False,
+                date_of_birth__month=today.month
+            ).select_related('user', 'department').distinct().order_by('date_of_birth__day')[:6]
+        ),
+        'upcoming_birthdays'
+    )
+
+    probation_cutoff = today - timedelta(days=90)
+    probation_staff = safe_value(
+        [],
+        lambda: list(
+            Staff.objects.filter(
+                is_active=True,
+                is_deleted=False,
+                date_of_joining__isnull=False,
+                date_of_joining__gte=probation_cutoff
+            ).select_related('user', 'department').distinct().order_by('date_of_joining')[:6]
+        ),
+        'probation_staff'
+    )
+    for staff in probation_staff:
+        if staff.date_of_joining:
+            days_since_joining = (today - staff.date_of_joining).days
+            staff.probation_days_elapsed = max(0, days_since_joining)
+            staff.probation_days_remaining = max(0, 90 - days_since_joining)
+        else:
+            staff.probation_days_elapsed = 0
+            staff.probation_days_remaining = 0
+
+    try:
+        from .models_hr import StaffDocument
+        expiring_documents = list(
+            StaffDocument.objects.filter(
+                is_deleted=False,
+                is_active=True,
+                expiry_date__gte=today,
+                expiry_date__lte=today + timedelta(days=45)
+            ).select_related('staff__user').order_by('expiry_date')[:6]
+        )
+        for doc in expiring_documents:
+            if doc.expiry_date:
+                doc.days_remaining = (doc.expiry_date - today).days
+                doc.is_overdue = doc.expiry_date < today
+            else:
+                doc.days_remaining = 0
+                doc.is_overdue = False
+    except Exception as exc:
+        print(f"[hr-services] Could not load expiring documents: {exc}")
+        expiring_documents = []
+
+    service_cards = [
+        {
+            'label': 'Active Staff',
+            'value': total_staff,
+            'accent': '#8b5cf6',
+            'icon': 'people-fill'
+        },
+        {
+            'label': 'Pending Leaves',
+            'value': pending_leaves,
+            'accent': '#f97316',
+            'icon': 'calendar2-event'
+        },
+        {
+            'label': 'Pending Payroll',
+            'value': payroll_pending,
+            'accent': '#10b981',
+            'icon': 'cash-stack'
+        },
+        {
+            'label': 'Expiring Contracts (60d)',
+            'value': contracts_expiring_60,
+            'accent': '#ef4444',
+            'icon': 'file-earmark-excel'
+        },
+        {
+            'label': 'Approved Leave (month)',
+            'value': approved_leaves_this_month,
+            'accent': '#0ea5e9',
+            'icon': 'calendar-check'
+        },
+        {
+            'label': 'Present Today',
+            'value': attendance_present,
+            'accent': '#22c55e',
+            'icon': 'person-check'
+        },
+    ]
+
+    context = {
+        'title': 'HR Service Desk',
+        'service_cards': service_cards,
+        'pending_leave_requests': pending_leave_requests,
+        'new_hires': new_hires,
+        'upcoming_birthdays': upcoming_birthdays,
+        'probation_staff': probation_staff,
+        'expiring_documents': expiring_documents,
+        'attendance_snapshot': {
+            'present': attendance_present,
+            'absent': attendance_absent,
+        },
+        'today': today,
+        'leave_totals': {
+            'pending': pending_leaves,
+            'approved_this_month': approved_leaves_this_month,
+        }
+    }
+
+    return render(request, 'hospital/hr/services_dashboard.html', context)
+
+
+@login_required
+@role_required('hr_manager', 'hr')
 def leave_calendar(request):
     """Calendar view of all leaves"""
     year = int(request.GET.get('year', timezone.now().year))
@@ -291,7 +502,7 @@ def leave_calendar(request):
 
 
 @login_required
-@role_required('hr_manager')
+@role_required('hr_manager', 'hr')
 def shift_calendar(request):
     """Calendar view of all shifts"""
     year = int(request.GET.get('year', timezone.now().year))
@@ -344,7 +555,7 @@ def shift_calendar(request):
 
 
 @login_required
-@role_required('hr_manager')
+@role_required('hr_manager', 'hr')
 def attendance_calendar(request):
     """Attendance calendar view"""
     year = int(request.GET.get('year', timezone.now().year))

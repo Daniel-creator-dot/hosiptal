@@ -1,8 +1,35 @@
 services:
-  # PostgreSQL is now running on PostgreSQL Desktop (host machine)
-  # Connect to it using host.docker.internal:5432 from Docker containers
-  # Make sure PostgreSQL Desktop is running and accepting connections on port 5432
-  
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: hms_db
+      POSTGRES_USER: hms_user
+      POSTGRES_PASSWORD: hms_password
+      # Performance optimizations
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    # Performance tuning for PostgreSQL
+    # Note: Some parameters like shared_buffers require server restart
+    # These are set via environment variables that PostgreSQL reads at startup
+    command: >
+      postgres
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=128MB
+      -c checkpoint_completion_target=0.9
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=16MB
+      -c max_connections=200
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hms_user -d hms_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   redis:
     image: redis:7.2-alpine
     command: >
@@ -15,7 +42,6 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 30s
@@ -27,6 +53,7 @@ services:
     # Use Gunicorn for production performance (much faster than runserver)
     command: >
       sh -c "
+      python manage.py migrate --noinput &&
       python manage.py collectstatic --noinput --clear || true &&
       gunicorn hms.wsgi:application
       --bind 0.0.0.0:8000
@@ -45,21 +72,18 @@ services:
       - .:/app
     ports:
       - "0.0.0.0:8000:8000"
-    restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      - DEBUG=1
-      # Default to the repo's SQLite database so Docker matches Cursor data exactly.
-      # Override DATABASE_URL in .env only if you really need Postgres.
-      - DATABASE_URL=${DATABASE_URL:-sqlite:///db.sqlite3}
+      # Override DATABASE_URL for Docker (use 'db' hostname instead of 'localhost')
+      - DATABASE_URL=postgresql://hms_user:hms_password@db:5432/hms_db
+      # Override REDIS_URL for Docker (use 'redis' hostname instead of 'localhost')
       - REDIS_URL=redis://redis:6379/0
-      - USE_REDIS_CACHE=True
-      - ALLOWED_HOSTS=*
-      - CSRF_TRUSTED_ORIGINS=http://localhost:8000,http://127.0.0.1:8000,http://0.0.0.0:8000,http://192.168.0.100:8000,http://192.168.0.*:8000,http://192.168.1.*:8000,http://192.168.2.*:8000
     depends_on:
+      db:
+        condition: service_healthy
       redis:
         condition: service_healthy
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
       interval: 30s
@@ -69,35 +93,51 @@ services:
 
   celery:
     build: .
-    command: celery -A hms worker -l info
+    command: >
+      sh -c "
+      python manage.py migrate --noinput &&
+      celery -A hms worker -l info
+      "
     volumes:
       - .:/app
+    env_file:
+      - .env
     environment:
-      - DEBUG=1
-      - DATABASE_URL=${DATABASE_URL:-sqlite:///db.sqlite3}
+      # Override DATABASE_URL for Docker (use 'db' hostname instead of 'localhost')
+      - DATABASE_URL=postgresql://hms_user:hms_password@db:5432/hms_db
+      # Override REDIS_URL for Docker (use 'redis' hostname instead of 'localhost')
       - REDIS_URL=redis://redis:6379/0
-    restart: unless-stopped
     depends_on:
+      db:
+        condition: service_healthy
       redis:
         condition: service_healthy
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      web:
+        condition: service_started
 
   celery-beat:
     build: .
-    command: celery -A hms beat -l info
+    command: >
+      sh -c "
+      python manage.py migrate --noinput &&
+      celery -A hms beat -l info
+      "
     volumes:
       - .:/app
+    env_file:
+      - .env
     environment:
-      - DEBUG=1
-      - DATABASE_URL=${DATABASE_URL:-sqlite:///db.sqlite3}
+      # Override DATABASE_URL for Docker (use 'db' hostname instead of 'localhost')
+      - DATABASE_URL=postgresql://hms_user:hms_password@db:5432/hms_db
+      # Override REDIS_URL for Docker (use 'redis' hostname instead of 'localhost')
       - REDIS_URL=redis://redis:6379/0
-    restart: unless-stopped
     depends_on:
+      db:
+        condition: service_healthy
       redis:
         condition: service_healthy
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      web:
+        condition: service_started
 
   minio:
     image: minio/minio:latest
@@ -110,7 +150,6 @@ services:
       - "9001:9001"
     volumes:
       - minio_data:/data
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
@@ -118,6 +157,6 @@ services:
       retries: 3
 
 volumes:
-  # postgres_data:  # Removed - using PostgreSQL Desktop instead
+  postgres_data:
   redis_data:
   minio_data:

@@ -64,7 +64,7 @@ class StaffSerializer(serializers.ModelSerializer):
 # ==================== PATIENT & EMR SERIALIZERS ====================
 
 class PatientSerializer(serializers.ModelSerializer):
-    """Patient serializer"""
+    """Patient serializer with duplicate prevention"""
     age = serializers.ReadOnlyField()
     full_name = serializers.ReadOnlyField()
     
@@ -72,6 +72,79 @@ class PatientSerializer(serializers.ModelSerializer):
         model = Patient
         fields = '__all__'
         read_only_fields = ['id', 'created', 'modified']
+    
+    def validate(self, attrs):
+        """Validate patient data and check for duplicates"""
+        from .models import Patient
+        
+        first_name = attrs.get('first_name', '').strip()
+        last_name = attrs.get('last_name', '').strip()
+        phone_number = attrs.get('phone_number', '').strip()
+        email = attrs.get('email', '').strip()
+        national_id = attrs.get('national_id', '').strip()
+        date_of_birth = attrs.get('date_of_birth')
+        
+        # Normalize phone
+        def normalize_phone(phone):
+            if not phone:
+                return ''
+            phone = str(phone).strip()
+            phone = phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+            if phone.startswith('0') and len(phone) == 10:
+                phone = '233' + phone[1:]
+            elif phone.startswith('+'):
+                phone = phone[1:]
+            return phone
+        
+        normalized_phone = normalize_phone(phone_number)
+        
+        # Get instance (if updating)
+        instance = self.instance
+        patient_id = instance.pk if instance else None
+        
+        # Check for duplicates
+        if first_name and last_name and normalized_phone:
+            if date_of_birth and date_of_birth != '2000-01-01':
+                existing = Patient.objects.filter(
+                    first_name__iexact=first_name,
+                    last_name__iexact=last_name,
+                    date_of_birth=date_of_birth,
+                    is_deleted=False
+                ).exclude(pk=patient_id).first()
+            else:
+                existing = Patient.objects.filter(
+                    first_name__iexact=first_name,
+                    last_name__iexact=last_name,
+                    is_deleted=False
+                ).exclude(pk=patient_id).first()
+            
+            if existing and normalize_phone(existing.phone_number) == normalized_phone:
+                raise serializers.ValidationError(
+                    f"Duplicate patient detected! A patient with the same name ({first_name} {last_name}) "
+                    f"and phone number ({phone_number}) already exists. MRN: {existing.mrn}"
+                )
+        
+        if email:
+            existing = Patient.objects.filter(
+                email__iexact=email,
+                is_deleted=False
+            ).exclude(pk=patient_id).first()
+            if existing:
+                raise serializers.ValidationError(
+                    f"Duplicate patient detected! A patient with email {email} already exists. MRN: {existing.mrn}"
+                )
+        
+        if national_id:
+            existing = Patient.objects.filter(
+                national_id=national_id,
+                is_deleted=False
+            ).exclude(pk=patient_id).first()
+            if existing:
+                raise serializers.ValidationError(
+                    f"Duplicate patient detected! A patient with National ID {national_id} already exists. MRN: {existing.mrn}"
+                )
+        
+        return attrs
 
 
 class VitalSignSerializer(serializers.ModelSerializer):

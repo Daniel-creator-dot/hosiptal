@@ -84,6 +84,28 @@ ROLE_FEATURES = {
             'change_hospitalactivity',
         ]
     },
+    'hr': {
+        'name': 'HR Services',
+        'color': '#a855f7',
+        'icon': 'person-rolodex',
+        'dashboards': [
+            'hr_service_center',
+            'staff_directory',
+            'leave_management',
+            'attendance',
+            'payroll',
+        ],
+        'features': [
+            'view_staff',
+            'change_staff',
+            'view_payroll',
+            'view_leaverequest',
+            'change_leaverequest',
+            'view_staffshift',
+            'view_staffcontract',
+            'view_hospitalactivity',
+        ]
+    },
     'doctor': {
         'name': 'Doctor',
         'color': '#3b82f6',
@@ -151,15 +173,19 @@ ROLE_FEATURES = {
             'view_inventoryitem',
         ]
     },
-    'store_manager': {
-        'name': 'Store Manager',
-        'color': '#8b5cf6',
-        'icon': 'box-seam',
+    'procurement_officer': {
+        'name': 'Procurement Officer',
+        'color': '#f59e0b',
+        'icon': 'cart-check',
         'dashboards': [
+            'procurement',
             'inventory',
             'stores',
             'transfers',
             'requisitions',
+            'suppliers',
+            'procurement_requests',
+            'approvals',
         ],
         'features': [
             'view_store',
@@ -177,6 +203,49 @@ ROLE_FEATURES = {
             'add_inventorybatch',
             'view_stockalert',
             'change_stockalert',
+            'view_procurementrequest',
+            'add_procurementrequest',
+            'change_procurementrequest',
+            'view_procurementrequestitem',
+            'add_procurementrequestitem',
+            'change_procurementrequestitem',
+            'view_supplier',
+            'add_supplier',
+            'change_supplier',
+            'view_purchaseorder',
+            'add_purchaseorder',
+            'change_purchaseorder',
+        ]
+    },
+    'store_manager': {
+        'name': 'Store Manager',
+        'color': '#8b5cf6',
+        'icon': 'box-seam',
+        'dashboards': [
+            'inventory',
+            'stores',
+            'transfers',
+            'requisitions',
+            'procurement',
+        ],
+        'features': [
+            'view_store',
+            'view_inventoryitem',
+            'add_inventoryitem',
+            'change_inventoryitem',
+            'view_storetransfer',
+            'add_storetransfer',
+            'change_storetransfer',
+            'view_inventoryrequisition',
+            'add_inventoryrequisition',
+            'change_inventoryrequisition',
+            'view_inventorytransaction',
+            'view_inventorybatch',
+            'add_inventorybatch',
+            'view_stockalert',
+            'change_stockalert',
+            'view_procurementrequest',
+            'add_procurementrequest',
         ]
     },
     'lab_technician': {
@@ -248,8 +317,6 @@ def _ensure_staff_flag(user, ensure_superuser=False):
     if ensure_superuser and not user.is_superuser:
         user.is_superuser = True
         updated = True
-    elif not ensure_superuser and user.is_superuser and not user.is_superuser:
-        pass  # no-op
     
     if updated:
         user.save(update_fields=['is_staff', 'is_superuser'] if ensure_superuser else ['is_staff'])
@@ -288,7 +355,10 @@ def get_user_role(user):
             'lab_technician': 'lab_technician',
             'receptionist': 'receptionist',
             'cashier': 'cashier',
-            'store_manager': 'store_manager',
+            'store_manager': 'procurement_officer',  # Store managers are procurement officers
+            'procurement_officer': 'procurement_officer',
+            'hr_manager': 'hr_manager',
+            'accountant': 'accountant',
         }
         
         role = profession_role_map.get(staff.profession, 'staff')
@@ -310,10 +380,12 @@ def get_user_dashboard_url(user, role=None):
         'admin': '/hms/admin-dashboard/',
         'accountant': '/hms/accountant/comprehensive-dashboard/',
         'hr_manager': '/hms/hr/worldclass/',
+        'hr': '/hms/hr/service-desk/',
         'doctor': '/hms/medical-dashboard/',
         'nurse': '/hms/triage/',
         'pharmacist': '/hms/pharmacy/pending-dispensing/',
-        'store_manager': '/hms/inventory/dashboard/',
+        'procurement_officer': '/hms/procurement/',
+        'store_manager': '/hms/procurement/',
         'lab_technician': '/hms/lab-dashboard/',
         'receptionist': '/hms/reception-dashboard/',
         'cashier': '/hms/cashier/dashboard/',
@@ -359,14 +431,14 @@ def get_role_navigation(user):
     Get navigation items for a user based on their role
     Returns list of dicts with 'title', 'url', 'icon'
     """
-    """
-    Get navigation items for user based on their role
-    """
     role = get_user_role(user)
     
     navigation = {
         'admin': [
             {'title': 'Dashboard', 'url': '/hms/admin-dashboard/', 'icon': 'speedometer2'},
+            {'title': 'Procurement Approvals', 'url': '/hms/procurement/admin/pending/', 'icon': 'clipboard-check'},
+            {'title': 'Pharmacy Requests', 'url': '/hms/procurement/approval/dashboard/', 'icon': 'capsule-pill'},
+            {'title': 'Bulk SMS', 'url': '/hms/sms/bulk/dashboard/', 'icon': 'chat-dots'},
             {'title': 'Patients', 'url': '/hms/patients/', 'icon': 'person'},
             {'title': 'Encounters', 'url': '/hms/encounters/', 'icon': 'card-list'},
             {'title': 'Inventory Management', 'url': '/hms/inventory/dashboard/', 'icon': 'box-seam'},
@@ -416,6 +488,14 @@ def get_role_navigation(user):
             {'title': 'Recognition', 'url': '/hms/hr/recognition-board/', 'icon': 'award'},
             {'title': 'HR Reports', 'url': '/hms/hr/reports/', 'icon': 'graph-up'},
         ],
+        'hr': [
+            {'title': 'Service Desk', 'url': '/hms/hr/service-desk/', 'icon': 'headset'},
+            {'title': 'Staff Directory', 'url': '/hms/staff/', 'icon': 'people'},
+            {'title': 'Leave Board', 'url': '/hms/hr/leave-calendar/', 'icon': 'calendar3'},
+            {'title': 'Attendance', 'url': '/hms/hr/attendance-calendar/', 'icon': 'calendar-check'},
+            {'title': 'Payroll Center', 'url': '/hms/payroll/', 'icon': 'cash'},
+            {'title': 'Contracts', 'url': '/hms/contracts/', 'icon': 'file-earmark-text'},
+        ],
         'doctor': [
             {'title': 'Medical Dashboard', 'url': '/hms/medical-dashboard/', 'icon': 'speedometer2'},
             {'title': 'My Patients', 'url': '/hms/patients/', 'icon': 'person'},
@@ -435,6 +515,19 @@ def get_role_navigation(user):
         'pharmacist': [
             {'title': 'Dispensing Queue', 'url': '/hms/pharmacy/pending-dispensing/', 'icon': 'bag-check'},
             {'title': 'Payment Verification', 'url': '/hms/payment/pharmacy/dispensing/', 'icon': 'lock'},
+        ],
+        'procurement_officer': [
+            {'title': 'Procurement Dashboard', 'url': '/hms/procurement/', 'icon': 'speedometer2'},
+            {'title': 'Procurement Requests', 'url': '/hms/procurement/requests/', 'icon': 'file-earmark-text'},
+            {'title': 'Create Request', 'url': '/hms/procurement/requests/new/', 'icon': 'plus-circle'},
+            {'title': 'Pending Approvals', 'url': '/hms/procurement/approval/dashboard/', 'icon': 'clipboard-check'},
+            {'title': 'Workflow Dashboard', 'url': '/hms/procurement/workflow/', 'icon': 'diagram-3'},
+            {'title': 'Stores', 'url': '/hms/procurement/stores/', 'icon': 'shop'},
+            {'title': 'Inventory', 'url': '/hms/procurement/inventory/', 'icon': 'boxes'},
+            {'title': 'Low Stock Alerts', 'url': '/hms/procurement/reports/low-stock/', 'icon': 'exclamation-triangle'},
+            {'title': 'Store Transfers', 'url': '/hms/procurement/transfers/', 'icon': 'arrow-left-right'},
+            {'title': 'Suppliers', 'url': '/hms/procurement/suppliers/', 'icon': 'truck'},
+            {'title': 'Inventory Reports', 'url': '/hms/inventory/reports/', 'icon': 'graph-up'},
         ],
         'store_manager': [
             {'title': 'Inventory Dashboard', 'url': '/hms/inventory/dashboard/', 'icon': 'speedometer2'},
@@ -564,6 +657,93 @@ def user_has_cashier_access(user):
         return True
     user_role = get_user_role(user)
     return user_role in CASHIER_ACCESS_ROLES
+
+
+# ----------------------------------------------------------------------
+# Staff Query Helpers - Centralized duplicate prevention
+# ----------------------------------------------------------------------
+def get_deduplicated_staff_queryset(base_filter=None):
+    """
+    Get a staff queryset with duplicate prevention.
+    Returns only the most recent staff record per user.
+    
+    Args:
+        base_filter: Optional Q object or dict to add additional filters
+    
+    Returns:
+        QuerySet of Staff objects (one per user, most recent)
+    """
+    from django.db.models import OuterRef, Subquery
+    from django.db import connection
+    from .models import Staff
+    
+    # Build base queryset
+    qs = Staff.objects.filter(is_deleted=False)
+    
+    if base_filter:
+        if isinstance(base_filter, dict):
+            qs = qs.filter(**base_filter)
+        else:
+            qs = qs.filter(base_filter)
+    
+    # Use PostgreSQL DISTINCT ON for reliable deduplication
+    if connection.vendor == 'postgresql':
+        # Get IDs of most recent staff per user using raw SQL
+        # Build WHERE clause dynamically based on filters
+        sql = """
+            SELECT DISTINCT ON (user_id) id
+            FROM hospital_staff
+            WHERE is_deleted = false
+        """
+        params = []
+        
+        # Add additional WHERE conditions if base_filter has them
+        if base_filter and isinstance(base_filter, dict):
+            if 'is_active' in base_filter:
+                sql += " AND is_active = %s"
+                params.append(base_filter['is_active'])
+        
+        sql += " ORDER BY user_id, created DESC"
+        
+        with connection.cursor() as cursor:
+            cursor.execute(sql, params)
+            staff_ids = [row[0] for row in cursor.fetchall()]
+        
+        # Return queryset filtered by the IDs, with select_related for performance
+        result = Staff.objects.filter(
+            id__in=staff_ids,
+            is_deleted=False
+        ).select_related('user', 'department')
+        
+        # Apply any additional filters that weren't in the SQL
+        if base_filter and isinstance(base_filter, dict):
+            # is_active was already handled in SQL, but apply any other filters
+            other_filters = {k: v for k, v in base_filter.items() if k != 'is_active'}
+            if other_filters:
+                result = result.filter(**other_filters)
+        
+        return result
+    else:
+        # Fallback for other databases
+        latest_staff = Staff.objects.filter(
+            is_deleted=False,
+            user=OuterRef('user')
+        )
+        
+        if base_filter and isinstance(base_filter, dict):
+            if 'is_active' in base_filter:
+                latest_staff = latest_staff.filter(is_active=base_filter['is_active'])
+        
+        latest_staff = latest_staff.order_by('-created')[:1]
+        
+        latest_staff_ids = qs.annotate(
+            latest_id=Subquery(latest_staff.values('id'))
+        ).values_list('latest_id', flat=True).distinct()
+        
+        return Staff.objects.filter(
+            id__in=latest_staff_ids,
+            is_deleted=False
+        ).select_related('user', 'department')
 
 
 

@@ -11,6 +11,55 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
 import os
+import sys
+
+# Fix for Windows colorama OSError: [Errno 22] Invalid argument
+# This must be done before any other imports that might use colorama
+if sys.platform == 'win32':
+    # Disable colorama completely by monkey-patching before import
+    try:
+        # Prevent colorama from auto-initializing
+        os.environ.setdefault('COLORAMA_DISABLE_AUTOWRAP', '1')
+        os.environ.setdefault('FORCE_COLOR', '0')
+        
+        # Import and patch colorama's write_plain_text to handle errors gracefully
+        try:
+            import colorama
+            # Disable wrapping completely
+            try:
+                colorama.init(strip=False, convert=False, wrap=False)
+            except (OSError, AttributeError):
+                pass
+            
+            # Monkey-patch the write_plain_text method to catch OSError
+            try:
+                from colorama.ansitowin32 import StreamWrapper
+                original_write_plain_text = StreamWrapper.write_plain_text
+                
+                def safe_write_plain_text(self, text):
+                    try:
+                        return original_write_plain_text(self, text)
+                    except OSError:
+                        # If write fails, try writing directly to the wrapped stream
+                        try:
+                            if hasattr(self, 'wrapped') and self.wrapped:
+                                self.wrapped.write(text)
+                                self.wrapped.flush()
+                        except (OSError, AttributeError):
+                            # If that also fails, silently ignore
+                            pass
+                
+                StreamWrapper.write_plain_text = safe_write_plain_text
+            except (ImportError, AttributeError):
+                # If patching fails, at least we disabled initialization
+                pass
+        except ImportError:
+            # colorama not installed, no problem
+            pass
+    except Exception:
+        # If anything fails, continue anyway
+        pass
+
 from pathlib import Path
 from decouple import config
 import dj_database_url
@@ -31,9 +80,9 @@ DEBUG = config('DEBUG', default=True, cast=bool)
 # Allow all hosts in DEBUG mode, or use configured hosts in production
 # For Docker/network access, include local network IPs
 if DEBUG:
-    # In DEBUG mode, allow all hosts for network access
-    # This allows access from any device on the network
-    default_hosts = '*'
+    # In DEBUG mode, allow common development hosts and IP addresses
+    # Include all common local network IPs for easier access from other devices
+    default_hosts = 'localhost,127.0.0.1,0.0.0.0,192.168.2.97,192.168.233.1,192.168.64.1,172.20.112.1,192.168.1.1,192.168.0.1,10.0.0.1,10.132.245.143'
 else:
     default_hosts = 'localhost,127.0.0.1'
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default=default_hosts, cast=lambda v: [s.strip() for s in v.split(',') if s.strip()])
@@ -45,30 +94,13 @@ if DEBUG:
     # Add common local IPs if not already present
     # Also add common private network ranges for easier network access
     common_hosts = [
-        '192.168.0.102', '192.168.2.97', '127.0.0.1', 'localhost', '0.0.0.0',
+        '192.168.2.97', '127.0.0.1', 'localhost', '0.0.0.0',
         '192.168.233.1', '192.168.64.1', '172.20.112.1',
-        '192.168.1.1', '192.168.0.1', '10.0.0.1'
+        '192.168.1.1', '192.168.0.1', '10.0.0.1', '10.132.245.143'
     ]
     for host in common_hosts:
         if host not in ALLOWED_HOSTS:
             ALLOWED_HOSTS.append(host)
-    
-    # In DEBUG mode, allow all private network IPs dynamically
-    # This ensures any device on the network can access
-    import ipaddress
-    def is_private_ip(host):
-        """Check if host is a private IP address"""
-        try:
-            ip = ipaddress.ip_address(host.split(':')[0])  # Remove port if present
-            return ip.is_private
-        except:
-            return False
-    
-    # Allow any private IP address in DEBUG mode
-    # This is safe for local network access
-    if '*' not in ALLOWED_HOSTS:
-        # Add wildcard to allow all hosts in DEBUG mode
-        ALLOWED_HOSTS.append('*')
     
     # In DEBUG mode, be more permissive - allow any 192.168.x.x, 10.x.x.x, 172.16-31.x.x
     # This is a workaround for network access - in production, specify exact hosts
@@ -207,12 +239,23 @@ WSGI_APPLICATION = 'hms.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
-# Multi-Database Support: PostgreSQL, MySQL, or SQLite
-# Django automatically detects the database type from DATABASE_URL
-# Supports remote database servers for better performance and scalability
+# ==============================================================================
+# SINGLE POSTGRESQL DATABASE - USED BY ALL SERVICES
+# ==============================================================================
+# This ensures Docker Desktop, Cursor server, and all services use the SAME database
+# Database URL is defined in .env file (single source of truth)
+# Docker services override hostname to 'db' instead of 'localhost'
+# ==============================================================================
+
+# Single PostgreSQL Database URL - Read from .env file
+# Format: postgresql://USER:PASSWORD@HOST:PORT/DATABASE
+# - Local/Cursor: postgresql://hms_user:hms_password@localhost:5432/hms_db
+# - Docker: postgresql://hms_user:hms_password@db:5432/hms_db (auto-overridden in docker-compose.yml)
+DATABASE_URL = config('DATABASE_URL', default='postgresql://hms_user:hms_password@localhost:5432/hms_db')
+
 DATABASES = {
     'default': dj_database_url.config(
-        default=config('DATABASE_URL', default='postgresql://hms_user:hms_password@localhost:5432/hms_db'),
+        default=DATABASE_URL,
         conn_max_age=config('DATABASE_CONN_MAX_AGE', default=600, cast=int),  # Connection pooling - keep connections for 10 min
         conn_health_checks=config('DATABASE_CONN_HEALTH_CHECKS', default=True, cast=bool),  # Check connection health before using
     )
@@ -260,33 +303,15 @@ if db_engine == 'django.db.backends.postgresql':
     # Performance optimizations
     DATABASES['default']['OPTIONS']['connect_timeout'] = 10
 
-# MySQL Performance Optimizations (for managed servers)
-elif db_engine == 'django.db.backends.mysql':
-    DATABASES['default'].setdefault('OPTIONS', {})
-    DATABASES['default']['OPTIONS'].update({
-        'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-        'charset': 'utf8mb4',
-        'connect_timeout': 10,
-        'read_timeout': 30,
-        'write_timeout': 30,
-        'isolation_level': 'read committed',
-    })
-    DATABASES['default']['ATOMIC_REQUESTS'] = True
-    DATABASES['default']['CONN_MAX_AGE'] = 600
-    DATABASES['default']['AUTOCOMMIT'] = True
-    
-# SQLite for Development/Testing
-elif db_engine == 'django.db.backends.sqlite3' or 'sqlite' in str(db_engine):
-    DATABASES['default'].setdefault('OPTIONS', {})
-    DATABASES['default']['OPTIONS'].update({
-        'timeout': 60,  # Increased timeout to 60 seconds for better concurrent access handling
-        'check_same_thread': False,  # Allow access from different threads
-    })
-    # SQLite doesn't handle persistent connections well - disable connection pooling
-    DATABASES['default']['CONN_MAX_AGE'] = 0  # Always close connections immediately for SQLite
-    DATABASES['default']['ATOMIC_REQUESTS'] = False  # Disable atomic requests to reduce lock contention
-    
-    # Enable WAL mode via database signal (see hospital/apps.py)
+# PostgreSQL is the ONLY supported database for this application
+# SQLite and MySQL configurations have been removed to prevent duplicate data issues
+if db_engine != 'django.db.backends.postgresql':
+    raise ValueError(
+        f"❌ ERROR: Only PostgreSQL is supported. "
+        f"Current database engine: {db_engine}\n"
+        f"Please set DATABASE_URL to a PostgreSQL connection string in your .env file.\n"
+        f"Example: DATABASE_URL=postgresql://user:password@localhost:5432/hms_db"
+    )
 
 
 # Password validation
@@ -571,6 +596,36 @@ import os
 logs_dir = BASE_DIR / 'logs'
 logs_dir.mkdir(exist_ok=True)
 
+# Create a safe StreamHandler for Windows that avoids colorama issues
+if sys.platform == 'win32':
+    class SafeStreamHandler(logging.StreamHandler):
+        """StreamHandler that catches OSError from colorama and handles gracefully"""
+        def emit(self, record):
+            try:
+                super().emit(record)
+            except OSError:
+                # If colorama causes OSError, try writing directly to underlying stream
+                try:
+                    stream = self.stream
+                    if hasattr(stream, 'wrapped'):
+                        # If stream is wrapped by colorama, try to access original
+                        original_stream = stream.wrapped
+                        msg = self.format(record)
+                        original_stream.write(msg + self.terminator)
+                        self.flush()
+                    else:
+                        # Fall back to sys.__stdout__ or sys.__stderr__
+                        fallback = sys.__stdout__ if stream is sys.stdout else sys.__stderr__
+                        msg = self.format(record)
+                        fallback.write(msg + self.terminator)
+                        fallback.flush()
+                except Exception:
+                    # If all else fails, silently ignore to prevent crash
+                    pass
+else:
+    # On non-Windows, use standard StreamHandler
+    SafeStreamHandler = logging.StreamHandler
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -611,7 +666,7 @@ LOGGING = {
         },
         'console': {
             'level': 'DEBUG',
-            'class': 'logging.StreamHandler',
+            '()': SafeStreamHandler,  # Use safe handler that catches colorama errors
             'formatter': 'simple',
             'filters': ['require_debug_true'],
         },
@@ -709,11 +764,14 @@ CSRF_COOKIE_AGE = 31449600  # 1 year
 CSRF_COOKIE_SECURE = not DEBUG  # Set to True in production with HTTPS
 # Don't set cookie domain for IP addresses to work properly
 CSRF_COOKIE_DOMAIN = None
+# Ensure CSRF cookie is set on all requests, not just POST
+CSRF_COOKIE_NAME = 'csrftoken'
+CSRF_HEADER_NAME = 'HTTP_X_CSRFTOKEN'
 
 # CSRF_TRUSTED_ORIGINS - Allow localhost and local network IPs
 # In Docker, this should include the host machine's IP address
 # Also includes common local network IPs for development
-default_csrf_origins = 'http://localhost:8000,http://127.0.0.1:8000,http://0.0.0.0:8000,http://192.168.0.102:8000,http://192.168.0.*:8000,http://192.168.1.*:8000,http://192.168.2.*:8000'
+default_csrf_origins = 'http://localhost:8000,http://127.0.0.1:8000,http://0.0.0.0:8000,http://192.168.2.97:8000,http://192.168.233.1:8000,http://192.168.64.1:8000,http://172.20.112.1:8000,http://10.132.245.143:8000'
 CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS', default=default_csrf_origins, cast=lambda v: [s.strip() for s in v.split(',') if s.strip()])
 
 # In DEBUG mode, add additional common development origins
@@ -728,6 +786,8 @@ if DEBUG:
         'http://192.168.233.1',
         'http://192.168.64.1',
         'http://172.20.112.1',
+        'http://10.132.245.143:8000',
+        'http://10.132.245.143',
     ]
     for origin in additional_origins:
         if origin not in CSRF_TRUSTED_ORIGINS:

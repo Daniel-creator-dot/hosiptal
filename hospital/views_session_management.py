@@ -114,12 +114,24 @@ def active_sessions_view(request):
             'last_ip': last_session.ip_address if last_session else None,
         })
     
+    # Also check for locked login attempts (even if user is active)
+    from .models_login_attempts import LoginAttempt
+    locked_attempts_count = LoginAttempt.objects.filter(
+        Q(is_locked=True) | 
+        Q(manually_blocked=True) | 
+        Q(locked_until__isnull=False)
+    ).count()
+    
+    failed_attempts_count = LoginAttempt.objects.filter(failed_attempts__gt=0).count()
+    
     context = {
         'title': 'Active Sessions & Blocked Users',
         'active_sessions': active_list,
         'total_active': len(active_list),
         'blocked_users': blocked_users_list,
         'total_blocked': len(blocked_users_list),
+        'locked_attempts_count': locked_attempts_count,
+        'failed_attempts_count': failed_attempts_count,
     }
     
     return render(request, 'hospital/admin/active_sessions.html', context)
@@ -413,6 +425,86 @@ def block_user(request, user_id):
         return JsonResponse({
             'success': False,
             'error': f'Error blocking user: {str(e)}'
+        }, status=500)
+
+
+@login_required
+@user_passes_test(is_admin)
+@require_http_methods(["POST"])
+@csrf_exempt
+def unlock_all_accounts(request):
+    """
+    Unlock all locked/blocked accounts at once
+    Admin only
+    """
+    try:
+        from .models_login_attempts import LoginAttempt
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        
+        # Get counts before unlocking
+        inactive_count = User.objects.filter(is_active=False).count()
+        locked_attempts_count = LoginAttempt.objects.filter(
+            Q(is_locked=True) | 
+            Q(manually_blocked=True) | 
+            Q(locked_until__isnull=False)
+        ).count()
+        failed_attempts_count = LoginAttempt.objects.filter(failed_attempts__gt=0).count()
+        
+        # Activate all inactive users
+        inactive_users = User.objects.filter(is_active=False)
+        activated_count = inactive_users.update(is_active=True)
+        
+        # Unlock all login attempts
+        locked_attempts = LoginAttempt.objects.filter(
+            Q(is_locked=True) | 
+            Q(manually_blocked=True) | 
+            Q(locked_until__isnull=False)
+        )
+        unlocked_count = 0
+        for attempt in locked_attempts:
+            attempt.unblock(unblocked_by=request.user, note='Bulk unlock from active sessions page')
+            unlocked_count += 1
+        
+        # Reset failed attempts
+        failed_attempts = LoginAttempt.objects.filter(failed_attempts__gt=0)
+        reset_count = failed_attempts.update(failed_attempts=0)
+        
+        total_actions = activated_count + unlocked_count + reset_count
+        
+        logger.info(
+            f"Admin {request.user.username} unlocked all accounts. "
+            f"Activated {activated_count} users, unlocked {unlocked_count} login attempts, reset {reset_count} failed counters."
+        )
+        
+        # Build detailed message
+        message_parts = []
+        if activated_count > 0:
+            message_parts.append(f"activated {activated_count} user{'s' if activated_count != 1 else ''}")
+        if unlocked_count > 0:
+            message_parts.append(f"unlocked {unlocked_count} login attempt{'s' if unlocked_count != 1 else ''}")
+        if reset_count > 0:
+            message_parts.append(f"reset {reset_count} failed counter{'s' if reset_count != 1 else ''}")
+        
+        if message_parts:
+            message = f"✅ All accounts unlocked! " + ", ".join(message_parts) + "."
+        else:
+            message = "✅ No locked accounts found. All accounts are already active!"
+        
+        return JsonResponse({
+            'success': True,
+            'message': message,
+            'activated_users': activated_count,
+            'unlocked_attempts': unlocked_count,
+            'reset_counters': reset_count,
+            'total_actions': total_actions,
+        })
+        
+    except Exception as e:
+        logger.error(f"Error unlocking all accounts: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': f'Error unlocking all accounts: {str(e)}'
         }, status=500)
 
 

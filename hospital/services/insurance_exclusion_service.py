@@ -43,6 +43,20 @@ class InsuranceExclusionService:
         self.reference_date = reference_date or timezone.now().date()
 
     def evaluate(self) -> InsuranceExclusionResult:
+        # CRITICAL: Exclusions only apply to insurance patients, NOT cash or corporate
+        # Cash patients should never have exclusions applied
+        if not self.payer:
+            return InsuranceExclusionResult()
+        
+        # Skip exclusions for cash payers
+        if self.payer.payer_type == 'cash':
+            return InsuranceExclusionResult()
+        
+        # Corporate patients may have different rules, but for now we'll apply insurance-style exclusions
+        # If you want corporate to also skip exclusions, uncomment the next line:
+        # if self.payer.payer_type == 'corporate':
+        #     return InsuranceExclusionResult()
+        
         enrollment = self._find_active_enrollment()
         if not enrollment:
             return InsuranceExclusionResult()

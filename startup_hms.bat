@@ -34,3 +34,11 @@ echo HMS services started at %date% %time% >> startup_log.txt
 
 
 
+
+
+
+
+
+
+
+

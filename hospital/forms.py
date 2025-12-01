@@ -8,12 +8,29 @@ from .models import (
     VitalSign, Order, Prescription, Bed, Ward, Department, Staff
 )
 from crispy_forms.helper import FormHelper
-from crispy_forms.layout import Layout, Row, Column, Submit, Fieldset, HTML
+from crispy_forms.layout import Layout, Row, Column, Submit, Fieldset, HTML, Div
 
 
 class PatientForm(forms.ModelForm):
     """Patient registration form with world-class insurance integration"""
-    # Add insurance company field
+    # Payer type selection
+    payer_type = forms.ChoiceField(
+        choices=[
+            ('', 'Select Payment Type...'),
+            ('insurance', 'Insurance'),
+            ('corporate', 'Corporate'),
+            ('cash', 'Cash'),
+        ],
+        required=False,
+        label="Payment Type",
+        widget=forms.Select(attrs={
+            'class': 'form-select', 
+            'id': 'id_payer_type'
+        }),
+        help_text="Select how the patient will pay for services"
+    )
+    
+    # Insurance fields
     selected_insurance_company = forms.ModelChoiceField(
         queryset=None,
         required=False,
@@ -29,12 +46,46 @@ class PatientForm(forms.ModelForm):
         help_text="Select the insurance plan"
     )
     
+    # Corporate fields
+    selected_corporate_company = forms.ModelChoiceField(
+        queryset=None,
+        required=False,
+        label="Corporate Company",
+        widget=forms.Select(attrs={'class': 'form-select', 'id': 'id_selected_corporate_company'}),
+        help_text="Select the corporate company"
+    )
+    employee_id = forms.CharField(
+        required=False,
+        max_length=50,
+        label="Employee ID",
+        widget=forms.TextInput(attrs={
+            'class': 'form-control', 
+            'id': 'id_employee_id',
+            'placeholder': 'Employee ID (if corporate)'
+        }),
+        help_text="Employee ID number (for corporate patients)"
+    )
+    
+    # Cash fields
+    receiving_point = forms.CharField(
+        required=False,
+        max_length=200,
+        label="Receiving Point",
+        widget=forms.TextInput(attrs={
+            'class': 'form-control', 
+            'id': 'id_receiving_point',
+            'placeholder': 'Cash collection point/location'
+        }),
+        help_text="Location where cash payments will be received (e.g., Main Cashier, Pharmacy Cashier)"
+    )
+    
     class Meta:
         model = Patient
         fields = [
             'first_name', 'last_name', 'middle_name',
             'date_of_birth', 'gender', 'blood_type',
             'phone_number', 'email', 'address',
+            'national_id',
             'next_of_kin_name', 'next_of_kin_phone', 'next_of_kin_relationship',
             'insurance_company', 'insurance_id', 'insurance_member_id', 'primary_insurance',
             'allergies', 'chronic_conditions', 'medications'
@@ -42,6 +93,7 @@ class PatientForm(forms.ModelForm):
         widgets = {
             'date_of_birth': forms.DateInput(attrs={'type': 'date', 'class': 'form-control'}),
             'address': forms.Textarea(attrs={'rows': 3}),
+            'national_id': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'National ID (optional)'}),
             'insurance_company': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Enter insurance company name (or select above)'}),
             'insurance_id': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Insurance ID/Policy Number'}),
             'insurance_member_id': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Member ID'}),
@@ -54,8 +106,15 @@ class PatientForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.helper = FormHelper()
+        # CRITICAL: Disable auto-save on patient registration form to prevent duplicate submissions
+        self.helper.attrs = {'data-no-autosave': ''}
         self.fields['primary_insurance'].queryset = self.fields['primary_insurance'].queryset.filter(is_active=True)
         self.fields['primary_insurance'].required = False
+        
+        # Make sure fields match model defaults (not required if model has defaults)
+        self.fields['address'].required = False  # Model has default=''
+        self.fields['next_of_kin_name'].required = False  # Model has default=''
+        self.fields['next_of_kin_relationship'].required = False  # Model has default=''
         
         # Load insurance companies
         try:
@@ -74,6 +133,17 @@ class PatientForm(forms.ModelForm):
             self.fields['selected_insurance_company'].queryset = self.fields['selected_insurance_company'].queryset.none()
             self.fields['selected_insurance_plan'].queryset = self.fields['selected_insurance_plan'].queryset.none()
         
+        # Load corporate companies
+        try:
+            from .models_enterprise_billing import CorporateAccount
+            self.fields['selected_corporate_company'].queryset = CorporateAccount.objects.filter(
+                is_active=True,
+                is_deleted=False,
+                credit_status='active'
+            ).order_by('company_name')
+        except:
+            self.fields['selected_corporate_company'].queryset = self.fields['selected_corporate_company'].queryset.none()
+        
         self.helper.layout = Layout(
             Fieldset('Personal Information',
                 Row(Column('first_name', css_class='form-group col-md-4'),
@@ -88,14 +158,33 @@ class PatientForm(forms.ModelForm):
                     Column('email', css_class='form-group col-md-6')),
                 'address',
             ),
-            Fieldset('🏥 Insurance Information',
-                Row(Column('selected_insurance_company', css_class='form-group col-md-6'),
-                    Column('selected_insurance_plan', css_class='form-group col-md-6')),
-                Row(Column('insurance_id', css_class='form-group col-md-6'),
-                    Column('insurance_member_id', css_class='form-group col-md-6')),
-                HTML('<small class="text-muted">Or enter manually below:</small>'),
-                Row(Column('insurance_company', css_class='form-group col-md-6'),
-                    Column('primary_insurance', css_class='form-group col-md-6')),
+            Fieldset('💳 Payment Type & Billing Information',
+                'payer_type',
+                Div(
+                    Row(Column('selected_insurance_company', css_class='form-group col-md-6'),
+                        Column('selected_insurance_plan', css_class='form-group col-md-6')),
+                    Row(Column('insurance_id', css_class='form-group col-md-6'),
+                        Column('insurance_member_id', css_class='form-group col-md-6')),
+                    HTML('<small class="text-muted d-block mb-2">Or enter manually below:</small>'),
+                    Row(Column('insurance_company', css_class='form-group col-md-6'),
+                        Column('primary_insurance', css_class='form-group col-md-6')),
+                    css_id='insurance_fields',
+                    css_class='mt-3',
+                    style='display:none;'
+                ),
+                Div(
+                    Row(Column('selected_corporate_company', css_class='form-group col-md-6'),
+                        Column('employee_id', css_class='form-group col-md-6')),
+                    css_id='corporate_fields',
+                    css_class='mt-3',
+                    style='display:none;'
+                ),
+                Div(
+                    'receiving_point',
+                    css_id='cash_fields',
+                    css_class='mt-3',
+                    style='display:none;'
+                ),
             ),
             Fieldset('Emergency Contact',
                 Row(Column('next_of_kin_name', css_class='form-group col-md-4'),
@@ -107,6 +196,182 @@ class PatientForm(forms.ModelForm):
             ),
             Submit('submit', 'Register Patient', css_class='btn btn-primary btn-lg')
         )
+    
+    def clean(self):
+        """Check for duplicate patients before saving"""
+        cleaned_data = super().clean()
+        
+        # Ensure cleaned_data is a dict
+        if not cleaned_data:
+            return cleaned_data
+        
+        # Check if user wants to proceed with duplicate (for family members)
+        # This is passed from the view via form data or POST data
+        proceed_with_duplicate = False
+        if hasattr(self, 'data') and self.data:
+            # Django QueryDict returns list, so check both string and list
+            proceed_val = self.data.get('proceed_with_duplicate')
+            if proceed_val:
+                if isinstance(proceed_val, list):
+                    proceed_with_duplicate = proceed_val[0] == 'true' if proceed_val else False
+                else:
+                    proceed_with_duplicate = str(proceed_val).lower() == 'true'
+        
+        # Log for debugging
+        if proceed_with_duplicate:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning("User proceeding with potential duplicate - bypassing form validation")
+        
+        first_name = (cleaned_data.get('first_name') or '').strip()
+        last_name = (cleaned_data.get('last_name') or '').strip()
+        date_of_birth = cleaned_data.get('date_of_birth')
+        phone_number = (cleaned_data.get('phone_number') or '').strip()
+        email = (cleaned_data.get('email') or '').strip()
+        
+        # Get the instance (if editing existing patient)
+        instance = self.instance
+        patient_id = instance.pk if instance else None
+        
+        # Normalize phone number for comparison (remove spaces, dashes, etc.)
+        def normalize_phone(phone):
+            if not phone:
+                return ''
+            # Remove common separators
+            phone = phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+            # Normalize Ghana numbers: 0241234567, +233241234567, 233241234567 -> 233241234567
+            if phone.startswith('0') and len(phone) == 10:
+                phone = '233' + phone[1:]
+            elif phone.startswith('+'):
+                phone = phone[1:]
+            return phone
+        
+        normalized_phone = normalize_phone(phone_number)
+        
+        # Check for duplicates
+        from .models import Patient
+        from django.db.models import Q
+        
+        duplicate_checks = []
+        
+        # Check 1: Same name + DOB + Phone (strongest match)
+        # Also check name + phone even without DOB (more aggressive)
+        if first_name and last_name and normalized_phone:
+            if date_of_birth:
+                existing = Patient.objects.filter(
+                    first_name__iexact=first_name,
+                    last_name__iexact=last_name,
+                    date_of_birth=date_of_birth,
+                    is_deleted=False
+                ).exclude(pk=patient_id)
+            else:
+                # If no DOB, check by name + phone only
+                existing = Patient.objects.filter(
+                    first_name__iexact=first_name,
+                    last_name__iexact=last_name,
+                    is_deleted=False
+                ).exclude(pk=patient_id)
+            
+            # Check phone number matches (normalized)
+            for patient in existing:
+                if normalize_phone(patient.phone_number) == normalized_phone:
+                    if date_of_birth:
+                        duplicate_checks.append(
+                            f"A patient with the same name ({first_name} {last_name}), "
+                            f"date of birth ({date_of_birth}), and phone number ({phone_number}) already exists. "
+                            f"MRN: {patient.mrn}"
+                        )
+                    else:
+                        duplicate_checks.append(
+                            f"A patient with the same name ({first_name} {last_name}) "
+                            f"and phone number ({phone_number}) already exists. "
+                            f"MRN: {patient.mrn}"
+                        )
+                    break
+        
+        # Check 2: Same email (if provided)
+        if email:
+            existing = Patient.objects.filter(
+                email__iexact=email,
+                is_deleted=False
+            ).exclude(pk=patient_id)
+            
+            if existing.exists():
+                patient = existing.first()
+                duplicate_checks.append(
+                    f"A patient with the same email ({email}) already exists. "
+                    f"Name: {patient.full_name}, MRN: {patient.mrn}"
+                )
+        
+        # Check 3: Same name + DOB (weaker match, but still important)
+        if first_name and last_name and date_of_birth and not normalized_phone:
+            existing = Patient.objects.filter(
+                first_name__iexact=first_name,
+                last_name__iexact=last_name,
+                date_of_birth=date_of_birth,
+                is_deleted=False
+            ).exclude(pk=patient_id)
+            
+            if existing.exists():
+                patient = existing.first()
+                duplicate_checks.append(
+                    f"A patient with the same name ({first_name} {last_name}) and "
+                    f"date of birth ({date_of_birth}) already exists. "
+                    f"MRN: {patient.mrn}, Phone: {patient.phone_number or 'N/A'}"
+                )
+        
+        # Check 4: Same phone number (if provided)
+        if normalized_phone:
+            existing = Patient.objects.filter(
+                is_deleted=False
+            ).exclude(pk=patient_id)
+            
+            for patient in existing:
+                if normalize_phone(patient.phone_number) == normalized_phone:
+                    duplicate_checks.append(
+                        f"A patient with the same phone number ({phone_number}) already exists. "
+                        f"Name: {patient.full_name}, MRN: {patient.mrn}"
+                    )
+                    break
+        
+        # Check 5: Same national_id (if provided)
+        national_id = cleaned_data.get('national_id') or ''
+        national_id = national_id.strip() if national_id else ''
+        if national_id:
+            existing = Patient.objects.filter(
+                national_id=national_id,
+                is_deleted=False
+            ).exclude(pk=patient_id)
+            
+            if existing.exists():
+                patient = existing.first()
+                duplicate_checks.append(
+                    f"A patient with the same National ID ({national_id}) already exists. "
+                    f"Name: {patient.full_name}, MRN: {patient.mrn}"
+                )
+        
+        # Raise validation error if duplicates found (but allow user to proceed if they confirm)
+        if duplicate_checks and not proceed_with_duplicate:
+            # Format error message for better display
+            error_messages = []
+            for check in duplicate_checks:
+                error_messages.append(check)
+            
+            # Create a single error message with note about family members
+            error_message = "⚠️ Potential duplicate patient detected:\n\n" + "\n\n".join(error_messages)
+            error_message += "\n\n💡 Note: This could be a family member or different person sharing the same contact information."
+            error_message += "\n\nPlease verify this is not a duplicate before proceeding, or proceed if this is a different person."
+            
+            # Raise as non-field error so it displays prominently at top of form
+            # The view will handle showing a confirmation option
+            raise forms.ValidationError(error_message)
+        elif duplicate_checks and proceed_with_duplicate:
+            # User confirmed they want to proceed - log it but don't block
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"User proceeding with potential duplicate - bypassing form validation")
+        
+        return cleaned_data
 
 
 class EncounterForm(forms.ModelForm):

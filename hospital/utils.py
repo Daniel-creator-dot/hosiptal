@@ -19,10 +19,17 @@ def get_dashboard_stats():
     # Include both new Django patients AND imported legacy patients
     django_patients = Patient.objects.filter(is_deleted=False).count()
     
+    # Safely get legacy patient count - handle if table doesn't exist
+    legacy_patients = 0
     try:
         from .models_legacy_patients import LegacyPatient
-        legacy_patients = LegacyPatient.objects.count()
-    except:
+        try:
+            legacy_patients = LegacyPatient.objects.count()
+        except Exception:
+            # Table doesn't exist or other database error
+            legacy_patients = 0
+    except ImportError:
+        # Model doesn't exist
         legacy_patients = 0
     
     total_patients = django_patients + legacy_patients

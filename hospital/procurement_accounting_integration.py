@@ -10,7 +10,8 @@ from django.utils import timezone
 from .models_accounting import Account
 from .models_accounting_advanced import (
     AccountsPayable, PaymentVoucher, Expense, ExpenseCategory,
-    AdvancedJournalEntry, AdvancedJournalEntryLine, Journal, AdvancedGeneralLedger
+    AdvancedJournalEntry, AdvancedJournalEntryLine, Journal, AdvancedGeneralLedger,
+    WithholdingTaxPayable
 )
 
 
@@ -180,6 +181,232 @@ class ProcurementAccountingIntegration:
         
         except Exception as e:
             print(f"\n❌ ERROR in create_accounting_entries_for_procurement: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    @staticmethod
+    def create_ap_from_grn(grn, invoice_amount, invoice_number, supplier_name, supply_type='goods', supplier_is_exempted=False):
+        """
+        Create Accounts Payable from Goods Received Note (GRN)
+        Implements 3-way matching: PO, Invoice, GRN
+        
+        According to guidelines:
+        - GRN amount and Invoice amount MUST be equal
+        - If not the same, system should not allow the transfer
+        - If same, create AP with GRN amount
+        - Automatically calculate withholding tax (3% for goods, 5% works, 7.5% local services, 20% foreign)
+        - Create WithholdingTaxPayable entry
+        
+        Args:
+            grn: GoodsReceiptNote object
+            invoice_amount: Amount from supplier invoice
+            invoice_number: Supplier invoice number
+            supplier_name: Supplier/vendor name
+            supply_type: 'goods', 'works', 'local_services', 'foreign_services'
+            supplier_is_exempted: Whether supplier is exempted from WHT
+        
+        Returns:
+            dict with 'success', 'accounts_payable', 'withholding_tax', 'error'
+        """
+        try:
+            with db_transaction.atomic():
+                # Get GRN amount (total from GRN lines)
+                grn_amount = Decimal('0.00')
+                if hasattr(grn, 'lines'):
+                    grn_amount = sum(line.line_total for line in grn.lines.all())
+                elif hasattr(grn, 'total_amount'):
+                    grn_amount = grn.total_amount
+                else:
+                    return {
+                        'success': False,
+                        'error': 'GRN amount cannot be determined'
+                    }
+                
+                # 3-WAY MATCHING VALIDATION
+                if abs(invoice_amount - grn_amount) > Decimal('0.01'):  # Allow small rounding differences
+                    return {
+                        'success': False,
+                        'error': f'3-way matching failed: Invoice amount (GHS {invoice_amount:,.2f}) does not match GRN amount (GHS {grn_amount:,.2f}). System cannot allow transfer.'
+                    }
+                
+                # Get purchase order if available
+                po_number = ''
+                if hasattr(grn, 'purchase_order') and grn.purchase_order:
+                    if hasattr(grn.purchase_order, 'po_number'):
+                        po_number = grn.purchase_order.po_number
+                    elif hasattr(grn.purchase_order, 'purchase_number'):
+                        po_number = grn.purchase_order.purchase_number
+                
+                # Get or create purchase account based on supply type
+                purchase_account_map = {
+                    'goods': ('5200', 'Purchases - Drugs'),
+                    'works': ('5300', 'Purchases - Works'),
+                    'local_services': ('5400', 'Purchases - Local Services'),
+                    'foreign_services': ('5500', 'Purchases - Foreign Services'),
+                }
+                account_code, account_name = purchase_account_map.get(supply_type, ('5200', 'Purchases'))
+                
+                purchase_account, _ = Account.objects.get_or_create(
+                    account_code=account_code,
+                    defaults={'account_name': account_name, 'account_type': 'expense'}
+                )
+                
+                # Get or create AP account
+                ap_account, _ = Account.objects.get_or_create(
+                    account_code='2100',
+                    defaults={'account_name': 'Accounts Payable', 'account_type': 'liability'}
+                )
+                
+                # Create Accounts Payable
+                from datetime import datetime
+                bill_prefix = "AP"
+                year_month = datetime.now().strftime('%Y%m')
+                ap_count = AccountsPayable.objects.filter(
+                    bill_number__startswith=f"{bill_prefix}{year_month}"
+                ).count()
+                bill_number = f"{bill_prefix}{year_month}{ap_count + 1:05d}"
+                
+                ap = AccountsPayable.objects.create(
+                    bill_number=bill_number,
+                    vendor_name=supplier_name,
+                    vendor_invoice=invoice_number,
+                    bill_date=timezone.now().date(),
+                    due_date=timezone.now().date() + timezone.timedelta(days=30),
+                    amount=grn_amount,  # Use GRN amount (not invoice amount per guidelines)
+                    amount_paid=Decimal('0.00'),
+                    balance_due=grn_amount,
+                    description=f"Purchase from {supplier_name} - GRN: {grn.grn_number if hasattr(grn, 'grn_number') else 'N/A'}",
+                    purchase_order_number=po_number,
+                    invoice_amount=invoice_amount,
+                    grn_amount=grn_amount,
+                    grn_number=grn.grn_number if hasattr(grn, 'grn_number') else '',
+                    is_matched=True,  # Already validated above
+                    supply_type=supply_type,
+                    supplier_is_exempted=supplier_is_exempted,
+                )
+                
+                print(f"[ACCOUNTING] ✅ Created AP from GRN: {supplier_name} - GHS {grn_amount}")
+                
+                # Calculate and create Withholding Tax Payable (unless exempted)
+                withholding_tax = None
+                if not supplier_is_exempted:
+                    wht_rate = WithholdingTaxPayable.get_rate_for_supply_type(supply_type)
+                    wht_amount = (grn_amount * wht_rate / 100)
+                    
+                    # Get or create WHT Payable account
+                    wht_account, _ = Account.objects.get_or_create(
+                        account_code='2400',
+                        defaults={'account_name': 'Withholding Tax Payable', 'account_type': 'liability'}
+                    )
+                    
+                    withholding_tax = WithholdingTaxPayable.objects.create(
+                        supplier_name=supplier_name,
+                        gross_amount=grn_amount,
+                        withholding_rate=wht_rate,
+                        withholding_amount=wht_amount,
+                        net_amount_paid=grn_amount - wht_amount,
+                        supply_type=supply_type,
+                        is_exempted=False,
+                        accounts_payable=ap,
+                        payable_account=wht_account,
+                        description=f"WHT on purchase from {supplier_name}",
+                    )
+                    
+                    print(f"[ACCOUNTING] ✅ Created WHT Payable: GHS {wht_amount:,.2f} ({wht_rate}%)")
+                
+                # Create Journal Entry: Debit Purchase Account, Credit Accounts Payable
+                expense_journal, _ = Journal.objects.get_or_create(
+                    journal_type='general',
+                    defaults={'name': 'General Journal', 'code': 'GJ', 'description': 'General journal entries'}
+                )
+                
+                journal_entry = AdvancedJournalEntry.objects.create(
+                    journal=expense_journal,
+                    entry_date=timezone.now().date(),
+                    description=f"Purchase from {supplier_name} - GRN: {grn.grn_number if hasattr(grn, 'grn_number') else 'N/A'}",
+                    reference=bill_number,
+                    status='posted',
+                )
+                
+                # Debit: Purchase Account
+                AdvancedJournalEntryLine.objects.create(
+                    journal_entry=journal_entry,
+                    line_number=1,
+                    account=purchase_account,
+                    description=f"Purchase from {supplier_name}",
+                    debit_amount=grn_amount,
+                    credit_amount=Decimal('0.00'),
+                )
+                
+                # Credit: Accounts Payable
+                AdvancedJournalEntryLine.objects.create(
+                    journal_entry=journal_entry,
+                    line_number=2,
+                    account=ap_account,
+                    description=f"AP for {supplier_name}",
+                    debit_amount=Decimal('0.00'),
+                    credit_amount=grn_amount,
+                )
+                
+                # If WHT, also create WHT Payable entry
+                if withholding_tax:
+                    AdvancedJournalEntryLine.objects.create(
+                        journal_entry=journal_entry,
+                        line_number=3,
+                        account=wht_account,
+                        description=f"WHT Payable for {supplier_name}",
+                        debit_amount=Decimal('0.00'),
+                        credit_amount=withholding_tax.withholding_amount,
+                    )
+                    
+                    # Adjust AP credit to net amount (gross - WHT)
+                    # Update line 2 to credit net amount
+                    line_2 = journal_entry.lines.get(line_number=2)
+                    line_2.credit_amount = withholding_tax.net_amount_paid
+                    line_2.save()
+                
+                # Update totals
+                journal_entry.total_debit = grn_amount
+                journal_entry.total_credit = grn_amount
+                journal_entry.save(update_fields=['total_debit', 'total_credit'])
+                
+                # Post to General Ledger
+                for line in journal_entry.lines.all():
+                    AdvancedGeneralLedger.objects.create(
+                        account=line.account,
+                        cost_center=line.cost_center,
+                        transaction_date=journal_entry.entry_date,
+                        posting_date=journal_entry.entry_date,
+                        journal_entry=journal_entry,
+                        journal_entry_line=line,
+                        description=line.description,
+                        debit_amount=line.debit_amount,
+                        credit_amount=line.credit_amount,
+                        balance=Decimal('0.00'),
+                    )
+                
+                ap.journal_entry = journal_entry
+                ap.save(update_fields=['journal_entry'])
+                
+                if withholding_tax:
+                    withholding_tax.journal_entry = journal_entry
+                    withholding_tax.save(update_fields=['journal_entry'])
+                
+                print(f"[ACCOUNTING] ✅ Posted to General Ledger: {journal_entry.entry_number}")
+                
+                return {
+                    'success': True,
+                    'accounts_payable': ap,
+                    'withholding_tax': withholding_tax,
+                    'message': f'AP created from GRN: GHS {grn_amount:,.2f}'
+                }
+        
+        except Exception as e:
+            print(f"\n❌ ERROR in create_ap_from_grn: {e}")
             import traceback
             traceback.print_exc()
             return {

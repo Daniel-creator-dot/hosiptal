@@ -4,6 +4,7 @@ Hospital App Configuration
 
 from django.apps import AppConfig
 from django.db.backends.signals import connection_created
+from django.db.models.signals import post_migrate
 
 
 def enable_sqlite_wal(sender, connection, **kwargs):
@@ -26,6 +27,17 @@ class HospitalConfig(AppConfig):
         """Import signals when app is ready"""
         # Enable SQLite WAL mode for better concurrency
         connection_created.connect(enable_sqlite_wal)
+
+        def seed_staff_data(sender, **kwargs):
+            """Ensure staff fixtures exist after migrations finish."""
+            try:
+                from hospital.seed_data.staff_seed import ensure_staff_seeded
+
+                ensure_staff_seeded()
+            except Exception as exc:  # noqa: BLE001 - log but don't crash startup
+                print(f"[INIT] Staff seed skipped: {exc}")
+
+        post_migrate.connect(seed_staff_data, sender=self, dispatch_uid='hospital_seed_staff')
         
         try:
             import hospital.signals  # noqa: F401

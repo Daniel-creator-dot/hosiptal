@@ -273,3 +273,11 @@ def get_receivable_details(request, receivable_id):
 
 
 
+
+
+
+
+
+
+
+
