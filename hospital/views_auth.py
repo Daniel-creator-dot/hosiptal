@@ -55,8 +55,20 @@ class HMSLoginView(LoginView):
     def dispatch(self, request, *args, **kwargs):
         """Check for locked accounts and existing sessions before processing login"""
         if request.method == 'POST':
-            username = request.POST.get('username', '').strip()
-            if username:
+            # Support both username and email authentication
+            username_or_email = request.POST.get('username', '').strip()
+            if username_or_email:
+                # Try to find user by email if it looks like an email
+                username = username_or_email
+                if '@' in username_or_email:
+                    try:
+                        from django.contrib.auth import get_user_model
+                        User = get_user_model()
+                        user = User.objects.filter(email=username_or_email).first()
+                        if user:
+                            username = user.username
+                    except Exception:
+                        pass  # Fall back to using as username
                 try:
                     from .models_login_attempts import LoginAttempt
                     
@@ -310,6 +322,9 @@ class HMSLoginView(LoginView):
         """Add remaining attempts info to context"""
         context = super().get_context_data(**kwargs)
         username = self.request.POST.get('username', '').strip() or self.request.GET.get('username', '').strip()
+        
+        # Add authentication method to context for template
+        context['ACCOUNT_AUTHENTICATION_METHOD'] = getattr(settings, 'ACCOUNT_AUTHENTICATION_METHOD', 'username')
         
         # Always set max_attempts
         context['max_attempts'] = self.MAX_LOGIN_ATTEMPTS
