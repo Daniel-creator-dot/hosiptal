@@ -5,11 +5,16 @@ from django.contrib import messages
 from django.utils import timezone
 from django.http import HttpResponse
 from django.db import transaction
+from django.views.decorators.csrf import ensure_csrf_cookie
+from django.utils.decorators import method_decorator
+from django.middleware.csrf import get_token
+from django.conf import settings
 import logging
 
 logger = logging.getLogger(__name__)
 
 
+@method_decorator(ensure_csrf_cookie, name='dispatch')
 class HMSLoginView(LoginView):
     """
     HMS login view that redirects users to their role-specific dashboard after login.
@@ -33,7 +38,19 @@ class HMSLoginView(LoginView):
     
     def get_user_agent(self):
         """Get user agent string"""
-        return self.request.META.get('HTTP_USER_AGENT', '')
+        return self.request.META.get('HTTP_USER_AGENT', '')[:500]  # Limit to 500 chars
+    
+    def get(self, request, *args, **kwargs):
+        """Ensure CSRF cookie is set on GET requests"""
+        # Ensure session exists (required for CSRF token generation)
+        if not request.session.session_key:
+            request.session.create()
+        
+        # Force CSRF token generation to ensure cookie is set
+        # The @ensure_csrf_cookie decorator handles setting the cookie in the response
+        get_token(request)
+        
+        return super().get(request, *args, **kwargs)
     
     def dispatch(self, request, *args, **kwargs):
         """Check for locked accounts and existing sessions before processing login"""

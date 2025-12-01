@@ -164,6 +164,53 @@ class PatientAdmin(admin.ModelAdmin):
         total_str = f"{float(total):.2f}"
         return format_html('<span style="color: #48bb78;">Total: GHS {}</span>', total_str)
     financial_summary.short_description = 'Financial Summary'
+    
+    def save_model(self, request, obj, form, change):
+        """Override save to check for duplicates in admin interface"""
+        from django.db import IntegrityError
+        from django.contrib import messages
+        
+        # Check for duplicates before saving (model.save() will also check, but this gives better error message)
+        if not change:  # Only for new patients
+            def normalize_phone(phone):
+                if not phone:
+                    return ''
+                phone = str(phone).strip()
+                phone = phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+                if phone.startswith('0') and len(phone) == 10:
+                    phone = '233' + phone[1:]
+                elif phone.startswith('+'):
+                    phone = phone[1:]
+                return phone
+            
+            normalized_phone = normalize_phone(obj.phone_number)
+            
+            # Check for duplicates
+            if obj.first_name and obj.last_name and normalized_phone:
+                if obj.date_of_birth and obj.date_of_birth != '2000-01-01':
+                    existing = Patient.objects.filter(
+                        first_name__iexact=obj.first_name,
+                        last_name__iexact=obj.last_name,
+                        date_of_birth=obj.date_of_birth,
+                        is_deleted=False
+                    ).exclude(pk=obj.pk).first()
+                else:
+                    existing = Patient.objects.filter(
+                        first_name__iexact=obj.first_name,
+                        last_name__iexact=obj.last_name,
+                        is_deleted=False
+                    ).exclude(pk=obj.pk).first()
+                
+                if existing and normalize_phone(existing.phone_number) == normalized_phone:
+                    messages.error(
+                        request,
+                        f'Duplicate patient detected! A patient with the same name ({obj.first_name} {obj.last_name}) '
+                        f'and phone number ({obj.phone_number}) already exists. MRN: {existing.mrn}'
+                    )
+                    raise IntegrityError(f"Duplicate patient: {existing.mrn}")
+        
+        # Call parent save (which will also check duplicates in model.save())
+        super().save_model(request, obj, form, change)
 
 
 @admin.register(PatientQRCode)
@@ -332,6 +379,12 @@ class StaffAdmin(admin.ModelAdmin):
     search_fields = ['user__first_name', 'user__last_name', 'employee_id', 'phone_number', 'personal_email']
     ordering = ['user__last_name', 'user__first_name']
     readonly_fields = ['employee_id', 'age_display', 'years_of_service_display', 'retirement_date_display']
+    
+    def get_queryset(self, request):
+        """Override to prevent duplicate staff records - only show most recent per user"""
+        from hospital.utils_roles import get_deduplicated_staff_queryset
+        # Get deduplicated queryset - admin shows all (active and inactive)
+        return get_deduplicated_staff_queryset()
     
     fieldsets = (
         ('Basic Information', {
@@ -914,16 +967,16 @@ class LabResultAdmin(admin.ModelAdmin):
 
 @admin.register(Drug)
 class DrugAdmin(admin.ModelAdmin):
-    list_display = ['name', 'generic_name', 'strength', 'form', 'unit_price_display', 'cost_price_display', 'margin_display', 'controlled_badge', 'is_active']
-    list_filter = ['form', 'is_controlled', 'is_active', 'created']
-    search_fields = ['name', 'generic_name', 'atc_code']
+    list_display = ['name', 'category_display', 'generic_name', 'strength', 'form', 'unit_price_display', 'cost_price_display', 'margin_display', 'controlled_badge', 'is_active']
+    list_filter = ['category', 'form', 'is_controlled', 'is_active', 'created']
+    search_fields = ['name', 'generic_name', 'atc_code', 'category']
     ordering = ['name']
     readonly_fields = ['created', 'modified']
     actions = ['activate_drugs', 'deactivate_drugs']
     
     fieldsets = (
         ('Drug Information', {
-            'fields': ('atc_code', 'name', 'generic_name')
+            'fields': ('atc_code', 'name', 'generic_name', 'category')
         }),
         ('Formulation', {
             'fields': ('strength', 'form', 'pack_size', 'is_controlled')
@@ -940,6 +993,17 @@ class DrugAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+    
+    def category_display(self, obj):
+        """Display category with abbreviated name"""
+        if hasattr(obj, 'category') and obj.category:
+            # Show short category name (first part before dash)
+            category_name = obj.get_category_display()
+            if ' - ' in category_name:
+                return category_name.split(' - ')[0]
+            return category_name
+        return '-'
+    category_display.short_description = 'Category'
     
     def unit_price_display(self, obj):
         price = getattr(obj, 'unit_price', 0)

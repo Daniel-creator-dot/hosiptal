@@ -11,7 +11,335 @@
     <div class="alert alert-info" style="border-radius: 12px; margin-bottom: 24px; border: none;">
         <i class="bi bi-info-circle"></i> <strong>Note:</strong> Patient ID (MRN) will be automatically generated as <strong>PMC[Year][000001]</strong> after registration. You don't need to enter it manually.
     </div>
+    
+    {% if form.non_field_errors %}
+    <div class="alert alert-warning" style="border-radius: 12px; margin-bottom: 24px; border: 2px solid #ffc107;">
+        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+        <strong>⚠️ Potential Duplicate Patient Detected!</strong>
+        <ul class="mb-3 mt-2">
+            {% for error in form.non_field_errors %}
+            <li>{{ error }}</li>
+            {% endfor %}
+        </ul>
+        <div class="alert alert-info mt-3" style="background-color: #e7f3ff; border: 1px solid #b3d9ff;">
+            <strong>💡 Note:</strong> This could be a family member or different person sharing the same phone number or email.
+        </div>
+        <div class="mt-3">
+            <button type="button" class="btn btn-warning me-2" id="proceedBtn" onclick="if(window.proceedWithDuplicate) { window.proceedWithDuplicate(); } else { alert('Function not loaded. Please refresh the page.'); } return false;">
+                <i class="bi bi-check-circle me-2"></i>Yes, Proceed Anyway (Family/Different Person)
+            </button>
+            <button type="button" class="btn btn-secondary" onclick="if(window.cancelRegistration) { window.cancelRegistration(); } else { window.location.reload(); } return false;">
+                <i class="bi bi-x-circle me-2"></i>Cancel - Check Existing Patient
+            </button>
+        </div>
+    </div>
+    {% endif %}
+    
+    {% if duplicate_warning %}
+    <div class="alert alert-warning" style="border-radius: 12px; margin-bottom: 24px; border: 2px solid #ffc107;">
+        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+        <strong>⚠️ Potential Duplicate Patient Detected!</strong>
+        <p class="mb-2 mt-2">{{ duplicate_reason }}</p>
+        {% if existing_patient %}
+        <div class="mb-3">
+            <strong>Existing Patient:</strong>
+            <ul class="mb-0">
+                <li>Name: {{ existing_patient.full_name }}</li>
+                <li>MRN: <a href="{% url 'hospital:patient_detail' existing_patient.pk %}" target="_blank">{{ existing_patient.mrn }}</a></li>
+                <li>Phone: {{ existing_patient.phone_number }}</li>
+                {% if existing_patient.email %}<li>Email: {{ existing_patient.email }}</li>{% endif %}
+            </ul>
+        </div>
+        {% endif %}
+        <div class="alert alert-info mt-3" style="background-color: #e7f3ff; border: 1px solid #b3d9ff;">
+            <strong>💡 Note:</strong> This could be a family member or different person sharing the same phone number or email.
+            <br><strong>If this is a different person, you can proceed with registration.</strong>
+        </div>
+        <div class="mt-3">
+            <p class="mb-3"><strong>What would you like to do?</strong></p>
+            <form method="post" id="proceedForm" style="display: inline;">
+                {% csrf_token %}
+                <input type="hidden" name="proceed_with_duplicate" value="true">
+                <button type="button" class="btn btn-warning me-2" onclick="if(window.proceedWithDuplicateForm) { window.proceedWithDuplicateForm(); } else if(window.proceedWithDuplicate) { window.proceedWithDuplicate(); } else { alert('Function not loaded. Please refresh the page.'); } return false;">
+                    <i class="bi bi-check-circle me-2"></i>Yes, Proceed Anyway (Family/Different Person)
+                </button>
+            </form>
+            {% if existing_patient %}
+            <a href="{% url 'hospital:patient_detail' existing_patient.pk %}" class="btn btn-info me-2" target="_blank">
+                <i class="bi bi-eye me-2"></i>View Existing Patient ({{ existing_patient.mrn }})
+            </a>
+            {% endif %}
+            <button type="button" class="btn btn-secondary" onclick="window.location.reload()">
+                <i class="bi bi-x-circle me-2"></i>Cancel
+            </button>
+        </div>
+    </div>
+    {% endif %}
+    
     {% crispy form %}
 </div>
+
+<script>
+// Prevent double-submission of patient registration form
+(function() {
+    const form = document.querySelector('form');
+    if (!form) return;
+    
+    let isSubmitting = false;
+    let submissionToken = null;
+    
+    // Generate unique submission token
+    function generateToken() {
+        return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+    }
+    
+    // Add submission token to form
+    const tokenInput = document.createElement('input');
+    tokenInput.type = 'hidden';
+    tokenInput.name = 'submission_token';
+    tokenInput.value = generateToken();
+    form.appendChild(tokenInput);
+    
+    form.addEventListener('submit', function(e) {
+        if (isSubmitting) {
+            e.preventDefault();
+            e.stopPropagation();
+            alert('Form is already being submitted. Please wait...');
+            return false;
+        }
+        
+        // Don't disable inputs - let form submit normally
+        // Only disable submit button to prevent double-click
+        const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            const originalText = submitBtn.innerHTML || submitBtn.value;
+            if (submitBtn.innerHTML) {
+                submitBtn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Registering...';
+            } else {
+                submitBtn.value = 'Registering...';
+            }
+        }
+        
+        isSubmitting = true;
+        
+        // Prevent browser back/forward from resubmitting
+        window.addEventListener('beforeunload', function(e) {
+            if (isSubmitting) {
+                e.preventDefault();
+                e.returnValue = 'Form is being submitted. Are you sure you want to leave?';
+                return e.returnValue;
+            }
+        });
+        
+        // Log submission
+        console.log('Form submitting with token:', tokenInput.value);
+    });
+    
+    // Prevent form resubmission on page refresh (POST-REDIRECT-GET pattern)
+    if (window.history && window.history.replaceState) {
+        window.history.replaceState(null, null, window.location.href);
+    }
+    
+    // Prevent double-click
+    let lastClickTime = 0;
+    form.addEventListener('click', function(e) {
+        if (e.target.type === 'submit' || e.target.closest('button[type="submit"]')) {
+            const now = Date.now();
+            if (now - lastClickTime < 2000) { // 2 second cooldown
+                e.preventDefault();
+                e.stopPropagation();
+                alert('Please wait before submitting again.');
+                return false;
+            }
+            lastClickTime = now;
+        }
+    });
+})();
+
+// Functions to handle duplicate confirmation - MUST be defined AFTER form initialization
+(function() {
+    // Function to proceed with duplicate (if user confirms)
+    window.proceedWithDuplicate = function() {
+        console.log('proceedWithDuplicate called');
+        
+        // Find the main patient registration form (crispy form)
+        const allForms = document.querySelectorAll('form');
+        console.log('All forms found:', allForms.length, allForms);
+        
+        let mainForm = null;
+        
+        // Find the form that's not the proceedForm and has method="post"
+        for (let form of allForms) {
+            const formMethod = form.method || form.getAttribute('method') || '';
+            const formId = form.id || '';
+            console.log('Checking form:', formId, 'Method:', formMethod);
+            
+            if (formId !== 'proceedForm' && (formMethod.toLowerCase() === 'post' || formMethod === '')) {
+                mainForm = form;
+                console.log('Found main form:', form);
+                break;
+            }
+        }
+        
+        // If still not found, get the first form that's not proceedForm
+        if (!mainForm) {
+            for (let form of allForms) {
+                if (form.id !== 'proceedForm') {
+                    mainForm = form;
+                    console.log('Using first non-proceedForm:', form);
+                    break;
+                }
+            }
+        }
+        
+        if (!mainForm) {
+            alert('Error: Could not find the registration form. Please refresh the page and try again.');
+            console.error('Form not found. Available forms:', allForms);
+            return false;
+        }
+        
+        console.log('Using form:', mainForm);
+        console.log('Form action:', mainForm.action);
+        console.log('Form method:', mainForm.method);
+        
+        // Remove any existing proceed input
+        const existingInput = mainForm.querySelector('input[name="proceed_with_duplicate"]');
+        if (existingInput) {
+            existingInput.remove();
+        }
+        
+        // Add hidden input to indicate user wants to proceed
+        const proceedInput = document.createElement('input');
+        proceedInput.type = 'hidden';
+        proceedInput.name = 'proceed_with_duplicate';
+        proceedInput.value = 'true';
+        mainForm.appendChild(proceedInput);
+        
+        console.log('Added proceed_with_duplicate input');
+        console.log('Form inputs before submit:', mainForm.querySelectorAll('input').length);
+        
+        // Check if form has required fields that might prevent submission
+        const requiredFields = mainForm.querySelectorAll('[required]');
+        console.log('Required fields:', requiredFields.length);
+        
+        // Submit the form by clicking the submit button (more reliable)
+        try {
+            // Find the submit button
+            const submitButton = mainForm.querySelector('button[type="submit"], input[type="submit"]');
+            
+            if (submitButton) {
+                console.log('Found submit button, clicking it...');
+                // Temporarily remove any disabled state
+                const wasDisabled = submitButton.disabled;
+                submitButton.disabled = false;
+                
+                // Click the button to trigger normal form submission
+                submitButton.click();
+                
+                // Re-disable if it was disabled
+                if (wasDisabled) {
+                    setTimeout(() => { submitButton.disabled = true; }, 100);
+                }
+                console.log('Submit button clicked');
+                return true;
+            } else {
+                // No submit button found, use form.submit()
+                console.log('No submit button found, using form.submit()');
+                mainForm.submit();
+                return true;
+            }
+        } catch (e) {
+            console.error('Error submitting form:', e);
+            console.error('Error details:', e.message, e.stack);
+            
+            // Last resort: try form.submit() directly
+            try {
+                console.log('Trying form.submit() as fallback...');
+                mainForm.submit();
+                return true;
+            } catch (e2) {
+                console.error('All submission methods failed:', e2);
+                // Show detailed error
+                alert('Error: ' + (e.message || e2.message || 'Could not submit form') + 
+                      '\n\nPlease check the browser console (F12) for details.\n\nYou can also manually add the patient by refreshing the page.');
+                return false;
+            }
+        }
+    };
+    
+    // Function to proceed with duplicate using the main form
+    window.proceedWithDuplicateForm = function() {
+        console.log('proceedWithDuplicateForm called');
+        return window.proceedWithDuplicate();
+    };
+    
+    // Function to cancel and view existing patient
+    window.cancelRegistration = function() {
+        console.log('cancelRegistration called');
+        window.location.reload();
+        return false;
+    };
+    
+    console.log('Duplicate handling functions initialized');
+})();
+
+// Toggle payer type fields based on selection
+(function() {
+    'use strict';
+    
+    function togglePayerFields() {
+        const payerTypeField = document.getElementById('id_payer_type');
+        if (!payerTypeField) {
+            console.warn('Payer type field not found');
+            return;
+        }
+        
+        const payerType = payerTypeField.value;
+        const insuranceFields = document.getElementById('insurance_fields');
+        const corporateFields = document.getElementById('corporate_fields');
+        const cashFields = document.getElementById('cash_fields');
+        
+        // Hide all fields first
+        if (insuranceFields) insuranceFields.style.display = 'none';
+        if (corporateFields) corporateFields.style.display = 'none';
+        if (cashFields) cashFields.style.display = 'none';
+        
+        // Show relevant fields based on selection
+        if (payerType === 'insurance' && insuranceFields) {
+            insuranceFields.style.display = 'block';
+        } else if (payerType === 'corporate' && corporateFields) {
+            corporateFields.style.display = 'block';
+        } else if (payerType === 'cash' && cashFields) {
+            cashFields.style.display = 'block';
+        }
+    }
+    
+    // Make function globally available
+    window.togglePayerFields = togglePayerFields;
+    
+    // Initialize when DOM is ready
+    function initPayerFields() {
+        const payerTypeField = document.getElementById('id_payer_type');
+        if (payerTypeField) {
+            // Set up change listener
+            payerTypeField.addEventListener('change', togglePayerFields);
+            // Initial toggle
+            togglePayerFields();
+        } else {
+            // Retry after a short delay if field not found yet
+            setTimeout(initPayerFields, 100);
+        }
+    }
+    
+    // Start initialization
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initPayerFields);
+    } else {
+        // DOM already loaded
+        initPayerFields();
+    }
+})();
+</script>
 {% endblock %}
 

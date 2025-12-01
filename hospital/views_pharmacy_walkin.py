@@ -393,12 +393,17 @@ def api_patient_search(request):
         is_deleted=False
     )[:10]
     
-    results = [{
-        'id': p.id,
-        'name': p.full_name,
-        'mrn': p.mrn,
-        'phone': p.phone_number,
-    } for p in patients]
+    results = []
+    for p in patients:
+        # Validate patient ID - skip if invalid
+        if not p.id or str(p.id).upper() == 'INVALID':
+            continue
+        results.append({
+            'id': str(p.id),
+            'name': p.full_name,
+            'mrn': p.mrn,
+            'phone': p.phone_number or '',
+        })
     
     return JsonResponse({'patients': results})
 

@@ -141,6 +141,128 @@ class StaffForm(forms.ModelForm):
             Submit('submit', 'Save Staff', css_class='btn btn-primary-modern btn-lg mt-4')
         )
     
+    def clean(self):
+        """Check for duplicate staff before saving"""
+        cleaned_data = super().clean()
+        username = cleaned_data.get('username', '').strip()
+        email = cleaned_data.get('email', '').strip()
+        personal_email = cleaned_data.get('personal_email', '').strip()
+        first_name = cleaned_data.get('first_name', '').strip()
+        last_name = cleaned_data.get('last_name', '').strip()
+        phone_number = cleaned_data.get('phone_number', '').strip()
+        employee_id = cleaned_data.get('employee_id', '').strip()
+        
+        # Get the instance (if editing existing staff)
+        instance = self.instance
+        staff_id = instance.pk if instance else None
+        
+        # Normalize phone number for comparison
+        def normalize_phone(phone):
+            if not phone:
+                return ''
+            phone = phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+            if phone.startswith('0') and len(phone) == 10:
+                phone = '233' + phone[1:]
+            elif phone.startswith('+'):
+                phone = phone[1:]
+            return phone
+        
+        normalized_phone = normalize_phone(phone_number)
+        
+        # Check for duplicates
+        from django.contrib.auth.models import User
+        from .models import Staff
+        duplicate_checks = []
+        
+        # Check 1: Username (must be unique)
+        if username:
+            existing_user = User.objects.filter(username__iexact=username).exclude(
+                staff__pk=staff_id if staff_id else None
+            ).first()
+            if existing_user:
+                duplicate_checks.append(
+                    f"A user with username '{username}' already exists. "
+                    f"Please choose a different username."
+                )
+        
+        # Check 2: Email (must be unique)
+        if email:
+            existing_user = User.objects.filter(email__iexact=email).exclude(
+                staff__pk=staff_id if staff_id else None
+            ).first()
+            if existing_user:
+                duplicate_checks.append(
+                    f"A user with email '{email}' already exists. "
+                    f"Username: {existing_user.username}"
+                )
+        
+        # Check 3: Personal email (if different from main email)
+        if personal_email and personal_email != email:
+            existing = Staff.objects.filter(
+                personal_email__iexact=personal_email,
+                is_deleted=False
+            ).exclude(pk=staff_id)
+            
+            if existing.exists():
+                staff = existing.first()
+                duplicate_checks.append(
+                    f"A staff member with personal email '{personal_email}' already exists. "
+                    f"Name: {staff.user.get_full_name()}, Employee ID: {staff.employee_id}"
+                )
+        
+        # Check 4: Employee ID (must be unique)
+        if employee_id:
+            existing = Staff.objects.filter(
+                employee_id=employee_id,
+                is_deleted=False
+            ).exclude(pk=staff_id)
+            
+            if existing.exists():
+                staff = existing.first()
+                duplicate_checks.append(
+                    f"A staff member with Employee ID '{employee_id}' already exists. "
+                    f"Name: {staff.user.get_full_name()}"
+                )
+        
+        # Check 5: Same name + phone (potential duplicate)
+        if first_name and last_name and normalized_phone:
+            existing = Staff.objects.filter(
+                user__first_name__iexact=first_name,
+                user__last_name__iexact=last_name,
+                is_deleted=False
+            ).exclude(pk=staff_id)
+            
+            for staff in existing:
+                if normalize_phone(staff.phone_number) == normalized_phone:
+                    duplicate_checks.append(
+                        f"A staff member with the same name ({first_name} {last_name}) and "
+                        f"phone number ({phone_number}) already exists. "
+                        f"Employee ID: {staff.employee_id}, Username: {staff.user.username}"
+                    )
+                    break
+        
+        # Check 6: Same phone number
+        if normalized_phone:
+            existing = Staff.objects.filter(
+                is_deleted=False
+            ).exclude(pk=staff_id)
+            
+            for staff in existing:
+                if normalize_phone(staff.phone_number) == normalized_phone:
+                    duplicate_checks.append(
+                        f"A staff member with phone number '{phone_number}' already exists. "
+                        f"Name: {staff.user.get_full_name()}, Employee ID: {staff.employee_id}"
+                    )
+                    break
+        
+        # Raise validation error if duplicates found
+        if duplicate_checks:
+            error_message = "⚠️ Potential duplicate staff member detected:\n\n" + "\n\n".join(duplicate_checks)
+            error_message += "\n\nPlease verify this is not a duplicate before proceeding."
+            raise forms.ValidationError(error_message)
+        
+        return cleaned_data
+    
     def save(self, commit=True):
         staff = super().save(commit=False)
         

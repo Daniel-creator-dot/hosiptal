@@ -1,29 +1,51 @@
 @echo off
-echo ========================================
-echo UNLOCK ALL BLOCKED ACCOUNTS
-echo ========================================
 echo.
-echo This will unlock ALL blocked accounts:
-echo   - Activate all inactive users
-echo   - Unlock all login attempts
-echo   - Reset failed attempt counters
+echo ========================================
+echo   UNLOCK ALL BLOCKED ACCOUNTS
+echo ========================================
 echo.
 
-docker-compose exec web python unlock_all_accounts.py
+REM Check if Docker is running
+echo [1/2] Checking Docker Desktop...
+docker info >nul 2>&1
+if %errorlevel% neq 0 (
+    echo    ❌ ERROR: Docker Desktop is not running!
+    echo    Please start Docker Desktop and try again.
+    echo.
+    pause
+    exit /b 1
+)
+echo    ✅ Docker Desktop is running
+echo.
+
+REM Run unlock command
+echo [2/2] Unlocking all accounts...
+echo.
+docker-compose exec web python manage.py unlock_all_accounts
 
 if %errorlevel% equ 0 (
     echo.
     echo ========================================
-    echo ✅ ALL ACCOUNTS UNLOCKED!
+    echo   ✅ ALL ACCOUNTS UNLOCKED!
     echo ========================================
+    echo.
+    echo All users can now login!
     echo.
 ) else (
     echo.
-    echo ❌ Failed to unlock accounts
+    echo ========================================
+    echo   ❌ FAILED TO UNLOCK ACCOUNTS
+    echo ========================================
+    echo.
+    echo Check the error messages above.
     echo.
 )
 
 pause
+
+
+
+
 
 
 

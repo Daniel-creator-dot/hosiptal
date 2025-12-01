@@ -24,7 +24,7 @@ from .models_accounting_advanced import (
     AccountingPayroll, AccountingPayrollEntry, DoctorCommission,
     IncomeGroup, ProfitLossReport,
     RegistrationFee, CashSale, AccountingCorporateAccount,
-    WithholdingReceivable, Deposit, InitialRevaluation
+    WithholdingReceivable, WithholdingTaxPayable, Deposit, InitialRevaluation
 )
 
 
@@ -1017,6 +1017,38 @@ class WithholdingReceivableAdmin(admin.ModelAdmin):
         }),
         ('Notes', {
             'fields': ('notes',)
+        }),
+    )
+
+
+# ==================== WITHHOLDING TAX PAYABLE ====================
+
+@admin.register(WithholdingTaxPayable)
+class WithholdingTaxPayableAdmin(admin.ModelAdmin):
+    list_display = ['withholding_number', 'supplier_name', 'withholding_date', 'gross_amount', 'withholding_rate', 'withholding_amount', 'balance_due', 'supply_type']
+    list_filter = ['withholding_date', 'supply_type', 'is_exempted', 'due_date']
+    search_fields = ['withholding_number', 'supplier_name', 'supplier_tin', 'description']
+    readonly_fields = ['withholding_number', 'withholding_amount', 'net_amount_paid', 'balance_due']
+    date_hierarchy = 'withholding_date'
+    
+    fieldsets = (
+        ('Withholding Tax Information', {
+            'fields': ('withholding_number', 'withholding_date', 'supplier_name', 'supplier_tin', 'is_exempted', 'supply_type')
+        }),
+        ('Amounts', {
+            'fields': ('gross_amount', 'withholding_rate', 'withholding_amount', 'net_amount_paid')
+        }),
+        ('Payment Status', {
+            'fields': ('amount_paid', 'balance_due', 'due_date', 'paid_date')
+        }),
+        ('Source Transaction', {
+            'fields': ('accounts_payable', 'payment_voucher')
+        }),
+        ('Accounting', {
+            'fields': ('payable_account', 'journal_entry')
+        }),
+        ('Details', {
+            'fields': ('description', 'notes')
         }),
     )
 

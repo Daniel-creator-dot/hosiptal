@@ -253,6 +253,33 @@ def admin_dashboard(request):
         ).count()
     )
     
+    # Procurement Approvals (for Medical Directors and Admins)
+    pending_admin_approvals = 0
+    pending_accounts_approvals = 0
+    recent_procurement_requests = []
+    try:
+        from .models_procurement import ProcurementRequest
+        
+        # Check if user can approve procurement (admin approval)
+        if request.user.has_perm('hospital.can_approve_procurement_admin') or request.user.is_superuser:
+            pending_admin_approvals = ProcurementRequest.objects.filter(
+                status='submitted',
+                is_deleted=False
+            ).count()
+            recent_procurement_requests = ProcurementRequest.objects.filter(
+                status='submitted',
+                is_deleted=False
+            ).select_related('requested_by_store', 'requested_by__user').order_by('-created')[:5]
+        
+        # Check if user can approve accounts
+        if request.user.has_perm('hospital.can_approve_procurement_accounts') or request.user.is_superuser:
+            pending_accounts_approvals = ProcurementRequest.objects.filter(
+                status='admin_approved',
+                is_deleted=False
+            ).count()
+    except Exception:
+        pass
+    
     context = {
         'title': 'Administrator Dashboard',
         'role_info': get_role_display_info(request.user),
@@ -265,6 +292,9 @@ def admin_dashboard(request):
         'staff_on_leave': staff_on_leave,
         'pending_leaves': pending_leaves,
         'appointments_today': appointments_today,
+        'pending_admin_approvals': pending_admin_approvals,
+        'pending_accounts_approvals': pending_accounts_approvals,
+        'recent_procurement_requests': recent_procurement_requests,
         'today': today,
     }
     

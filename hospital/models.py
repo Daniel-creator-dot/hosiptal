@@ -79,14 +79,16 @@ class Patient(BaseModel):
     gender = models.CharField(max_length=1, choices=GENDER_CHOICES, default='M')
     blood_type = models.CharField(max_length=3, choices=BLOOD_TYPE_CHOICES, blank=True)
     
-    phone_regex = RegexValidator(regex=r'^\+?1?\d{9,15}$', message="Phone number must be entered in the format: '+999999999'. Up to 15 digits allowed.")
+    # Updated phone regex to accept Ghana numbers (024, 050, 020, etc.) and international format
+    # Accepts: 0241234567, +233241234567, 233241234567, or any 9-15 digit number
+    phone_regex = RegexValidator(regex=r'^(\+?233|0)?[0-9]{9,15}$', message="Phone number must be entered in the format: '+233241234567' or '0241234567'. Up to 15 digits allowed.")
     phone_number = models.CharField(validators=[phone_regex], max_length=17, blank=True)
     email = models.EmailField(blank=True)
     address = models.TextField(default='')
     
     # Emergency contact
     next_of_kin_name = models.CharField(max_length=100, default='')
-    next_of_kin_phone = models.CharField(validators=[phone_regex], max_length=17, default='')
+    next_of_kin_phone = models.CharField(validators=[phone_regex], max_length=17, blank=True, default='')
     next_of_kin_relationship = models.CharField(max_length=50, default='')
     
     # Medical information
@@ -107,6 +109,14 @@ class Patient(BaseModel):
     
     class Meta:
         ordering = ['last_name', 'first_name']
+        # Add indexes to speed up duplicate detection queries
+        indexes = [
+            models.Index(fields=['first_name', 'last_name', 'date_of_birth'], name='patient_name_dob_idx'),
+            models.Index(fields=['first_name', 'last_name', 'phone_number'], name='patient_name_phone_idx'),
+            models.Index(fields=['email'], name='patient_email_idx'),
+            models.Index(fields=['national_id'], name='patient_national_id_idx'),
+            models.Index(fields=['phone_number'], name='patient_phone_idx'),
+        ]
     
     def __str__(self):
         return f"{self.first_name} {self.last_name} ({self.mrn})"
@@ -121,43 +131,194 @@ class Patient(BaseModel):
         return today.year - self.date_of_birth.year - ((today.month, today.day) < (self.date_of_birth.month, self.date_of_birth.day))
     
     def save(self, *args, **kwargs):
-        """Auto-generate Patient ID (MRN) if not provided"""
+        """Auto-generate Patient ID (MRN) if not provided
+        CRITICAL: Also checks for duplicates BEFORE saving (final safety net)
+        Handles duplicate MRN errors with retry logic for concurrent environments
+        """
+        from django.db import IntegrityError, transaction
+        import time
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
         is_new = self.pk is None
         
         # Normalize national_id: convert empty strings to None (for unique constraint)
         if self.national_id == '':
             self.national_id = None
         
+        # CRITICAL: Check for duplicates BEFORE saving (catches API, admin, and any other bypasses)
+        if is_new:  # Only check for new patients
+            def normalize_phone(phone):
+                if not phone:
+                    return ''
+                phone = str(phone).strip()
+                phone = phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+                if phone.startswith('0') and len(phone) == 10:
+                    phone = '233' + phone[1:]
+                elif phone.startswith('+'):
+                    phone = phone[1:]
+                return phone
+            
+            normalized_phone = normalize_phone(self.phone_number)
+            
+            # Check for duplicates by name + phone (most reliable)
+            if self.first_name and self.last_name and normalized_phone:
+                # Use select_for_update to lock rows during check
+                with transaction.atomic():
+                    if self.date_of_birth and self.date_of_birth != '2000-01-01':  # Only if DOB is not default
+                        existing = Patient.objects.select_for_update().filter(
+                            first_name__iexact=self.first_name,
+                            last_name__iexact=self.last_name,
+                            date_of_birth=self.date_of_birth,
+                            is_deleted=False
+                        ).exclude(pk=self.pk).first()
+                    else:
+                        # Check by name + phone only (more aggressive)
+                        existing = Patient.objects.select_for_update().filter(
+                            first_name__iexact=self.first_name,
+                            last_name__iexact=self.last_name,
+                            is_deleted=False
+                        ).exclude(pk=self.pk).first()
+                    
+                    if existing:
+                        existing_normalized = normalize_phone(existing.phone_number)
+                        if existing_normalized == normalized_phone:
+                            logger.error(
+                                f"DUPLICATE PATIENT BLOCKED IN MODEL.SAVE(): "
+                                f"Trying to create {self.first_name} {self.last_name} with phone {self.phone_number}, "
+                                f"but {existing.mrn} already exists!"
+                            )
+                            from django.core.exceptions import ValidationError
+                            raise ValidationError(
+                                f"Duplicate patient detected! A patient with the same name ({self.first_name} {self.last_name}) "
+                                f"and phone number ({self.phone_number}) already exists. MRN: {existing.mrn}"
+                            )
+            
+            # Check by email
+            if self.email:
+                with transaction.atomic():
+                    existing = Patient.objects.select_for_update().filter(
+                        email__iexact=self.email,
+                        is_deleted=False
+                    ).exclude(pk=self.pk).first()
+                    if existing:
+                        logger.error(
+                            f"DUPLICATE PATIENT BLOCKED IN MODEL.SAVE(): "
+                            f"Trying to create patient with email {self.email}, "
+                            f"but {existing.mrn} already exists!"
+                        )
+                        from django.core.exceptions import ValidationError
+                        raise ValidationError(
+                            f"Duplicate patient detected! A patient with email {self.email} already exists. MRN: {existing.mrn}"
+                        )
+            
+            # Check by national_id
+            if self.national_id:
+                with transaction.atomic():
+                    existing = Patient.objects.select_for_update().filter(
+                        national_id=self.national_id,
+                        is_deleted=False
+                    ).exclude(pk=self.pk).first()
+                    if existing:
+                        logger.error(
+                            f"DUPLICATE PATIENT BLOCKED IN MODEL.SAVE(): "
+                            f"Trying to create patient with national_id {self.national_id}, "
+                            f"but {existing.mrn} already exists!"
+                        )
+                        from django.core.exceptions import ValidationError
+                        raise ValidationError(
+                            f"Duplicate patient detected! A patient with National ID {self.national_id} already exists. MRN: {existing.mrn}"
+                        )
+        
+        # Generate MRN if not provided
         if not self.mrn or self.mrn == '':
             self.mrn = self.generate_mrn()
-        super().save(*args, **kwargs)
         
-        # If this is a new patient and MRN was auto-generated, save again to ensure it's set
+        # Retry logic for handling duplicate MRN errors (race conditions)
+        max_retries = 5
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                super().save(*args, **kwargs)
+                # If save successful, break out of retry loop
+                break
+            except IntegrityError as e:
+                # Check if it's a duplicate MRN error
+                error_str = str(e).lower()
+                if 'mrn' in error_str or 'unique' in error_str:
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        # Last retry failed, raise the error
+                        raise
+                    # Generate a new MRN and retry
+                    self.mrn = self.generate_mrn()
+                    # Small delay to reduce collision probability
+                    time.sleep(0.1 * retry_count)
+                else:
+                    # Not a duplicate MRN error, re-raise
+                    raise
+        
+        # If this is a new patient and MRN was auto-generated, ensure it's set
         if is_new and not self.mrn:
             self.mrn = self.generate_mrn()
-            super().save(update_fields=['mrn'], *args, **kwargs)
+            try:
+                super().save(update_fields=['mrn'], *args, **kwargs)
+            except IntegrityError as e:
+                # If still duplicate, generate new one and try once more
+                error_str = str(e).lower()
+                if 'mrn' in error_str or 'unique' in error_str:
+                    self.mrn = self.generate_mrn()
+                    super().save(update_fields=['mrn'], *args, **kwargs)
+                else:
+                    raise
     
     @staticmethod
     def generate_mrn():
-        """Generate a unique Patient ID (Medical Record Number) for PrimeCare Medical Center"""
+        """Generate a unique Patient ID (Medical Record Number) for PrimeCare Medical Center
+        Uses database-level locking to prevent race conditions in concurrent environments (Docker, etc.)
+        """
         from datetime import datetime
+        from django.db import transaction
+        from django.db.models import F
+        
         prefix = "PMC"  # PrimeCare Medical Center
         year = datetime.now().year
-        # Get the last MRN for this year
-        last_patient = Patient.objects.filter(
-            mrn__startswith=f"{prefix}{year}"
-        ).order_by('-mrn').first()
         
-        if last_patient and last_patient.mrn:
-            try:
-                last_num = int(last_patient.mrn.replace(f"{prefix}{year}", ""))
-                new_num = last_num + 1
-            except ValueError:
+        # Use database-level locking to prevent race conditions
+        # This is critical for Docker environments with multiple workers
+        with transaction.atomic():
+            # Use SELECT FOR UPDATE to lock the row and prevent concurrent access
+            last_patient = Patient.objects.filter(
+                mrn__startswith=f"{prefix}{year}",
+                is_deleted=False
+            ).select_for_update().order_by('-mrn').first()
+            
+            if last_patient and last_patient.mrn:
+                try:
+                    last_num = int(last_patient.mrn.replace(f"{prefix}{year}", ""))
+                    new_num = last_num + 1
+                except ValueError:
+                    new_num = 1
+            else:
                 new_num = 1
-        else:
-            new_num = 1
-        
-        return f"{prefix}{year}{new_num:06d}"  # 6 digits for better scalability
+            
+            # Check if the generated MRN already exists (safety check)
+            max_retries = 10
+            retry_count = 0
+            while retry_count < max_retries:
+                candidate_mrn = f"{prefix}{year}{new_num:06d}"
+                if not Patient.objects.filter(mrn=candidate_mrn, is_deleted=False).exists():
+                    return candidate_mrn
+                # If exists, increment and try again
+                new_num += 1
+                retry_count += 1
+            
+            # Fallback: use timestamp-based suffix if all sequential numbers are taken
+            import time
+            timestamp_suffix = str(int(time.time()))[-4:]  # Last 4 digits of timestamp
+            return f"{prefix}{year}{new_num:06d}{timestamp_suffix}"
     
     def get_active_encounters(self):
         """Get all active encounters for this patient"""
@@ -964,6 +1125,8 @@ class Staff(BaseModel):
         ('admin', 'Administrator'),
         ('receptionist', 'Receptionist'),
         ('cashier', 'Cashier'),
+        ('hr_manager', 'HR Manager'),
+        ('accountant', 'Accountant'),
     ]
     
     BLOOD_GROUP_CHOICES = [
@@ -1429,13 +1592,85 @@ class LabResult(BaseModel):
 
 class Drug(BaseModel):
     """Pharmacy drug formulary"""
+    
+    # Comprehensive drug categories - logically organized without duplication
+    CATEGORIES = [
+        # ========== PAIN MANAGEMENT & FEVER ==========
+        ('analgesic', 'Analgesics - Relieve pain (non-narcotic for mild pain, narcotic for severe pain)'),
+        ('antipyretic', 'Antipyretics - Drugs that reduce fever'),
+        
+        # ========== CARDIOVASCULAR SYSTEM ==========
+        ('antihypertensive', 'Antihypertensives - Lower blood pressure (includes diuretics, beta-blockers, calcium channel blockers, ACE inhibitors)'),
+        ('antiarrhythmic', 'Antiarrhythmics - Control irregularities of heartbeat'),
+        ('beta_blocker', 'Beta-Blockers - Reduce oxygen needs of heart by reducing heartbeat rate'),
+        ('anticoagulant', 'Anticoagulants - Prevent blood from clotting'),
+        ('thrombolytic', 'Thrombolytics - Dissolve and disperse blood clots'),
+        ('diuretic', 'Diuretics - Increase urine production, rid body of excess fluid'),
+        
+        # ========== INFECTIONS & ANTIMICROBIALS ==========
+        ('antibiotic', 'Antibiotics - Combat bacterial infections (naturally occurring and synthetic substances)'),
+        ('antibacterial', 'Antibacterials - Drugs used to treat infections'),
+        ('antiviral', 'Antivirals - Treat viral infections or provide temporary protection (e.g., influenza)'),
+        ('antifungal', 'Antifungals - Treat fungal infections (hair, skin, nails, mucous membranes)'),
+        
+        # ========== NEUROLOGICAL CONDITIONS ==========
+        ('anticonvulsant', 'Anticonvulsants - Prevent epileptic seizures'),
+        
+        # ========== PSYCHIATRIC & MENTAL HEALTH ==========
+        ('antipsychotic', 'Antipsychotics - Treat symptoms of severe psychiatric disorders (major tranquilizers)'),
+        ('antidepressant', 'Antidepressants - Mood-lifting medications (tricyclics, MAOIs, SSRIs)'),
+        ('antianxiety', 'Antianxiety Drugs - Suppress anxiety and relax muscles (anxiolytics, sedatives, minor tranquilizers)'),
+        ('tranquilizer', 'Tranquilizers - Drugs with calming or sedative effect (minor = antianxiety, major = antipsychotic)'),
+        ('sedative', 'Sedatives - Calming or sedative effect (same as antianxiety drugs)'),
+        ('sleeping_drug', 'Sleeping Drugs - Induce sleep (benzodiazepines and barbiturates)'),
+        
+        # ========== RESPIRATORY SYSTEM ==========
+        ('bronchodilator', 'Bronchodilators - Open bronchial tubes in lungs (e.g., for asthma)'),
+        ('cough_suppressant', 'Cough Suppressants - Suppress coughing reflex or alter phlegm consistency (includes expectorants, mucolytics)'),
+        ('expectorant', 'Expectorants - Stimulate flow of saliva and promote coughing to eliminate phlegm'),
+        ('decongestant', 'Decongestants - Reduce swelling of nasal mucous membranes, relieve nasal stuffiness'),
+        ('cold_cure', 'Cold Cures - Relieve aches, pains, and fever accompanying colds (aspirin, acetaminophen with decongestant/antihistamine)'),
+        
+        # ========== GASTROINTESTINAL SYSTEM ==========
+        ('antacid', 'Antacids - Relieve indigestion and heartburn by neutralizing stomach acid'),
+        ('antidiarrheal', 'Antidiarrheals - Relief of diarrhea (adsorbent substances or drugs that slow bowel contractions)'),
+        ('antiemetic', 'Antiemetics - Treat nausea and vomiting'),
+        ('laxative', 'Laxatives - Increase frequency and ease of bowel movements (stimulant, bulk, or lubricating)'),
+        
+        # ========== INFLAMMATION & IMMUNE SYSTEM ==========
+        ('anti_inflammatory', 'Anti-Inflammatories - Reduce inflammation (redness, heat, swelling in infections and chronic diseases)'),
+        ('corticosteroid', 'Corticosteroids - Hormonal preparations used as anti-inflammatories (arthritis, asthma) or immunosuppressives'),
+        ('immunosuppressive', 'Immunosuppressives - Prevent or reduce body\'s reaction to disease or foreign tissues (autoimmune diseases, organ transplants)'),
+        ('antihistamine', 'Antihistamines - Counteract effects of histamine (chemical involved in allergic reactions)'),
+        
+        # ========== CANCER TREATMENT ==========
+        ('antineoplastic', 'Antineoplastics - Drugs used to treat cancer'),
+        ('cytotoxic', 'Cytotoxics - Kill or damage cells (used as antineoplastics for cancer and as immunosuppressives)'),
+        
+        # ========== ENDOCRINE SYSTEM & HORMONES ==========
+        ('hormone', 'Hormones - Chemicals from endocrine glands, used in hormone replacement therapy'),
+        ('female_sex_hormone', 'Female Sex Hormones - Estrogens and progesterone (treat menstrual/menopausal disorders, oral contraceptives)'),
+        ('male_sex_hormone', 'Male Sex Hormones - Androgenic hormones like testosterone (compensate deficiency, treat breast cancer)'),
+        ('oral_hypoglycemic', 'Oral Hypoglycemics - Lower blood glucose levels (used in diabetes mellitus)'),
+        
+        # ========== MUSCULOSKELETAL ==========
+        ('muscle_relaxant', 'Muscle Relaxants - Relieve muscle spasm (e.g., backache, often antianxiety drugs with muscle-relaxant action)'),
+        
+        # ========== NUTRITION & SUPPLEMENTS ==========
+        ('vitamin', 'Vitamins - Essential chemicals for good health (not manufactured by body, needed in diet or supplements)'),
+        
+        # ========== OTHER ==========
+        ('other', 'Other - Miscellaneous drugs not fitting above categories'),
+    ]
+    
     atc_code = models.CharField(max_length=20, blank=True, verbose_name="ATC Code")
     name = models.CharField(max_length=200)
     generic_name = models.CharField(max_length=200, blank=True)
     strength = models.CharField(max_length=50)
-    form = models.CharField(max_length=50)  # tablet, capsule, injection, etc.
+    form = models.CharField(max_length=50, help_text="tablet, capsule, injection, etc.")
     pack_size = models.CharField(max_length=50)
-    is_controlled = models.BooleanField(default=False)
+    category = models.CharField(max_length=50, choices=CATEGORIES, default='other', help_text="Drug category classification")
+    is_controlled = models.BooleanField(default=False, help_text="Controlled substance requiring special handling")
     is_active = models.BooleanField(default=True)
     
     # Pricing fields
@@ -1444,9 +1679,23 @@ class Drug(BaseModel):
     
     class Meta:
         ordering = ['name']
+        verbose_name = 'Drug'
+        verbose_name_plural = 'Drugs'
+        indexes = [
+            models.Index(fields=['category']),
+            models.Index(fields=['name']),
+            models.Index(fields=['is_active', 'category']),
+        ]
     
     def __str__(self):
         return f"{self.name} {self.strength} {self.form}"
+    
+    def get_category_display_full(self):
+        """Get full category name with description"""
+        for code, desc in self.CATEGORIES:
+            if code == self.category:
+                return desc
+        return self.get_category_display()
 
 
 class PharmacyStock(BaseModel):

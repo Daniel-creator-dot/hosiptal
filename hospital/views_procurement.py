@@ -27,8 +27,18 @@ def is_procurement_staff(user):
     """Check if user has procurement access"""
     if not user.is_authenticated:
         return False
-    # Allow staff users or users in specific groups
-    return user.is_staff or user.groups.filter(name__in=['Admin', 'Store Manager', 'Procurement']).exists()
+    # Check if user is in Procurement group
+    if user.groups.filter(name__in=['Admin', 'Store Manager', 'Procurement', 'Procurement Officer']).exists():
+        return True
+    # Check if user's staff profession is store_manager (procurement officer)
+    try:
+        if hasattr(user, 'staff'):
+            if user.staff.profession in ['store_manager', 'procurement_officer']:
+                return True
+    except:
+        pass
+    # Allow staff users
+    return user.is_staff
 
 
 def is_pharmacy_staff(user):
@@ -58,75 +68,114 @@ def procurement_dashboard(request):
     today = timezone.now().date()
     
     # Store statistics
-    stores = Store.objects.filter(is_active=True, is_deleted=False)
-    total_stores = stores.count()
+    try:
+        stores = Store.objects.filter(is_active=True, is_deleted=False)
+        total_stores = stores.count()
+    except Exception as e:
+        stores = []
+        total_stores = 0
     
     # Inventory summary
-    inventory_stats = InventoryItem.objects.filter(
-        is_active=True,
-        is_deleted=False
-    ).aggregate(
-        total_items=Count('id'),
-        total_value=Sum(F('quantity_on_hand') * F('unit_cost')),
-        low_stock_items=Count('id', filter=Q(quantity_on_hand__lte=F('reorder_level')))
-    )
+    try:
+        inventory_stats = InventoryItem.objects.filter(
+            is_active=True,
+            is_deleted=False
+        ).aggregate(
+            total_items=Count('id'),
+            total_value=Sum(F('quantity_on_hand') * F('unit_cost')),
+            low_stock_items=Count('id', filter=Q(quantity_on_hand__lte=F('reorder_level')))
+        )
+    except Exception as e:
+        inventory_stats = {
+            'total_items': 0,
+            'total_value': 0,
+            'low_stock_items': 0
+        }
     
     # Procurement requests summary
-    procurement_stats = ProcurementRequest.objects.filter(
-        is_deleted=False
-    ).aggregate(
-        total_requests=Count('id'),
-        pending_admin=Count('id', filter=Q(status='submitted')),
-        pending_accounts=Count('id', filter=Q(status='admin_approved')),
-        pending_payment=Count('id', filter=Q(status='accounts_approved')),
-        total_value=Sum('estimated_total')
-    )
+    try:
+        procurement_stats = ProcurementRequest.objects.filter(
+            is_deleted=False
+        ).aggregate(
+            total_requests=Count('id'),
+            pending_admin=Count('id', filter=Q(status='submitted')),
+            pending_accounts=Count('id', filter=Q(status='admin_approved')),
+            pending_payment=Count('id', filter=Q(status='accounts_approved')),
+            total_value=Sum('estimated_total')
+        )
+    except Exception as e:
+        procurement_stats = {
+            'total_requests': 0,
+            'pending_admin': 0,
+            'pending_accounts': 0,
+            'pending_payment': 0,
+            'total_value': 0
+        }
     
     # Recent procurement requests
-    recent_requests = ProcurementRequest.objects.filter(
-        is_deleted=False
-    ).select_related('requested_by_store', 'requested_by').order_by('-created')[:10]
+    try:
+        recent_requests = ProcurementRequest.objects.filter(
+            is_deleted=False
+        ).select_related('requested_by_store', 'requested_by').order_by('-created')[:10]
+    except Exception as e:
+        recent_requests = []
     
     # Low stock items
-    low_stock_items = InventoryItem.objects.filter(
-        is_active=True,
-        is_deleted=False
-    ).annotate(
-        total_value=F('quantity_on_hand') * F('unit_cost')
-    ).filter(
-        quantity_on_hand__lte=F('reorder_level')
-    ).select_related('store', 'drug')[:20]
+    try:
+        low_stock_items = InventoryItem.objects.filter(
+            is_active=True,
+            is_deleted=False
+        ).annotate(
+            total_value=F('quantity_on_hand') * F('unit_cost')
+        ).filter(
+            quantity_on_hand__lte=F('reorder_level')
+        ).select_related('store', 'drug')[:20]
+    except Exception as e:
+        low_stock_items = []
     
     # Pending store transfers
-    pending_transfers = StoreTransfer.objects.filter(
-        status='pending',
-        is_deleted=False
-    ).select_related('from_store', 'to_store', 'requested_by')[:10]
+    try:
+        pending_transfers = StoreTransfer.objects.filter(
+            status='pending',
+            is_deleted=False
+        ).select_related('from_store', 'to_store', 'requested_by')[:10]
+    except Exception as e:
+        pending_transfers = []
     
     # Top suppliers by purchase value
-    from .models_missing_features import PurchaseOrder
-    top_suppliers = Supplier.objects.filter(
-        is_deleted=False
-    ).annotate(
-        total_spent=Sum('purchase_orders__total_amount', 
-                       filter=Q(purchase_orders__is_deleted=False,
-                               purchase_orders__status__in=['received', 'approved'])),
-        order_count=Count('purchase_orders', 
-                         filter=Q(purchase_orders__is_deleted=False))
-    ).filter(
-        total_spent__gt=0
-    ).order_by('-total_spent')[:10]
+    top_suppliers = []
+    top_suppliers_by_items = []
+    try:
+        from .models_missing_features import PurchaseOrder
+        top_suppliers = Supplier.objects.filter(
+            is_deleted=False
+        ).annotate(
+            total_spent=Sum('purchase_orders__total_amount', 
+                           filter=Q(purchase_orders__is_deleted=False,
+                                   purchase_orders__status__in=['received', 'approved'])),
+            order_count=Count('purchase_orders', 
+                             filter=Q(purchase_orders__is_deleted=False))
+        ).filter(
+            total_spent__gt=0
+        ).order_by('-total_spent')[:10]
+    except Exception as e:
+        # If PurchaseOrder doesn't exist or relationship is wrong, use empty list
+        top_suppliers = []
     
     # Top suppliers by item count (using Django default related_name: inventoryitem_set)
-    top_suppliers_by_items = Supplier.objects.filter(
-        is_deleted=False
-    ).annotate(
-        items_count=Count('inventoryitem', 
-                         filter=Q(inventoryitem__is_deleted=False),
-                         distinct=True)
-    ).filter(
-        items_count__gt=0
-    ).order_by('-items_count')[:10]
+    try:
+        top_suppliers_by_items = Supplier.objects.filter(
+            is_deleted=False
+        ).annotate(
+            items_count=Count('inventoryitem', 
+                             filter=Q(inventoryitem__is_deleted=False),
+                             distinct=True)
+        ).filter(
+            items_count__gt=0
+        ).order_by('-items_count')[:10]
+    except Exception as e:
+        # If relationship doesn't exist, use empty list
+        top_suppliers_by_items = []
     
     context = {
         'total_stores': total_stores,

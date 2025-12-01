@@ -6,8 +6,9 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth import logout as auth_logout
 from django.contrib import messages
 from django.core.paginator import Paginator
+from django.core.exceptions import ValidationError
 from django.db.models import Q, Sum, F
-from django.db import models, transaction, connection
+from django.db import models, transaction, connection, IntegrityError
 from django.db.transaction import TransactionManagementError
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
@@ -126,7 +127,7 @@ def dashboard(request):
         elif user_role == 'cashier':
             return redirect('hospital:cashier_dashboard')
         elif user_role == 'accountant':
-            return redirect('hospital:accountant_comprehensive_dashboard')
+            return redirect('hospital:accountant_dashboard')
         elif user_role == 'admin':
             return redirect('hospital:admin_dashboard')
     
@@ -541,8 +542,8 @@ def patient_list(request):
     page_number = request.GET.get('page', 1)
     per_page = 25  # Reduced from 50 for faster mobile loading
     
-    # Cache counts for 5 minutes to avoid repeated expensive queries
-    cache_key = f'patient_counts_{source_filter}'
+    # Cache counts for 10 minutes to reduce database load on network devices
+    cache_key = f'patient_counts_{source_filter}_{query}'
     counts = cache.get(cache_key)
     if not counts:
         new_count = Patient.objects.filter(is_deleted=False).count()
@@ -555,14 +556,16 @@ def patient_list(request):
                 logger.warning(f"Could not count legacy patients: {e}")
                 legacy_count = 0
         counts = {'new': new_count, 'legacy': legacy_count, 'total': new_count + legacy_count}
-        cache.set(cache_key, counts, 300)  # Cache for 5 minutes
+        cache.set(cache_key, counts, 600)  # Cache for 10 minutes (longer for network devices)
     
     new_count = counts['new']
     legacy_count = counts['legacy']
     total_count = counts['total']
     
+    # OPTIMIZED: Use database-level pagination instead of loading all into memory
+    # This is MUCH faster, especially on network devices
     all_patients = []
-    base_limit = 500 if not query else 2000
+    
     try:
         django_patients_qs = Patient.objects.filter(is_deleted=False).only(
             'id', 'first_name', 'last_name', 'middle_name', 'mrn', 'date_of_birth',
@@ -572,11 +575,9 @@ def patient_list(request):
         logger.error(f"Error loading patient list: {e}")
         django_patients_qs = Patient.objects.none()
     
-    base_queryset = django_patients_qs.order_by('-created')
-    
     # Filter based on source selection
     if source_filter == 'new':
-        # Only new Django patients
+        # Only new Django patients - use database pagination
         filtered_qs = django_patients_qs.filter(
             Q(first_name__icontains=query) |
             Q(last_name__icontains=query) |
@@ -586,9 +587,20 @@ def patient_list(request):
             Q(national_id__icontains=query)
         ) if query else django_patients_qs
         
-        filtered_qs = filtered_qs.order_by('-created')[:base_limit]
+        # Use database pagination - don't load all into memory
+        paginator = Paginator(filtered_qs, per_page)
+        try:
+            patients_page = paginator.page(page_number)
+        except (PageNotAnInteger, EmptyPage):
+            patients_page = paginator.page(1)
         
-        for p in filtered_qs:
+        # Only process the current page (25 patients)
+        for p in patients_page:
+            # Validate patient ID - skip if invalid
+            if not p.id or str(p.id).upper() == 'INVALID':
+                logger.warning(f"Skipping patient with invalid ID: MRN={p.mrn}, Name={p.full_name}")
+                continue
+            
             all_patients.append({
                 'id': str(p.id),
                 'name': p.full_name,
@@ -603,19 +615,36 @@ def patient_list(request):
                 'edit_url': f"/hms/patients/{p.id}/edit/",
                 'quick_visit_url': f"/hms/patients/{p.id}/quick-visit/",
             })
+        
+        # Use the paginator from database query
+        context = {
+            'page_obj': patients_page,
+            'patients': all_patients,
+            'query': query,
+            'source': source_filter,
+            'total_count': paginator.count,
+            'visible_count': len(all_patients),
+            'new_count': paginator.count,
+            'legacy_count': 0,
+            'is_paginated': patients_page.has_other_pages(),
+            'page_range': paginator.get_elided_page_range(page_number, on_each_side=2, on_ends=1),
+        }
+        return render(request, 'hospital/patient_list.html', context)
     
     elif source_filter == 'legacy':
-        # Only legacy patients
+        # Only legacy patients - use database pagination
         if not LegacyPatient or not legacy_table_exists:
             all_patients = []
+            paginator = Paginator([], per_page)
+            patients_page = paginator.page(1)
         else:
             try:
-                legacy_patients = LegacyPatient.objects.all().only(
+                legacy_qs = LegacyPatient.objects.all().only(
                     'id', 'pid', 'fname', 'lname', 'mname', 'DOB', 'sex', 'phone_cell', 'pmc_mrn'
                 ).order_by('lname', 'fname')
                 
                 if query:
-                    legacy_patients = legacy_patients.filter(
+                    legacy_qs = legacy_qs.filter(
                         Q(fname__icontains=query) |
                         Q(lname__icontains=query) |
                         Q(mname__icontains=query) |
@@ -624,10 +653,15 @@ def patient_list(request):
                         Q(pmc_mrn__icontains=query)
                     )
                 
-                legacy_patients = legacy_patients[:base_limit]
+                # Use database pagination
+                paginator = Paginator(legacy_qs, per_page)
+                try:
+                    patients_page = paginator.page(page_number)
+                except (PageNotAnInteger, EmptyPage):
+                    patients_page = paginator.page(1)
                 
-                # Convert to list
-                for lp in legacy_patients:
+                # Only process current page
+                for lp in patients_page:
                     # Calculate age from DOB string
                     age_str = ''
                     try:
@@ -654,16 +688,32 @@ def patient_list(request):
                     })
             except Exception as e:
                 logger.warning(f"Could not fetch legacy patients: {e}")
-                all_patients = []  # Continue with empty list for legacy patients
-    
-    else:  # 'all' - show both (OPTIMIZED: limit initial load)
-        # MOBILE OPTIMIZATION: Only load 100 most recent from each source
-        # This prevents loading thousands of patients on initial page load
-        # REMOVED LIMIT: Show all patients to prevent data appearing missing
-        # limit = 100 if not query else 1000  # Search needs more records
+                all_patients = []
+                paginator = Paginator([], per_page)
+                patients_page = paginator.page(1)
         
-        # Get new patients (NO LIMIT - show all)
-        filtered_qs = django_patients_qs.filter(
+        context = {
+            'page_obj': patients_page,
+            'patients': all_patients,
+            'query': query,
+            'source': source_filter,
+            'total_count': paginator.count,
+            'visible_count': len(all_patients),
+            'new_count': 0,
+            'legacy_count': paginator.count,
+            'is_paginated': patients_page.has_other_pages(),
+            'page_range': paginator.get_elided_page_range(page_number, on_each_side=2, on_ends=1),
+        }
+        return render(request, 'hospital/patient_list.html', context)
+    
+    else:  # 'all' - show both (OPTIMIZED: database-level pagination)
+        # NETWORK OPTIMIZATION: Use database pagination - only load current page
+        # This is MUCH faster on network devices and shows ALL patients
+        
+        # For 'all' view, prioritize new patients (they're more relevant)
+        # If no new patients, fall back to showing legacy patients
+        
+        new_filtered = django_patients_qs.filter(
             Q(first_name__icontains=query) |
             Q(last_name__icontains=query) |
             Q(middle_name__icontains=query) |
@@ -672,7 +722,20 @@ def patient_list(request):
             Q(national_id__icontains=query)
         ) if query else django_patients_qs
         
-        for p in filtered_qs.order_by('-created')[:base_limit]:
+        # Use database-level pagination (Django handles this efficiently)
+        paginator = Paginator(new_filtered, per_page)
+        try:
+            patients_page = paginator.page(page_number)
+        except (PageNotAnInteger, EmptyPage):
+            patients_page = paginator.page(1)
+        
+        # Only process the current page (25 patients) - MUCH faster!
+        for p in patients_page:
+            # Validate patient ID - skip if invalid
+            if not p.id or str(p.id).upper() == 'INVALID':
+                logger.warning(f"Skipping patient with invalid ID: MRN={p.mrn}, Name={p.full_name}")
+                continue
+            
             all_patients.append({
                 'id': str(p.id),
                 'name': p.full_name,
@@ -688,28 +751,33 @@ def patient_list(request):
                 'quick_visit_url': f"/hms/patients/{p.id}/quick-visit/",
             })
         
-        # Get legacy patients (limited for performance)
-        if LegacyPatient and legacy_table_exists:
+        # If no new patients found and we have legacy patients, show legacy instead
+        if len(all_patients) == 0 and legacy_count > 0 and LegacyPatient and legacy_table_exists:
+            # Fall back to showing legacy patients
             try:
+                legacy_qs = LegacyPatient.objects.all().only(
+                    'id', 'pid', 'fname', 'lname', 'mname', 'DOB', 'sex', 'phone_cell', 'pmc_mrn'
+                ).order_by('lname', 'fname')
+                
                 if query:
-                    legacy_patients = LegacyPatient.objects.filter(
+                    legacy_qs = legacy_qs.filter(
                         Q(fname__icontains=query) |
                         Q(lname__icontains=query) |
                         Q(mname__icontains=query) |
                         Q(pid__icontains=query) |
                         Q(phone_cell__icontains=query) |
                         Q(pmc_mrn__icontains=query)
-                    ).only(
-                        'id', 'pid', 'fname', 'lname', 'mname', 'DOB', 'sex', 'phone_cell', 'pmc_mrn'
-                    ).order_by('lname', 'fname')[:base_limit]
-                else:
-                    legacy_patients = LegacyPatient.objects.all().only(
-                        'id', 'pid', 'fname', 'lname', 'mname', 'DOB', 'sex', 'phone_cell', 'pmc_mrn'
-                    ).order_by('-id')[:base_limit]
+                    )
                 
-                # Add legacy patients
-                for lp in legacy_patients:
-                    # Calculate age from DOB string
+                # Use database pagination
+                legacy_paginator = Paginator(legacy_qs, per_page)
+                try:
+                    legacy_page = legacy_paginator.page(page_number)
+                except (PageNotAnInteger, EmptyPage):
+                    legacy_page = legacy_paginator.page(1)
+                
+                # Process legacy patients
+                for lp in legacy_page:
                     age_str = ''
                     try:
                         if lp.DOB:
@@ -731,260 +799,677 @@ def patient_list(request):
                         'source': 'legacy',
                         'initials': f"{lp.fname[0] if lp.fname else ''}{lp.lname[0] if lp.lname else ''}",
                         'view_url': f"/hms/patients/legacy/{lp.id}/",
-                        'edit_url': None,  # Legacy patients are read-only
+                        'edit_url': None,
                     })
+                
+                # Update paginator for legacy patients
+                patients_page = legacy_page
+                paginator = legacy_paginator
             except Exception as e:
-                logger.warning(f"Could not fetch legacy patients: {e}")
-                # Continue without legacy patients
-    
-    # PAGINATION - Show 25 patients per page (faster on mobile)
-    paginator = Paginator(all_patients, per_page)
-    
-    try:
-        patients_page = paginator.page(page_number)
-    except PageNotAnInteger:
-        patients_page = paginator.page(1)
-    except EmptyPage:
-        patients_page = paginator.page(paginator.num_pages)
-    
-    context = {
-        'page_obj': patients_page,
-        'patients': patients_page.object_list,  # List of current page patients
-        'query': query,
-        'source': source_filter,
-        'total_count': total_count,
-        'visible_count': len(all_patients),
-        'new_count': new_count,
-        'legacy_count': legacy_count,
-        'is_paginated': patients_page.has_other_pages(),
-        'page_range': paginator.get_elided_page_range(page_number, on_each_side=2, on_ends=1),
-    }
-    
-    return render(request, 'hospital/patient_list.html', context)
+                logger.warning(f"Could not fetch legacy patients as fallback: {e}")
+        
+        # Get legacy count for display (cached)
+        legacy_display_count = legacy_count if legacy_table_exists else 0
+        
+        context = {
+            'page_obj': patients_page,
+            'patients': all_patients,
+            'query': query,
+            'source': source_filter,
+            'total_count': paginator.count + legacy_display_count,
+            'visible_count': len(all_patients),
+            'new_count': new_count,
+            'legacy_count': legacy_display_count,
+            'is_paginated': patients_page.has_other_pages() if hasattr(patients_page, 'has_other_pages') else False,
+            'page_range': paginator.get_elided_page_range(page_number, on_each_side=2, on_ends=1) if hasattr(paginator, 'get_elided_page_range') else [],
+        }
+        
+        return render(request, 'hospital/patient_list.html', context)
 
 
 @login_required
 def patient_create(request):
-    """Create a new patient with insurance enrollment"""
+    """Create a new patient with insurance enrollment
+    Uses transaction to prevent duplicate creation in concurrent environments (Docker)
+    """
+    from django.db import transaction, IntegrityError
+    
     if request.method == 'POST':
-        form = PatientForm(request.POST)
-        if form.is_valid():
-            patient = form.save()
-            # Ensure MRN is generated
-            if not patient.mrn:
-                patient.mrn = Patient.generate_mrn()
-                patient.save(update_fields=['mrn'])
-            
-            # Generate QR code credentials for ID card printing
+        # CRITICAL: Check if this is an auto-save request - IGNORE IT to prevent duplicates
+        is_auto_save = request.POST.get('auto_save') == 'true' or \
+                      request.META.get('HTTP_X_AUTO_SAVE') == 'true'
+        
+        if is_auto_save:
+            # Auto-save should NOT create patients - return success but don't save
+            logger.warning("Auto-save request detected on patient registration - ignoring to prevent duplicate creation")
+            return JsonResponse({'status': 'ignored', 'message': 'Patient registration cannot be auto-saved'})
+        
+        # CRITICAL: Check for duplicate submission using session token
+        submission_token = request.POST.get('submission_token')
+        session_key = f'patient_submission_{submission_token}'
+        
+        if submission_token and request.session.get(session_key):
+            # This submission was already processed - prevent duplicate
+            logger.error(f"DUPLICATE SUBMISSION DETECTED! Token: {submission_token}")
+            messages.error(request, 'This form was already submitted. Please do not refresh the page.')
+            return redirect('hospital:patient_list')
+        
+        # Mark this submission as processed
+        if submission_token:
+            request.session[session_key] = True
+            # Expire after 5 minutes
+            request.session.set_expiry(300)
+        
+        # Check if user wants to proceed with duplicate (for family members, etc.)
+        proceed_with_duplicate = request.POST.get('proceed_with_duplicate') == 'true'
+        
+        # CRITICAL: If user wants to proceed, create mutable POST copy with the flag
+        if proceed_with_duplicate:
+            from django.http import QueryDict
+            # Create mutable copy of POST data
+            mutable_post = request.POST.copy()
+            mutable_post['proceed_with_duplicate'] = 'true'
+            form = PatientForm(mutable_post)
+        else:
+            form = PatientForm(request.POST)
+        
+        # CRITICAL: Form validation MUST run first (includes duplicate checks in clean())
+        # This is the FIRST line of defense against duplicates
+        # If user wants to proceed with duplicate, the form's clean() will skip duplicate checks
+        form_valid = form.is_valid()
+        bypass_duplicate_check = False
+        
+        # If form is invalid, check if it's a duplicate error and user wants to proceed
+        if not form_valid:
+            if proceed_with_duplicate:
+                # Check if the only errors are duplicate-related
+                has_duplicate_error = False
+                has_other_errors = False
+                
+                if form.non_field_errors():
+                    for error in form.non_field_errors():
+                        if 'duplicate' in str(error).lower():
+                            has_duplicate_error = True
+                        else:
+                            has_other_errors = True
+                
+                # If only duplicate errors, clear them and manually populate cleaned_data
+                if has_duplicate_error and not has_other_errors:
+                    logger.info("Clearing duplicate errors - user confirmed to proceed")
+                    # Clear only non-field errors (duplicate errors)
+                    if '__all__' in form._errors:
+                        del form._errors['__all__']
+                    
+                    # Manually populate cleaned_data from POST
+                    if not hasattr(form, 'cleaned_data') or not form.cleaned_data:
+                        form.cleaned_data = {}
+                    
+                    # Get all field values from POST (use mutable_post if available)
+                    post_data = mutable_post if mutable_post else request.POST
+                    for field_name in form.fields:
+                        if field_name in post_data:
+                            value = post_data.get(field_name)
+                            # Handle date fields
+                            if field_name == 'date_of_birth' and value:
+                                try:
+                                    from django.utils.dateparse import parse_date
+                                    form.cleaned_data[field_name] = parse_date(value)
+                                except:
+                                    form.cleaned_data[field_name] = value
+                            else:
+                                form.cleaned_data[field_name] = value
+                        elif field_name in request.FILES:
+                            form.cleaned_data[field_name] = request.FILES.get(field_name)
+                    
+                    logger.info(f"Form data manually populated with {len(form.cleaned_data)} fields, marking form as valid")
+                    # Mark form as valid by clearing all errors
+                    form._errors = {}
+                    form_valid = True  # Override validation result
+                    bypass_duplicate_check = True  # Skip duplicate checks in transaction
+                else:
+                    # Other validation errors - show them
+                    if form.errors:
+                        logger.warning(f"Form validation failed - errors: {form.errors}")
+                    return render(request, 'hospital/patient_form.html', {'form': form, 'title': 'Register New Patient'})
+            else:
+                # Form has validation errors (including duplicate checks from clean())
+                # Log the errors for debugging
+                if form.errors:
+                    logger.warning(f"Form validation failed - errors: {form.errors}")
+                    # Check if it's a duplicate error
+                    if form.non_field_errors():
+                        for error in form.non_field_errors():
+                            if 'duplicate' in str(error).lower():
+                                logger.error(f"DUPLICATE DETECTED IN FORM VALIDATION: {error}")
+                                # Try to find existing patient for display
+                                try:
+                                    # Extract info from error message or search
+                                    existing_patient = None
+                                    if first_name and last_name and normalized_phone:
+                                        existing_patient = Patient.objects.filter(
+                                            first_name__iexact=first_name,
+                                            last_name__iexact=last_name,
+                                            is_deleted=False
+                                        ).first()
+                                except:
+                                    pass
+                                
+                                context = {
+                                    'form': form,
+                                    'title': 'Register New Patient',
+                                    'duplicate_warning': True,
+                                    'duplicate_reason': str(error),
+                                    'existing_patient': existing_patient
+                                }
+                                return render(request, 'hospital/patient_form.html', context)
+                # Return form with errors - DO NOT PROCEED TO SAVE
+                return render(request, 'hospital/patient_form.html', {'form': form, 'title': 'Register New Patient'})
+        
+        # Form is valid (or was manually validated) - proceed with additional duplicate checks inside transaction
+        # This is the SECOND line of defense (transaction-based with row locking)
+            # Wrap in transaction to ensure atomicity and handle duplicates
+            # IMPORTANT: All duplicate checks must be INSIDE the transaction to prevent race conditions
             try:
-                patient.ensure_qr_profile()
-            except Exception as qr_error:
-                logger.warning(f"Failed to provision patient QR card: {qr_error}", exc_info=True)
-            
-            # Handle insurance enrollment if selected
-            selected_insurance_company = form.cleaned_data.get('selected_insurance_company')
-            selected_insurance_plan = form.cleaned_data.get('selected_insurance_plan')
-            insurance_id = form.cleaned_data.get('insurance_id')
-            insurance_member_id = form.cleaned_data.get('insurance_member_id')
-            
-            if selected_insurance_company and (insurance_id or insurance_member_id):
-                try:
-                    from .models_insurance_companies import PatientInsurance
+                with transaction.atomic():
+                    # Normalize phone number for comparison
+                    def normalize_phone(phone):
+                        if not phone:
+                            return ''
+                        phone = phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+                        if phone.startswith('0') and len(phone) == 10:
+                            phone = '233' + phone[1:]
+                        elif phone.startswith('+'):
+                            phone = phone[1:]
+                        return phone
+                    
+                    # Get cleaned data
+                    cleaned_data = form.cleaned_data
+                    first_name = cleaned_data.get('first_name', '').strip()
+                    last_name = cleaned_data.get('last_name', '').strip()
+                    date_of_birth = cleaned_data.get('date_of_birth')
+                    phone_number = cleaned_data.get('phone_number', '').strip()
+                    email = cleaned_data.get('email', '').strip()
+                    national_id = cleaned_data.get('national_id', '').strip()
+                    
+                    normalized_phone = normalize_phone(phone_number)
+                    
+                    # CRITICAL: Duplicate checks INSIDE transaction with SELECT FOR UPDATE to prevent race conditions
+                    # Use select_for_update() to lock rows and prevent concurrent duplicate creation
+                    from django.db.models import Q
+                    
+                    duplicate_found = False
+                    existing_patient = None
+                    error_message = None
+                    
+                    # Check by name + DOB + phone (most reliable match) - WITH ROW LOCKING
+                    if first_name and last_name and normalized_phone:
+                        # Use select_for_update() to lock matching rows during transaction
+                        # Check with DOB if provided, otherwise check without DOB
+                        if date_of_birth:
+                            candidates = Patient.objects.select_for_update().filter(
+                                first_name__iexact=first_name,
+                                last_name__iexact=last_name,
+                                date_of_birth=date_of_birth,
+                                is_deleted=False
+                            )
+                        else:
+                            # If no DOB, check by name + phone only
+                            candidates = Patient.objects.select_for_update().filter(
+                                first_name__iexact=first_name,
+                                last_name__iexact=last_name,
+                                is_deleted=False
+                            )
+                        
+                        for candidate in candidates:
+                            if normalize_phone(candidate.phone_number) == normalized_phone:
+                                existing_patient = candidate
+                                duplicate_found = True
+                                if date_of_birth:
+                                    error_message = (
+                                        f'⚠️ Duplicate patient detected! A patient with the same name ({first_name} {last_name}), '
+                                        f'date of birth ({date_of_birth}), and phone number ({phone_number}) already exists. '
+                                        f'MRN: {existing_patient.mrn}. Please verify before proceeding.'
+                                    )
+                                else:
+                                    error_message = (
+                                        f'⚠️ Duplicate patient detected! A patient with the same name ({first_name} {last_name}) '
+                                        f'and phone number ({phone_number}) already exists. '
+                                        f'MRN: {existing_patient.mrn}. Please verify before proceeding.'
+                                    )
+                                logger.warning(f"Duplicate patient detected: {first_name} {last_name} - {phone_number} - Existing MRN: {existing_patient.mrn}")
+                                break
+                    
+                    # Check by email (if not already found) - WITH ROW LOCKING
+                    if not duplicate_found and email:
+                        existing_patient = Patient.objects.select_for_update().filter(
+                            email__iexact=email,
+                            is_deleted=False
+                        ).first()
+                        if existing_patient:
+                            duplicate_found = True
+                            error_message = (
+                                f'⚠️ Duplicate patient detected! A patient with email {email} already exists. '
+                                f'Name: {existing_patient.full_name}, MRN: {existing_patient.mrn}'
+                            )
+                    
+                    # Check by national_id (if not already found) - WITH ROW LOCKING
+                    if not duplicate_found and national_id:
+                        existing_patient = Patient.objects.select_for_update().filter(
+                            national_id=national_id,
+                            is_deleted=False
+                        ).first()
+                        if existing_patient:
+                            duplicate_found = True
+                            error_message = (
+                                f'⚠️ Duplicate patient detected! A patient with National ID {national_id} already exists. '
+                                f'Name: {existing_patient.full_name}, MRN: {existing_patient.mrn}'
+                            )
+                    
+                    # If duplicate found, check if user wants to proceed anyway
+                    if duplicate_found and existing_patient:
+                        # Check if user confirmed they want to proceed (for family members, etc.)
+                        # Use bypass_duplicate_check flag if set, otherwise check POST
+                        proceed_anyway = bypass_duplicate_check or request.POST.get('proceed_with_duplicate') == 'true'
+                        
+                        if not proceed_anyway:
+                            # Show warning with option to proceed
+                            # Return form with duplicate warning and option to proceed
+                            context = {
+                                'form': form,
+                                'title': 'Register New Patient',
+                                'duplicate_warning': True,
+                                'existing_patient': existing_patient,
+                                'duplicate_reason': error_message
+                            }
+                            return render(request, 'hospital/patient_form.html', context)
+                        else:
+                            # User confirmed - log the bypass and proceed
+                            logger.warning(
+                                f"User bypassed duplicate check for {first_name} {last_name} - "
+                                f"Existing: {existing_patient.mrn}, Proceeding anyway"
+                            )
+                            messages.info(
+                                request,
+                                f'⚠️ Proceeding with registration despite potential duplicate. '
+                                f'Existing patient: {existing_patient.mrn}. '
+                                f'Please verify this is a different person or family member.'
+                            )
+                    
+                    # FINAL SAFETY CHECK: One more check right before save (catches any edge cases)
+                    # This ensures no duplicate was created in the microseconds between our check and save
+                    # Skip this check if user confirmed they want to proceed (bypass_duplicate_check)
+                    if not bypass_duplicate_check and first_name and last_name and normalized_phone:
+                        if date_of_birth:
+                            last_second_check = Patient.objects.select_for_update().filter(
+                                first_name__iexact=first_name,
+                                last_name__iexact=last_name,
+                                date_of_birth=date_of_birth,
+                                is_deleted=False
+                            ).first()
+                        else:
+                            # Check by name + phone even without DOB
+                            last_second_check = Patient.objects.select_for_update().filter(
+                                first_name__iexact=first_name,
+                                last_name__iexact=last_name,
+                                is_deleted=False
+                            ).first()
+                        
+                        if last_second_check and normalize_phone(last_second_check.phone_number) == normalized_phone:
+                            messages.error(
+                                request,
+                                f'⚠️ Duplicate patient detected! A patient with the same information was just created. '
+                                f'MRN: {last_second_check.mrn}. Please check the patient list.'
+                            )
+                            logger.warning(f"Final check caught duplicate: {first_name} {last_name} - {phone_number} - Existing MRN: {last_second_check.mrn}")
+                            return render(request, 'hospital/patient_form.html', {'form': form, 'title': 'Register New Patient'})
+                    
+                    # Create patient - this is the critical operation that must be atomic
+                    # The database unique constraints on mrn and national_id provide final protection
+                    try:
+                        patient = form.save()
+                    except IntegrityError as save_error:
+                        # Catch database-level duplicate errors (unique constraint violations)
+                        error_str = str(save_error).lower()
+                        if 'unique' in error_str or 'duplicate' in error_str or 'mrn' in error_str or 'national_id' in error_str:
+                            # Database-level duplicate detected - this is the final safety net
+                            messages.error(
+                                request,
+                                f'⚠️ Duplicate patient detected at database level! '
+                                f'This patient may have been created by another user. Please check the patient list.'
+                            )
+                            logger.error(f"Database duplicate error during patient creation: {save_error}", exc_info=True)
+                            return render(request, 'hospital/patient_form.html', {'form': form, 'title': 'Register New Patient'})
+                        else:
+                            # Some other IntegrityError occurred
+                            raise
+                    except ValidationError as validation_error:
+                        # Catch ValidationError from model.save() duplicate checks
+                        error_message = str(validation_error)
+                        if 'duplicate' in error_message.lower():
+                            messages.error(request, f'⚠️ {error_message}')
+                            logger.error(f"ValidationError during patient creation: {validation_error}", exc_info=True)
+                            return render(request, 'hospital/patient_form.html', {'form': form, 'title': 'Register New Patient'})
+                        else:
+                            # Re-raise if not a duplicate error
+                            raise
+                    except Exception as save_error:
+                        # Catch any other save errors
+                        logger.error(f"Error creating patient: {save_error}", exc_info=True)
+                        messages.error(request, f'Error creating patient: {str(save_error)}. Please try again.')
+                        return render(request, 'hospital/patient_form.html', {'form': form, 'title': 'Register New Patient'})
+                    # Ensure MRN is generated (should be done in save(), but double-check)
+                    if not patient.mrn:
+                        patient.mrn = Patient.generate_mrn()
+                        patient.save(update_fields=['mrn'])
+                    
+                    # Generate QR code credentials for ID card printing
+                    try:
+                        patient.ensure_qr_profile()
+                    except Exception as qr_error:
+                        logger.warning(f"Failed to provision patient QR card: {qr_error}", exc_info=True)
+                    
+                    # Handle payer type selection (Insurance/Corporate/Cash)
+                    payer_type = form.cleaned_data.get('payer_type')
                     from .models import Payer
                     
-                    # Create patient insurance enrollment
-                    enrollment = PatientInsurance.objects.create(
+                    if payer_type == 'insurance':
+                        # Handle insurance enrollment
+                        selected_insurance_company = form.cleaned_data.get('selected_insurance_company')
+                        selected_insurance_plan = form.cleaned_data.get('selected_insurance_plan')
+                        insurance_id = form.cleaned_data.get('insurance_id')
+                        insurance_member_id = form.cleaned_data.get('insurance_member_id')
+                        
+                        if selected_insurance_company and (insurance_id or insurance_member_id):
+                            try:
+                                from .models_insurance_companies import PatientInsurance
+                                
+                                # Create patient insurance enrollment
+                                enrollment = PatientInsurance.objects.create(
+                                    patient=patient,
+                                    insurance_company=selected_insurance_company,
+                                    insurance_plan=selected_insurance_plan,
+                                    policy_number=insurance_id or '',
+                                    member_id=insurance_member_id or insurance_id or '',
+                                    is_primary_subscriber=True,
+                                    relationship_to_subscriber='self',
+                                    effective_date=timezone.now().date(),
+                                    is_primary=True,
+                                    status='active',
+                                )
+                                
+                                # Update patient's primary insurance in Payer table
+                                payer, _ = Payer.objects.get_or_create(
+                                    name=selected_insurance_company.name,
+                                    defaults={
+                                        'payer_type': 'private',
+                                        'is_active': True,
+                                    }
+                                )
+                                patient.primary_insurance = payer
+                                patient.insurance_company = selected_insurance_company.name
+                                patient.insurance_member_id = insurance_member_id
+                                patient.insurance_id = insurance_id
+                                patient.save(update_fields=['primary_insurance', 'insurance_company', 
+                                                          'insurance_member_id', 'insurance_id'])
+                                
+                                messages.success(request, f'✅ Patient enrolled in {selected_insurance_company.name}!')
+                            except Exception as e:
+                                messages.warning(request, f'Patient registered, but insurance enrollment failed: {str(e)}')
+                    
+                    elif payer_type == 'corporate':
+                        # Handle corporate enrollment
+                        selected_corporate_company = form.cleaned_data.get('selected_corporate_company')
+                        employee_id = form.cleaned_data.get('employee_id')
+                        
+                        if selected_corporate_company:
+                            try:
+                                from .models_enterprise_billing import CorporateEmployee
+                                
+                                # Create or get corporate payer
+                                payer, _ = Payer.objects.get_or_create(
+                                    name=selected_corporate_company.company_name,
+                                    defaults={
+                                        'payer_type': 'corporate',
+                                        'is_active': True,
+                                    }
+                                )
+                                
+                                # Create corporate employee enrollment
+                                corporate_employee, created = CorporateEmployee.objects.get_or_create(
+                                    corporate_account=selected_corporate_company,
+                                    patient=patient,
+                                    defaults={
+                                        'employee_id': employee_id or f'EMP{patient.mrn}',
+                                        'enrollment_date': timezone.now().date(),
+                                        'is_active': True,
+                                    }
+                                )
+                                
+                                if not created and employee_id:
+                                    corporate_employee.employee_id = employee_id
+                                    corporate_employee.save(update_fields=['employee_id'])
+                                
+                                # Set patient's primary insurance to corporate payer
+                                patient.primary_insurance = payer
+                                patient.save(update_fields=['primary_insurance'])
+                                
+                                messages.success(request, f'✅ Patient enrolled as employee of {selected_corporate_company.company_name}!')
+                            except Exception as e:
+                                messages.warning(request, f'Patient registered, but corporate enrollment failed: {str(e)}')
+                    
+                    elif payer_type == 'cash':
+                        # Handle cash payment - set receiving point
+                        receiving_point = form.cleaned_data.get('receiving_point')
+                        
+                        # Get or create Cash payer
+                        payer, _ = Payer.objects.get_or_create(
+                            name='Cash',
+                            defaults={
+                                'payer_type': 'cash',
+                                'is_active': True,
+                            }
+                        )
+                        
+                        patient.primary_insurance = payer
+                        # Store receiving point in patient notes or a custom field if available
+                        if receiving_point:
+                            # Add receiving point to patient notes if not already set
+                            if not patient.notes:
+                                patient.notes = f'Cash receiving point: {receiving_point}'
+                            elif 'receiving point' not in patient.notes.lower():
+                                patient.notes += f'\nCash receiving point: {receiving_point}'
+                            patient.save(update_fields=['primary_insurance', 'notes'])
+                        
+                        messages.info(request, f'✅ Patient registered as Cash payer. Receiving point: {receiving_point or "Not specified"}')
+                    
+                    # Auto-create encounter
+                    from django.utils import timezone
+                    from .models import Encounter, Department, Staff
+                    from .models_workflow import PatientFlowStage
+                    
+                    # Get or create default department for registration
+                    default_dept = Department.objects.filter(name__icontains='outpatient').first()
+                    if not default_dept:
+                        default_dept = Department.objects.first()
+                    
+                    # Get current staff if available
+                    current_staff = None
+                    if hasattr(request.user, 'staff'):
+                        current_staff = request.user.staff
+                    
+                    # Create encounter
+                    encounter = Encounter.objects.create(
                         patient=patient,
-                        insurance_company=selected_insurance_company,
-                        insurance_plan=selected_insurance_plan,
-                        policy_number=insurance_id or '',
-                        member_id=insurance_member_id or insurance_id or '',
-                        is_primary_subscriber=True,
-                        relationship_to_subscriber='self',
-                        effective_date=timezone.now().date(),
-                        is_primary=True,
+                        encounter_type='outpatient',
                         status='active',
+                        started_at=timezone.now(),
+                        location=None,
+                        provider=current_staff,
+                        chief_complaint='New patient registration',
+                        notes='Auto-created during registration'
                     )
                     
-                    # Update patient's primary insurance in Payer table
-                    payer, _ = Payer.objects.get_or_create(
-                        name=selected_insurance_company.name,
+                    # Create vital signs stage in patient flow
+                    PatientFlowStage.objects.create(
+                        encounter=encounter,
+                        stage_type='vitals',
+                        status='pending'
+                    )
+                
+                # Operations outside transaction (non-critical, can fail without rolling back patient creation)
+                # Send welcome SMS to new patient
+                if patient.phone_number:
+                    try:
+                        from .services.sms_service import sms_service
+                        message = (
+                            f"Welcome to PrimeCare Hospital, {patient.first_name}!\n\n"
+                            f"Your Medical Record Number (MRN): {patient.mrn}\n"
+                            f"Please keep this number for future visits.\n\n"
+                            f"Thank you for choosing us for your healthcare needs.\n\n"
+                            f"PrimeCare Hospital\n"
+                            f"Call us: [Hospital Contact]"
+                        )
+                        sms_service.send_sms(
+                            phone_number=patient.phone_number,
+                            message=message,
+                            message_type='patient_registration',
+                            recipient_name=patient.full_name,
+                            related_object_id=patient.id,
+                            related_object_type='Patient'
+                        )
+                        messages.success(request, f'Patient registered successfully! Welcome SMS sent to {patient.phone_number}.')
+                    except Exception as e:
+                        messages.warning(request, f'Patient registered successfully, but SMS could not be sent: {str(e)}')
+                else:
+                    messages.success(request, 'Patient registered successfully! No phone number provided for SMS.')
+                
+                # 🎫 QUEUE SYSTEM: Assign queue number and send SMS
+                try:
+                    from .services.queue_service import queue_service
+                    from .services.queue_notification_service import queue_notification_service
+                    
+                    # Create queue entry (priority: 1=Emergency, 2=Urgent, 3=Normal, 4=Follow-up)
+                    queue_entry = queue_service.create_queue_entry(
+                        patient=patient,
+                        encounter=encounter,
+                        department=default_dept,
+                        assigned_doctor=None,
+                        priority=3,  # 3 = Normal priority
+                        notes='New patient registration'
+                    )
+                    
+                    # Send queue SMS notification
+                    queue_notification_service.send_check_in_notification(queue_entry)
+                    
+                    logger.info(f"✅ Queue entry created: {queue_entry.queue_number} for {patient.full_name}")
+                    
+                except Exception as e:
+                    logger.error(f"Error creating queue entry: {str(e)}", exc_info=True)
+                    # Don't fail patient creation if queue fails
+                
+                # Auto-create invoice with registration fee (50 GHS)
+                try:
+                    from .models import Invoice, InvoiceLine, ServiceCode, Payer
+                    from .models_pricing import DefaultPrice, PayerPrice
+                    from decimal import Decimal
+                    
+                    # Get patient's payer (default to Cash if not set)
+                    payer = patient.primary_insurance
+                    if not payer:
+                        # Try to get Cash payer
+                        payer = Payer.objects.filter(payer_type='cash', is_active=True, is_deleted=False).first()
+                        if not payer:
+                            # Try any active payer
+                            payer = Payer.objects.filter(is_active=True, is_deleted=False).first()
+                            if not payer:
+                                # Create a default Cash payer if none exists
+                                payer = Payer.objects.create(
+                                    name='Cash',
+                                    payer_type='cash',
+                                    is_active=True
+                                )
+                    
+                    if payer:
+                        # Get registration price (check payer-specific first, then default)
+                        registration_price = PayerPrice.get_price(payer, 'registration')
+                        if registration_price is None:
+                            registration_price = DefaultPrice.get_price('registration', Decimal('50.00'))
+                    else:
+                        # Default 50 GHS if no payer
+                        registration_price = DefaultPrice.get_price('registration', Decimal('50.00'))
+                    
+                    # Get or create Registration service code
+                    reg_service, _ = ServiceCode.objects.get_or_create(
+                        code='REG001',
                         defaults={
-                            'payer_type': 'private',
+                            'description': 'Patient Registration Fee',
+                            'category': 'Administrative',
                             'is_active': True,
                         }
                     )
-                    patient.primary_insurance = payer
-                    patient.insurance_company = selected_insurance_company.name
-                    patient.insurance_member_id = insurance_member_id
-                    patient.insurance_id = insurance_id
-                    patient.save(update_fields=['primary_insurance', 'insurance_company', 
-                                              'insurance_member_id', 'insurance_id'])
                     
-                    messages.success(request, f'✅ Patient enrolled in {selected_insurance_company.name}!')
+                    # Only create invoice if payer exists
+                    if payer:
+                        # Set invoice due date (30 days from now)
+                        from datetime import timedelta
+                        due_date = timezone.now() + timedelta(days=30)
+                        
+                        # Create invoice
+                        invoice = Invoice.objects.create(
+                            patient=patient,
+                            encounter=encounter,
+                            payer=payer,
+                            status='draft',
+                            due_at=due_date
+                        )
+                        
+                        # Add registration fee line
+                        InvoiceLine.objects.create(
+                            invoice=invoice,
+                            service_code=reg_service,
+                            description='Patient Registration Fee',
+                            quantity=1,
+                            unit_price=registration_price,
+                            line_total=registration_price
+                        )
+                        
+                        # Update invoice totals
+                        invoice.update_totals()
+                    
                 except Exception as e:
-                    messages.warning(request, f'Patient registered, but insurance enrollment failed: {str(e)}')
-            
-            # Send welcome SMS to new patient
-            if patient.phone_number:
-                try:
-                    from .services.sms_service import sms_service
-                    message = (
-                        f"Welcome to PrimeCare Hospital, {patient.first_name}!\n\n"
-                        f"Your Medical Record Number (MRN): {patient.mrn}\n"
-                        f"Please keep this number for future visits.\n\n"
-                        f"Thank you for choosing us for your healthcare needs.\n\n"
-                        f"PrimeCare Hospital\n"
-                        f"Call us: [Hospital Contact]"
-                    )
-                    sms_service.send_sms(
-                        phone_number=patient.phone_number,
-                        message=message,
-                        message_type='patient_registration',
-                        recipient_name=patient.full_name,
-                        related_object_id=patient.id,
-                        related_object_type='Patient'
-                    )
-                    messages.success(request, f'Patient registered successfully! Welcome SMS sent to {patient.phone_number}.')
-                except Exception as e:
-                    messages.warning(request, f'Patient registered successfully, but SMS could not be sent: {str(e)}')
-            else:
-                messages.success(request, 'Patient registered successfully! No phone number provided for SMS.')
-            
-            # Auto-create encounter and redirect to vital signs
-            from django.utils import timezone
-            from .models import Encounter, Department, Staff
-            from .models_workflow import PatientFlowStage
-            
-            # Get or create default department for registration
-            default_dept = Department.objects.filter(name__icontains='outpatient').first()
-            if not default_dept:
-                default_dept = Department.objects.first()
-            
-            # Get current staff if available
-            current_staff = None
-            if hasattr(request.user, 'staff'):
-                current_staff = request.user.staff
-            
-            # Create encounter
-            encounter = Encounter.objects.create(
-                patient=patient,
-                encounter_type='outpatient',
-                status='active',
-                started_at=timezone.now(),
-                location=None,
-                provider=current_staff,
-                chief_complaint='New patient registration',
-                notes='Auto-created during registration'
-            )
-            
-            # 🎫 QUEUE SYSTEM: Assign queue number and send SMS
-            try:
-                from .services.queue_service import queue_service
-                from .services.queue_notification_service import queue_notification_service
+                    # Log error but don't break patient registration
+                    logger.error(f"Error creating registration invoice: {str(e)}")
                 
-                # Create queue entry (priority: 1=Emergency, 2=Urgent, 3=Normal, 4=Follow-up)
-                queue_entry = queue_service.create_queue_entry(
-                    patient=patient,
-                    encounter=encounter,
-                    department=default_dept,
-                    assigned_doctor=None,
-                    priority=3,  # 3 = Normal priority
-                    notes='New patient registration'
-                )
+                messages.success(request, f'Patient {patient.full_name} registered successfully with Patient ID: <strong>{patient.mrn}</strong>. Please record vital signs.', extra_tags='html')
                 
-                # Send queue SMS notification
-                queue_notification_service.send_check_in_notification(queue_entry)
+                # CRITICAL: Clear submission token to prevent reuse
+                if submission_token:
+                    try:
+                        del request.session[session_key]
+                    except:
+                        pass
                 
-                logger.info(f"✅ Queue entry created: {queue_entry.queue_number} for {patient.full_name}")
-                
-            except Exception as e:
-                logger.error(f"Error creating queue entry: {str(e)}", exc_info=True)
-                # Don't fail patient creation if queue fails
-            
-            # Create vital signs stage in patient flow
-            from .models_workflow import PatientFlowStage
-            PatientFlowStage.objects.create(
-                encounter=encounter,
-                stage_type='vitals',
-                status='pending'
-            )
-            
-            # Auto-create invoice with registration fee (50 GHS)
-            try:
-                from .models import Invoice, InvoiceLine, ServiceCode, Payer
-                from .models_pricing import DefaultPrice, PayerPrice
-                from decimal import Decimal
-                
-                # Get patient's payer (default to Cash if not set)
-                payer = patient.primary_insurance
-                if not payer:
-                    # Try to get Cash payer
-                    payer = Payer.objects.filter(payer_type='cash', is_active=True, is_deleted=False).first()
-                    if not payer:
-                        # Try any active payer
-                        payer = Payer.objects.filter(is_active=True, is_deleted=False).first()
-                        if not payer:
-                            # Create a default Cash payer if none exists
-                            payer = Payer.objects.create(
-                                name='Cash',
-                                payer_type='cash',
-                                is_active=True
-                            )
-                
-                if payer:
-                    # Get registration price (check payer-specific first, then default)
-                    registration_price = PayerPrice.get_price(payer, 'registration')
-                    if registration_price is None:
-                        registration_price = DefaultPrice.get_price('registration', Decimal('50.00'))
+                # CRITICAL: Redirect immediately to prevent browser refresh from resubmitting
+                return redirect('hospital:record_vitals', encounter_id=encounter.pk)
+                    
+            except IntegrityError as e:
+                # Handle duplicate MRN or other unique constraint violations
+                error_str = str(e).lower()
+                if 'mrn' in error_str or 'unique' in error_str:
+                    logger.error(f"Duplicate patient creation attempt: {str(e)}", exc_info=True)
+                    messages.error(request, 'A patient with this information already exists. Please check for duplicates or try again.')
                 else:
-                    # Default 50 GHS if no payer
-                    registration_price = DefaultPrice.get_price('registration', Decimal('50.00'))
-                
-                # Get or create Registration service code
-                reg_service, _ = ServiceCode.objects.get_or_create(
-                    code='REG001',
-                    defaults={
-                        'description': 'Patient Registration Fee',
-                        'category': 'Administrative',
-                        'is_active': True,
-                    }
-                )
-                
-                # Only create invoice if payer exists
-                if payer:
-                    # Set invoice due date (30 days from now)
-                    from datetime import timedelta
-                    due_date = timezone.now() + timedelta(days=30)
-                    
-                    # Create invoice
-                    invoice = Invoice.objects.create(
-                        patient=patient,
-                        encounter=encounter,
-                        payer=payer,
-                        status='draft',
-                        due_at=due_date
-                    )
-                    
-                    # Add registration fee line
-                    InvoiceLine.objects.create(
-                        invoice=invoice,
-                        service_code=reg_service,
-                        description='Patient Registration Fee',
-                        quantity=1,
-                        unit_price=registration_price,
-                        line_total=registration_price
-                    )
-                    
-                    # Update invoice totals
-                    invoice.update_totals()
-                
+                    logger.error(f"Database error creating patient: {str(e)}", exc_info=True)
+                    messages.error(request, f'Error creating patient: {str(e)}. Please try again.')
+                # Re-render form with errors
+                context = {'form': form, 'title': 'Register New Patient'}
+                return render(request, 'hospital/patient_form.html', context)
             except Exception as e:
-                # Log error but don't break patient registration
-                logger.error(f"Error creating registration invoice: {str(e)}")
-            
-            messages.success(request, f'Patient {patient.full_name} registered successfully with Patient ID: <strong>{patient.mrn}</strong>. Please record vital signs.', extra_tags='html')
-            return redirect('hospital:record_vitals', encounter_id=encounter.pk)
+                # Handle any other errors
+                logger.error(f"Unexpected error creating patient: {str(e)}", exc_info=True)
+                messages.error(request, f'An error occurred while creating the patient: {str(e)}. Please try again.')
+                context = {'form': form, 'title': 'Register New Patient'}
+                return render(request, 'hospital/patient_form.html', context)
     else:
         form = PatientForm()
     
@@ -997,13 +1482,24 @@ def patient_detail(request, pk):
     """OPTIMIZED patient detail view for fast mobile loading"""
     from .models import Encounter, VitalSign, Order, Invoice, LabResult
     from django.core.cache import cache
+    from django.http import Http404
+    
+    # Check if pk is "INVALID" or invalid format
+    if str(pk).upper() == 'INVALID' or not pk:
+        messages.error(request, 'Invalid patient ID. Please select a valid patient from the patient list.')
+        return redirect('hospital:patient_list')
     
     # Get patient with optimized query
-    patient = get_object_or_404(
-        Patient.objects.select_related('primary_insurance'),
-        pk=pk, 
-        is_deleted=False
-    )
+    try:
+        patient = get_object_or_404(
+            Patient.objects.select_related('primary_insurance'),
+            pk=pk, 
+            is_deleted=False
+        )
+    except (ValueError, ValidationError) as e:
+        # Invalid UUID format
+        messages.error(request, f'Invalid patient ID format. Please select a valid patient from the patient list.')
+        return redirect('hospital:patient_list')
     
     # MOBILE OPTIMIZATION: Limit initial data load
     # Use smaller limits for faster page load - users can click "View More" if needed
@@ -2520,21 +3016,43 @@ def global_search(request):
             from .models import Staff
             from .models_advanced import LeaveRequest
             from django.utils import timezone
+            from django.db.models import OuterRef, Subquery
             
+            # Get the most recent staff record ID for each user to avoid duplicates
+            from django.db.models import OuterRef, Subquery
+            base_qs = Staff.objects.filter(is_deleted=False)
+            if status_filter == 'active':
+                base_qs = base_qs.filter(is_active=True)
+            elif status_filter == 'inactive':
+                base_qs = base_qs.filter(is_active=False)
+            
+            latest_staff = Staff.objects.filter(
+                is_deleted=False,
+                user=OuterRef('user')
+            )
+            if status_filter == 'active':
+                latest_staff = latest_staff.filter(is_active=True)
+            elif status_filter == 'inactive':
+                latest_staff = latest_staff.filter(is_active=False)
+            latest_staff = latest_staff.order_by('-created')[:1]
+            
+            latest_staff_ids = base_qs.annotate(
+                latest_id=Subquery(latest_staff.values('id'))
+            ).values_list('latest_id', flat=True).distinct()
+            
+            # latest_staff_ids already includes status filter, so we don't need to apply it again
             qs = Staff.objects.filter(
+                id__in=latest_staff_ids,
+                is_deleted=False
+            ).filter(
                 Q(user__first_name__icontains=query) |
                 Q(user__last_name__icontains=query) |
                 Q(user__username__icontains=query) |
                 Q(user__email__icontains=query) |
                 Q(employee_id__icontains=query) |
                 Q(registration_number__icontains=query) |
-                Q(phone_number__icontains=query),
-                is_deleted=False
+                Q(phone_number__icontains=query)
             )
-            if status_filter == 'active':
-                qs = qs.filter(is_active=True)
-            elif status_filter == 'inactive':
-                qs = qs.filter(is_active=False)
             qs = qs.select_related('user', 'department', 'leave_balance').order_by('user__last_name', 'user__first_name')[:limit_per_category]
             
             # Add current leave information to each staff member

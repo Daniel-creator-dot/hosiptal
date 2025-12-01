@@ -123,9 +123,9 @@ def pv_create(request):
             model = PaymentVoucher
             fields = [
                 'voucher_date', 'payment_type', 'payee_name', 'payee_type',
-                'description', 'amount', 'payment_method', 'bank_name',
-                'account_number', 'expense_account', 'payment_account',
-                'invoice_number', 'po_number', 'notes'
+                'description', 'amount', 'payment_method', 'bank_account',
+                'bank_name', 'account_number', 'expense_account', 'payment_account',
+                'invoice_number', 'po_number', 'memo', 'notes'
             ]
             widgets = {
                 'voucher_date': forms.DateInput(attrs={'type': 'date', 'class': 'form-control'}),
@@ -135,12 +135,14 @@ def pv_create(request):
                 'description': forms.Textarea(attrs={'class': 'form-control', 'rows': 3}),
                 'amount': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01'}),
                 'payment_method': forms.Select(attrs={'class': 'form-select'}),
+                'bank_account': forms.Select(attrs={'class': 'form-select', 'onchange': 'updateBankBalance()'}),
                 'bank_name': forms.TextInput(attrs={'class': 'form-control'}),
                 'account_number': forms.TextInput(attrs={'class': 'form-control'}),
                 'expense_account': forms.Select(attrs={'class': 'form-select'}),
                 'payment_account': forms.Select(attrs={'class': 'form-select'}),
                 'invoice_number': forms.TextInput(attrs={'class': 'form-control'}),
                 'po_number': forms.TextInput(attrs={'class': 'form-control'}),
+                'memo': forms.Textarea(attrs={'class': 'form-control', 'rows': 2, 'placeholder': 'Enter payment details/memo'}),
                 'notes': forms.Textarea(attrs={'class': 'form-control', 'rows': 2}),
             }
     
@@ -199,11 +201,36 @@ def pv_create(request):
         expense_accounts = get_pv_expense_accounts()
         payment_accounts = get_pv_payment_accounts()
     
+    # Calculate ending balances for bank accounts
+    bank_accounts_with_balance = []
+    for bank in bank_accounts:
+        # Get current balance from GL
+        from .models_accounting_advanced import AdvancedGeneralLedger
+        from django.db.models import Sum
+        
+        gl_balance = AdvancedGeneralLedger.objects.filter(
+            account=bank.gl_account,
+            is_voided=False
+        ).aggregate(
+            total_debit=Sum('debit_amount'),
+            total_credit=Sum('credit_amount')
+        )
+        
+        debit_total = gl_balance['total_debit'] or Decimal('0.00')
+        credit_total = gl_balance['total_credit'] or Decimal('0.00')
+        current_balance = bank.opening_balance + debit_total - credit_total
+        
+        bank_accounts_with_balance.append({
+            'bank': bank,
+            'current_balance': current_balance,
+        })
+    
     context = {
         'form': form,
         'expense_accounts': expense_accounts,
         'payment_accounts': payment_accounts,
         'bank_accounts': bank_accounts,
+        'bank_accounts_with_balance': bank_accounts_with_balance,
     }
     
     return render(request, 'hospital/pv/pv_create.html', context)

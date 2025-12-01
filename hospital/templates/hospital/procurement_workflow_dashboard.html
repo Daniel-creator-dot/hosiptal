@@ -1,0 +1,442 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Procurement Workflow Dashboard - HMS{% endblock %}
+{% block page_title %}Procurement Workflow Dashboard{% endblock %}
+{% block page_subtitle %}Complete procurement process tracking{% endblock %}
+
+{% block extra_css %}
+<style>
+    .workflow-stage {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        border-left: 4px solid var(--primary);
+    }
+    
+    .workflow-stage.draft { border-left-color: #6c757d; }
+    .workflow-stage.submitted { border-left-color: #ffc107; }
+    .workflow-stage.admin_approved { border-left-color: #17a2b8; }
+    .workflow-stage.accounts_approved { border-left-color: #28a745; }
+    .workflow-stage.received { border-left-color: #20c997; }
+    
+    .stage-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 12px;
+        border-bottom: 2px solid #e9ecef;
+    }
+    
+    .stage-count {
+        background: var(--primary);
+        color: white;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-weight: 600;
+        font-size: 18px;
+    }
+    
+    .request-card {
+        background: #f8f9fa;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        transition: all 0.3s;
+        border: 1px solid #dee2e6;
+    }
+    
+    .request-card:hover {
+        transform: translateX(4px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        border-color: var(--primary);
+    }
+    
+    .status-badge {
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    
+    .badge-draft { background: #6c757d; color: white; }
+    .badge-submitted { background: #ffc107; color: #000; }
+    .badge-admin_approved { background: #17a2b8; color: white; }
+    .badge-accounts_approved { background: #28a745; color: white; }
+    .badge-received { background: #20c997; color: white; }
+    
+    .workflow-timeline {
+        display: flex;
+        justify-content: space-between;
+        margin: 40px 0;
+        padding: 20px;
+        background: white;
+        border-radius: 16px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    }
+    
+    .timeline-step {
+        flex: 1;
+        text-align: center;
+        position: relative;
+    }
+    
+    .timeline-step::after {
+        content: '';
+        position: absolute;
+        top: 20px;
+        left: 50%;
+        width: 100%;
+        height: 2px;
+        background: #dee2e6;
+        z-index: 0;
+    }
+    
+    .timeline-step:last-child::after {
+        display: none;
+    }
+    
+    .timeline-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background: var(--primary);
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 8px;
+        position: relative;
+        z-index: 1;
+    }
+    
+    .timeline-step.active .timeline-icon {
+        background: #28a745;
+    }
+    
+    .timeline-step.completed .timeline-icon {
+        background: #20c997;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2><i class="bi bi-diagram-3"></i> Procurement Workflow Dashboard</h2>
+            <p class="text-muted">Track requests through the complete procurement process</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:procurement_dashboard' %}" class="btn btn-outline-primary">
+                <i class="bi bi-arrow-left"></i> Back to Dashboard
+            </a>
+            <a href="{% url 'hospital:procurement_request_create' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> Create New Request
+            </a>
+        </div>
+    </div>
+    
+    <!-- Workflow Timeline -->
+    <div class="workflow-timeline">
+        <div class="timeline-step completed">
+            <div class="timeline-icon">
+                <i class="bi bi-file-earmark-text"></i>
+            </div>
+            <div class="small">Draft</div>
+            <div class="small text-muted">{{ draft_count }} requests</div>
+        </div>
+        <div class="timeline-step {% if submitted_requests %}active{% endif %}">
+            <div class="timeline-icon">
+                <i class="bi bi-send"></i>
+            </div>
+            <div class="small">Submitted</div>
+            <div class="small text-muted">{{ submitted_requests|length }} requests</div>
+        </div>
+        <div class="timeline-step {% if admin_approved_requests %}active{% endif %}">
+            <div class="timeline-icon">
+                <i class="bi bi-check-circle"></i>
+            </div>
+            <div class="small">Admin Approved</div>
+            <div class="small text-muted">{{ admin_approved_requests|length }} requests</div>
+        </div>
+        <div class="timeline-step {% if accounts_approved_requests %}active{% endif %}">
+            <div class="timeline-icon">
+                <i class="bi bi-check2-circle"></i>
+            </div>
+            <div class="small">Accounts Approved</div>
+            <div class="small text-muted">{{ accounts_approved_requests|length }} requests</div>
+        </div>
+        <div class="timeline-step {% if received_requests %}active{% endif %}">
+            <div class="timeline-icon">
+                <i class="bi bi-check-all"></i>
+            </div>
+            <div class="small">Received</div>
+            <div class="small text-muted">{{ received_requests|length }} requests</div>
+        </div>
+    </div>
+    
+    <!-- Draft Requests -->
+    <div class="workflow-stage draft">
+        <div class="stage-header">
+            <div>
+                <h4><i class="bi bi-file-earmark-text"></i> Draft Requests</h4>
+                <p class="text-muted mb-0">Requests being prepared</p>
+            </div>
+            <div class="stage-count">{{ draft_count }}</div>
+        </div>
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i> Draft requests are being prepared and have not been submitted yet.
+        </div>
+    </div>
+    
+    <!-- Submitted Requests -->
+    <div class="workflow-stage submitted">
+        <div class="stage-header">
+            <div>
+                <h4><i class="bi bi-send"></i> Submitted Requests</h4>
+                <p class="text-muted mb-0">Awaiting administrator approval</p>
+            </div>
+            <div class="stage-count">{{ submitted_requests|length }}</div>
+        </div>
+        
+        {% if submitted_requests %}
+        <div class="row">
+            {% for request in submitted_requests %}
+            <div class="col-md-6 mb-3">
+                <div class="request-card">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h6 class="mb-1">
+                                <a href="{% url 'hospital:procurement_request_detail' request.pk %}" style="text-decoration: none; color: var(--dark);">
+                                    {{ request.request_number }}
+                                </a>
+                            </h6>
+                            <p class="text-muted small mb-0">
+                                <i class="bi bi-shop"></i> {{ request.requested_by_store.name|default:"N/A" }}
+                            </p>
+                        </div>
+                        <span class="status-badge badge-submitted">Submitted</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <small class="text-muted">
+                                <i class="bi bi-calendar"></i> {{ request.request_date|date:"M d, Y" }}
+                            </small>
+                        </div>
+                        <div>
+                            <strong class="text-success">GHS {{ request.estimated_total|floatformat:2|intcomma }}</strong>
+                        </div>
+                    </div>
+                    {% if request.requested_by %}
+                    <div class="mt-2">
+                        <small class="text-muted">
+                            <i class="bi bi-person"></i> Requested by: {{ request.requested_by.user.get_full_name|default:request.requested_by.user.username }}
+                        </small>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-4">
+            <i class="bi bi-inbox" style="font-size: 48px; color: #dee2e6;"></i>
+            <p class="text-muted mt-3">No submitted requests</p>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Admin Approved Requests -->
+    <div class="workflow-stage admin_approved">
+        <div class="stage-header">
+            <div>
+                <h4><i class="bi bi-check-circle"></i> Admin Approved</h4>
+                <p class="text-muted mb-0">Awaiting accounts approval</p>
+            </div>
+            <div class="stage-count">{{ admin_approved_requests|length }}</div>
+        </div>
+        
+        {% if admin_approved_requests %}
+        <div class="row">
+            {% for request in admin_approved_requests %}
+            <div class="col-md-6 mb-3">
+                <div class="request-card">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h6 class="mb-1">
+                                <a href="{% url 'hospital:procurement_request_detail' request.pk %}" style="text-decoration: none; color: var(--dark);">
+                                    {{ request.request_number }}
+                                </a>
+                            </h6>
+                            <p class="text-muted small mb-0">
+                                <i class="bi bi-shop"></i> {{ request.requested_by_store.name|default:"N/A" }}
+                            </p>
+                        </div>
+                        <span class="status-badge badge-admin_approved">Admin OK</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <small class="text-muted">
+                                <i class="bi bi-calendar"></i> {{ request.request_date|date:"M d, Y" }}
+                            </small>
+                        </div>
+                        <div>
+                            <strong class="text-success">GHS {{ request.estimated_total|floatformat:2|intcomma }}</strong>
+                        </div>
+                    </div>
+                    {% if request.admin_approved_by %}
+                    <div class="mt-2">
+                        <small class="text-muted">
+                            <i class="bi bi-person-check"></i> Approved by: {{ request.admin_approved_by.user.get_full_name|default:request.admin_approved_by.user.username }}
+                        </small>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-4">
+            <i class="bi bi-inbox" style="font-size: 48px; color: #dee2e6;"></i>
+            <p class="text-muted mt-3">No admin approved requests</p>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Accounts Approved Requests -->
+    <div class="workflow-stage accounts_approved">
+        <div class="stage-header">
+            <div>
+                <h4><i class="bi bi-check2-circle"></i> Accounts Approved</h4>
+                <p class="text-muted mb-0">Ready for payment processing</p>
+            </div>
+            <div class="stage-count">{{ accounts_approved_requests|length }}</div>
+        </div>
+        
+        {% if accounts_approved_requests %}
+        <div class="row">
+            {% for request in accounts_approved_requests %}
+            <div class="col-md-6 mb-3">
+                <div class="request-card">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h6 class="mb-1">
+                                <a href="{% url 'hospital:procurement_request_detail' request.pk %}" style="text-decoration: none; color: var(--dark);">
+                                    {{ request.request_number }}
+                                </a>
+                            </h6>
+                            <p class="text-muted small mb-0">
+                                <i class="bi bi-shop"></i> {{ request.requested_by_store.name|default:"N/A" }}
+                            </p>
+                        </div>
+                        <span class="status-badge badge-accounts_approved">Accounts OK</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <small class="text-muted">
+                                <i class="bi bi-calendar"></i> {{ request.request_date|date:"M d, Y" }}
+                            </small>
+                        </div>
+                        <div>
+                            <strong class="text-success">GHS {{ request.estimated_total|floatformat:2|intcomma }}</strong>
+                        </div>
+                    </div>
+                    {% if request.accounts_approved_by %}
+                    <div class="mt-2">
+                        <small class="text-muted">
+                            <i class="bi bi-person-check"></i> Approved by: {{ request.accounts_approved_by.user.get_full_name|default:request.accounts_approved_by.user.username }}
+                        </small>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-4">
+            <i class="bi bi-inbox" style="font-size: 48px; color: #dee2e6;"></i>
+            <p class="text-muted mt-3">No accounts approved requests</p>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Received Requests -->
+    <div class="workflow-stage received">
+        <div class="stage-header">
+            <div>
+                <h4><i class="bi bi-check-all"></i> Received</h4>
+                <p class="text-muted mb-0">Completed and received</p>
+            </div>
+            <div class="stage-count">{{ received_requests|length }}</div>
+        </div>
+        
+        {% if received_requests %}
+        <div class="row">
+            {% for request in received_requests %}
+            <div class="col-md-6 mb-3">
+                <div class="request-card">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h6 class="mb-1">
+                                <a href="{% url 'hospital:procurement_request_detail' request.pk %}" style="text-decoration: none; color: var(--dark);">
+                                    {{ request.request_number }}
+                                </a>
+                            </h6>
+                            <p class="text-muted small mb-0">
+                                <i class="bi bi-shop"></i> {{ request.requested_by_store.name|default:"N/A" }}
+                            </p>
+                        </div>
+                        <span class="status-badge badge-received">Received</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <small class="text-muted">
+                                <i class="bi bi-calendar"></i> {{ request.request_date|date:"M d, Y" }}
+                            </small>
+                        </div>
+                        <div>
+                            <strong class="text-success">GHS {{ request.estimated_total|floatformat:2|intcomma }}</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-4">
+            <i class="bi bi-inbox" style="font-size: 48px; color: #dee2e6;"></i>
+            <p class="text-muted mt-3">No received requests</p>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Quick Actions -->
+    <div class="row mt-4">
+        <div class="col-md-4">
+            <a href="{% url 'hospital:procurement_requests_list' %}" class="btn btn-outline-primary w-100">
+                <i class="bi bi-list-ul"></i> View All Requests
+            </a>
+        </div>
+        <div class="col-md-4">
+            <a href="{% url 'hospital:admin_approval_list' %}" class="btn btn-outline-warning w-100">
+                <i class="bi bi-clipboard-check"></i> Admin Approval Queue
+            </a>
+        </div>
+        <div class="col-md-4">
+            <a href="{% url 'hospital:accounts_approval_list' %}" class="btn btn-outline-success w-100">
+                <i class="bi bi-check2-circle"></i> Accounts Approval Queue
+            </a>
+        </div>
+    </div>
+    
+</div>
+{% endblock %}
+

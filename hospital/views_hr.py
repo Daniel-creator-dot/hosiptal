@@ -52,8 +52,28 @@ def _suggest_rating_from_score(score: float) -> str:
 @user_passes_test(is_hr_or_admin, login_url='/admin/login/')
 def hr_dashboard(request):
     """HR main dashboard"""
-    # Statistics
-    total_staff = Staff.objects.filter(is_active=True, is_deleted=False).count()
+    from django.db.models import OuterRef, Subquery
+    
+    # Statistics - count distinct users to avoid duplicates
+    # Get the most recent staff record per user (by created date)
+    latest_staff = Staff.objects.filter(
+        is_active=True,
+        is_deleted=False,
+        user=OuterRef('user')
+    ).order_by('-created')[:1]
+    
+    latest_staff_ids = Staff.objects.filter(
+        is_active=True,
+        is_deleted=False
+    ).annotate(
+        latest_id=Subquery(latest_staff.values('id'))
+    ).values_list('latest_id', flat=True).distinct()
+    
+    total_staff = Staff.objects.filter(
+        id__in=latest_staff_ids,
+        is_active=True,
+        is_deleted=False
+    ).count()
     total_contracts = StaffContract.objects.filter(is_active=True, is_deleted=False).count()
     
     # Payroll stats
@@ -94,18 +114,20 @@ def hr_dashboard(request):
 @user_passes_test(is_hr_or_admin, login_url='/admin/login/')
 def staff_list(request):
     """List all staff"""
+    from .utils_roles import get_deduplicated_staff_queryset
+    
     department_filter = request.GET.get('department')
     status_filter = request.GET.get('status', 'active')
     query = request.GET.get('q', '')
     
-    staff_list = Staff.objects.filter(is_deleted=False).select_related(
-        'user', 'department'
-    )
-    
+    # Get deduplicated staff queryset
+    base_filter = {}
     if status_filter == 'active':
-        staff_list = staff_list.filter(is_active=True)
+        base_filter['is_active'] = True
     elif status_filter == 'inactive':
-        staff_list = staff_list.filter(is_active=False)
+        base_filter['is_active'] = False
+    
+    staff_list = get_deduplicated_staff_queryset(base_filter=base_filter)
     
     if department_filter:
         staff_list = staff_list.filter(department_id=department_filter)
@@ -125,7 +147,7 @@ def staff_list(request):
     today = date.today()
     
     context = {
-        'staff_list': staff_list.order_by('user__last_name')[:100],
+        'staff_list': staff_list.order_by('user__last_name', 'user__first_name')[:100],
         'departments': departments,
         'department_filter': department_filter,
         'status_filter': status_filter,
@@ -649,7 +671,26 @@ def staff_shift_list(request):
         shifts_by_date[date_key].append(shift)
     
     from datetime import date, timedelta
-    staff_list = Staff.objects.filter(is_active=True, is_deleted=False).order_by('user__last_name')
+    from django.db.models import OuterRef, Subquery
+    
+    # Get the most recent staff record ID for each user to avoid duplicates
+    latest_staff = Staff.objects.filter(
+        is_active=True,
+        is_deleted=False,
+        user=OuterRef('user')
+    ).order_by('-created')[:1]
+    latest_staff_ids = Staff.objects.filter(
+        is_active=True,
+        is_deleted=False
+    ).annotate(
+        latest_id=Subquery(latest_staff.values('id'))
+    ).values_list('latest_id', flat=True).distinct()
+    
+    staff_list = Staff.objects.filter(
+        id__in=latest_staff_ids,
+        is_active=True,
+        is_deleted=False
+    ).order_by('user__last_name')
     departments = Department.objects.filter(is_active=True, is_deleted=False)
     
     if not date_filter:
@@ -700,7 +741,26 @@ def staff_shift_create(request):
             messages.error(request, f'Error creating shift: {str(e)}')
     
     from .models import Ward
-    staff_list = Staff.objects.filter(is_active=True, is_deleted=False).order_by('user__last_name')
+    from django.db.models import OuterRef, Subquery
+    
+    # Get the most recent staff record ID for each user to avoid duplicates
+    latest_staff = Staff.objects.filter(
+        is_active=True,
+        is_deleted=False,
+        user=OuterRef('user')
+    ).order_by('-created')[:1]
+    latest_staff_ids = Staff.objects.filter(
+        is_active=True,
+        is_deleted=False
+    ).annotate(
+        latest_id=Subquery(latest_staff.values('id'))
+    ).values_list('latest_id', flat=True).distinct()
+    
+    staff_list = Staff.objects.filter(
+        id__in=latest_staff_ids,
+        is_active=True,
+        is_deleted=False
+    ).order_by('user__last_name')
     departments = Department.objects.filter(is_active=True, is_deleted=False)
     wards = Ward.objects.filter(is_active=True, is_deleted=False)
     
@@ -1194,7 +1254,26 @@ def create_leave_for_staff(request):
             messages.error(request, f'Error creating leave request: {str(e)}')
     
     # Get all staff for dropdown with their leave balances
-    all_staff = Staff.objects.filter(is_active=True, is_deleted=False).select_related('user', 'department')
+    from django.db.models import OuterRef, Subquery
+    
+    # Get the most recent staff record ID for each user to avoid duplicates
+    latest_staff = Staff.objects.filter(
+        is_active=True,
+        is_deleted=False,
+        user=OuterRef('user')
+    ).order_by('-created')[:1]
+    latest_staff_ids = Staff.objects.filter(
+        is_active=True,
+        is_deleted=False
+    ).annotate(
+        latest_id=Subquery(latest_staff.values('id'))
+    ).values_list('latest_id', flat=True).distinct()
+    
+    all_staff = Staff.objects.filter(
+        id__in=latest_staff_ids,
+        is_active=True,
+        is_deleted=False
+    ).select_related('user', 'department')
     
     # Attach leave balance to each staff
     for staff_member in all_staff:

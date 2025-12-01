@@ -14,6 +14,27 @@ from .models_reminders import SMSNotification
 from .models_advanced import SMSLog
 from .services.sms_service import sms_service
 
+# Users allowed to access bulk SMS (in addition to staff with is_staff=True)
+BULK_SMS_ALLOWED_USERS = [
+    'min',  # Front desk user
+    # Add more usernames here as needed
+]
+
+def can_access_bulk_sms(user):
+    """Check if user can access bulk SMS features"""
+    if not user or not user.is_authenticated:
+        return False
+    # Allow staff users
+    if user.is_staff:
+        return True
+    # Allow specific usernames
+    if user.username.lower() in [u.lower() for u in BULK_SMS_ALLOWED_USERS]:
+        return True
+    # Allow superusers
+    if user.is_superuser:
+        return True
+    return False
+
 
 @login_required
 def send_sms(request):
@@ -221,6 +242,11 @@ def send_lab_result_sms(request, lab_result_id):
 @login_required
 def bulk_sms_dashboard(request):
     """Bulk SMS dashboard - select recipients from database"""
+    # Check if user has access to bulk SMS
+    if not can_access_bulk_sms(request.user):
+        messages.error(request, 'You do not have permission to access bulk SMS. Please contact an administrator.')
+        return redirect('hospital:index')
+    
     from .models import Staff
     
     # Filters
@@ -235,9 +261,26 @@ def bulk_sms_dashboard(request):
     total_patients = 0
     
     # Get staff
+    from django.db.models import OuterRef, Subquery
+    
     staff_query = Staff.objects.none()
     if recipient_type in ['all', 'staff']:
+        # Get the most recent staff record ID for each user to avoid duplicates
+        from django.db.models import OuterRef, Subquery
+        latest_staff = Staff.objects.filter(
+            is_deleted=False,
+            is_active=True,
+            user=OuterRef('user')
+        ).order_by('-created')[:1]
+        latest_staff_ids = Staff.objects.filter(
+            is_deleted=False,
+            is_active=True
+        ).annotate(
+            latest_id=Subquery(latest_staff.values('id'))
+        ).values_list('latest_id', flat=True).distinct()
+        
         staff_query = Staff.objects.filter(
+            id__in=latest_staff_ids,
             is_deleted=False,
             is_active=True
         ).select_related('user', 'department')
@@ -313,15 +356,27 @@ def bulk_sms_dashboard(request):
 
 @login_required
 def send_bulk_sms(request):
-    """Send SMS to multiple recipients"""
+    """Send SMS to multiple recipients including custom phone numbers"""
+    # Check if user has access to bulk SMS
+    if not can_access_bulk_sms(request.user):
+        messages.error(request, 'You do not have permission to send bulk SMS. Please contact an administrator.')
+        return redirect('hospital:index')
+    
     if request.method == 'POST':
         recipient_ids = request.POST.getlist('recipients')
         recipient_types = request.POST.getlist('recipient_types')  # 'staff' or 'patient'
+        custom_phones = request.POST.getlist('custom_phones')  # Custom phone numbers
+        custom_names = request.POST.getlist('custom_names')  # Custom names
         message_text = request.POST.get('message', '').strip()
         msg_type = request.POST.get('message_type', 'custom')
         
-        if not recipient_ids or not message_text:
-            messages.error(request, 'Please select recipients and enter a message.')
+        # Check if we have any recipients (database or custom)
+        if not recipient_ids and not custom_phones:
+            messages.error(request, 'Please select recipients or add custom phone numbers and enter a message.')
+            return redirect('hospital:bulk_sms_dashboard')
+        
+        if not message_text:
+            messages.error(request, 'Please enter a message.')
             return redirect('hospital:bulk_sms_dashboard')
         
         from .models import Staff
@@ -330,7 +385,7 @@ def send_bulk_sms(request):
         fail_count = 0
         failed_recipients = []
         
-        # Process each recipient
+        # Process database recipients
         for idx, recipient_id in enumerate(recipient_ids):
             recipient_type = recipient_types[idx] if idx < len(recipient_types) else 'patient'
             
@@ -389,6 +444,49 @@ def send_bulk_sms(request):
                 fail_count += 1
                 error_msg = str(e)[:50] if str(e) else 'Unknown error'
                 failed_recipients.append(f"{name if 'name' in locals() else 'ID: ' + str(recipient_id)} ({error_msg})")
+        
+        # Process custom phone numbers
+        for idx, phone in enumerate(custom_phones):
+            name = custom_names[idx] if idx < len(custom_names) else 'Custom Contact'
+            
+            try:
+                # Personalize message for custom contacts
+                personalized_msg = message_text.replace('{name}', name)
+                if '{first_name}' in personalized_msg:
+                    first_name = name.split()[0] if name else 'Valued'
+                    personalized_msg = personalized_msg.replace('{first_name}', first_name)
+                
+                # Send SMS to custom number
+                sms_log = sms_service.send_sms(
+                    phone_number=phone,
+                    message=personalized_msg,
+                    message_type=msg_type,
+                    recipient_name=name,
+                    related_object_id=None,
+                    related_object_type='Custom',
+                )
+                
+                if sms_log.status == 'sent':
+                    # Create notification record for custom contact
+                    SMSNotification.objects.create(
+                        notification_type=msg_type,
+                        recipient_number=phone,
+                        recipient_name=name,
+                        message=personalized_msg,
+                        status='sent',
+                        sent_at=sms_log.sent_at,
+                        staff=None,
+                        patient=None,
+                    )
+                    success_count += 1
+                else:
+                    fail_count += 1
+                    error_reason = sms_log.error_message or 'Unknown error'
+                    failed_recipients.append(f"{name} ({error_reason[:30]})")
+            except Exception as e:
+                fail_count += 1
+                error_msg = str(e)[:50] if str(e) else 'Unknown error'
+                failed_recipients.append(f"{name} ({error_msg})")
         
         if success_count > 0:
             messages.success(request, f'Bulk SMS completed: {success_count} sent successfully{fail_count > 0 and f", {fail_count} failed" or ""}')

@@ -117,8 +117,8 @@ class Command(BaseCommand):
         with open(sql_file, 'r', encoding='utf-8', errors='ignore') as f:
             sql_content = f.read()
 
-        # Convert MySQL to SQLite compatible SQL
-        sql_content = self.convert_mysql_to_sqlite(sql_content, skip_drop)
+        # Convert MySQL to database-compatible SQL (SQLite or PostgreSQL)
+        sql_content = self.convert_mysql_to_database(sql_content, skip_drop)
 
         # Split into individual statements
         statements = self.split_sql_statements(sql_content)
@@ -126,8 +126,11 @@ class Command(BaseCommand):
         result = {'tables_created': 0, 'rows_inserted': 0}
 
         if not dry_run:
+            total_statements = len(statements)
+            self.stdout.write(f'  Executing {total_statements:,} SQL statements...')
+            
             with connection.cursor() as cursor:
-                for statement in statements:
+                for idx, statement in enumerate(statements, 1):
                     statement = statement.strip()
                     if not statement or statement.startswith('--'):
                         continue
@@ -138,15 +141,33 @@ class Command(BaseCommand):
                         # Track statistics
                         if statement.upper().startswith('CREATE TABLE'):
                             result['tables_created'] += 1
+                            self.stdout.write(f'  ✓ Table created')
                         elif statement.upper().startswith('INSERT INTO'):
                             result['rows_inserted'] += 1
+                            # Show progress every 1000 inserts
+                            if result['rows_inserted'] % 1000 == 0:
+                                self.stdout.write(f'  ✓ Inserted {result["rows_inserted"]:,} rows...')
                             
                     except Exception as e:
-                        # Log but continue with other statements
-                        logger.debug(f'Statement failed: {str(e)[:100]}')
+                        # Show first few errors, then suppress
+                        error_msg = str(e)[:200]
+                        if result.get('error_count', 0) < 5:
+                            self.stdout.write(self.style.WARNING(f'  ⚠️  Error: {error_msg}'))
+                        result['error_count'] = result.get('error_count', 0) + 1
+                        logger.debug(f'Statement failed: {error_msg}')
                         
         return result
 
+    def convert_mysql_to_database(self, sql_content, skip_drop=False):
+        """Convert MySQL SQL syntax to database-compatible syntax (SQLite or PostgreSQL)"""
+        from django.db import connection
+        vendor = connection.vendor
+        
+        if vendor == 'postgresql':
+            return self.convert_mysql_to_postgresql(sql_content, skip_drop)
+        else:
+            return self.convert_mysql_to_sqlite(sql_content, skip_drop)
+    
     def convert_mysql_to_sqlite(self, sql_content, skip_drop=False):
         """Convert MySQL SQL syntax to SQLite compatible syntax"""
         
@@ -218,6 +239,90 @@ class Command(BaseCommand):
         
         # Remove IF EXISTS/IF NOT EXISTS in some contexts where SQLite might not support
         # But keep them for DROP and CREATE statements
+        
+        return sql_content
+
+    def convert_mysql_to_postgresql(self, sql_content, skip_drop=False):
+        """Convert MySQL SQL syntax to PostgreSQL compatible syntax"""
+        
+        # Remove DROP TABLE if requested
+        if skip_drop:
+            sql_content = re.sub(r'DROP TABLE .*?;', '', sql_content, flags=re.IGNORECASE)
+
+        # Remove MySQL-specific keywords
+        sql_content = re.sub(r'ENGINE\s*=\s*\w+', '', sql_content, flags=re.IGNORECASE)
+        sql_content = re.sub(r'DEFAULT CHARSET\s*=\s*\w+', '', sql_content, flags=re.IGNORECASE)
+        sql_content = re.sub(r'CHARSET\s+\w+', '', sql_content, flags=re.IGNORECASE)
+        sql_content = re.sub(r'COLLATE\s+\w+', '', sql_content, flags=re.IGNORECASE)
+        sql_content = re.sub(r'AUTO_INCREMENT\s*=\s*\d+', '', sql_content, flags=re.IGNORECASE)
+        sql_content = re.sub(r'COMMENT\s+["\'].*?["\']', '', sql_content, flags=re.IGNORECASE)
+        
+        # Convert AUTO_INCREMENT to SERIAL (PostgreSQL)
+        # Handle: AUTO_INCREMENT -> SERIAL, but need to handle NOT NULL AUTO_INCREMENT properly
+        sql_content = re.sub(
+            r'(\w+)\s+(BIGINT|INT|INTEGER)\(?\d*\)?\s+NOT\s+NULL\s+AUTO_INCREMENT',
+            r'\1 SERIAL',
+            sql_content,
+            flags=re.IGNORECASE
+        )
+        sql_content = re.sub(
+            r'(\w+)\s+(BIGINT|INT|INTEGER)\(?\d*\)?\s+AUTO_INCREMENT',
+            r'\1 SERIAL',
+            sql_content,
+            flags=re.IGNORECASE
+        )
+        sql_content = re.sub(r'AUTO_INCREMENT', 'SERIAL', sql_content, flags=re.IGNORECASE)
+        
+        # Convert MySQL types to PostgreSQL types
+        type_mappings = {
+            r'BIGINT\(20\)': 'BIGINT',
+            r'INT\(11\)': 'INTEGER',
+            r'INT\(\d+\)': 'INTEGER',
+            r'TINYINT\(\d+\)': 'SMALLINT',
+            r'SMALLINT\(\d+\)': 'SMALLINT',
+            r'MEDIUMINT\(\d+\)': 'INTEGER',
+            r'FLOAT\(\d+,\d+\)': 'REAL',
+            r'DOUBLE(\(\d+,\d+\))?': 'DOUBLE PRECISION',
+            r'DECIMAL\(\d+,\d+\)': 'NUMERIC',
+            r'TINYTEXT': 'TEXT',
+            r'MEDIUMTEXT': 'TEXT',
+            r'LONGTEXT': 'TEXT',
+            r'TINYBLOB': 'BYTEA',
+            r'MEDIUMBLOB': 'BYTEA',
+            r'LONGBLOB': 'BYTEA',
+            r'DATETIME': 'TIMESTAMP',
+            r'TIMESTAMP': 'TIMESTAMP',
+            r'DATE': 'DATE',
+            r'TIME': 'TIME',
+        }
+        
+        for mysql_type, pg_type in type_mappings.items():
+            sql_content = re.sub(mysql_type, pg_type, sql_content, flags=re.IGNORECASE)
+        
+        # Remove UNSIGNED (PostgreSQL doesn't have unsigned)
+        sql_content = re.sub(r'\s+UNSIGNED', '', sql_content, flags=re.IGNORECASE)
+        
+        # Convert backticks to double quotes for identifiers (PostgreSQL uses double quotes)
+        sql_content = sql_content.replace('`', '"')
+        
+        # Fix DEFAULT CURRENT_TIMESTAMP
+        sql_content = re.sub(
+            r"DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
+            "DEFAULT CURRENT_TIMESTAMP",
+            sql_content,
+            flags=re.IGNORECASE
+        )
+        
+        # Handle ENUM types (PostgreSQL supports ENUM, but convert to TEXT for simplicity)
+        sql_content = re.sub(
+            r'ENUM\s*\([^)]+\)',
+            'TEXT',
+            sql_content,
+            flags=re.IGNORECASE
+        )
+        
+        # PostgreSQL uses single quotes for string literals in INSERT statements
+        # But we'll handle this in the statement execution
         
         return sql_content
 

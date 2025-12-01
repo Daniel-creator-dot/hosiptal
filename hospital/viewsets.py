@@ -124,7 +124,6 @@ class DepartmentViewSet(viewsets.ModelViewSet):
 
 class StaffViewSet(viewsets.ModelViewSet):
     """ViewSet for Staff management"""
-    queryset = Staff.objects.filter(is_deleted=False, is_active=True)
     serializer_class = StaffSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, rest_filters.SearchFilter, rest_filters.OrderingFilter]
@@ -132,6 +131,11 @@ class StaffViewSet(viewsets.ModelViewSet):
     search_fields = ['user__first_name', 'user__last_name', 'employee_id']
     ordering_fields = ['user__last_name', 'user__first_name']
     ordering = ['user__last_name']
+    
+    def get_queryset(self):
+        """Get queryset with duplicate prevention - only most recent staff record per user"""
+        from hospital.utils_roles import get_deduplicated_staff_queryset
+        return get_deduplicated_staff_queryset(base_filter={'is_active': True})
 
 
 # ==================== FACILITY & BEDS VIEWSETS ====================
