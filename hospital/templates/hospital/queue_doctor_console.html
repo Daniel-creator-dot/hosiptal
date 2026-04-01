@@ -9,10 +9,27 @@
         <div>
             <h2 class="fw-bold mb-1">Doctor Queue Console</h2>
             <p class="text-muted mb-0">Call and manage patients assigned to {{ department.name }}</p>
+            {% if current_room_assignment %}
+            <div class="mt-2">
+                <span class="badge bg-success">
+                    <i class="bi bi-door-open me-1"></i>Assigned: {{ current_room_assignment.room.room_number }}
+                    {% if current_room_assignment.room.room_name %}({{ current_room_assignment.room.room_name }}){% endif %}
+                </span>
+                <a href="{% url 'hospital:doctor_room_selection' %}" class="btn btn-sm btn-outline-primary ms-2">
+                    <i class="bi bi-pencil me-1"></i>Change Room
+                </a>
+            </div>
+            {% else %}
+            <div class="mt-2">
+                <a href="{% url 'hospital:doctor_room_selection' %}" class="btn btn-sm btn-primary">
+                    <i class="bi bi-door-open me-1"></i>Select Consulting Room
+                </a>
+            </div>
+            {% endif %}
         </div>
         <form method="get" class="d-flex gap-2 align-items-center">
             <label for="department" class="fw-semibold text-muted mb-0">Department</label>
-            <select name="department" id="department" class="form-select">
+            <select name="department" id="department" class="form-select" title="Select option" aria-label="Select option">
                 {% for dept in departments %}
                 <option value="{{ dept.id }}" {% if dept.id == department.id %}selected{% endif %}>{{ dept.name }}</option>
                 {% endfor %}
@@ -25,10 +42,15 @@
         <div class="col-lg-7">
             <div class="card shadow-sm border-0">
                 <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
-                    <span><i class="bi bi-clipboard-plus me-2"></i>My Active Queue</span>
+                    <div>
+                        <span><i class="bi bi-clipboard-plus me-2"></i>My Active Queue</span>
+                        <small class="d-block mt-1" style="opacity: 0.9; font-size: 0.85rem;">
+                            <i class="bi bi-stethoscope me-1"></i>Click <strong>"Consultation"</strong> on any patient to start consultation directly
+                        </small>
+                    </div>
                     <div class="d-flex gap-2">
                         <input type="text" class="form-control form-control-sm" placeholder="Room #"
-                               id="roomNumberInput" style="width: 120px;">
+                               id="roomNumberInput" style="width: 120px;" title="Enter text" placeholder="Enter text">
                         <button class="btn btn-light btn-sm" id="callNextBtn">
                             <i class="bi bi-telephone-forward me-2"></i>Call Next
                         </button>
@@ -41,22 +63,33 @@
                             <div class="border rounded p-3 mb-3" data-queue-id="{{ entry.id }}">
                                 <div class="d-flex justify-content-between align-items-center mb-2">
                                     <div>
-                                        <h5 class="mb-0">{{ entry.queue_number }} &middot; {{ entry.patient.full_name }}</h5>
-                                        <small class="text-muted">{{ entry.get_priority_display }} &middot; Checked in {{ entry.check_in_time|timesince }} ago</small>
+                                        <h5 class="mb-0">{{ entry.display_ticket_number }} &middot; {{ entry.patient.full_name }}</h5>
+                                        <small class="text-muted">
+                                            {{ entry.get_priority_display }} &middot; Checked in {{ entry.check_in_time|timesince }} ago
+                                            {% if entry.room_number %}
+                                                &middot; <i class="bi bi-door-open"></i> Room {{ entry.room_number }}
+                                            {% endif %}
+                                        </small>
                                     </div>
                                     <span class="badge bg-secondary text-uppercase">{{ entry.get_status_display }}</span>
                                 </div>
-                                <div class="d-flex gap-2">
-                                    <button class="btn btn-outline-success btn-sm queue-action" data-action="start" data-id="{{ entry.id }}">
+                                <div class="d-flex gap-2 flex-wrap">
+                                    {% if entry.encounter %}
+                                    <a href="{% url 'hospital:consultation_view' encounter_id=entry.encounter.pk %}" 
+                                       class="btn btn-success btn-sm" 
+                                       style="font-weight: 600; min-width: 120px;"
+                                       title="Start Consultation">
+                                        <i class="bi bi-stethoscope me-1"></i>Consultation
+                                    </a>
+                                    {% endif %}
+                                    <button class="btn btn-outline-success btn-sm queue-action" data-action="start" data-id="{{ entry.id }}" title="Start Service">
                                         <i class="bi bi-play-circle"></i>
                                     </button>
-                                    <button class="btn btn-outline-primary btn-sm queue-action" data-action="complete" data-id="{{ entry.id }}">
-                                        <i class="bi bi-check-circle"></i>
-                                    </button>
-                                    <button class="btn btn-outline-warning btn-sm queue-action" data-action="call" data-id="{{ entry.id }}">
+                                    <button class="btn btn-outline-primary btn-sm queue-action" data-action="complete" data-id="{{ entry.id }}" title="Complete"><i class="bi bi-check" aria-hidden="true"></i><span class="visually-hidden">Approve</span></button>
+                                    <button class="btn btn-outline-warning btn-sm queue-action" data-action="call" data-id="{{ entry.id }}" title="Call Patient">
                                         <i class="bi bi-megaphone"></i>
                                     </button>
-                                    <button class="btn btn-outline-danger btn-sm queue-action" data-action="no-show" data-id="{{ entry.id }}">
+                                    <button class="btn btn-outline-danger btn-sm queue-action" data-action="no-show" data-id="{{ entry.id }}" title="Mark No-Show">
                                         <i class="bi bi-person-x"></i>
                                     </button>
                                 </div>
@@ -80,12 +113,22 @@
                             {% for entry in unassigned_entries %}
                             <li class="list-group-item d-flex justify-content-between align-items-center">
                                 <div>
-                                    <strong>{{ entry.queue_number }}</strong>
+                                    <strong>{{ entry.display_ticket_number }}</strong>
                                     <div class="small text-muted">{{ entry.patient.full_name }}</div>
                                 </div>
-                                <button class="btn btn-sm btn-outline-success queue-action" data-action="call" data-id="{{ entry.id }}">
-                                    Call
-                                </button>
+                                <div class="d-flex gap-1">
+                                    {% if entry.encounter %}
+                                    <a href="{% url 'hospital:consultation_view' encounter_id=entry.encounter.pk %}" 
+                                       class="btn btn-sm btn-success" 
+                                       style="font-weight: 600;"
+                                       title="Start Consultation">
+                                        <i class="bi bi-stethoscope me-1"></i>Consult
+                                    </a>
+                                    {% endif %}
+                                    <button class="btn btn-sm btn-outline-success queue-action" data-action="call" data-id="{{ entry.id }}" title="Call Patient">
+                                        <i class="bi bi-megaphone me-1"></i>Call
+                                    </button>
+                                </div>
                             </li>
                             {% endfor %}
                         </ul>
@@ -110,32 +153,68 @@
     const callNextBtn = document.getElementById('callNextBtn');
     const departmentField = document.getElementById('department');
 
-    function postAction(url, payload = {}) {
+    async function postAction(url, payload = {}) {
         payload.department = departmentField?.value || '';
         if (roomInput?.value) {
-            payload.room_number = roomInput.value;
+            payload.room_number = roomInput.value.trim();
         }
-        return fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': csrfToken,
-                'Accept': 'application/json'
-            },
-            body: JSON.stringify(payload)
-        }).then(res => {
-            if (!res.ok) throw res;
-            return res.json();
-        });
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken,
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+            
+            // Check if response is actually JSON
+            const contentType = res.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                // If it's HTML (like an error page), get the text and reject
+                const text = await res.text();
+                console.error('Non-JSON response received:', text.substring(0, 200));
+                return Promise.reject({
+                    status: res.status,
+                    message: res.status === 404 ? 'Endpoint not found. Please refresh the page.' : 
+                             res.status === 403 ? 'Permission denied. Please check your access.' :
+                             res.status === 500 ? 'Server error occurred. Please try again.' :
+                             `Server returned non-JSON response (${res.status})`
+                });
+            }
+            
+            const data = await res.json();
+            if (!res.ok) {
+                // Return error data with status for proper handling
+                return Promise.reject({
+                    status: res.status,
+                    ...data,
+                    json: () => Promise.resolve(data)
+                });
+            }
+            return data;
+        } catch (error) {
+            // Network or parsing errors
+            if (error.message && error.message.includes('JSON')) {
+                console.error('JSON parsing error - server likely returned HTML:', error);
+                return Promise.reject({
+                    status: 500,
+                    message: 'Server returned an invalid response. Please refresh the page and try again.'
+                });
+            }
+            return Promise.reject(error);
+        }
     }
 
     const endpoints = {
-        call: "/queues/api/{id}/call/",
-        start: "/queues/api/{id}/start/",
-        complete: "/queues/api/{id}/complete/",
-        noShow: "/queues/api/{id}/no-show/",
+        call: "/hms/queues/api/{id}/call/",
+        start: "/hms/queues/api/{id}/start/",
+        complete: "/hms/queues/api/{id}/complete/",
+        noShow: "/hms/queues/api/{id}/no-show/",
     };
 
+    // Handle queue actions (call, start, complete, no-show) for individual patients
     function handleAction(event) {
         const target = event.target.closest('.queue-action');
         if (!target) return;
@@ -158,19 +237,129 @@
                 break;
         }
         if (!endpoint) return;
-        postAction(endpoint)
-            .then(() => window.location.reload())
-            .catch(() => alert('Unable to perform action right now.'));
+        
+        // Include room number in payload
+        const payload = {};
+        if (roomInput?.value) {
+            payload.room_number = roomInput.value.trim();
+        }
+        
+        console.log(`Performing action: ${action} on queue ${queueId} at ${endpoint}`);
+        postAction(endpoint, payload)
+            .then((data) => {
+                console.log(`Action ${action} response:`, data);
+                if (data.success) {
+                    if (action === 'call' && data.entry) {
+                        alert(`✅ Called patient ${data.entry.queue_number}. SMS sent with room information.`);
+                    } else {
+                        alert(data.message || `Action ${action} completed successfully.`);
+                    }
+                    window.location.reload();
+                } else {
+                    alert(data.message || 'Unable to complete action.');
+                }
+            })
+            .catch((error) => {
+                console.error(`Error performing ${action}:`, error);
+                console.error('Error details:', {
+                    status: error?.status,
+                    message: error?.message,
+                    endpoint: endpoint
+                });
+                let errorMessage = 'Unable to perform action right now.';
+                if (error && error.message) {
+                    errorMessage = error.message;
+                } else if (error && typeof error === 'object' && 'message' in error) {
+                    errorMessage = error.message;
+                } else if (error?.status === 404) {
+                    errorMessage = `Endpoint not found (404). Please refresh the page. URL: ${endpoint}`;
+                }
+                alert(errorMessage);
+            });
     }
 
+    // Attach event listener once for queue action buttons
     document.addEventListener('click', handleAction);
+
+    // Auto-populate room number if doctor has room assignment
+    {% if current_room_assignment %}
+    if (roomInput) {
+        roomInput.value = '{{ current_room_assignment.room.room_number }}';
+        roomInput.readOnly = false; // Allow manual override
+    }
+    {% endif %}
 
     callNextBtn?.addEventListener('click', function() {
         callNextBtn.disabled = true;
-        postAction("{% url 'hospital:queue_call_next' %}")
-            .then(() => window.location.reload())
-            .catch(() => alert('No patients waiting.'))
-            .finally(() => callNextBtn.disabled = false);
+        
+        // Build payload with room number (from input or auto-detected)
+        const payload = {};
+        if (roomInput?.value) {
+            payload.room_number = roomInput.value.trim();
+        }
+        
+        // Use Django URL reversal - should return /hms/queues/api/call-next/
+        let callNextUrl = "{% url 'hospital:queue_call_next' %}";
+        
+        // Fallback to hardcoded path if URL tag fails (shouldn't happen, but safety check)
+        if (!callNextUrl || callNextUrl === 'hospital:queue_call_next') {
+            console.warn('URL tag failed, using hardcoded path');
+            callNextUrl = '/hms/queues/api/call-next/';
+        }
+        
+        // Ensure URL is absolute
+        if (!callNextUrl.startsWith('/')) {
+            callNextUrl = '/' + callNextUrl;
+        }
+        
+        console.log('Resolved URL:', callNextUrl);
+        console.log('Current page:', window.location.pathname);
+        console.log('Full URL will be:', window.location.origin + callNextUrl);
+        postAction(callNextUrl, payload)
+            .then((data) => {
+                console.log('Call next response:', data);
+                if (data.success && data.entry) {
+                    alert(`✅ Called patient ${data.entry.queue_number} - ${data.entry.patient}. SMS sent with room information.`);
+                    setTimeout(() => window.location.reload(), 1000);
+                } else if (data.error === 'queue_empty') {
+                    alert('ℹ️ No patients waiting in queue.');
+                } else if (data.error === 'department_required') {
+                    alert('⚠️ ' + (data.message || 'Department is required.'));
+                } else {
+                    alert(data.message || 'Action completed.');
+                    if (data.success !== false) {
+                        setTimeout(() => window.location.reload(), 1000);
+                    }
+                }
+            })
+            .catch((error) => {
+                console.error('Error calling next:', error);
+                console.error('Error details:', {
+                    status: error?.status,
+                    message: error?.message,
+                    url: callNextUrl,
+                    currentUrl: window.location.href
+                });
+                
+                // If it's a 404, suggest checking the URL
+                if (error?.status === 404) {
+                    console.error('404 Error - URL not found. Checked URL:', callNextUrl);
+                    console.error('Expected URL pattern: /hms/queues/api/call-next/');
+                }
+                
+                let errorMessage = 'Unable to perform action right now.';
+                if (error && error.message) {
+                    errorMessage = error.message;
+                } else if (error && typeof error === 'object' && 'message' in error) {
+                    errorMessage = error.message;
+                } else if (error?.status === 404) {
+                    errorMessage = `Endpoint not found (404). Please refresh the page. URL attempted: ${callNextUrl}`;
+                }
+                alert(errorMessage);
+            })
+            .finally(() => {
+                if (callNextBtn) callNextBtn.disabled = false;
+            });
     });
 })();
 </script>

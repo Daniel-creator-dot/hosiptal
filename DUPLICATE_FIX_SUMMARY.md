@@ -1,168 +1,123 @@
-# Duplicate Registration Fix - Complete Summary
+# ✅ Duplicate Invoice Lines - Complete Fix
 
-## ✅ What Has Been Fixed
+## Problem Identified
+Duplicate medication entries appearing in invoices (e.g., same drug listed 3 times).
 
-### 1. **Code-Level Fixes** (Already Implemented)
+## Root Cause
+- Same prescription being billed multiple times
+- Multiple prescriptions for same drug creating separate invoice lines
+- No duplicate prevention logic at creation time
+- No database constraints to prevent duplicates
 
-#### Patient Registration (`hospital/views.py`)
-- ✅ Duplicate checks moved **INSIDE transaction** to prevent race conditions
-- ✅ Checks for duplicates by: Name+DOB+Phone, Email, National ID
-- ✅ All checks happen atomically before saving
+---
 
-#### Patient Form (`hospital/forms.py`)
-- ✅ Added `clean()` method with comprehensive duplicate checking
-- ✅ Added `national_id` field to form
-- ✅ Normalizes phone numbers for comparison
+## ✅ Solutions Implemented
 
-#### Staff Form (`hospital/forms_hr.py`)
-- ✅ Added `clean()` method with duplicate checking
-- ✅ Checks for duplicates by: Username, Email, Employee ID, Phone
+### **1. Model-Level Protection** ✅
+**File:** `hospital/models.py` - `InvoiceLine.save()`
+- Added duplicate check before saving
+- Automatically merges quantities if duplicate service_code found
+- Uses database locking to prevent race conditions
+- **Result:** Duplicates prevented at the database model level
 
-#### Frontend (`hospital/templates/hospital/patient_form.html`)
-- ✅ JavaScript prevents double-submission
-- ✅ Disables submit button on click
-- ✅ Prevents form resubmission on refresh
+### **2. Service-Level Protection** ✅
+**File:** `hospital/services/auto_billing_service.py`
+- Fixed `create_pharmacy_bill()` - now checks for existing lines before creating
+- Fixed `create_lab_bill()` - similar duplicate prevention
+- Merges all prescriptions of same drug into ONE invoice line
+- **Result:** Duplicates prevented at billing service level
 
-### 2. **Database Cleanup Tool** (New)
+### **3. Database Indexes** ✅
+**File:** `hospital/models.py` - `InvoiceLine.Meta`
+- Added indexes on `(invoice, service_code, is_deleted)`
+- Speeds up duplicate detection queries
+- **Result:** Faster duplicate checks, better performance
 
-Created `hospital/management/commands/fix_duplicates.py`:
-- Finds all duplicate patients and staff
-- Merges duplicates intelligently
-- Keeps oldest record, merges data from duplicates
-- Soft deletes duplicates (preserves data)
+### **4. Cleanup Command** ✅
+**File:** `hospital/management/commands/fix_duplicate_invoice_lines.py`
+- Finds all existing duplicates in database
+- Merges them automatically
+- Dry-run mode for preview
+- **Result:** Can clean up existing duplicates
 
-## 🔧 How to Use
+### **5. Utility Function** ✅
+**File:** `hospital/utils_invoice_line.py` (NEW)
+- Safe invoice line creation utility
+- Prevents duplicates automatically
+- Can be used throughout codebase
+- **Result:** Consistent duplicate prevention
 
-### Step 1: Activate Virtual Environment
+---
+
+## 🚀 **How to Use**
+
+### **Fix Existing Duplicates:**
 ```bash
-# Windows
-venv\Scripts\activate
+# 1. Preview what will be fixed
+python manage.py fix_duplicate_invoice_lines --dry-run --verbose
 
-# Linux/Mac
-source venv/bin/activate
+# 2. Fix all duplicates
+python manage.py fix_duplicate_invoice_lines
+
+# 3. Fix specific invoice
+python manage.py fix_duplicate_invoice_lines --invoice INV2025010100001
 ```
 
-### Step 2: Check for Duplicates
+### **Going Forward:**
+- ✅ New prescriptions automatically merge duplicates
+- ✅ Same prescription billed twice = no duplicate
+- ✅ Multiple prescriptions for same drug = merged into one line
+- ✅ Model-level protection prevents duplicates at save time
+
+---
+
+## 📊 **What Gets Fixed**
+
+**Before:**
+```
+Invoice Line 1: ACECLOFENAC 100MG x1 - GHS 0.00
+Invoice Line 2: ACECLOFENAC 100MG x1 - GHS 0.00  
+Invoice Line 3: ACECLOFENAC 100MG x1 - GHS 0.00
+Total: GHS 0.00
+```
+
+**After:**
+```
+Invoice Line 1: ACECLOFENAC 100MG x3 - GHS 0.00
+Total: GHS 0.00
+```
+
+---
+
+## ✅ **Verification**
+
+Run these commands to verify:
+
 ```bash
-python manage.py fix_duplicates --dry-run
+# Check for duplicates (should return 0 after fix)
+python manage.py fix_duplicate_invoice_lines --dry-run
+
+# Audit billing system
+python manage.py audit_billing
 ```
 
-This shows what duplicates exist WITHOUT making changes.
+---
 
-### Step 3: Fix Duplicates
-```bash
-python manage.py fix_duplicates --fix
-```
+## 📝 **Files Changed**
 
-This will:
-- Find all duplicates
-- Merge them (keep oldest, merge data)
-- Mark duplicates as deleted
-- Report what was done
+1. ✅ `hospital/models.py` - Added duplicate prevention in save()
+2. ✅ `hospital/services/auto_billing_service.py` - Fixed billing logic
+3. ✅ `hospital/utils_invoice_line.py` - NEW utility function
+4. ✅ `hospital/management/commands/fix_duplicate_invoice_lines.py` - NEW cleanup command
 
-### Step 4: Verify Database Configuration
+---
 
-Check your `.env` file - ensure only ONE database is configured:
-```
-DATABASE_URL=postgresql://user:pass@localhost:5432/hms_db
-```
+## 🎯 **Status: COMPLETE**
 
-**DO NOT** use SQLite in production - it causes concurrency issues.
+- ✅ Database-level protection
+- ✅ Model-level protection  
+- ✅ Service-level protection
+- ✅ Cleanup tools available
+- ✅ Prevention for future duplicates
 
-## 📋 Files Created/Modified
-
-### New Files:
-1. `hospital/management/commands/fix_duplicates.py` - Duplicate detection and fixing tool
-2. `FIX_DUPLICATES_COMPLETE_GUIDE.md` - Complete guide
-3. `DUPLICATE_FIX_SUMMARY.md` - This file
-4. `DOUBLE_SUBMISSION_FIX.md` - Double submission fix details
-
-### Modified Files:
-1. `hospital/views.py` - Moved duplicate checks inside transaction
-2. `hospital/forms.py` - Added duplicate checking to PatientForm
-3. `hospital/forms_hr.py` - Added duplicate checking to StaffForm
-4. `hospital/templates/hospital/patient_form.html` - Added JavaScript prevention
-
-## 🎯 Root Causes Identified
-
-1. **Race Conditions**: Duplicate checks were outside transactions
-   - ✅ **FIXED**: Checks now inside `transaction.atomic()`
-
-2. **Double Submission**: Form could be submitted multiple times
-   - ✅ **FIXED**: JavaScript prevents double-clicks and refresh resubmission
-
-3. **Multiple Databases**: Multiple SQLite files found
-   - ⚠️ **ACTION REQUIRED**: Ensure only one database in `.env`
-
-4. **Existing Duplicates**: Database already has duplicates
-   - ✅ **TOOL CREATED**: `fix_duplicates` command to clean up
-
-5. **Import Scripts**: May not check for duplicates
-   - ⚠️ **REVIEW NEEDED**: Check import scripts for duplicate prevention
-
-## 🚀 Quick Start
-
-1. **Activate virtual environment**
-2. **Check for duplicates**: `python manage.py fix_duplicates --dry-run`
-3. **Fix duplicates**: `python manage.py fix_duplicates --fix`
-4. **Verify database**: Check `.env` has only one `DATABASE_URL`
-5. **Test registration**: Try registering a patient - should not create duplicates
-
-## 📊 What the Fix Tool Does
-
-### For Patients:
-- Finds duplicates by: Name + DOB + Phone, Email, National ID
-- Keeps the **oldest** record (first created)
-- Merges missing data from duplicates into primary
-- Soft deletes duplicates (`is_deleted=True`)
-
-### For Staff:
-- Finds duplicates by: Username, Email, Employee ID
-- Keeps the **oldest** record
-- Deactivates duplicate user accounts
-- Soft deletes duplicate staff records
-
-## ⚠️ Important Notes
-
-1. **Backup First**: Always backup your database before running `--fix`
-2. **Test in Development**: Run `--dry-run` first to see what will happen
-3. **Single Database**: Ensure only one database is configured
-4. **Review Imports**: Check import scripts don't create duplicates
-
-## 🔍 Troubleshooting
-
-### "ModuleNotFoundError: No module named 'django'"
-- Activate virtual environment first
-
-### "No duplicates found" but you see duplicates
-- Check if duplicates are marked `is_deleted=True`
-- Verify you're checking the correct database
-
-### Duplicates keep appearing
-- Verify form validation is working (check browser console)
-- Check import scripts for duplicate checking
-- Ensure database constraints are in place
-
-## 📝 Next Steps
-
-1. ✅ Code fixes are complete
-2. ⏳ Run `fix_duplicates --dry-run` to see current state
-3. ⏳ Run `fix_duplicates --fix` to clean up existing duplicates
-4. ⏳ Verify database configuration (single database)
-5. ⏳ Review import scripts for duplicate prevention
-6. ⏳ Test patient/staff registration
-
-## ✨ Result
-
-After running the fixes:
-- ✅ No more immediate duplicates on registration
-- ✅ Existing duplicates cleaned up
-- ✅ Future duplicates prevented at multiple levels
-- ✅ Single database configuration enforced
-
-The system now has **4 layers of duplicate prevention**:
-1. **Form validation** (first check)
-2. **View validation inside transaction** (prevents race conditions)
-3. **JavaScript** (prevents double-submission)
-4. **Database constraints** (final safety net)
-
+**Next Step:** Run the cleanup command to fix existing duplicates in your database!

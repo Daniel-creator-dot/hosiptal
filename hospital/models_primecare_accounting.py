@@ -233,6 +233,37 @@ class InsuranceReceivableEntry(BaseModel):
         verbose_name_plural = 'Insurance Receivable Entries'
     
     def __str__(self):
+        return f"IRE {self.entry_number} - {self.payer.name} - GHS {self.total_amount}"
+    
+    def save(self, *args, **kwargs):
+        if not self.entry_number or not str(self.entry_number).strip():
+            self.entry_number = self.generate_entry_number()
+        if not hasattr(self, 'outstanding_amount') or self.outstanding_amount is None:
+            self.outstanding_amount = self.total_amount
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_entry_number():
+        """Generate unique entry number for insurance receivable entries. Never returns empty."""
+        from datetime import datetime
+        import uuid
+        prefix = "IRE"
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
+        suffix = (uuid.uuid4().hex or "")[:8]
+        if not suffix:
+            suffix = str(uuid.uuid4())[:8]
+        value = f"{prefix}{timestamp}{suffix}"
+        return value if (value and value.strip()) else f"{prefix}{uuid.uuid4().hex[:12]}"
+
+
+class CorporateReceivableEntry(InsuranceReceivableEntry):
+    """Proxy model for Corporate Receivable Entries - separates corporate from insurance"""
+    class Meta:
+        proxy = True
+        verbose_name = 'Corporate Receivable Entry'
+        verbose_name_plural = 'Corporate Receivable Entries'
+    
+    def __str__(self):
         return f"AR {self.entry_number} - {self.payer.name} - GHS {self.total_amount}"
     
     def save(self, *args, **kwargs):

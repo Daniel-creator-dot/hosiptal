@@ -1,0 +1,676 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}{{ action }} Lab Test - HMS{% endblock %}
+{% block page_title %}<i class="bi bi-flask me-2"></i>{{ action }} Lab Test{% endblock %}
+{% block page_subtitle %}{% if action == 'Create' %}Add a new test to the lab catalog{% else %}Update lab test information{% endif %}{% endblock %}
+
+{% block extra_css %}
+<style>
+    :root {
+        --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        --success-gradient: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        --card-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        --card-hover-shadow: 0 20px 60px rgba(102, 126, 234, 0.2);
+    }
+
+    .form-container {
+        max-width: 900px;
+        margin: 0 auto;
+        animation: fadeInUp 0.6s ease-out;
+    }
+
+    @keyframes fadeInUp {
+        from {
+            opacity: 0;
+            transform: translateY(30px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .form-section {
+        background: white;
+        border-radius: 20px;
+        padding: 2rem;
+        margin-bottom: 2rem;
+        box-shadow: var(--card-shadow);
+        border: 1px solid rgba(102, 126, 234, 0.1);
+        transition: all 0.3s ease;
+    }
+
+    .form-section:hover {
+        box-shadow: var(--card-hover-shadow);
+        transform: translateY(-2px);
+    }
+
+    .form-section h6 {
+        color: #667eea;
+        font-weight: 700;
+        font-size: 1.1rem;
+        margin-bottom: 1.5rem;
+        padding-bottom: 1rem;
+        border-bottom: 3px solid #e2e8f0;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .form-section h6 i {
+        font-size: 1.3rem;
+    }
+
+    .form-label {
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 0.75rem;
+        font-size: 0.95rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .required-field::after {
+        content: " *";
+        color: #ef4444;
+        font-weight: 700;
+    }
+
+    .form-control, .form-select {
+        border: 2px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 0.875rem 1.25rem;
+        font-size: 0.95rem;
+        transition: all 0.3s ease;
+        background: #fafafa;
+    }
+
+    .form-control:focus, .form-select:focus {
+        border-color: #667eea;
+        background: white;
+        box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+        outline: none;
+    }
+
+    .form-control:hover, .form-select:hover {
+        border-color: #c7d2fe;
+    }
+
+    /* Turnaround Time Section - Modern Design */
+    .tat-container {
+        background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+        border-radius: 16px;
+        padding: 1.5rem;
+        border: 2px solid #e2e8f0;
+        margin-top: 1rem;
+    }
+
+    .tat-mode-toggle {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1.5rem;
+        background: white;
+        padding: 0.5rem;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+
+    .tat-mode-btn {
+        flex: 1;
+        padding: 0.75rem 1.5rem;
+        border: 2px solid transparent;
+        border-radius: 10px;
+        background: transparent;
+        font-weight: 600;
+        font-size: 0.9rem;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        color: #6b7280;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+    }
+
+    .tat-mode-btn:hover {
+        background: #f3f4f6;
+        color: #374151;
+    }
+
+    .tat-mode-btn.active {
+        background: var(--primary-gradient);
+        color: white;
+        border-color: #667eea;
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        transform: translateY(-2px);
+    }
+
+    .tat-input-group {
+        display: none;
+        animation: fadeIn 0.3s ease;
+    }
+
+    .tat-input-group.active {
+        display: block;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(-10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .tat-quick-input {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 1rem;
+        align-items: end;
+    }
+
+    .tat-quick-input .input-group {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .tat-quick-input .input-group label {
+        font-size: 0.85rem;
+        color: #6b7280;
+        margin-bottom: 0.5rem;
+    }
+
+    .tat-quick-input input[type="number"] {
+        width: 100%;
+    }
+
+    .tat-extended-input {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+    }
+
+    .datetime-input-wrapper {
+        position: relative;
+    }
+
+    .datetime-input-wrapper input[type="datetime-local"] {
+        width: 100%;
+        padding: 0.875rem 1.25rem;
+        border: 2px solid #e5e7eb;
+        border-radius: 12px;
+        font-size: 0.95rem;
+        background: white;
+        transition: all 0.3s ease;
+    }
+
+    .datetime-input-wrapper input[type="datetime-local"]:focus {
+        border-color: #667eea;
+        box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+        outline: none;
+    }
+
+    .tat-preview {
+        margin-top: 1rem;
+        padding: 1rem;
+        background: white;
+        border-radius: 10px;
+        border-left: 4px solid #667eea;
+        display: none;
+    }
+
+    .tat-preview.active {
+        display: block;
+    }
+
+    .tat-preview-label {
+        font-size: 0.85rem;
+        color: #6b7280;
+        margin-bottom: 0.5rem;
+        font-weight: 600;
+    }
+
+    .tat-preview-value {
+        font-size: 1.1rem;
+        color: #667eea;
+        font-weight: 700;
+    }
+
+    .form-check-switch {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 1rem;
+        background: #f8fafc;
+        border-radius: 12px;
+        border: 2px solid #e2e8f0;
+    }
+
+    .form-check-input {
+        width: 3.5rem;
+        height: 2rem;
+        cursor: pointer;
+    }
+
+    .form-check-label {
+        font-weight: 600;
+        color: #374151;
+        cursor: pointer;
+        flex: 1;
+    }
+
+    .btn-primary {
+        background: var(--primary-gradient);
+        border: none;
+        padding: 0.875rem 2rem;
+        border-radius: 12px;
+        font-weight: 600;
+        font-size: 1rem;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    }
+
+    .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-outline-secondary {
+        border: 2px solid #e5e7eb;
+        padding: 0.875rem 2rem;
+        border-radius: 12px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+
+    .btn-outline-secondary:hover {
+        border-color: #667eea;
+        color: #667eea;
+        background: #f8fafc;
+    }
+
+    .text-muted {
+        font-size: 0.85rem;
+        color: #6b7280;
+        margin-top: 0.5rem;
+        display: block;
+    }
+
+    .info-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        background: #eef2ff;
+        color: #667eea;
+        border-radius: 8px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin-top: 0.5rem;
+    }
+
+    .info-badge i {
+        font-size: 1rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="form-container">
+        <form method="post" id="labTestForm">
+            {% csrf_token %}
+            
+            <!-- Basic Information -->
+            <div class="form-section">
+                <h6><i class="bi bi-info-circle"></i>Basic Information</h6>
+                <div class="row">
+                    <div class="col-md-6 mb-4">
+                        <label class="form-label required-field">
+                            <i class="bi bi-tag"></i>Test Code
+                        </label>
+                        <input type="text" class="form-control" name="code" id="code" 
+                               value="{% if test %}{{ test.code }}{% endif %}" 
+                               placeholder="e.g., GLU, HGB, CBC" required>
+                        <small class="text-muted">Unique code for this test (e.g., GLU for Glucose)</small>
+                    </div>
+                    <div class="col-md-6 mb-4">
+                        <label class="form-label required-field">
+                            <i class="bi bi-file-text"></i>Test Name
+                        </label>
+                        <input type="text" class="form-control" name="name" id="name" 
+                               value="{% if test %}{{ test.name }}{% endif %}" 
+                               placeholder="e.g., Glucose, Hemoglobin, Complete Blood Count" required>
+                        <small class="text-muted">Full name of the lab test</small>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-md-6 mb-4">
+                        <label class="form-label required-field">
+                            <i class="bi bi-droplet"></i>Specimen Type
+                        </label>
+                        <input type="text" class="form-control" name="specimen_type" id="specimen_type" 
+                               value="{% if test %}{{ test.specimen_type }}{% endif %}" 
+                               placeholder="e.g., Blood, Urine, Serum, Plasma" required>
+                        <small class="text-muted">Type of specimen required for this test</small>
+                    </div>
+                    <div class="col-md-6 mb-4">
+                        <label class="form-label required-field">
+                            <i class="bi bi-clock-history"></i>Turnaround Time
+                        </label>
+                        <div class="tat-container">
+                            <div class="tat-mode-toggle">
+                                <button type="button" class="tat-mode-btn active" data-mode="quick" id="tatModeQuick">
+                                    <i class="bi bi-lightning-charge"></i>Quick Test
+                                </button>
+                                <button type="button" class="tat-mode-btn" data-mode="extended" id="tatModeExtended">
+                                    <i class="bi bi-calendar-range"></i>Extended Test
+                                </button>
+                            </div>
+
+                            <!-- Quick Test Mode (Minutes) -->
+                            <div class="tat-input-group active" id="tatQuickGroup">
+                                <div class="tat-quick-input">
+                                    <div class="input-group">
+                                        <label>Duration in Minutes</label>
+                                        <input type="number" class="form-control" name="tat_minutes" id="tat_minutes" 
+                                               value="{% if test %}{{ test.tat_minutes }}{% else %}60{% endif %}" 
+                                               min="1" required>
+                                    </div>
+                                    <div class="input-group" style="max-width: 120px;">
+                                        <label>Preview</label>
+                                        <div class="form-control" id="tatQuickPreview" style="background: white; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #667eea;">
+                                            {% if test %}{{ test.tat_minutes }} min{% else %}60 min{% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                <small class="text-muted">For tests that complete within hours (e.g., 30 min, 2 hours, 1 day)</small>
+                            </div>
+
+                            <!-- Extended Test Mode (Date/Time) -->
+                            <div class="tat-input-group" id="tatExtendedGroup">
+                                <div class="tat-extended-input">
+                                    <div class="datetime-input-wrapper">
+                                        <label class="form-label">
+                                            <i class="bi bi-calendar3"></i>Expected Completion Date & Time
+                                        </label>
+                                        <input type="datetime-local" class="form-control" id="tat_datetime" 
+                                               value="">
+                                        <input type="hidden" name="tat_minutes" id="tat_minutes_extended" value="">
+                                    </div>
+                                    <div class="datetime-input-wrapper">
+                                        <label class="form-label">
+                                            <i class="bi bi-info-circle"></i>Duration Preview
+                                        </label>
+                                        <div class="form-control" id="tatExtendedPreview" style="background: white; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #667eea; min-height: 48px;">
+                                            Select date & time
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="tat-preview" id="tatExtendedPreviewBox">
+                                    <div class="tat-preview-label">Calculated Duration:</div>
+                                    <div class="tat-preview-value" id="tatExtendedPreviewValue"></div>
+                                </div>
+                                <small class="text-muted">For tests that take multiple days (e.g., cultures, biopsies, specialized tests)</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pricing & Status -->
+            <div class="form-section">
+                <h6><i class="bi bi-currency-dollar"></i>Pricing & Status</h6>
+                <div class="row">
+                    <div class="col-md-6 mb-4">
+                        <label class="form-label">
+                            <i class="bi bi-cash-coin"></i>Price (GHS)
+                        </label>
+                        {% if can_edit_price %}
+                        <input type="number" class="form-control" name="price" id="price" 
+                               value="{% if test %}{{ test.price }}{% else %}0{% endif %}" 
+                               step="0.01" min="0" placeholder="0.00">
+                        {% else %}
+                        <input type="text" class="form-control bg-light" id="price" 
+                               value="{% if test %}{{ test.price }}{% else %}0{% endif %}" 
+                               readonly title="View only – only admin can change price">
+                        {% endif %}
+                        <small class="text-muted">{% if can_edit_price %}Price for this test in Ghana Cedis{% else %}View only – only admin can change price{% endif %}</small>
+                    </div>
+                    <div class="col-md-6 mb-4">
+                        <label class="form-label">
+                            <i class="bi bi-toggle-on"></i>Status
+                        </label>
+                        <div class="form-check-switch">
+                            <input class="form-check-input" type="checkbox" name="is_active" id="is_active" 
+                                   {% if not test or test.is_active %}checked{% endif %}>
+                            <label class="form-check-label" for="is_active">
+                                Active
+                            </label>
+                        </div>
+                        <small class="text-muted">Only active tests can be ordered</small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Form Actions -->
+            <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+                <a href="{% if test %}{% url 'hospital:lab_test_detail' test.pk %}{% else %}{% url 'hospital:lab_tests_catalog' %}{% endif %}" 
+                   class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left me-2"></i>Cancel
+                </a>
+                <div class="d-flex gap-2">
+                    {% if lab_test_delete_url %}
+                    <a href="{{ lab_test_delete_url }}" class="btn btn-outline-danger">
+                        <i class="bi bi-trash me-2"></i>Delete
+                    </a>
+                    {% endif %}
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-circle me-2"></i>{{ action }} Lab Test
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('labTestForm');
+    const tatModeQuick = document.getElementById('tatModeQuick');
+    const tatModeExtended = document.getElementById('tatModeExtended');
+    const tatQuickGroup = document.getElementById('tatQuickGroup');
+    const tatExtendedGroup = document.getElementById('tatExtendedGroup');
+    const tatMinutesInput = document.getElementById('tat_minutes');
+    const tatDatetimeInput = document.getElementById('tat_datetime');
+    const tatMinutesExtended = document.getElementById('tat_minutes_extended');
+    const tatQuickPreview = document.getElementById('tatQuickPreview');
+    const tatExtendedPreview = document.getElementById('tatExtendedPreview');
+    const tatExtendedPreviewBox = document.getElementById('tatExtendedPreviewBox');
+    const tatExtendedPreviewValue = document.getElementById('tatExtendedPreviewValue');
+
+    // Initialize datetime input with current time + default minutes
+    {% if test %}
+        const testMinutes = {{ test.tat_minutes }};
+        if (testMinutes >= 1440) {
+            // If test takes days, set up extended mode
+            const now = new Date();
+            const completionDate = new Date(now.getTime() + testMinutes * 60000);
+            const year = completionDate.getFullYear();
+            const month = String(completionDate.getMonth() + 1).padStart(2, '0');
+            const day = String(completionDate.getDate()).padStart(2, '0');
+            const hours = String(completionDate.getHours()).padStart(2, '0');
+            const minutes = String(completionDate.getMinutes()).padStart(2, '0');
+            tatDatetimeInput.value = `${year}-${month}-${day}T${hours}:${minutes}`;
+        }
+    {% endif %}
+
+    // Toggle between Quick and Extended modes
+    function switchTatMode(mode) {
+        if (mode === 'quick') {
+            tatModeQuick.classList.add('active');
+            tatModeExtended.classList.remove('active');
+            tatQuickGroup.classList.add('active');
+            tatExtendedGroup.classList.remove('active');
+            tatMinutesInput.required = true;
+            tatDatetimeInput.required = false;
+            tatMinutesExtended.value = '';
+        } else {
+            tatModeQuick.classList.remove('active');
+            tatModeExtended.classList.add('active');
+            tatQuickGroup.classList.remove('active');
+            tatExtendedGroup.classList.add('active');
+            tatMinutesInput.required = false;
+            tatDatetimeInput.required = true;
+        }
+    }
+
+    tatModeQuick.addEventListener('click', () => switchTatMode('quick'));
+    tatModeExtended.addEventListener('click', () => switchTatMode('extended'));
+
+    // Update quick preview
+    function updateQuickPreview() {
+        const minutes = parseInt(tatMinutesInput.value) || 0;
+        if (minutes > 0) {
+            if (minutes >= 1440) {
+                const days = Math.floor(minutes / 1440);
+                const remainingHours = Math.floor((minutes % 1440) / 60);
+                if (remainingHours > 0) {
+                    tatQuickPreview.textContent = `${minutes} min (${days} day${days > 1 ? 's' : ''}, ${remainingHours} hour${remainingHours > 1 ? 's' : ''})`;
+                } else {
+                    tatQuickPreview.textContent = `${minutes} min (${days} day${days > 1 ? 's' : ''})`;
+                }
+            } else if (minutes >= 60) {
+                const hours = Math.floor(minutes / 60);
+                const remainingMinutes = minutes % 60;
+                if (remainingMinutes > 0) {
+                    tatQuickPreview.textContent = `${minutes} min (${hours} hour${hours > 1 ? 's' : ''}, ${remainingMinutes} min)`;
+                } else {
+                    tatQuickPreview.textContent = `${minutes} min (${hours} hour${hours > 1 ? 's' : ''})`;
+                }
+            } else {
+                tatQuickPreview.textContent = `${minutes} min`;
+            }
+        } else {
+            tatQuickPreview.textContent = 'Enter minutes';
+        }
+    }
+
+    tatMinutesInput.addEventListener('input', updateQuickPreview);
+    updateQuickPreview();
+
+    // Update extended preview and calculate minutes
+    function updateExtendedPreview() {
+        const selectedDateTime = tatDatetimeInput.value;
+        if (selectedDateTime) {
+            const selectedDate = new Date(selectedDateTime);
+            const now = new Date();
+            const diffMs = selectedDate - now;
+            
+            if (diffMs > 0) {
+                const diffMinutes = Math.floor(diffMs / 60000);
+                const days = Math.floor(diffMinutes / 1440);
+                const hours = Math.floor((diffMinutes % 1440) / 60);
+                const minutes = diffMinutes % 60;
+                
+                let previewText = '';
+                if (days > 0) {
+                    previewText = `${days} day${days > 1 ? 's' : ''}`;
+                    if (hours > 0) {
+                        previewText += `, ${hours} hour${hours > 1 ? 's' : ''}`;
+                    }
+                } else if (hours > 0) {
+                    previewText = `${hours} hour${hours > 1 ? 's' : ''}`;
+                    if (minutes > 0) {
+                        previewText += `, ${minutes} min`;
+                    }
+                } else {
+                    previewText = `${minutes} min`;
+                }
+                
+                tatExtendedPreview.textContent = previewText;
+                tatExtendedPreviewValue.textContent = `${diffMinutes.toLocaleString()} minutes (${previewText})`;
+                tatMinutesExtended.value = diffMinutes;
+                tatExtendedPreviewBox.classList.add('active');
+            } else {
+                tatExtendedPreview.textContent = 'Invalid date (must be in future)';
+                tatExtendedPreviewBox.classList.remove('active');
+                tatMinutesExtended.value = '';
+            }
+        } else {
+            tatExtendedPreview.textContent = 'Select date & time';
+            tatExtendedPreviewBox.classList.remove('active');
+            tatMinutesExtended.value = '';
+        }
+    }
+
+    tatDatetimeInput.addEventListener('change', updateExtendedPreview);
+    tatDatetimeInput.addEventListener('input', updateExtendedPreview);
+
+    // Form validation
+    form.addEventListener('submit', function(e) {
+        const code = document.getElementById('code').value.trim();
+        const name = document.getElementById('name').value.trim();
+        const specimenType = document.getElementById('specimen_type').value.trim();
+        
+        // Check which mode is active
+        const isQuickMode = tatModeQuick.classList.contains('active');
+        let tatMinutes = 0;
+        
+        if (isQuickMode) {
+            tatMinutes = parseInt(tatMinutesInput.value);
+        } else {
+            tatMinutes = parseInt(tatMinutesExtended.value);
+        }
+        
+        if (!code) {
+            e.preventDefault();
+            alert('⚠️ Please enter a test code');
+            document.getElementById('code').focus();
+            return false;
+        }
+        
+        if (!name) {
+            e.preventDefault();
+            alert('⚠️ Please enter a test name');
+            document.getElementById('name').focus();
+            return false;
+        }
+        
+        if (!specimenType) {
+            e.preventDefault();
+            alert('⚠️ Please enter specimen type');
+            document.getElementById('specimen_type').focus();
+            return false;
+        }
+        
+        if (!tatMinutes || tatMinutes < 1) {
+            e.preventDefault();
+            if (isQuickMode) {
+                alert('⚠️ Please enter a valid turnaround time (minimum 1 minute)');
+                tatMinutesInput.focus();
+            } else {
+                alert('⚠️ Please select a valid completion date and time');
+                tatDatetimeInput.focus();
+            }
+            return false;
+        }
+        
+        // Ensure the correct field is submitted
+        if (isQuickMode) {
+            tatMinutesExtended.value = '';
+        } else {
+            tatMinutesInput.value = tatMinutes;
+            tatMinutesExtended.value = '';
+        }
+    });
+    
+    // Auto-format code to uppercase
+    const codeInput = document.getElementById('code');
+    if (codeInput) {
+        codeInput.addEventListener('input', function() {
+            this.value = this.value.toUpperCase();
+        });
+    }
+});
+</script>
+{% endblock %}

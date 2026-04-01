@@ -81,14 +81,18 @@ def insurance_company_list(request):
     query = request.GET.get('q', '')
     status_filter = request.GET.get('status', '')
     
+    # Start with base query
     companies = InsuranceCompany.objects.filter(
         is_deleted=False
-    ).annotate(
-        plans_count=Count('plans', filter=Q(plans__is_deleted=False)),
+    )
+    
+    # Add annotations (using distinct to avoid duplicates from joins)
+    companies = companies.annotate(
+        plans_count=Count('plans', filter=Q(plans__is_deleted=False), distinct=True),
         enrolled_count=Count('patient_enrollments', filter=Q(
             patient_enrollments__status='active',
             patient_enrollments__is_deleted=False
-        ))
+        ), distinct=True)
     )
     
     if query:
@@ -101,10 +105,14 @@ def insurance_company_list(request):
     if status_filter:
         companies = companies.filter(status=status_filter)
     
-    companies = companies.order_by('name')
+    # Order by newest first, then by name
+    companies = companies.order_by('-created', 'name')
+    
+    # Debug: Log total count
+    total_count = companies.count()
     
     paginator = Paginator(companies, 25)
-    page = request.GET.get('page')
+    page = request.GET.get('page', 1)
     companies_page = paginator.get_page(page)
     
     context = {
@@ -112,6 +120,7 @@ def insurance_company_list(request):
         'companies': companies_page,
         'query': query,
         'status_filter': status_filter,
+        'total_count': total_count,  # Add for debugging
     }
     
     return render(request, 'hospital/insurance/company_list.html', context)
@@ -196,11 +205,54 @@ def insurance_company_create(request):
                 is_active=True,
             )
             
-            messages.success(request, f'✅ Insurance company "{company.name}" created successfully!')
-            return redirect('hospital:insurance_company_detail', pk=company.pk)
+            # Also create a corresponding Payer for billing/claims
+            from .models import Payer
+            payer_type_input = request.POST.get('payer_type', 'private')  # Default to private insurance
+            # Map to valid payer_type choices on Payer model
+            if payer_type_input == 'nhis':
+                payer_type = 'nhis'
+            elif payer_type_input == 'corporate':
+                payer_type = 'corporate'
+            else:
+                payer_type = 'private'
+            payer, created = Payer.objects.get_or_create(
+                name=name,
+                payer_type=payer_type,
+                defaults={'is_active': True, 'is_deleted': False}
+            )
+            
+            # Ensure payer is active even if it already existed
+            if not created:
+                payer.is_active = True
+                payer.is_deleted = False
+                payer.save()
+            
+            if created:
+                messages.success(request, f'Insurance company "{company.name}" and corresponding payer created successfully! The company is now available in all dropdowns.')
+            else:
+                messages.success(request, f'Insurance company "{company.name}" created successfully! (Updated existing payer)')
+            
+            # Redirect to list page with a flag to highlight the new company
+            return redirect('hospital:insurance_company_list')
         
         except Exception as e:
-            messages.error(request, f'❌ Error creating insurance company: {str(e)}')
+            import traceback
+            error_details = str(e)
+            # Check for common errors
+            if 'unique constraint' in error_details.lower() or 'duplicate' in error_details.lower():
+                if 'code' in error_details.lower():
+                    messages.error(request, f'❌ Error: Company code "{code.upper()}" already exists. Please use a different code.')
+                elif 'name' in error_details.lower():
+                    messages.error(request, f'❌ Error: Company name "{name}" already exists. Please use a different name.')
+                else:
+                    messages.error(request, f'❌ Error: A company with this information already exists. {error_details}')
+            else:
+                messages.error(request, f'❌ Error creating insurance company: {error_details}')
+            
+            # Log the full error for debugging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error creating insurance company: {error_details}\n{traceback.format_exc()}")
     
     context = {
         'title': 'Add New Insurance Company',
@@ -269,17 +321,38 @@ def patient_insurance_enroll(request, patient_pk):
             if plan_id:
                 plan = get_object_or_404(InsurancePlan, pk=plan_id, is_deleted=False)
             
-            enrollment = PatientInsurance.objects.create(
+            # Check for existing enrollment to prevent duplicates
+            existing_enrollment = PatientInsurance.objects.filter(
                 patient=patient,
                 insurance_company=company,
-                insurance_plan=plan,
-                policy_number=request.POST.get('policy_number'),
-                member_id=request.POST.get('member_id'),
-                group_number=request.POST.get('group_number', ''),
-                is_primary_subscriber=request.POST.get('is_primary_subscriber') == 'on',
-                relationship_to_subscriber=request.POST.get('relationship_to_subscriber', 'self'),
-                effective_date=request.POST.get('effective_date'),
-                is_primary=request.POST.get('is_primary') == 'on',
+                is_deleted=False
+            ).first()
+            
+            if existing_enrollment:
+                # Update existing enrollment instead of creating duplicate
+                existing_enrollment.insurance_plan = plan
+                existing_enrollment.policy_number = request.POST.get('policy_number')
+                existing_enrollment.member_id = request.POST.get('member_id')
+                existing_enrollment.group_number = request.POST.get('group_number', '')
+                existing_enrollment.is_primary_subscriber = request.POST.get('is_primary_subscriber') == 'on'
+                existing_enrollment.relationship_to_subscriber = request.POST.get('relationship_to_subscriber', 'self')
+                existing_enrollment.effective_date = request.POST.get('effective_date')
+                existing_enrollment.is_primary = request.POST.get('is_primary') == 'on'
+                existing_enrollment.status = 'active'
+                existing_enrollment.save()
+                enrollment = existing_enrollment
+            else:
+                enrollment = PatientInsurance.objects.create(
+                    patient=patient,
+                    insurance_company=company,
+                    insurance_plan=plan,
+                    policy_number=request.POST.get('policy_number'),
+                    member_id=request.POST.get('member_id'),
+                    group_number=request.POST.get('group_number', ''),
+                    is_primary_subscriber=request.POST.get('is_primary_subscriber') == 'on',
+                    relationship_to_subscriber=request.POST.get('relationship_to_subscriber', 'self'),
+                    effective_date=request.POST.get('effective_date'),
+                    is_primary=request.POST.get('is_primary') == 'on',
                 status='active',
             )
             

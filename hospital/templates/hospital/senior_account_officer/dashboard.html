@@ -1,0 +1,368 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}{{ title }} - HMS{% endblock %}
+{% block page_title %}{{ title }}{% endblock %}
+{% block page_subtitle %}Overseeing All Accounting Operations & Account Staff{% endblock %}
+
+{% block extra_css %}
+<style>
+    .dashboard-card {
+        background: white;
+        border-radius: 12px;
+        padding: 24px;
+        border: 1px solid #e0e0e0;
+        margin-bottom: 20px;
+        transition: all 0.3s;
+    }
+    
+    .dashboard-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    
+    .stat-card {
+        background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+    
+    .stat-card.revenue {
+        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+    }
+    
+    .stat-card.expense {
+        background: linear-gradient(135deg, #dc3545 0%, #fd7e14 100%);
+    }
+    
+    .stat-card.warning {
+        background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%);
+    }
+    
+    .stat-card.info {
+        background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+    }
+    
+    .stat-card.staff {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    }
+    
+    .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 20px;
+        margin-top: 30px;
+    }
+    
+    .feature-card {
+        background: white;
+        border: 2px solid #e0e0e0;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        transition: all 0.3s;
+        text-decoration: none;
+        color: inherit;
+        display: block;
+    }
+    
+    .feature-card:hover {
+        border-color: #059669;
+        transform: translateY(-4px);
+        box-shadow: 0 8px 16px rgba(5, 150, 105, 0.2);
+        text-decoration: none;
+        color: inherit;
+    }
+    
+    .feature-card i {
+        font-size: 48px;
+        color: #059669;
+        margin-bottom: 15px;
+    }
+    
+    .feature-card h4 {
+        margin-top: 10px;
+        font-weight: 600;
+    }
+    
+    .staff-badge {
+        display: inline-block;
+        padding: 5px 12px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        margin: 3px;
+    }
+    
+    .badge-accountant { background: #10b981; color: white; }
+    .badge-officer { background: #f59e0b; color: white; }
+    .badge-personnel { background: #6366f1; color: white; }
+    .badge-senior { background: #059669; color: white; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header Section -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <h2><i class="bi bi-shield-check me-2"></i>Senior Account Officer Dashboard</h2>
+                <p class="text-muted mb-0">Comprehensive oversight of all accounting operations and account-related staff</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Financial Summary Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stat-card revenue">
+                <h5>Total Revenue (Month)</h5>
+                <h2>GHS {{ total_revenue|floatformat:2|intcomma }}</h2>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card expense">
+                <h5>Total Expenses (Month)</h5>
+                <h2>GHS {{ total_expenses|floatformat:2|intcomma }}</h2>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card {% if net_income >= 0 %}revenue{% else %}expense{% endif %}">
+                <h5>Net Income (Month)</h5>
+                <h2>GHS {{ net_income|floatformat:2|intcomma }}</h2>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card staff">
+                <h5>Account Staff</h5>
+                <h2>{{ active_account_staff }} / {{ total_account_staff }}</h2>
+                <small>Active / Total</small>
+            </div>
+        </div>
+    </div>
+
+    <!-- Account Staff Overview -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="dashboard-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h4><i class="bi bi-people me-2"></i>Account Staff Management</h4>
+                    <a href="{% url 'hospital:account_staff_list' %}" class="btn btn-primary">
+                        <i class="bi bi-arrow-right me-1"></i>View All Account Staff
+                    </a>
+                </div>
+                
+                <div class="row mb-3">
+                    <div class="col-md-3">
+                        <div class="text-center p-3 bg-light rounded">
+                            <h3 class="mb-0">{% if staff_by_profession.accountant %}{{ staff_by_profession.accountant }}{% else %}0{% endif %}</h3>
+                            <small class="text-muted">Accountants</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center p-3 bg-light rounded">
+                            <h3 class="mb-0">{% if staff_by_profession.account_officer %}{{ staff_by_profession.account_officer }}{% else %}0{% endif %}</h3>
+                            <small class="text-muted">Account Officers</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center p-3 bg-light rounded">
+                            <h3 class="mb-0">{% if staff_by_profession.account_personnel %}{{ staff_by_profession.account_personnel }}{% else %}0{% endif %}</h3>
+                            <small class="text-muted">Account Personnel</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center p-3 bg-light rounded">
+                            <h3 class="mb-0">{% if staff_by_profession.senior_account_officer %}{{ staff_by_profession.senior_account_officer }}{% else %}0{% endif %}</h3>
+                            <small class="text-muted">Senior Officers</small>
+                        </div>
+                    </div>
+                </div>
+
+                {% if account_staff %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Employee ID</th>
+                                <th>Profession</th>
+                                <th>Department</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for staff_member in account_staff %}
+                            <tr>
+                                <td>
+                                    {% if staff_member.user %}
+                                        {{ staff_member.user.get_full_name|default:staff_member.user.username }}
+                                    {% else %}
+                                        N/A
+                                    {% endif %}
+                                </td>
+                                <td>{{ staff_member.employee_id|default:"-" }}</td>
+                                <td>
+                                    <span class="staff-badge 
+                                        {% if staff_member.profession == 'accountant' %}badge-accountant
+                                        {% elif staff_member.profession == 'account_officer' %}badge-officer
+                                        {% elif staff_member.profession == 'account_personnel' %}badge-personnel
+                                        {% elif staff_member.profession == 'senior_account_officer' %}badge-senior
+                                        {% endif %}">
+                                        {{ staff_member.get_profession_display }}
+                                    </span>
+                                </td>
+                                <td>{{ staff_member.department.name|default:"-" }}</td>
+                                <td>
+                                    {% if staff_member.is_active %}
+                                        <span class="badge bg-success">Active</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Inactive</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <a href="{% url 'hospital:account_staff_detail' staff_member.pk %}" class="btn btn-sm btn-outline-primary" title="View Details" aria-label="View Details">
+                                        <i class="bi bi-eye"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted">No account staff found.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Pending Actions -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="dashboard-card">
+                <h4><i class="bi bi-hourglass-split me-2"></i>Pending Actions</h4>
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="stat-card warning">
+                            <h6>Pending Cashbook</h6>
+                            <h3>{{ pending_cashbook }}</h3>
+                            {% if ready_to_classify > 0 %}
+                                <small>{{ ready_to_classify }} ready to classify</small>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="stat-card info">
+                            <h6>Unreconciled Transactions</h6>
+                            <h3>{{ unreconciled_transactions }}</h3>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="stat-card warning">
+                            <h6>Pending Vouchers</h6>
+                            <h3>{{ pending_vouchers }}</h3>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="stat-card info">
+                            <h6>Draft Journals</h6>
+                            <h3>{{ draft_journals }}</h3>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Financial Overview -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="dashboard-card">
+                <h4><i class="bi bi-cash-stack me-2"></i>Financial Overview</h4>
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="p-3 bg-light rounded">
+                            <h6>Insurance Receivable</h6>
+                            <h4>GHS {{ total_insurance_receivable|floatformat:2|intcomma }}</h4>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="p-3 bg-light rounded">
+                            <h6>Accounts Receivable</h6>
+                            <h4>GHS {{ total_ar|floatformat:2|intcomma }}</h4>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="p-3 bg-light rounded">
+                            <h6>Accounts Payable</h6>
+                            <h4>GHS {{ total_ap|floatformat:2|intcomma }}</h4>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="p-3 bg-light rounded">
+                            <h6>Outstanding Cheques</h6>
+                            <h4>GHS {{ outstanding_cheques|floatformat:2|intcomma }}</h4>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="row">
+        <div class="col-md-12">
+            <div class="dashboard-card">
+                <h4><i class="bi bi-lightning-charge me-2"></i>Quick Actions</h4>
+                <div class="feature-grid">
+                    <a href="{% url 'hospital:account_staff_list' %}" class="feature-card">
+                        <i class="bi bi-people"></i>
+                        <h4>Account Staff</h4>
+                        <p>Manage account-related staff</p>
+                    </a>
+                    <a href="{% url 'hospital:accountant_comprehensive_dashboard' %}" class="feature-card">
+                        <i class="bi bi-calculator"></i>
+                        <h4>Accounting Dashboard</h4>
+                        <p>Full accounting overview</p>
+                    </a>
+                    <a href="{% url 'hospital:cashbook_list' %}" class="feature-card">
+                        <i class="bi bi-journal-text"></i>
+                        <h4>Cashbook</h4>
+                        <p>View cashbook entries</p>
+                    </a>
+                    <a href="{% url 'hospital:bank_reconciliation_list' %}" class="feature-card">
+                        <i class="bi bi-bank"></i>
+                        <h4>Bank Reconciliation</h4>
+                        <p>Reconcile bank transactions</p>
+                    </a>
+                    <a href="{% url 'hospital:insurance_receivable_list' %}" class="feature-card">
+                        <i class="bi bi-file-earmark-medical"></i>
+                        <h4>Insurance Receivable</h4>
+                        <p>Track insurance receivables</p>
+                    </a>
+                    <a href="{% url 'hospital:pv_list' %}" class="feature-card">
+                        <i class="bi bi-receipt-cutoff"></i>
+                        <h4>Payment Vouchers</h4>
+                        <p>Manage payment vouchers</p>
+                    </a>
+                    <a href="{% url 'hospital:general_ledger_report' %}" class="feature-card">
+                        <i class="bi bi-journal"></i>
+                        <h4>Journal Entries</h4>
+                        <p>View journal entries</p>
+                    </a>
+                    <a href="{% url 'hospital:profit_loss_list' %}" class="feature-card">
+                        <i class="bi bi-graph-up"></i>
+                        <h4>Profit & Loss</h4>
+                        <p>Financial reports</p>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

@@ -200,6 +200,13 @@ class InventoryItemAdmin(admin.ModelAdmin):
     ]
     list_filter = ['store', 'category', 'is_active']
     search_fields = ['item_name', 'item_code', 'description']
+
+    def has_change_permission(self, request, obj=None):
+        """Only admins can edit inventory/stock - restrict procurement/pharmacy from changing quantities"""
+        from .views_procurement import is_admin_user
+        if not is_admin_user(request.user):
+            return False
+        return super().has_change_permission(request, obj)
     fieldsets = (
         ('Item Information', {
             'fields': ('store', 'category', 'item_name', 'item_code', 'description', 'drug'),
@@ -254,6 +261,7 @@ class StoreTransferAdmin(admin.ModelAdmin):
     list_filter = ['status', 'transfer_date', 'from_store', 'to_store']
     search_fields = ['transfer_number', 'from_store__name', 'to_store__name']
     readonly_fields = ['transfer_number', 'approved_at', 'received_at']
+    ordering = ['-transfer_date', '-created']  # Use 'created' and 'modified', not 'updated'
     fieldsets = (
         ('Transfer Information', {
             'fields': ('transfer_number', 'from_store', 'to_store', 'transfer_date', 'status')

@@ -1,0 +1,162 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Sales Summary by Company - HMS{% endblock %}
+{% block page_title %}Sales Summary by Corporate/Insurance Company{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">Sales Summary by Company</h5>
+            <a href="{% url 'hospital:claims_bills_hub' %}" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Claims Bills Hub
+            </a>
+        </div>
+        <div class="card-body">
+            <!-- Date Range Filter -->
+            <form method="get" class="mb-4">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label>From Date</label>
+                        <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label>To Date</label>
+                        <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label>&nbsp;</label>
+                        <button type="submit" class="btn btn-primary w-100">Update Report</button>
+                    </div>
+                </div>
+            </form>
+
+            <!-- Corporate Accounts Summary -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h6 class="mb-0">Corporate Accounts Summary</h6>
+                </div>
+                <div class="card-body">
+                    {% if corporate_summary %}
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Company</th>
+                                    <th class="text-end">Invoices / statements</th>
+                                    <th class="text-end">Labs</th>
+                                    <th class="text-end">Drugs</th>
+                                    <th class="text-end">Scans</th>
+                                    <th class="text-end">Total billed</th>
+                                    <th class="text-end">Total paid</th>
+                                    <th class="text-end">Outstanding</th>
+                                    <th>Source / status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in corporate_summary %}
+                                <tr>
+                                    <td><strong>{{ row.name }}</strong></td>
+                                    <td class="text-end">{{ row.invoice_count|default:0|intcomma }}</td>
+                                    <td class="text-end">GHS {{ row.labs|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ row.drugs|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ row.scans|floatformat:2|intcomma }}</td>
+                                    <td class="text-end"><strong>GHS {{ row.total_billed|floatformat:2|intcomma }}</strong></td>
+                                    <td class="text-end">GHS {{ row.total_paid|floatformat:2|intcomma }}</td>
+                                    <td class="text-end"><strong>GHS {{ row.outstanding|floatformat:2|intcomma }}</strong></td>
+                                    <td>
+                                        {% if row.credit_status %}
+                                        <span class="badge bg-{% if row.credit_status == 'active' %}success{% elif row.credit_status == 'suspended' %}warning{% else %}danger{% endif %}">
+                                            {{ row.credit_status_display }}
+                                        </span>
+                                        <span class="text-muted small ms-1">{{ row.source_label }}</span>
+                                        {% else %}
+                                        <span class="badge bg-secondary">{{ row.source_label }}</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                            <tfoot class="table-light fw-bold">
+                                <tr>
+                                    <td>Total</td>
+                                    <td class="text-end">{{ corporate_totals.invoice_count|intcomma }}</td>
+                                    <td class="text-end">GHS {{ corporate_totals.labs|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ corporate_totals.drugs|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ corporate_totals.scans|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ corporate_totals.total_billed|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ corporate_totals.total_paid|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ corporate_totals.outstanding|floatformat:2|intcomma }}</td>
+                                    <td></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                    <p class="text-muted small mb-0">Labs, drugs, and scans use line-item categories (e.g. Laboratory Services, Pharmacy Services, Imaging Services). Other services appear in total billed only.</p>
+                    {% else %}
+                    <p class="text-muted">No corporate accounts with activity in this period</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Insurance Companies Summary -->
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0">Insurance Companies Summary</h6>
+                </div>
+                <div class="card-body">
+                    {% if insurance_summary %}
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Insurance Company</th>
+                                    <th class="text-end">Total claims</th>
+                                    <th class="text-end">Labs</th>
+                                    <th class="text-end">Drugs</th>
+                                    <th class="text-end">Scans</th>
+                                    <th class="text-end">Total billed</th>
+                                    <th class="text-end">Total paid</th>
+                                    <th class="text-end">Outstanding</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in insurance_summary %}
+                                <tr>
+                                    <td><strong>{{ row.name }}</strong></td>
+                                    <td class="text-end">{{ row.total_claims|default:0|intcomma }}</td>
+                                    <td class="text-end">GHS {{ row.labs|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ row.drugs|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ row.scans|floatformat:2|intcomma }}</td>
+                                    <td class="text-end"><strong>GHS {{ row.total_billed|floatformat:2|intcomma }}</strong></td>
+                                    <td class="text-end">GHS {{ row.total_paid|floatformat:2|intcomma }}</td>
+                                    <td class="text-end"><strong>GHS {{ row.outstanding|floatformat:2|intcomma }}</strong></td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                            <tfoot class="table-light fw-bold">
+                                <tr>
+                                    <td>Total</td>
+                                    <td class="text-end">{{ insurance_totals.total_claims|intcomma }}</td>
+                                    <td class="text-end">GHS {{ insurance_totals.labs|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ insurance_totals.drugs|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ insurance_totals.scans|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ insurance_totals.total_billed|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ insurance_totals.total_paid|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ insurance_totals.outstanding|floatformat:2|intcomma }}</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                    <p class="text-muted small mb-0">Outstanding = total billed minus total paid per claim line. Category splits follow each claim item&rsquo;s service code.</p>
+                    {% else %}
+                    <p class="text-muted">No insurance claims in this period</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

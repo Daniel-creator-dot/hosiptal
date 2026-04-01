@@ -1,0 +1,151 @@
+{% load humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice group {{ invoice.invoice_number }} — {{ hospital_settings.hospital_name|default:"Hospital" }}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            font-size: 11px;
+            line-height: 1.45;
+            color: #1a1a1a;
+            padding: 16px 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        h1 { font-size: 1.35rem; margin-bottom: 0.35rem; }
+        h2 { font-size: 1rem; margin: 1.25rem 0 0.5rem; border-bottom: 1px solid #ccc; padding-bottom: 0.25rem; }
+        .cover {
+            text-align: center;
+            padding: 28px 20px;
+            border: 2px solid #333;
+            border-radius: 8px;
+            margin-bottom: 22px;
+        }
+        .cover .facility { font-size: 1.1rem; font-weight: 700; margin-bottom: 8px; }
+        .muted { color: #555; }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px 24px;
+            margin-bottom: 14px;
+        }
+        .grid p { margin: 2px 0; }
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+        th, td { border: 1px solid #bbb; padding: 6px 8px; text-align: left; }
+        th { background: #f0f0f0; font-weight: 600; }
+        td.num, th.num { text-align: right; }
+        .cat { margin-top: 14px; }
+        .cat h3 { font-size: 0.85rem; margin: 8px 0 4px; color: #333; }
+        .no-print { margin-bottom: 12px; }
+        .no-print button {
+            padding: 8px 16px;
+            font-size: 13px;
+            cursor: pointer;
+            background: #1e40af;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+        }
+        @media print {
+            body { padding: 0; }
+            a[href]:after { content: none !important; }
+            .no-print { display: none !important; }
+        }
+    </style>
+</head>
+<body>
+    <div class="no-print">
+        <button type="button" onclick="window.print()">Print</button>
+    </div>
+    <div class="cover">
+        <div class="facility">{{ hospital_settings.hospital_name|default:"Hospital" }}</div>
+        {% if hospital_settings.hospital_tagline %}<div class="muted">{{ hospital_settings.hospital_tagline }}</div>{% endif %}
+        <h1 style="margin-top: 14px;">Invoice &amp; bill group</h1>
+        <p class="muted">Cover summary — printed {{ now|date:"Y-m-d H:i" }}</p>
+    </div>
+
+    <h2>Invoice</h2>
+    <div class="grid">
+        <p><strong>Invoice #</strong><br>{{ invoice.invoice_number }}</p>
+        <p><strong>Status</strong><br>{{ invoice.get_status_display }}</p>
+        <p><strong>Patient</strong><br>{{ invoice.patient.full_name|default:"—" }}{% if invoice.patient.mrn %} <span class="muted">(MRN {{ invoice.patient.mrn }})</span>{% endif %}</p>
+        <p><strong>Payer</strong><br>{% if invoice.payer %}{{ invoice.payer.name }}{% else %}—{% endif %}</p>
+        <p><strong>Issued</strong><br>{{ invoice.issued_at|date:"Y-m-d H:i" }}</p>
+        <p><strong>Due</strong><br>{% if invoice.due_at %}{{ invoice.due_at|date:"Y-m-d" }}{% else %}—{% endif %}</p>
+        <p><strong>Total</strong><br>GHS {{ invoice.total_amount|floatformat:2|intcomma }}</p>
+        <p><strong>Balance / paid</strong><br>
+            GHS {{ invoice.balance|floatformat:2|intcomma }} / GHS {{ invoice.amount_paid|floatformat:2|intcomma }}
+        </p>
+    </div>
+    {% if invoice.encounter %}
+    <p class="muted"><strong>Encounter:</strong> {{ invoice.encounter }}</p>
+    {% endif %}
+
+    <h2>Bills linked to this invoice</h2>
+    {% if group_bills %}
+    <table>
+        <thead>
+            <tr>
+                <th>Bill #</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th class="num">Total</th>
+                <th class="num">Insurance</th>
+                <th class="num">Patient portion</th>
+                <th>Issued</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for b in group_bills %}
+            <tr>
+                <td>{{ b.bill_number }}</td>
+                <td>{{ b.get_bill_type_display }}</td>
+                <td>{{ b.get_status_display }}</td>
+                <td class="num">GHS {{ b.total_amount|floatformat:2|intcomma }}</td>
+                <td class="num">GHS {{ b.insurance_covered|floatformat:2|intcomma }}</td>
+                <td class="num">GHS {{ b.patient_portion|floatformat:2|intcomma }}</td>
+                <td>{{ b.issued_at|date:"Y-m-d" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="muted">No bill records linked (invoice lines only).</p>
+    {% endif %}
+
+    <h2>Invoice line items (by category)</h2>
+    {% if lines_by_category %}
+        {% for category, cat_lines in lines_by_category %}
+        <div class="cat">
+            <h3>{{ category }}</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Service</th>
+                        <th class="num">Qty</th>
+                        <th class="num">Unit</th>
+                        <th class="num">Line total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for line in cat_lines %}
+                    <tr>
+                        <td>{% if line.service_code %}{{ line.service_code.code }} — {{ line.service_code.description }}{% else %}{{ line.description|default:"—" }}{% endif %}</td>
+                        <td class="num">{{ line.quantity|floatformat:0 }}</td>
+                        <td class="num">GHS {{ line.display_unit_price|floatformat:2|intcomma }}</td>
+                        <td class="num">GHS {{ line.display_line_total|floatformat:2|intcomma }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endfor %}
+    {% else %}
+    <p class="muted">No line items.</p>
+    {% endif %}
+</body>
+</html>

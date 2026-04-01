@@ -1,0 +1,412 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Staff Management - IT Operations{% endblock %}
+{% block page_title %}Staff Management{% endblock %}
+{% block page_subtitle %}Manage staff accounts, passwords, and sessions{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Search and Filters -->
+    <div class="card mb-3">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Search</label>
+                    <input type="text" name="q" value="{{ query }}" placeholder="Search by name, email, employee ID..." class="form-control">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Department</label>
+                    <select name="department" class="form-select">
+                        <option value="">All Departments</option>
+                        {% for dept in departments %}
+                        <option value="{{ dept.id }}" {% if department_filter == dept.id|stringformat:"s" %}selected{% endif %}>
+                            {{ dept.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Status</label>
+                    <select name="status" class="form-select">
+                        <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Active</option>
+                        <option value="inactive" {% if status_filter == 'inactive' %}selected{% endif %}>Inactive</option>
+                        <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">&nbsp;</label>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary flex-fill">Filter</button>
+                        <a href="{% url 'hospital:staff_list_it' %}" class="btn btn-outline-secondary">Clear</a>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Staff List -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-people-fill me-2"></i>Staff Members ({{ staff_list|length }})</h5>
+            <a href="{% url 'hospital:it_operations_dashboard' %}" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-arrow-left me-2"></i>Back to IT Operations
+            </a>
+        </div>
+        <div class="card-body">
+            {% if staff_list %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Employee ID</th>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Department</th>
+                            <th>Profession</th>
+                            <th>Active Sessions</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in staff_list %}
+                        <tr>
+                            <td><strong>{{ item.staff.employee_id|default:"-" }}</strong></td>
+                            <td>
+                                <strong>
+                                    {% if item.is_protected %}
+                                    <i class="bi bi-shield-lock-fill text-warning me-1"></i>
+                                    {% endif %}
+                                    {% if item.user %}
+                                        {% if item.user.get_full_name %}
+                                            {{ item.user.get_full_name }}
+                                        {% elif item.user.first_name or item.user.last_name %}
+                                            {{ item.user.first_name|default:"" }} {{ item.user.last_name|default:"" }}
+                                        {% else %}
+                                            {{ item.user.username|default:"-" }}
+                                        {% endif %}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </strong>
+                                {% if item.user and item.user.username %}
+                                <br><small class="text-muted">@{{ item.user.username }}</small>
+                                {% endif %}
+                                {% if item.is_protected %}
+                                <br><span class="badge bg-warning text-dark mt-1">Protected Account</span>
+                                {% endif %}
+                            </td>
+                            <td>{% if item.user %}{{ item.user.email|default:"-" }}{% else %}-{% endif %}</td>
+                            <td>{% if item.staff.department %}{{ item.staff.department.name|default:"-" }}{% else %}-{% endif %}</td>
+                            <td>
+                                <span class="badge bg-info">{% if item.staff.profession %}{{ item.staff.get_profession_display|default:item.staff.profession }}{% else %}-{% endif %}</span>
+                            </td>
+                            <td>
+                                {% if item.active_sessions > 0 %}
+                                <span class="badge bg-warning">{{ item.active_sessions }} active</span>
+                                {% else %}
+                                <span class="text-muted">None</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.user.is_active %}
+                                <span class="badge bg-success">Active</span>
+                                {% else %}
+                                <span class="badge bg-secondary">Inactive</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.is_protected %}
+                                <div class="text-center">
+                                    <i class="bi bi-shield-lock-fill text-warning" style="font-size: 1.5rem;"></i>
+                                    <br><small class="text-muted fw-bold">Protected</small>
+                                    <br><small class="text-muted">Administrator Account</small>
+                                    <br><small class="text-danger">Cannot be modified</small>
+                                </div>
+                                {% else %}
+                                <div class="btn-group" role="group">
+                                    <button type="button" 
+                                            class="btn btn-sm btn-outline-warning" 
+                                            onclick="showPasswordResetModal('{{ item.staff.id }}', '{% if item.user.get_full_name %}{{ item.user.get_full_name }}{% elif item.user.first_name or item.user.last_name %}{{ item.user.first_name|default:"" }} {{ item.user.last_name|default:"" }}{% else %}{{ item.user.username|default:"Staff" }}{% endif %}', '{{ item.user.username|default:"" }}')"
+                                            title="Reset Password">
+                                        <i class="bi bi-key"></i> Password
+                                    </button>
+                                    {% if item.active_sessions > 0 %}
+                                    <button type="button" 
+                                            class="btn btn-sm btn-outline-danger" 
+                                            onclick="revokeSessions('{{ item.staff.id }}', '{% if item.user.get_full_name %}{{ item.user.get_full_name }}{% elif item.user.first_name or item.user.last_name %}{{ item.user.first_name|default:"" }} {{ item.user.last_name|default:"" }}{% else %}{{ item.user.username|default:"Staff" }}{% endif %}')"
+                                            title="Revoke All Sessions">
+                                        <i class="bi bi-shield-lock"></i> Revoke Sessions
+                                    </button>
+                                    {% endif %}
+                                </div>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>
+                No staff members found matching your criteria.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Password Reset Modal -->
+<div class="modal fade" id="passwordResetModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Reset Password</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="passwordResetForm" method="post">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Staff Member</label>
+                        <input type="text" class="form-control" id="staffNameDisplay" readonly>
+                        <small class="text-muted" id="staffUsernameDisplay"></small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="new_password" class="form-label">New Password <span class="text-danger">*</span></label>
+                        <input type="password" class="form-control" id="new_password" name="new_password" required minlength="8">
+                        <small class="text-muted">Password must be at least 8 characters long.</small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="confirm_password" class="form-label">Confirm Password <span class="text-danger">*</span></label>
+                        <input type="password" class="form-control" id="confirm_password" name="confirm_password" required minlength="8">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning">
+                        <i class="bi bi-key me-2"></i>Reset Password
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+// Ensure script runs after DOM is ready
+(function() {
+    'use strict';
+    
+    let currentStaffId = null;
+
+    // Get base URLs from view context - these are pre-rendered with placeholder UUID
+    const resetPasswordBaseUrl = '{{ reset_password_base_url }}';
+    const revokeSessionsBaseUrl = '{{ revoke_sessions_base_url }}';
+    const placeholderUuid = '00000000-0000-0000-0000-000000000000';
+
+function showPasswordResetModal(staffId, staffName, username) {
+    currentStaffId = staffId;
+    const form = document.getElementById('passwordResetForm');
+    if (!form) {
+        console.error('Password reset form not found');
+        return;
+    }
+    
+    document.getElementById('staffNameDisplay').value = staffName;
+    document.getElementById('staffUsernameDisplay').textContent = 'Username: ' + username;
+    // Build the URL by replacing the placeholder UUID with the actual staff ID
+    form.action = resetPasswordBaseUrl.replace(placeholderUuid, staffId);
+    document.getElementById('new_password').value = '';
+    document.getElementById('confirm_password').value = '';
+    
+    // Remove any existing event listeners and attach fresh one
+    const newForm = form.cloneNode(true);
+    form.parentNode.replaceChild(newForm, form);
+    
+    // Attach event listener to the new form
+    attachPasswordResetHandler();
+    
+    new bootstrap.Modal(document.getElementById('passwordResetModal')).show();
+}
+
+function attachPasswordResetHandler() {
+    const form = document.getElementById('passwordResetForm');
+    if (!form) {
+        console.error('Password reset form not found for event listener');
+        return;
+    }
+    
+    // Remove any existing listeners by cloning
+    form.onsubmit = function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+    };
+    
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        handlePasswordReset(e);
+        return false;
+    }, { once: false, capture: true });
+}
+
+function handlePasswordReset(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const form = document.getElementById('passwordResetForm');
+    if (!form) return;
+    
+    const newPassword = document.getElementById('new_password').value;
+    const confirmPassword = document.getElementById('confirm_password').value;
+    
+    // Client-side validation
+    if (newPassword !== confirmPassword) {
+        showNotification('Passwords do not match! Please try again.', 'error');
+        return false;
+    }
+    
+    if (newPassword.length < 8) {
+        showNotification('Password must be at least 8 characters long!', 'error');
+        return false;
+    }
+    
+    // Get form action URL
+    const formUrl = form.action;
+    const formData = new FormData(form);
+    
+    // Disable submit button
+    const submitBtn = form.querySelector('button[type="submit"]');
+    const originalBtnText = submitBtn.innerHTML;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Resetting...';
+    
+    // Submit via AJAX
+    fetch(formUrl, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
+        },
+        body: formData,
+    })
+    .then(response => {
+        // Check if response is JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            throw new Error('Server returned non-JSON response. The form may have submitted normally.');
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            // Close modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('passwordResetModal'));
+            if (modal) {
+                modal.hide();
+            }
+            
+            // Show success notification
+            showNotification(data.message, 'success');
+            
+            // Reload page after a short delay to show updated data and Django messages
+            setTimeout(() => {
+                window.location.href = '{% url "hospital:staff_list_it" %}';
+            }, 1500);
+        } else {
+            // Show error message
+            showNotification('Error: ' + (data.error || 'Failed to reset password'), 'error');
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalBtnText;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showNotification('An error occurred while resetting the password. Please try again.', 'error');
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalBtnText;
+    });
+    
+    return false;
+}
+
+function revokeSessions(staffId, staffName) {
+    if (!confirm(`Are you sure you want to revoke all active sessions for "${staffName}"? They will be logged out immediately.`)) {
+        return;
+    }
+    
+    // Build the URL by replacing the placeholder UUID with the actual staff ID
+    const url = revokeSessionsBaseUrl.replace(placeholderUuid, staffId);
+    
+    fetch(url, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
+            'Content-Type': 'application/json',
+        },
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(data.message, 'success');
+            setTimeout(() => {
+                window.location.href = '{% url "hospital:staff_list_it" %}';
+            }, 1500);
+        } else {
+            showNotification('Error: ' + (data.error || 'Failed to revoke sessions'), 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showNotification('An error occurred while revoking sessions', 'error');
+    });
+}
+
+// Attach form handler when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', attachPasswordResetHandler);
+} else {
+    // DOM is already ready
+    attachPasswordResetHandler();
+}
+
+// Notification function for better UX
+function showNotification(message, type) {
+    // Remove any existing notifications
+    const existing = document.querySelector('.staff-notification');
+    if (existing) {
+        existing.remove();
+    }
+    
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.className = `staff-notification alert alert-${type === 'success' ? 'success' : 'danger'} alert-dismissible fade show`;
+    notification.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 9999; min-width: 300px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);';
+    notification.innerHTML = `
+        <i class="bi bi-${type === 'success' ? 'check-circle' : 'exclamation-triangle'}-fill me-2"></i>
+        <strong>${type === 'success' ? 'Success!' : 'Error!'}</strong> ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        if (notification.parentNode) {
+            notification.classList.remove('show');
+            setTimeout(() => notification.remove(), 300);
+        }
+    }, 5000);
+}
+
+// Make functions globally available
+window.showPasswordResetModal = showPasswordResetModal;
+window.revokeSessions = revokeSessions;
+window.showNotification = showNotification;
+
+})(); // End IIFE - ensures all code runs after DOM is ready
+</script>
+{% endblock %}

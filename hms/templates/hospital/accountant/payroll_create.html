@@ -1,0 +1,174 @@
+{# Canonical: TEMPLATES DIRS loads hms/templates first. Sync with hospital/templates/hospital/accountant/payroll_create.html #}
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}New payroll run — HMS{% endblock %}
+{% block page_title %}New payroll run{% endblock %}
+{% block page_subtitle %}Pick staff (optional), dates, and optional automatic SSF/PF/PAYE % — then import your Sample Salary-RMC workbook on the next screen.{% endblock %}
+
+{% block extra_css %}
+<style>
+  .create-shell {
+    max-width: min(100%, 680px);
+    margin: 0 auto;
+    background: #fff;
+    border-radius: 16px;
+    border: 1px solid #e8edf3;
+    box-shadow: 0 8px 32px rgba(15, 23, 42, 0.08);
+    padding: 2rem;
+  }
+  .create-shell h5 { color: #0f766e; font-weight: 700; }
+  .payroll-deduction-callout {
+    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+    border: 2px solid #14b8a6;
+    border-radius: 12px;
+    padding: 1rem 1.15rem;
+    margin-bottom: 1.5rem;
+  }
+  .payroll-deduction-callout h6 { color: #0f766e; font-weight: 700; }
+  .staff-pick-scroll {
+    max-height: 240px;
+    overflow-y: auto;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 0.5rem 0.75rem;
+    background: #fafbfc;
+  }
+  .staff-pick-row { border-bottom: 1px solid #eef2f7; }
+  .staff-pick-row:last-child { border-bottom: none; }
+  .staff-pick-label {
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.12s ease;
+  }
+  .staff-pick-label:hover { background: #f1f5f9; }
+  .staff-pick-row:has(.staff-pick-cb:checked) .staff-pick-label { background: #ecfdf5; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <div class="create-shell">
+    <h5 class="mb-3"><i class="bi bi-calendar-plus me-2"></i>New payroll run</h5>
+    <form method="post" data-payroll-form="accountant-create-v2">
+      {% csrf_token %}
+      <div class="payroll-deduction-callout">
+        <h6 class="mb-2"><i class="bi bi-percent me-2"></i>Automatic deductions</h6>
+        <p class="small text-dark mb-3 mb-md-2" style="opacity:0.88;">
+          Turn this on to have HMS calculate SSF, PF, optional flat PAYE %, and an optional &ldquo;other&rdquo; % from each staff line when you import Excel or save lines. You can change rates later on the payroll detail page too.
+        </p>
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" name="deduction_apply_percentages" value="1" id="deduction_apply_percentages" {% if deduction_apply_percentages %}checked{% endif %}>
+          <label class="form-check-label fw-semibold" for="deduction_apply_percentages">Apply percentage deductions on import / save</label>
+        </div>
+        <div class="row g-2">
+          <div class="col-6 col-md-3">
+            <label class="form-label small mb-0" for="id_ssnit_pct">SSF emp %</label>
+            <input type="number" name="deduction_ssnit_employee_pct" id="id_ssnit_pct" class="form-control form-control-sm" step="0.01" min="0" max="100" value="{{ deduction_ssnit_employee_pct }}">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label small mb-0" for="id_pf_pct">PF emp %</label>
+            <input type="number" name="deduction_pension_employee_pct" id="id_pf_pct" class="form-control form-control-sm" step="0.01" min="0" max="100" value="{{ deduction_pension_employee_pct }}">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label small mb-0" for="id_paye_pct">PAYE % <span class="text-muted fw-normal">(0=manual)</span></label>
+            <input type="number" name="deduction_paye_pct" id="id_paye_pct" class="form-control form-control-sm" step="0.01" min="0" max="100" value="{{ deduction_paye_pct }}">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label small mb-0" for="id_other_pct">Other %</label>
+            <input type="number" name="deduction_other_deduction_pct" id="id_other_pct" class="form-control form-control-sm" step="0.01" min="0" max="100" value="{{ deduction_other_deduction_pct }}">
+          </div>
+        </div>
+      </div>
+      <h6 class="mb-2 text-secondary fw-bold"><i class="bi bi-calendar3 me-2"></i>Period &amp; pay date</h6>
+      <p class="text-muted small mb-3">Dates can be overwritten from the spreadsheet when you import (optional checkbox on the next step).</p>
+      <div class="mb-3">
+        <label class="form-label">Period start</label>
+        <input type="date" name="payroll_period_start" class="form-control" required value="{{ default_start }}">
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Period end</label>
+        <input type="date" name="payroll_period_end" class="form-control" required value="{{ default_end }}">
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Pay date</label>
+        <input type="date" name="pay_date" class="form-control" required value="{{ default_pay }}">
+      </div>
+      <h6 class="mb-2 text-secondary fw-bold"><i class="bi bi-people me-2"></i>Staff on this run</h6>
+      <p class="text-muted small mb-2">Click a row or its box to select. Lines start at <strong>GHS 0</strong> until you import Excel or enter amounts in admin. Leave everyone unticked if you only want to import the sheet (matched by employee ID).</p>
+      {% if staff_pick_relaxed and staff_pick_count %}
+      <div class="alert alert-warning py-2 small mb-2">Showing <strong>all non-deleted</strong> staff (or only those with active user accounts) because no one matched the stricter &ldquo;active employment&rdquo; filter. Ask an admin to set <strong>Staff → is active</strong> and <strong>employment status</strong> if this list looks too broad.</div>
+      {% endif %}
+      <div class="mb-2 d-flex flex-wrap gap-2 align-items-center">
+        <input type="search" class="form-control form-control-sm" id="staffPickFilter" placeholder="Filter by name or employee ID…" style="max-width: 20rem;" autocomplete="off">
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="staffPickSelectVisible">Select visible</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="staffPickClearAll">Clear all</button>
+        {% if staff_pick_count %}<span class="small text-muted align-self-center">{{ staff_pick_count }} staff</span>{% endif %}
+      </div>
+      <div class="staff-pick-scroll mb-4">
+        <p id="staffPickNoFilterMatch" class="small text-muted mb-2 py-1 d-none">No names match this filter — clear the search box to see everyone again.</p>
+        {% for s in staff_pick_list %}
+        <div class="staff-pick-row" data-text="{{ s.user.get_full_name|default:s.user.username }} {{ s.employee_id|default:'' }}">
+          <label class="staff-pick-label d-flex align-items-start gap-2 w-100 mb-0 py-2 px-2" for="st_{{ s.pk }}">
+            <input class="form-check-input flex-shrink-0 mt-1 staff-pick-cb" type="checkbox" name="staff_ids" value="{{ s.pk }}" id="st_{{ s.pk }}" {% if s.pk in selected_staff_uuid %}checked{% endif %}>
+            <span class="small flex-grow-1"><span class="fw-medium text-dark">{{ s.user.get_full_name|default:s.user.username }}</span>{% if s.employee_id %} <span class="text-muted font-monospace">{{ s.employee_id }}</span>{% endif %}{% if s.department %}<br><span class="text-muted">{{ s.department.name }}</span>{% endif %}</span>
+          </label>
+        </div>
+        {% empty %}
+        <p class="small mb-1"><strong>No staff found.</strong> Add people in <strong>Admin → Hospital → Staff</strong> (each needs a user account). If staff exist, check they are not marked <strong>deleted</strong>.</p>
+        <p class="small text-muted mb-0">You can still create an empty payroll run and import the RMC Excel file; rows are created from the spreadsheet when employee IDs match.</p>
+        {% endfor %}
+      </div>
+      <div class="mb-4">
+        <label class="form-label">Display label <span class="text-muted fw-normal">(optional)</span></label>
+        <input type="text" name="period_label" class="form-control" placeholder="e.g. January 2026 — Salary RMC" maxlength="120" value="{{ period_label_value|default:'' }}">
+      </div>
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-success px-4">Create &amp; continue</button>
+        <a href="{% url 'accountant_payroll_list' %}" class="btn btn-outline-secondary">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+  const inp = document.getElementById('staffPickFilter');
+  const rows = () => Array.from(document.querySelectorAll('.staff-pick-row'));
+  const noMatch = document.getElementById('staffPickNoFilterMatch');
+  function applyFilter() {
+    if (!inp) return;
+    const q = inp.value.trim().toLowerCase();
+    let visible = 0;
+    rows().forEach(function(row) {
+      const t = (row.getAttribute('data-text') || '').toLowerCase();
+      const show = !q || t.indexOf(q) !== -1;
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    if (noMatch) {
+      const any = document.querySelectorAll('.staff-pick-cb').length;
+      noMatch.classList.toggle('d-none', !(any > 0 && visible === 0 && q.length > 0));
+    }
+  }
+  if (inp) inp.addEventListener('input', applyFilter);
+  const selVis = document.getElementById('staffPickSelectVisible');
+  if (selVis) selVis.addEventListener('click', function() {
+    rows().forEach(function(row) {
+      if (row.style.display === 'none') return;
+      const cb = row.querySelector('.staff-pick-cb');
+      if (cb) cb.checked = true;
+    });
+  });
+  const clr = document.getElementById('staffPickClearAll');
+  if (clr) clr.addEventListener('click', function() {
+    document.querySelectorAll('.staff-pick-cb').forEach(function(cb) { cb.checked = false; });
+    if (inp) inp.value = '';
+    applyFilter();
+  });
+  applyFilter();
+})();
+</script>
+{% endblock %}

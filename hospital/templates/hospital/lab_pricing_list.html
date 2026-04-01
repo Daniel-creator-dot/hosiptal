@@ -1,88 +1,241 @@
 {% extends 'hospital/base.html' %}
-{% load static %}
+{% load static humanize %}
+
+{% block title %}Lab Catalog & Prices{% endblock %}
+{% block page_title %}🧪 Lab Catalog & Prices{% endblock %}
+{% block page_subtitle %}View and manage lab test catalog with prices{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2>{{ title }}</h2>
-        <a href="{% url 'hospital:pricing_dashboard' %}" class="btn btn-secondary">
-            <i class="bi bi-arrow-left"></i> Back to Dashboard
-        </a>
-    </div>
-    
-    <!-- Search -->
-    <div class="row mb-4">
-        <div class="col-md-6">
-            <form method="GET" class="input-group">
-                <input type="text" 
-                       name="search" 
-                       class="form-control" 
-                       placeholder="Search lab tests..."
-                       value="{{ search }}">
-                <button class="btn btn-primary" type="submit">
-                    <i class="bi bi-search"></i> Search
-                </button>
-            </form>
-        </div>
-    </div>
-    
-    <!-- Lab Tests Table -->
-    <div class="card shadow">
-        <div class="card-body">
-            <div class="table-responsive">
-                <table class="table table-hover">
-                    <thead>
-                        <tr>
-                            <th>Code</th>
-                            <th>Name</th>
-                            <th>Specimen</th>
-                            <th>TAT</th>
-                            <th>Current Price</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for lab in labs %}
-                        <tr>
-                            <td><strong>{{ lab.code }}</strong></td>
-                            <td>{{ lab.name }}</td>
-                            <td>{{ lab.specimen_type }}</td>
-                            <td>{{ lab.tat_minutes }} min</td>
-                            <td>
-                                {% if lab.price > 0 %}
-                                    <h5 class="text-success mb-0">GHS {{ lab.price }}</h5>
-                                {% else %}
-                                    <span class="badge bg-danger">No Price Set</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if lab.is_active %}
-                                    <span class="badge bg-success">Active</span>
-                                {% else %}
-                                    <span class="badge bg-secondary">Inactive</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                <a href="{% url 'hospital:lab_pricing_update' lab.id %}" 
-                                   class="btn btn-sm btn-primary">
-                                    <i class="bi bi-pencil"></i> Update Price
-                                </a>
-                            </td>
-                        </tr>
-                        {% empty %}
-                        <tr>
-                            <td colspan="7" class="text-center text-muted py-4">
-                                No lab tests found
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+<div class="row">
+    <div class="col-12">
+        <div class="card shadow-sm border-0">
+            <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h5 class="mb-0"><i class="bi bi-collection me-2"></i>Lab Catalog & Prices</h5>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-light btn-sm" data-bs-toggle="modal" data-bs-target="#addLabItemModal">
+                        <i class="bi bi-plus-circle me-1"></i>Add Lab Item
+                    </button>
+                    <a href="{% url 'hospital:pricing_dashboard' %}" class="btn btn-outline-light btn-sm">Dashboard</a>
+                </div>
+            </div>
+            <div class="card-body">
+                <form method="get" class="mb-4">
+                    <div class="input-group">
+                        <input type="text" name="search" class="form-control" placeholder="Search by name, code, specimen type..." value="{{ search }}">
+                        <button type="submit" class="btn btn-warning">Search</button>
+                    </div>
+                </form>
+
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Code</th>
+                                <th>Name</th>
+                                <th>Specimen</th>
+                                <th>TAT</th>
+                                <th class="text-end">Cash (GHS)</th>
+                                <th>Status</th>
+                                <th class="text-center">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for lab in labs_page %}
+                            <tr>
+                                <td><code>{{ lab.code|default:"—" }}</code></td>
+                                <td><strong>{{ lab.name }}</strong></td>
+                                <td>{{ lab.specimen_type|default:"—" }}</td>
+                                <td>{{ lab.tat_minutes|default:0 }} min</td>
+                                <td class="text-end fw-bold">GHS {{ lab.price|default:0|floatformat:2|intcomma }}</td>
+                                <td>
+                                    {% if lab.is_active %}
+                                        <span class="badge bg-success">Active</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Inactive</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    <div class="btn-group" role="group">
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-primary"
+                                                data-bs-toggle="modal"
+                                                data-bs-target="#editPriceModal"
+                                                data-id="{{ lab.id }}"
+                                                data-name="{{ lab.name }}"
+                                                data-price="{{ lab.price|default:0|floatformat:2 }}"
+                                                data-tat="{{ lab.tat_minutes|default:'' }}">
+                                            <i class="bi bi-pencil"></i>
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteLabItemModal" 
+                                                data-id="{{ lab.id }}" data-name="{{ lab.name }}">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="7" class="text-center text-muted py-4">No lab tests in catalog.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                {% if labs_page.has_other_pages %}
+                <nav class="mt-3">
+                    <ul class="pagination justify-content-center mb-0">
+                        {% if labs_page.has_previous %}
+                        <li class="page-item"><a class="page-link" href="?page={{ labs_page.previous_page_number }}{% if search %}&search={{ search }}{% endif %}">Previous</a></li>
+                        {% endif %}
+                        <li class="page-item disabled"><span class="page-link">Page {{ labs_page.number }} of {{ labs_page.paginator.num_pages }}</span></li>
+                        {% if labs_page.has_next %}
+                        <li class="page-item"><a class="page-link" href="?page={{ labs_page.next_page_number }}{% if search %}&search={{ search }}{% endif %}">Next</a></li>
+                        {% endif %}
+                    </ul>
+                </nav>
+                {% endif %}
             </div>
         </div>
     </div>
 </div>
+
+<!-- Add Lab Item Modal -->
+<div class="modal fade" id="addLabItemModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'hospital:lab_pricing_list' %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="add_lab_item">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>Add New Lab Item</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Code <span class="text-danger">*</span></label>
+                        <input type="text" name="code" class="form-control" required placeholder="e.g., GLU, FBC, HIV">
+                        <div class="form-text">Unique code for this lab test</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Name <span class="text-danger">*</span></label>
+                        <input type="text" name="name" class="form-control" required placeholder="e.g., Glucose (Fasting)">
+                        <div class="form-text">Full name of the lab test</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Specimen Type</label>
+                        <input type="text" name="specimen_type" class="form-control" placeholder="e.g., Serum, Whole Blood (EDTA)">
+                        <div class="form-text">Type of specimen required</div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label fw-bold">TAT (Minutes)</label>
+                            <input type="number" name="tat_minutes" class="form-control" value="60" min="1" required>
+                            <div class="form-text">Turnaround time in minutes</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label fw-bold">Price (GHS) <span class="text-danger">*</span></label>
+                            <input type="number" name="price" class="form-control" step="0.01" min="0" value="0" required placeholder="0.00">
+                            <div class="form-text">Cash price for this test</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning">Add Lab Item</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Price Modal -->
+<div class="modal fade" id="editPriceModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'hospital:lab_pricing_list' %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_prices">
+                <input type="hidden" name="lab_id" id="modalLabId">
+                <div class="modal-header">
+                    <h5 class="modal-title">Update Price – <span id="modalItemName"></span></h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Cash Price (GHS) <span class="text-danger">*</span></label>
+                        <input type="number" name="price" id="modalPrice" class="form-control" step="0.01" min="0" required placeholder="0.00">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Turnaround Time (Minutes)</label>
+                        <input type="number" name="tat_minutes" id="modalTatMinutes" class="form-control" min="1" placeholder="Leave blank to keep current">
+                        <div class="form-text">Optional: update the lab test turnaround time in minutes.</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Lab Item Modal -->
+<div class="modal fade" id="deleteLabItemModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'hospital:lab_pricing_list' %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="delete_lab_item">
+                <input type="hidden" name="lab_id" id="deleteLabId">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Delete Lab Item</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Are you sure you want to delete <strong id="deleteLabName"></strong>?</p>
+                    <p class="text-danger"><small>This action cannot be undone. The lab test will be removed from the catalog.</small></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Delete</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Edit Price Modal
+    var editModal = document.getElementById('editPriceModal');
+    if (editModal && typeof bootstrap !== 'undefined') {
+        editModal.addEventListener('show.bs.modal', function(e) {
+            var btn = e.relatedTarget;
+            if (!btn) return;
+            document.getElementById('modalLabId').value = btn.dataset.id || '';
+            document.getElementById('modalItemName').textContent = btn.dataset.name || '';
+            document.getElementById('modalPrice').value = btn.dataset.price || '';
+            var tatInput = document.getElementById('modalTatMinutes');
+            if (tatInput) {
+                tatInput.value = btn.dataset.tat || '';
+            }
+        });
+    }
+    
+    // Delete Lab Item Modal
+    var deleteModal = document.getElementById('deleteLabItemModal');
+    if (deleteModal && typeof bootstrap !== 'undefined') {
+        deleteModal.addEventListener('show.bs.modal', function(e) {
+            var btn = e.relatedTarget;
+            if (!btn) return;
+            document.getElementById('deleteLabId').value = btn.dataset.id || '';
+            document.getElementById('deleteLabName').textContent = btn.dataset.name || '';
+        });
+    }
+});
+</script>
 {% endblock %}
 
 

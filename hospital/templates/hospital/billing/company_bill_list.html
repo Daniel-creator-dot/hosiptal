@@ -1,0 +1,406 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}{% if request.resolver_match.url_name == 'corporate_bill_list' %}Corporate Bills{% else %}{{ title|default:"Company Bills" }}{% endif %} - HMS{% endblock %}
+{% block page_title %}{% if request.resolver_match.url_name == 'corporate_bill_list' %}Corporate Bills{% else %}{{ title|default:"Company Bills" }}{% endif %}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="card border-0 shadow-sm overflow-hidden">
+        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2 border-0 py-3" style="background: linear-gradient(135deg, #4f46e5 0%, #6366f1 45%, #7c3aed 100%);">
+            <div class="text-white">
+                <h5 class="mb-0 fw-semibold"><i class="bi bi-building-check me-2"></i>{% if request.resolver_match.url_name == 'corporate_bill_list' %}Corporate Bills{% else %}{{ title|default:"Company Bills" }}{% endif %}</h5>
+                <small class="opacity-90">Statements, receivables & open invoices — grouped by company</small>
+            </div>
+            <a href="{% url 'hospital:claims_bills_hub' %}" class="btn btn-sm btn-light">
+                <i class="bi bi-arrow-left"></i> Claims Bills Hub
+            </a>
+        </div>
+        <div class="card-body bg-light bg-opacity-50">
+            <!-- Filters -->
+            <form method="get" class="mb-4">
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted mb-1">Company</label>
+                        <input type="text" name="company" class="form-control" placeholder="Search company…" value="{{ company_filter }}">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small text-muted mb-1">Status</label>
+                        <select name="status" class="form-select">
+                            <option value="">All Status</option>
+                            <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Draft</option>
+                            <option value="sent" {% if status_filter == 'sent' %}selected{% endif %}>Sent</option>
+                            <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid</option>
+                            <option value="overdue" {% if status_filter == 'overdue' %}selected{% endif %}>Overdue</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small text-muted mb-1">From</label>
+                        <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small text-muted mb-1">To</label>
+                        <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+                    </div>
+                    <div class="col-md-1">
+                        <button type="submit" class="btn btn-primary w-100"><i class="bi bi-funnel me-1"></i>Filter</button>
+                    </div>
+                </div>
+            </form>
+
+            {% if corporate_bills_analytics and corporate_bills_analytics.summary.lines %}
+            {{ corporate_bills_charts|json_script:"corporate-bills-analytics-data" }}
+            <div class="mb-4">
+                <h6 class="text-muted text-uppercase small fw-semibold mb-3">
+                    <i class="bi bi-graph-up-arrow me-1"></i> Analytics <span class="fw-normal">(current filters)</span>
+                </h6>
+                <div class="row g-3 mb-3">
+                    <div class="col-6 col-md-4 col-xl-2">
+                        <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
+                            <div class="small text-muted">Companies</div>
+                            <div class="fs-5 fw-bold text-primary">{{ corporate_bills_analytics.summary.companies|intcomma }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-4 col-xl-2">
+                        <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
+                            <div class="small text-muted">Rows / items</div>
+                            <div class="fs-5 fw-bold text-dark">{{ corporate_bills_analytics.summary.lines|intcomma }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-4 col-xl-2">
+                        <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
+                            <div class="small text-muted">Total charges</div>
+                            <div class="fs-6 fw-bold text-success">GHS {{ corporate_bills_analytics.summary.total_charges|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-4 col-xl-2">
+                        <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
+                            <div class="small text-muted">Payments recorded</div>
+                            <div class="fs-6 fw-bold text-info">GHS {{ corporate_bills_analytics.summary.total_payments|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-4 col-xl-2">
+                        <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
+                            <div class="small text-muted">Closing / outstanding</div>
+                            <div class="fs-6 fw-bold text-warning">GHS {{ corporate_bills_analytics.summary.total_closing|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-4 col-xl-2">
+                        <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
+                            <div class="small text-muted">Cos. with balance</div>
+                            <div class="fs-5 fw-bold text-danger">{{ corporate_bills_analytics.summary.companies_with_outstanding|intcomma }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="row g-3 mb-4">
+                    <div class="col-lg-4">
+                        <div class="card border-0 shadow-sm h-100">
+                            <div class="card-header bg-white py-2 small fw-semibold"><i class="bi bi-pie-chart me-1 text-primary"></i> Row types</div>
+                            <div class="card-body" style="max-height: 280px;">
+                                <canvas id="corpChartKind" aria-label="Row types"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <div class="card border-0 shadow-sm h-100">
+                            <div class="card-header bg-white py-2 small fw-semibold"><i class="bi bi-tags me-1 text-primary"></i> By status</div>
+                            <div class="card-body" style="max-height: 280px;">
+                                <canvas id="corpChartStatus" aria-label="Status chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <div class="card border-0 shadow-sm h-100">
+                            <div class="card-header bg-white py-2 small fw-semibold"><i class="bi bi-bar-chart-steps me-1 text-primary"></i> Top closing balance (GHS)</div>
+                            <div class="card-body" style="max-height: 280px;">
+                                <canvas id="corpChartTop" aria-label="Top outstanding"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% if corporate_bills_analytics.top_table %}
+                <div class="card border-0 shadow-sm mb-4">
+                    <div class="card-header bg-white py-2 d-flex justify-content-between align-items-center">
+                        <span class="small fw-semibold"><i class="bi bi-list-columns-reverse me-1"></i> Detail: highest closing balances</span>
+                        <span class="text-muted small">Open a full bill pack</span>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover mb-0 align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Company</th>
+                                    <th class="text-end">Charges</th>
+                                    <th class="text-end">Closing</th>
+                                    <th style="width:8rem;"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in corporate_bills_analytics.top_table %}
+                                <tr>
+                                    <td class="fw-medium">{{ row.name|truncatechars:64 }}</td>
+                                    <td class="text-end text-muted">GHS {{ row.charges|floatformat:2|intcomma }}</td>
+                                    <td class="text-end fw-semibold text-warning">GHS {{ row.closing|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">
+                                        {% if row.payer_id %}
+                                        <a href="{% url 'hospital:corporate_bill_detail_by_payer' payer_id=row.payer_id %}" class="btn btn-sm btn-outline-primary">Detail view</a>
+                                        {% else %}
+                                        <span class="text-muted small">—</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            {% if total_corporate_bills_count %}
+            <div class="card border-0 shadow-sm">
+                <div class="card-body p-0">
+            <p class="text-muted small mb-2 px-3 pt-3">
+                Showing {{ statement_groups.start_index }}–{{ statement_groups.end_index }} of <strong>{{ total_corporate_bills_count }}</strong> compan{% if total_corporate_bills_count == 1 %}y{% else %}ies{% endif %}
+                (<strong>{{ total_corporate_line_count }}</strong> line{{ total_corporate_line_count|pluralize }} in view).
+                {% if statement_groups.has_other_pages %}Use pagination below to see more.{% endif %}
+                <span class="d-block mt-1"><i class="bi bi-chevron-expand me-1"></i>Click a company row to expand — each line shows type, patients & amounts.</span>
+            </p>
+            <div class="table-responsive px-0">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width:2.5rem;"></th>
+                            <th>Statement #</th>
+                            <th>Type</th>
+                            <th>Company</th>
+                            <th>Patient(s)</th>
+                            <th>Period</th>
+                            <th>Total Charges</th>
+                            <th>Payments</th>
+                            <th>Closing Balance</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for group in statement_groups %}
+                        <tr class="table-secondary bill-group-header" style="cursor: pointer;" data-bill-group="{{ forloop.counter0 }}" aria-expanded="false" role="button" tabindex="0">
+                            <td class="text-center"><i class="bi bi-chevron-right expand-icon" aria-hidden="true"></i></td>
+                            <td><span class="badge bg-dark">{{ group.row_count }} item{{ group.row_count|pluralize }}</span></td>
+                            <td><span class="badge bg-secondary">Group</span></td>
+                            <td><strong>{{ group.company_name }}</strong></td>
+                            <td class="text-muted small">Expand rows</td>
+                            <td class="text-muted small">—</td>
+                            <td><strong>GHS {{ group.total_charges|floatformat:2|intcomma }}</strong></td>
+                            <td>GHS {{ group.total_payments|floatformat:2|intcomma }}</td>
+                            <td><strong>GHS {{ group.closing_balance|floatformat:2|intcomma }}</strong></td>
+                            <td><span class="text-muted small">Expand</span></td>
+                            <td>
+                                {% if group.primary_payer_id %}
+                                <a href="{% url 'hospital:corporate_bill_detail_by_payer' payer_id=group.primary_payer_id %}" class="btn btn-sm btn-primary" onclick="event.stopPropagation();" title="Full invoice & line-item detail">
+                                    <i class="bi bi-box-arrow-up-right"></i> Detail
+                                </a>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% for statement in group.children %}
+                        <tr class="bill-group-child bill-gc-{{ forloop.parentloop.counter0 }} d-none">
+                            <td></td>
+                            <td><strong>{{ statement.statement_number }}</strong></td>
+                            <td>
+                                {% if statement.row_kind == 'statement' %}
+                                <span class="badge rounded-pill text-bg-primary small">{{ statement.row_kind_label }}</span>
+                                {% elif statement.row_kind == 'invoices' %}
+                                <span class="badge rounded-pill text-bg-info small">{{ statement.row_kind_label }}</span>
+                                {% elif statement.row_kind == 'receivable' %}
+                                <span class="badge rounded-pill text-bg-warning text-dark small">{{ statement.row_kind_label }}</span>
+                                {% else %}
+                                <span class="badge rounded-pill bg-secondary small">{{ statement.row_kind_label|default:"—" }}</span>
+                                {% endif %}
+                            </td>
+                            <td>{% if statement.corporate_account %}{{ statement.corporate_account.company_name|default:"N/A" }}{% else %}N/A{% endif %}</td>
+                            <td class="small text-break" style="max-width: 14rem;">{{ statement.patient_display|default:"—" }}</td>
+                            <td>
+                                {% if statement.is_receivable %}
+                                    {{ statement.period_start|date:"Y-m-d" }}
+                                {% elif statement.period_start and statement.period_end %}
+                                    {{ statement.period_start|date:"Y-m-d" }} to {{ statement.period_end|date:"Y-m-d" }}
+                                {% elif statement.period_start %}
+                                    {{ statement.period_start|date:"Y-m-d" }}
+                                {% else %}
+                                    —
+                                {% endif %}
+                            </td>
+                            <td><strong>GHS {{ statement.total_charges|floatformat:2|intcomma }}</strong></td>
+                            <td>GHS {{ statement.total_payments|floatformat:2|intcomma }}</td>
+                            <td><strong>GHS {{ statement.closing_balance|floatformat:2|intcomma }}</strong></td>
+                            <td>
+                                <span class="badge bg-{% if statement.status == 'paid' %}success{% elif statement.status == 'overdue' or statement.status == 'pending' %}danger{% elif statement.status == 'sent' or statement.status == 'matched' %}warning{% else %}secondary{% endif %}">
+                                    {% if statement.is_receivable %}
+                                        {{ statement.get_status_display|default:statement.status|title }}
+                                    {% else %}
+                                        {{ statement.get_status_display|default:statement.status|title }}
+                                    {% endif %}
+                                </span>
+                            </td>
+                            <td>
+                                {% if statement.is_invoice_summary %}
+                                    <div class="btn-group">
+                                        <a href="{% url 'hospital:corporate_bill_detail_by_payer' payer_id=statement.payer_id %}" class="btn btn-sm btn-outline-primary" title="Labs, scans, drugs by invoice" onclick="event.stopPropagation();">
+                                            <i class="bi bi-file-earmark-text"></i> View bill
+                                        </a>
+                                        <a href="{% url 'hospital:invoice_list' %}?payer_type=corporate{% if statement.corporate_account.company_name %}&q={{ statement.corporate_account.company_name|urlencode }}{% endif %}" class="btn btn-sm btn-outline-secondary" title="Invoice list" onclick="event.stopPropagation();">
+                                            <i class="bi bi-receipt"></i> Invoices
+                                        </a>
+                                    </div>
+                                {% elif statement.is_receivable %}
+                                    <a href="{% url 'receivable_entry_detail' entry_id=statement.id %}" class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation();">
+                                        <i class="bi bi-eye"></i> View
+                                    </a>
+                                {% else %}
+                                    <div class="btn-group flex-wrap">
+                                        {% if request.resolver_match.url_name == 'corporate_bill_list' %}
+                                            <a href="{% url 'hospital:corporate_bill_with_subscriber' statement_id=statement.id %}" class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation();"><i class="bi bi-people"></i> Subscribers</a>
+                                        {% endif %}
+                                        <a href="{% url 'hospital:company_bill_with_cover_page' statement_id=statement.id %}" class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation();">Cover</a>
+                                        <a href="{% url 'hospital:company_bill_with_offer' statement_id=statement.id %}" class="btn btn-sm btn-outline-info" onclick="event.stopPropagation();">Offer</a>
+                                    </div>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+                </div>
+            </div>
+
+            {% if statement_groups.has_other_pages %}
+            <nav aria-label="Page navigation" class="mt-3">
+                <ul class="pagination justify-content-center">
+                    {% if statement_groups.has_previous %}
+                    <li class="page-item"><a class="page-link" href="{{ request.path }}?{% if company_filter %}company={{ company_filter|urlencode }}&{% endif %}{% if status_filter %}status={{ status_filter|urlencode }}&{% endif %}{% if date_from %}date_from={{ date_from }}&{% endif %}{% if date_to %}date_to={{ date_to }}&{% endif %}page={{ statement_groups.previous_page_number }}">Previous</a></li>
+                    {% endif %}
+                    <li class="page-item active"><span class="page-link">Page {{ statement_groups.number }} of {{ statement_groups.paginator.num_pages }}</span></li>
+                    {% if statement_groups.has_next %}
+                    <li class="page-item"><a class="page-link" href="{{ request.path }}?{% if company_filter %}company={{ company_filter|urlencode }}&{% endif %}{% if status_filter %}status={{ status_filter|urlencode }}&{% endif %}{% if date_from %}date_from={{ date_from }}&{% endif %}{% if date_to %}date_to={{ date_to }}&{% endif %}page={{ statement_groups.next_page_number }}">Next</a></li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="text-center py-5 card border-0 shadow-sm">
+                <div class="card-body">
+                    <i class="bi bi-inbox" style="font-size: 48px; color: #cbd5e1;"></i>
+                    <p class="text-muted mt-3 mb-1">{% if request.resolver_match.url_name == 'corporate_bill_list' %}No corporate bill activity for these filters{% else %}No company bills found{% endif %}</p>
+                    <p class="text-muted small">Try clearing dates or search — rows with all amounts at zero are hidden.</p>
+                    <a href="{{ request.path }}" class="btn btn-sm btn-outline-primary mt-2">Reset filters</a>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  function toggleGroup(row) {
+    var id = row.getAttribute('data-bill-group');
+    if (id === null) return;
+    var expanded = row.getAttribute('aria-expanded') === 'true';
+    row.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+    document.querySelectorAll('.bill-gc-' + id).forEach(function (r) {
+      r.classList.toggle('d-none', expanded);
+    });
+    var ic = row.querySelector('.expand-icon');
+    if (ic) {
+      if (expanded) {
+        ic.classList.remove('bi-chevron-down');
+        ic.classList.add('bi-chevron-right');
+      } else {
+        ic.classList.remove('bi-chevron-right');
+        ic.classList.add('bi-chevron-down');
+      }
+    }
+  }
+  document.querySelectorAll('.bill-group-header').forEach(function (row) {
+    row.addEventListener('click', function () { toggleGroup(row); });
+    row.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggleGroup(row);
+      }
+    });
+  });
+})();
+</script>
+<script>
+(function () {
+  var dataEl = document.getElementById('corporate-bills-analytics-data');
+  if (!dataEl || typeof Chart === 'undefined') return;
+  var A;
+  try { A = JSON.parse(dataEl.textContent); } catch (e) { return; }
+  var colors = ['#6366f1', '#8b5cf6', '#10b981', '#f59e0b', '#3b82f6', '#ec4899', '#64748b', '#14b8a6'];
+
+  function doughnutOpts() {
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } }
+      }
+    };
+  }
+
+  var kind = A.by_kind;
+  if (kind && kind.labels && kind.labels.length && document.getElementById('corpChartKind')) {
+    new Chart(document.getElementById('corpChartKind'), {
+      type: 'doughnut',
+      data: { labels: kind.labels, datasets: [{ data: kind.counts, backgroundColor: colors, borderWidth: 0 }] },
+      options: doughnutOpts()
+    });
+  }
+
+  var st = A.status;
+  if (st && st.labels && st.labels.length && document.getElementById('corpChartStatus')) {
+    new Chart(document.getElementById('corpChartStatus'), {
+      type: 'doughnut',
+      data: { labels: st.labels, datasets: [{ data: st.counts, backgroundColor: colors.slice().reverse(), borderWidth: 0 }] },
+      options: doughnutOpts()
+    });
+  }
+
+  var top = A.top_outstanding;
+  if (top && top.labels && top.labels.length && document.getElementById('corpChartTop')) {
+    new Chart(document.getElementById('corpChartTop'), {
+      type: 'bar',
+      data: {
+        labels: top.labels,
+        datasets: [{
+          label: 'Closing (GHS)',
+          data: top.amounts,
+          backgroundColor: 'rgba(99, 102, 241, 0.85)',
+          borderRadius: 6
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { beginAtZero: true, ticks: { font: { size: 10 } } },
+          y: { ticks: { font: { size: 10 } } }
+        }
+      }
+    });
+  }
+})();
+</script>
+{% endblock %}

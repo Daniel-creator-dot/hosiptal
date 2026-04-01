@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load static humanize %}
+{% load static humanize hospital_extras %}
 
 {% block title %}Medical Command Center{% endblock %}
 
@@ -61,6 +61,7 @@
             <p class="hero-date">{{ today|date:"l, F j, Y" }}</p>
             <p style="max-width: 420px; font-size: 15px; opacity: .9;">Monitor beds, procedures, and clinical priorities in a single ultra-modern command surface built for rapid rounds.</p>
             <div class="quick-actions">
+                <a class="action-pill" href="{% url 'hospital:doctor_appointment_calendar' %}"><i class="bi bi-calendar3"></i>My Appointments</a>
                 <a class="action-pill" href="{% url 'hospital:patient_list' %}"><i class="bi bi-people"></i>Patients</a>
                 <a class="action-pill" href="{% url 'hospital:encounter_list' %}"><i class="bi bi-hospital"></i>Encounters</a>
                 <a class="action-pill" href="{% url 'hospital:admission_list' %}"><i class="bi bi-door-open"></i>Admissions</a>
@@ -99,6 +100,31 @@
         </div>
     </section>
 
+    <!-- HOD Shift Management Card (if HOD) -->
+    {% if is_hod %}
+    <div class="card-shell mb-4" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; border-left: 4px solid #fff;">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h4 class="mb-2" style="color: white;">
+                    <i class="bi bi-calendar-check me-2"></i>
+                    Shift Management - Head of Medicine
+                </h4>
+                <p class="mb-0" style="opacity: 0.9; color: white;">
+                    Create shifts, monitor attendance, and track compliance for your department staff
+                </p>
+            </div>
+            <div>
+                <a href="{% url 'hospital:hod_shift_monitoring_dashboard' %}" class="btn btn-light btn-lg me-2">
+                    <i class="bi bi-calendar-check me-2"></i> Manage Shifts
+                </a>
+                <a href="{% url 'hospital:hod_create_shift_enhanced' %}" class="btn btn-outline-light btn-lg">
+                    <i class="bi bi-plus-circle me-2"></i> Create Shift
+                </a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <section class="kpi-grid">
         <div class="kpi-card">
             <div class="kpi-label">My Active Patients</div>
@@ -124,6 +150,109 @@
             </a>
         </div>
     </section>
+
+    <!-- Patient Access Section - Enhanced for Doctors -->
+    <div class="card-shell" style="background: linear-gradient(135deg, #0ea5e9 0%, #3b82f6 100%); color: white; margin-bottom: 24px;">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+            <div style="flex: 1; min-width: 300px;">
+                <h5 class="mb-2" style="color: white; font-weight: 700; font-size: 24px;">
+                    <i class="bi bi-people-fill me-2"></i>
+                    Patient Access Center
+                </h5>
+                <p class="mb-0" style="opacity: 0.95; font-size: 15px; line-height: 1.6;">
+                    Quick access to all patients. Search, view records, and manage patient care efficiently.
+                </p>
+            </div>
+            <div class="d-flex gap-2 flex-wrap">
+                <a href="{% url 'hospital:patient_list' %}" class="action-pill" style="background: white; color: #3b82f6; min-width: 160px; font-weight: 700; text-decoration: none;">
+                    <i class="bi bi-search"></i> Search All Patients
+                </a>
+                <a href="{% url 'hospital:global_search' %}" class="action-pill" style="background: rgba(255,255,255,0.2); color: white; min-width: 140px; font-weight: 600; text-decoration: none; border: 1px solid rgba(255,255,255,0.3);">
+                    <i class="bi bi-globe"></i> Global Search
+                </a>
+            </div>
+        </div>
+        
+        <div class="row g-3 mb-3">
+            <div class="col-md-3">
+                <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
+                    <div style="font-size: 32px; font-weight: 700; margin-bottom: 8px;">{{ total_patients_accessible|intcomma }}</div>
+                    <div style="font-size: 13px; opacity: 0.9;">Total Patients Available</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
+                    <div style="font-size: 32px; font-weight: 700; margin-bottom: 8px;">{{ total_patients_seen|intcomma }}</div>
+                    <div style="font-size: 13px; opacity: 0.9;">Patients You've Seen</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
+                    <div style="font-size: 32px; font-weight: 700; margin-bottom: 8px;">{{ active_patients }}</div>
+                    <div style="font-size: 13px; opacity: 0.9;">Active Encounters</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
+                    <div style="font-size: 32px; font-weight: 700; margin-bottom: 8px;">{{ appointments_count }}</div>
+                    <div style="font-size: 13px; opacity: 0.9;">Appointments Today</div>
+                </div>
+            </div>
+        </div>
+        
+        {% if recent_patients %}
+        <div class="mt-4">
+            <h6 class="mb-3" style="color: white; font-weight: 600;">
+                <i class="bi bi-clock-history me-2"></i>Recent Patients
+            </h6>
+            <div class="row g-2">
+                {% for patient in recent_patients|slice:":6" %}
+                <div class="col-md-4 col-sm-6">
+                    <a href="{% url 'hospital:patient_detail' patient.id %}" style="text-decoration: none; color: inherit;">
+                        <div style="background: rgba(255,255,255,0.15); border-radius: 10px; padding: 14px; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.2); transition: all 0.2s;" 
+                             onmouseover="this.style.background='rgba(255,255,255,0.25)'; this.style.transform='translateY(-2px)'" 
+                             onmouseout="this.style.background='rgba(255,255,255,0.15)'; this.style.transform='translateY(0)'">
+                            <div style="font-weight: 600; margin-bottom: 4px;">{{ patient.full_name }} {% patient_payer_badges patient %}</div>
+                            <div style="font-size: 12px; opacity: 0.85;">
+                                {% if patient.mrn %}<i class="bi bi-tag"></i> {{ patient.mrn }}{% endif %}
+                                {% if patient.phone_number %} · <i class="bi bi-telephone"></i> {{ patient.phone_number }}{% endif %}
+                            </div>
+                        </div>
+                    </a>
+                </div>
+                {% endfor %}
+            </div>
+            {% if recent_patients|length > 6 %}
+            <div class="text-center mt-3">
+                <a href="{% url 'hospital:patient_list' %}" class="btn btn-light btn-sm">
+                    <i class="bi bi-arrow-right"></i> View All Patients
+                </a>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Drug Classification Guide - Prominent Feature Card -->
+    <div class="card-shell" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin-bottom: 24px; display: block !important; visibility: visible !important;">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+            <div style="flex: 1; min-width: 300px;">
+                <h5 class="mb-2" style="color: white; font-weight: 700;">
+                    <i class="bi bi-book me-2"></i>
+                    Drug Classification Guide
+                </h5>
+                <p class="mb-0" style="opacity: 0.95; font-size: 14px; line-height: 1.6;">
+                    Comprehensive hierarchical drug reference with detailed categories, subcategories, and real-time inventory status. 
+                    Browse by system, search drugs, and prescribe directly from the guide.
+                </p>
+            </div>
+            <div>
+                <a href="{% url 'hospital:drug_classification_guide' %}" class="action-pill" style="background: white; color: #667eea; min-width: 180px; font-weight: 700; text-decoration: none;">
+                    <i class="bi bi-arrow-right-circle"></i>Open Drug Guide
+                </a>
+            </div>
+        </div>
+    </div>
 
     <div class="grid-2">
         <section class="card-shell">
@@ -174,6 +303,7 @@
                 <div class="empty-state">All beds operational.</div>
             {% endif %}
         </section>
+    </div>
 
     <div class="grid-2">
         <section class="card-shell">
@@ -188,7 +318,7 @@
                 <div class="list-tile">
                     <div class="d-flex justify-content-between">
                         <div>
-                            <strong>#{{ queue.queue_number }} · {{ queue.encounter.patient.full_name }}</strong>
+                            <strong>#{{ queue.queue_number }} · {{ queue.encounter.patient.full_name }}</strong> {% patient_payer_badges queue.encounter.patient queue.encounter %}
                             <div class="secondary-text">{{ queue.department.name }} · {{ queue.location }}</div>
                             <div class="secondary-text">Priority: {{ queue.get_priority_display }}</div>
                         </div>
@@ -228,7 +358,7 @@
             </div>
             {% for admission in recent_admissions %}
             <div class="timeline-item">
-                <div class="timeline-title">{{ admission.encounter.patient.full_name }}</div>
+                <div class="timeline-title">{{ admission.encounter.patient.full_name }} {% patient_payer_badges admission.encounter.patient admission.encounter %}</div>
                 <div class="secondary-text">
                     {% if admission.ward %}{{ admission.ward.name }}{% else %}Unassigned{% endif %}{% if admission.bed %} · Bed {{ admission.bed.bed_number }}{% endif %}
                 </div>
@@ -250,7 +380,7 @@
             <div class="list-tile">
                 <div class="d-flex justify-content-between">
                     <div>
-                        <strong>{{ appointment.patient.full_name }}</strong>
+                        <strong>{{ appointment.patient.full_name }}</strong> {% patient_payer_badges appointment.patient %}
                         <div class="secondary-text"><i class="bi bi-clock me-1"></i>{{ appointment.appointment_date|date:"g:i A" }}</div>
                     </div>
                     <span class="badge bg-info text-dark">{{ appointment.get_status_display }}</span>
@@ -270,8 +400,8 @@
             {% for encounter in rounds_patients %}
             <div class="list-tile d-flex justify-content-between align-items-center">
                 <div>
-                    <strong>{{ encounter.patient.full_name }}</strong>
-                    <div class="secondary-text">Ward {{ encounter.location.name|default:"—" }}</div>
+                    <strong>{{ encounter.patient.full_name }}</strong> {% patient_payer_badges encounter.patient encounter %}
+                    <div class="secondary-text">Ward {% if encounter.location %}{{ encounter.location.name|default:"—" }}{% else %}—{% endif %}</div>
                     <div class="secondary-text">{{ encounter.chief_complaint|truncatewords:10 }}</div>
                 </div>
                 <a class="btn btn-outline-primary btn-sm" href="{% url 'hospital:encounter_documentation' encounter.pk %}">Open</a>
@@ -292,7 +422,7 @@
             <div class="list-tile" data-order-id="{{ order.id|stringformat:'s' }}">
                 <div class="d-flex justify-content-between">
                     <div>
-                        <strong>{{ order.encounter.patient.full_name }}</strong>
+                        <strong>{{ order.encounter.patient.full_name }}</strong> {% patient_payer_badges order.encounter.patient order.encounter %}
                         <div class="secondary-text">{{ order.get_order_type_display }} · {{ order.priority|upper }}</div>
                     </div>
                     <span class="badge bg-danger">{{ order.get_status_display }}</span>
@@ -313,7 +443,7 @@
                 {% for order in pending_labs %}
                 <div class="list-tile d-flex justify-content-between align-items-center" data-lab-order-id="{{ order.id|stringformat:'s' }}">
                     <div>
-                        <strong>{{ order.encounter.patient.full_name }}</strong>
+                        <strong>{{ order.encounter.patient.full_name }}</strong> {% patient_payer_badges order.encounter.patient order.encounter %}
                         <div class="secondary-text">Order {{ order.pk|slice:":8" }} · {{ order.notes|default:"Awaiting processing"|truncatewords:10 }}</div>
                     </div>
                     <span class="badge bg-warning text-dark">{{ order.get_priority_display }}</span>
@@ -335,7 +465,7 @@
             <div class="list-tile">
                 <div class="d-flex justify-content-between">
                     <div>
-                        <strong>{{ encounter.patient.full_name }}</strong>
+                        <strong>{{ encounter.patient.full_name }}</strong> {% patient_payer_badges encounter.patient encounter %}
                         <div class="secondary-text">MRN: {{ encounter.patient.mrn }} · {{ encounter.get_encounter_type_display }}</div>
                         <div class="secondary-text">Chief complaint: {{ encounter.chief_complaint|truncatewords:12 }}</div>
                     </div>

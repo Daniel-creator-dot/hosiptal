@@ -233,6 +233,249 @@ class OphthalmologyChart(BaseModel):
         return f"Eye Chart - {self.patient.full_name} - {self.chart_date}"
 
 
+# ==================== PSYCHIATRY MODULE ====================
+
+class PsychiatricChart(BaseModel):
+    """Comprehensive psychiatric/mental health chart"""
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='psychiatric_charts')
+    encounter = models.ForeignKey(Encounter, on_delete=models.CASCADE, related_name='psychiatric_charts', null=True, blank=True)
+    chart_date = models.DateField(default=date.today)
+    created_by = models.ForeignKey(Staff, on_delete=models.SET_NULL, null=True)
+    
+    # Chief Complaint & Presenting Problem
+    chief_complaint = models.TextField(blank=True)
+    presenting_problem = models.TextField(blank=True)
+    duration_of_symptoms = models.CharField(max_length=100, blank=True)
+    
+    # Mental Status Examination (MSE)
+    appearance = models.TextField(blank=True, help_text="General appearance, grooming, dress")
+    behavior = models.TextField(blank=True, help_text="Motor activity, eye contact, rapport")
+    speech = models.TextField(blank=True, help_text="Rate, rhythm, volume, quality")
+    mood = models.CharField(max_length=100, blank=True, help_text="Patient's subjective mood")
+    affect = models.CharField(max_length=100, blank=True, help_text="Observed emotional expression")
+    thought_process = models.TextField(blank=True, help_text="Form of thought, flow, organization")
+    thought_content = models.TextField(blank=True, help_text="Delusions, obsessions, suicidal/homicidal ideation")
+    perception = models.TextField(blank=True, help_text="Hallucinations, illusions, depersonalization")
+    cognition = models.TextField(blank=True, help_text="Orientation, memory, attention, concentration")
+    insight = models.CharField(max_length=50, blank=True, choices=[
+        ('poor', 'Poor'),
+        ('fair', 'Fair'),
+        ('good', 'Good'),
+        ('excellent', 'Excellent'),
+    ])
+    judgment = models.CharField(max_length=50, blank=True, choices=[
+        ('poor', 'Poor'),
+        ('fair', 'Fair'),
+        ('good', 'Good'),
+        ('excellent', 'Excellent'),
+    ])
+    
+    # Standardized Assessment Scales (0-27 for PHQ-9, 0-21 for GAD-7)
+    phq9_score = models.IntegerField(null=True, blank=True, help_text="PHQ-9 Depression Scale (0-27)")
+    gad7_score = models.IntegerField(null=True, blank=True, help_text="GAD-7 Anxiety Scale (0-21)")
+    pcl5_score = models.IntegerField(null=True, blank=True, help_text="PCL-5 PTSD Scale (0-80)")
+    mmse_score = models.IntegerField(null=True, blank=True, help_text="MMSE Cognitive Assessment (0-30)")
+    ybocs_score = models.IntegerField(null=True, blank=True, help_text="Y-BOCS OCD Scale (0-40)")
+    
+    # Risk Assessment
+    suicide_risk = models.CharField(max_length=20, blank=True, choices=[
+        ('none', 'None'),
+        ('low', 'Low'),
+        ('moderate', 'Moderate'),
+        ('high', 'High'),
+        ('imminent', 'Imminent'),
+    ])
+    suicide_ideation = models.TextField(blank=True)
+    suicide_plan = models.TextField(blank=True)
+    suicide_means = models.TextField(blank=True)
+    homicide_risk = models.CharField(max_length=20, blank=True, choices=[
+        ('none', 'None'),
+        ('low', 'Low'),
+        ('moderate', 'Moderate'),
+        ('high', 'High'),
+    ])
+    violence_risk = models.CharField(max_length=20, blank=True, choices=[
+        ('none', 'None'),
+        ('low', 'Low'),
+        ('moderate', 'Moderate'),
+        ('high', 'High'),
+    ])
+    self_harm_risk = models.CharField(max_length=20, blank=True, choices=[
+        ('none', 'None'),
+        ('low', 'Low'),
+        ('moderate', 'Moderate'),
+        ('high', 'High'),
+    ])
+    
+    # Psychiatric History
+    psychiatric_history = models.TextField(blank=True)
+    previous_diagnoses = models.TextField(blank=True)
+    previous_treatments = models.TextField(blank=True)
+    hospitalizations = models.TextField(blank=True)
+    family_psychiatric_history = models.TextField(blank=True)
+    substance_use_history = models.TextField(blank=True)
+    
+    # Current Medications
+    current_medications = models.TextField(blank=True)
+    medication_compliance = models.CharField(max_length=50, blank=True, choices=[
+        ('compliant', 'Compliant'),
+        ('partial', 'Partially Compliant'),
+        ('non_compliant', 'Non-Compliant'),
+    ])
+    medication_side_effects = models.TextField(blank=True)
+    
+    # Social History
+    living_situation = models.TextField(blank=True)
+    occupation = models.CharField(max_length=200, blank=True)
+    education = models.CharField(max_length=200, blank=True)
+    social_support = models.TextField(blank=True)
+    stressors = models.TextField(blank=True)
+    coping_mechanisms = models.TextField(blank=True)
+    
+    # Diagnosis (ICD-10/DSM-5)
+    primary_diagnosis = models.CharField(max_length=200, blank=True)
+    secondary_diagnosis = models.CharField(max_length=200, blank=True)
+    provisional_diagnosis = models.CharField(max_length=200, blank=True)
+    differential_diagnosis = models.TextField(blank=True)
+    
+    # Treatment Plan
+    treatment_plan = models.TextField(blank=True)
+    psychotherapy_plan = models.TextField(blank=True)
+    medication_plan = models.TextField(blank=True)
+    behavioral_interventions = models.TextField(blank=True)
+    goals = models.TextField(blank=True)
+    
+    # Progress & Follow-up
+    progress_notes = models.TextField(blank=True)
+    response_to_treatment = models.CharField(max_length=50, blank=True, choices=[
+        ('excellent', 'Excellent'),
+        ('good', 'Good'),
+        ('fair', 'Fair'),
+        ('poor', 'Poor'),
+        ('worsening', 'Worsening'),
+    ])
+    follow_up_date = models.DateField(null=True, blank=True)
+    follow_up_instructions = models.TextField(blank=True)
+    
+    # Additional Notes
+    notes = models.TextField(blank=True)
+    recommendations = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['-chart_date']
+    
+    def __str__(self):
+        return f"Psychiatric Chart - {self.patient.full_name} - {self.chart_date}"
+    
+    def get_depression_severity(self):
+        """Get PHQ-9 depression severity"""
+        if not self.phq9_score:
+            return None
+        if self.phq9_score <= 4:
+            return 'Minimal'
+        elif self.phq9_score <= 9:
+            return 'Mild'
+        elif self.phq9_score <= 14:
+            return 'Moderate'
+        elif self.phq9_score <= 19:
+            return 'Moderately Severe'
+        else:
+            return 'Severe'
+    
+    def get_anxiety_severity(self):
+        """Get GAD-7 anxiety severity"""
+        if not self.gad7_score:
+            return None
+        if self.gad7_score <= 4:
+            return 'Minimal'
+        elif self.gad7_score <= 9:
+            return 'Mild'
+        elif self.gad7_score <= 14:
+            return 'Moderate'
+        else:
+            return 'Severe'
+
+
+# ==================== GYNECOLOGY MODULE ====================
+
+class GynecologyChart(BaseModel):
+    """Comprehensive gynecology/obstetrics chart"""
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='gynecology_charts')
+    encounter = models.ForeignKey(Encounter, on_delete=models.CASCADE, related_name='gynecology_charts', null=True, blank=True)
+    chart_date = models.DateField(default=date.today)
+    created_by = models.ForeignKey(Staff, on_delete=models.SET_NULL, null=True)
+    
+    # Chief Complaint & History
+    chief_complaint = models.TextField(blank=True)
+    presenting_problem = models.TextField(blank=True)
+    menstrual_history = models.TextField(blank=True, help_text="Menstrual cycle details, LMP, regularity")
+    obstetric_history = models.TextField(blank=True, help_text="Gravida, Para, abortions, deliveries")
+    gynecological_history = models.TextField(blank=True, help_text="Previous gynecological conditions, surgeries")
+    contraceptive_history = models.TextField(blank=True, help_text="Current and past contraceptive methods")
+    sexual_history = models.TextField(blank=True, help_text="Sexually active, partners, STI history")
+    
+    # Current Pregnancy (if applicable)
+    is_pregnant = models.BooleanField(default=False)
+    gestational_age_weeks = models.IntegerField(null=True, blank=True)
+    edd = models.DateField(null=True, blank=True, help_text="Expected Due Date")
+    pregnancy_complications = models.TextField(blank=True)
+    prenatal_care = models.TextField(blank=True)
+    
+    # Physical Examination
+    general_examination = models.TextField(blank=True)
+    abdominal_examination = models.TextField(blank=True)
+    pelvic_examination = models.TextField(blank=True, help_text="Inspection, speculum, bimanual findings")
+    breast_examination = models.TextField(blank=True)
+    cervical_examination = models.TextField(blank=True, help_text="Cervix appearance, discharge, lesions")
+    
+    # Vital Signs
+    blood_pressure = models.CharField(max_length=20, blank=True)
+    pulse = models.PositiveIntegerField(null=True, blank=True)
+    temperature = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    weight = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True, help_text="kg")
+    height = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text="cm")
+    bmi = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    
+    # Investigations
+    pap_smear_result = models.CharField(max_length=100, blank=True)
+    pap_smear_date = models.DateField(null=True, blank=True)
+    hiv_status = models.CharField(max_length=50, blank=True, choices=[
+        ('negative', 'Negative'),
+        ('positive', 'Positive'),
+        ('not_tested', 'Not Tested'),
+        ('declined', 'Declined'),
+    ])
+    hiv_test_date = models.DateField(null=True, blank=True)
+    other_investigations = models.TextField(blank=True, help_text="Ultrasound, lab tests, etc.")
+    
+    # Diagnosis
+    primary_diagnosis = models.CharField(max_length=200, blank=True)
+    secondary_diagnosis = models.CharField(max_length=200, blank=True)
+    provisional_diagnosis = models.CharField(max_length=200, blank=True)
+    differential_diagnosis = models.TextField(blank=True)
+    
+    # Treatment Plan
+    treatment_plan = models.TextField(blank=True)
+    medications_prescribed = models.TextField(blank=True)
+    procedures_planned = models.TextField(blank=True)
+    lifestyle_advice = models.TextField(blank=True)
+    
+    # Follow-up
+    follow_up_date = models.DateField(null=True, blank=True)
+    follow_up_instructions = models.TextField(blank=True)
+    progress_notes = models.TextField(blank=True)
+    
+    # Additional Notes
+    notes = models.TextField(blank=True)
+    recommendations = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['-chart_date']
+    
+    def __str__(self):
+        return f"Gynecology Chart - {self.patient.full_name} - {self.chart_date}"
+
+
 # ==================== SPECIALIST CONSULTATION ====================
 
 class SpecialistConsultation(BaseModel):

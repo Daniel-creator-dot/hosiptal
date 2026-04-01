@@ -23,8 +23,12 @@ logger = logging.getLogger(__name__)
 
 
 def is_admin(user):
-    """Check if user is admin or superuser"""
-    return user.is_authenticated and (user.is_staff or user.is_superuser)
+    """Strict admin/IT check (no is_staff fallback)."""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    return get_user_role(user) in {'admin', 'it'}
 
 
 @login_required

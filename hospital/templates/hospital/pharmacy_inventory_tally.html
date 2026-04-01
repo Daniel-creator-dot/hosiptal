@@ -1,0 +1,230 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{% url 'hospital:pharmacy_dashboard' %}">Pharmacy</a></li>
+                    <li class="breadcrumb-item active">Inventory Tally</li>
+                </ol>
+            </nav>
+            <div class="d-flex justify-content-between align-items-center">
+                <h2><i class="bi bi-clipboard-check"></i> {{ title }}</h2>
+                <div>
+                    <a href="{% url 'hospital:pharmacy_tally_export' %}?location={{ location }}" class="btn btn-outline-primary">
+                        <i class="bi bi-download"></i> Export CSV
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card bg-primary text-white">
+                <div class="card-body">
+                    <h5 class="card-title">Total Items</h5>
+                    <h2>{{ total_items }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card bg-success text-white">
+                <div class="card-body">
+                    <h5 class="card-title">Total Quantity</h5>
+                    <h2>{{ total_quantity }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card bg-info text-white">
+                <div class="card-body">
+                    <h5 class="card-title">Total Value</h5>
+                    <h2>GHS {{ total_value|floatformat:2 }}</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Location</label>
+                    <select name="location" class="form-select">
+                        {% for loc in locations %}
+                            <option value="{{ loc }}" {% if loc == location %}selected{% endif %}>{{ loc }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Search</label>
+                    <input type="text" name="search" class="form-control" value="{{ search_query }}" placeholder="Search by drug name or batch number">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">&nbsp;</label>
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-search"></i> Filter
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Tally Sheet Form -->
+    <form method="post" id="tallyForm">
+        {% csrf_token %}
+        <input type="hidden" name="location" value="{{ location }}">
+        <input type="hidden" name="tally_data" id="tallyData">
+        
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="bi bi-clipboard-data"></i> Physical Count Sheet</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-hover">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Drug Name</th>
+                                <th>Batch Number</th>
+                                <th>Expiry Date</th>
+                                <th>System Qty</th>
+                                <th>Counted Qty</th>
+                                <th>Variance</th>
+                                <th>Unit Cost</th>
+                                <th>Value</th>
+                                <th>Notes</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tallyTableBody">
+                            {% for stock in stock_items %}
+                            <tr data-drug-id="{{ stock.drug.id }}" data-batch="{{ stock.batch_number }}">
+                                <td>
+                                    <strong>{{ stock.drug.name }}</strong>
+                                    {% if stock.drug.strength %}
+                                        <br><small class="text-muted">{{ stock.drug.strength }}</small>
+                                    {% endif %}
+                                </td>
+                                <td>{{ stock.batch_number }}</td>
+                                <td>
+                                    <input type="date" class="form-control form-control-sm expiry-date" 
+                                           value="{{ stock.expiry_date|date:'Y-m-d' }}" 
+                                           data-stock-id="{{ stock.id }}">
+                                </td>
+                                <td class="system-qty">{{ stock.quantity_on_hand }}</td>
+                                <td>
+                                    <input type="number" class="form-control form-control-sm counted-qty" 
+                                           value="{{ stock.quantity_on_hand }}" 
+                                           min="0" 
+                                           data-stock-id="{{ stock.id }}"
+                                           data-system-qty="{{ stock.quantity_on_hand }}">
+                                </td>
+                                <td class="variance">0</td>
+                                <td>GHS {{ stock.unit_cost|floatformat:2 }}</td>
+                                <td class="item-value">GHS {{ stock.quantity_on_hand|mul:stock.unit_cost|floatformat:2 }}</td>
+                                <td>
+                                    <input type="text" class="form-control form-control-sm notes" 
+                                           placeholder="Notes" 
+                                           data-stock-id="{{ stock.id }}">
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="9" class="text-center text-muted">No stock items found for this location.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-4">
+            <button type="submit" class="btn btn-success btn-lg">
+                <i class="bi bi-check-circle"></i> Submit Tally
+            </button>
+            <a href="{% url 'hospital:pharmacy_dashboard' %}" class="btn btn-outline-secondary btn-lg">
+                <i class="bi bi-arrow-left"></i> Back to Dashboard
+            </a>
+        </div>
+    </form>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('tallyForm');
+    const tableBody = document.getElementById('tallyTableBody');
+    
+    // Calculate variance and update totals
+    function updateRow(row) {
+        const systemQty = parseInt(row.querySelector('.system-qty').textContent) || 0;
+        const countedInput = row.querySelector('.counted-qty');
+        const countedQty = parseInt(countedInput.value) || 0;
+        const variance = countedQty - systemQty;
+        const varianceCell = row.querySelector('.variance');
+        
+        varianceCell.textContent = variance;
+        if (variance !== 0) {
+            varianceCell.className = variance > 0 ? 'variance text-success' : 'variance text-danger';
+        } else {
+            varianceCell.className = 'variance';
+        }
+        
+        // Update value
+        const unitCost = parseFloat(row.querySelector('td:nth-child(7)').textContent.replace('GHS ', '')) || 0;
+        const valueCell = row.querySelector('.item-value');
+        valueCell.textContent = 'GHS ' + (countedQty * unitCost).toFixed(2);
+    }
+    
+    // Update all rows
+    function updateAllRows() {
+        tableBody.querySelectorAll('tr[data-drug-id]').forEach(updateRow);
+    }
+    
+    // Add event listeners
+    tableBody.addEventListener('input', function(e) {
+        if (e.target.classList.contains('counted-qty')) {
+            updateRow(e.target.closest('tr'));
+        }
+    });
+    
+    // Form submission
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const tallyData = [];
+        tableBody.querySelectorAll('tr[data-drug-id]').forEach(function(row) {
+            const drugId = row.getAttribute('data-drug-id');
+            const batchNumber = row.getAttribute('data-batch');
+            const expiryInput = row.querySelector('.expiry-date');
+            const countedInput = row.querySelector('.counted-qty');
+            const notesInput = row.querySelector('.notes');
+            const systemQty = parseInt(row.querySelector('.system-qty').textContent) || 0;
+            
+            tallyData.push({
+                drug_id: drugId,
+                batch_number: batchNumber,
+                expiry_date: expiryInput ? expiryInput.value : '',
+                counted_quantity: parseInt(countedInput.value) || 0,
+                system_quantity: systemQty,
+                notes: notesInput ? notesInput.value : ''
+            });
+        });
+        
+        document.getElementById('tallyData').value = JSON.stringify(tallyData);
+        form.submit();
+    });
+    
+    // Initial update
+    updateAllRows();
+});
+</script>
+{% endblock %}

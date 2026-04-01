@@ -13,6 +13,7 @@ from .models import BaseModel
 class ContractCategory(BaseModel):
     """Categories for organizing contracts"""
     CATEGORY_TYPES = [
+        ('corporate', 'Corporate Contract'),
         ('insurance', 'Insurance Companies'),
         ('supplier', 'Suppliers/Vendors'),
         ('service', 'Service Providers'),

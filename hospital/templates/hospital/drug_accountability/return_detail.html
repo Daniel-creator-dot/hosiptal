@@ -1,0 +1,258 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Drug Return Detail - HMS{% endblock %}
+{% block page_title %}Drug Return: {{ drug_return.return_number }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8">
+        <!-- Return Information -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-info-circle me-2"></i>Return Information
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <strong>Return Number:</strong><br>
+                        <span class="text-primary">{{ drug_return.return_number }}</span>
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Return Date:</strong><br>
+                        {{ drug_return.return_date|date:"M d, Y H:i" }}
+                    </div>
+                </div>
+                
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <strong>Patient:</strong><br>
+                        <a href="{% url 'hospital:patient_detail' drug_return.patient.id %}">
+                            {{ drug_return.patient.full_name }}
+                        </a>
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Drug:</strong><br>
+                        <strong>{{ drug_return.drug.name }}</strong><br>
+                        <small class="text-muted">{{ drug_return.drug.strength }} {{ drug_return.drug.form }}</small>
+                    </div>
+                </div>
+                
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <strong>Quantity:</strong><br>
+                        <span class="badge bg-info" style="font-size: 14px;">
+                            {{ drug_return.quantity_returned }} units
+                        </span>
+                        <small class="text-muted">(Original: {{ drug_return.quantity_original }})</small>
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Status:</strong><br>
+                        {% if drug_return.status == 'pending' %}
+                            <span class="badge bg-warning">Pending Approval</span>
+                        {% elif drug_return.status == 'approved' %}
+                            <span class="badge bg-info">Approved</span>
+                        {% elif drug_return.status == 'completed' %}
+                            <span class="badge bg-success">Completed</span>
+                        {% elif drug_return.status == 'rejected' %}
+                            <span class="badge bg-danger">Rejected</span>
+                        {% endif %}
+                    </div>
+                </div>
+                
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <strong>Return Reason:</strong><br>
+                        <span class="badge bg-secondary">{{ drug_return.get_return_reason_display }}</span>
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Condition:</strong><br>
+                        <span class="badge bg-info">{{ drug_return.get_condition_on_return_display }}</span>
+                    </div>
+                </div>
+                
+                {% if drug_return.reason_details %}
+                <div class="mb-3">
+                    <strong>Reason Details:</strong><br>
+                    <p class="text-muted">{{ drug_return.reason_details }}</p>
+                </div>
+                {% endif %}
+                
+                {% if drug_return.notes %}
+                <div class="mb-3">
+                    <strong>Notes:</strong><br>
+                    <p class="text-muted">{{ drug_return.notes }}</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Financial Information -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-currency-dollar me-2"></i>Financial Information
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <strong>Original Unit Price:</strong><br>
+                        <span class="h5">GHS {{ drug_return.original_unit_price|floatformat:2 }}</span>
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Refund Amount:</strong><br>
+                        <span class="h5 text-success">GHS {{ drug_return.refund_amount|floatformat:2 }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Workflow Information -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-diagram-3 me-2"></i>Workflow
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <strong>Requested By:</strong><br>
+                        {{ drug_return.requested_by.full_name }}<br>
+                        <small class="text-muted">{{ drug_return.requested_at|date:"M d, Y H:i" }}</small>
+                    </div>
+                    {% if drug_return.approved_by %}
+                    <div class="col-md-6">
+                        <strong>Approved By:</strong><br>
+                        {{ drug_return.approved_by.full_name }}<br>
+                        <small class="text-muted">{{ drug_return.approved_at|date:"M d, Y H:i" }}</small>
+                    </div>
+                    {% endif %}
+                </div>
+                
+                {% if drug_return.processed_by %}
+                <div class="row mt-3">
+                    <div class="col-md-6">
+                        <strong>Processed By:</strong><br>
+                        {{ drug_return.processed_by.full_name }}<br>
+                        <small class="text-muted">{{ drug_return.processed_at|date:"M d, Y H:i" }}</small>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Inventory Transaction -->
+        {% if drug_return.inventory_transaction %}
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-arrow-left-right me-2"></i>Inventory Transaction
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <strong>Transaction Number:</strong><br>
+                        {{ drug_return.inventory_transaction.transaction_number }}
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Transaction Date:</strong><br>
+                        {{ drug_return.inventory_transaction.transaction_date|date:"M d, Y H:i" }}
+                    </div>
+                </div>
+                <div class="row mt-3">
+                    <div class="col-md-6">
+                        <strong>Quantity Before:</strong> {{ drug_return.inventory_transaction.quantity_before }}<br>
+                        <strong>Quantity After:</strong> {{ drug_return.inventory_transaction.quantity_after }}
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Store:</strong> {{ drug_return.store.name|default:"N/A" }}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    
+    <div class="col-md-4">
+        <!-- Actions -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-gear me-2"></i>Actions
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if drug_return.status == 'pending' %}
+                    {% if can_approve %}
+                        {% if is_medical_director %}
+                        <div class="alert alert-info mb-3">
+                            <i class="bi bi-shield-check me-2"></i>
+                            <strong>Medical Director Authorization</strong><br>
+                            <small>You have authority to approve or reject this return.</small>
+                        </div>
+                        {% endif %}
+                        <form method="post" action="{% url 'hospital:drug_return_approve' drug_return.id %}" class="mb-3">
+                            {% csrf_token %}
+                            <div class="mb-3">
+                                <label class="form-label">Approval Notes</label>
+                                <textarea name="approval_notes" class="form-control" rows="3" placeholder="Optional notes for approval..."></textarea>
+                            </div>
+                            <button type="submit" class="btn btn-success w-100">
+                                <i class="bi bi-check-circle me-2"></i>Approve Return
+                            </button>
+                        </form>
+                        
+                        <form method="post" action="{% url 'hospital:drug_return_reject' drug_return.id %}">
+                            {% csrf_token %}
+                            <div class="mb-3">
+                                <label class="form-label">Rejection Reason *</label>
+                                <textarea name="rejection_reason" class="form-control" rows="3" required placeholder="Please provide a reason for rejection..."></textarea>
+                            </div>
+                            <button type="submit" class="btn btn-danger w-100">
+                                <i class="bi bi-x-circle me-2"></i>Reject Return
+                            </button>
+                        </form>
+                    {% else %}
+                        <div class="alert alert-warning">
+                            <i class="bi bi-lock me-2"></i>
+                            <strong>Authorization Required</strong><br>
+                            <small>Only Administrators and Medical Directors can approve returns.</small>
+                        </div>
+                    {% endif %}
+                {% elif drug_return.status == 'approved' %}
+                <form method="post" action="{% url 'hospital:drug_return_process' drug_return.id %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-arrow-return-left me-2"></i>Process Return to Inventory
+                    </button>
+                </form>
+                {% elif drug_return.status == 'completed' %}
+                <div class="alert alert-success">
+                    <i class="bi bi-check-circle me-2"></i>
+                    Return completed and drug returned to inventory.
+                </div>
+                {% elif drug_return.status == 'rejected' %}
+                <div class="alert alert-danger">
+                    <i class="bi bi-x-circle me-2"></i>
+                    Return rejected.
+                    {% if drug_return.rejection_reason %}
+                    <br><strong>Reason:</strong> {{ drug_return.rejection_reason }}
+                    {% endif %}
+                </div>
+                {% endif %}
+                
+                <hr>
+                <a href="{% url 'hospital:drug_returns_list' %}" class="btn btn-outline-secondary w-100">
+                    <i class="bi bi-arrow-left me-2"></i>Back to List
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

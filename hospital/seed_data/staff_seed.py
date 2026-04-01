@@ -33,7 +33,7 @@ STAFF_DATA: List[Dict[str, Optional[str]]] = [
     {'name': 'Robbert Kwame Gbologah', 'phone': '0243187872', 'dob': '1/7/1972', 'dept': 'Accounts', 'profession': 'admin'},
     {'name': 'Nana Yaa B. Asamoah', 'phone': '0209017207', 'dob': '4/12/2003', 'dept': 'Accounts', 'profession': 'admin'},
     # Front Office - dates in DD/MM/YYYY format
-    {'name': 'Mavis Ananga', 'phone': '0543325547', 'dob': '5/10/1994', 'dept': 'Front Office', 'profession': 'receptionist'},
+    {'name': 'Mavis Ananga', 'phone': '0200024081', 'dob': '5/10/1994', 'dept': 'Front Office', 'profession': 'receptionist'},
     # IT Support - dates in DD/MM/YYYY format
     {'name': 'Johnson Kpatabui Mawuna', 'phone': '0249563432', 'dob': '6/5/1998', 'dept': 'IT Support', 'profession': 'admin'},
     # Scan - dates in DD/MM/YYYY format

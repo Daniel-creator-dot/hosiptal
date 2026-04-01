@@ -1,0 +1,261 @@
+{# Canonical copy: TEMPLATES DIRS loads hms/templates first. Sync with hospital/templates/hospital/accountant/payroll_list.html #}
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Accounting Payroll — HMS{% endblock %}
+{% block page_title %}Staff payroll{% endblock %}
+{% block page_subtitle %}Each staff line is its own table row (one name, one emp. code, per-person gross/deductions/net). Same payroll # repeats for everyone on that run.{% endblock %}
+
+{% block extra_css %}
+<style>
+  .payroll-hero {
+    background: linear-gradient(135deg, #0f766e 0%, #0d9488 38%, #14b8a6 100%);
+    border-radius: 16px;
+    padding: 1.75rem 2rem;
+    color: #fff;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 12px 40px rgba(15, 118, 110, 0.35);
+  }
+  .payroll-hero h2 { font-weight: 700; letter-spacing: -0.02em; }
+  .payroll-hero .lead { opacity: 0.92; max-width: 42rem; }
+  .stat-tile {
+    background: rgba(255,255,255,0.14);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.2);
+  }
+  .stat-tile .value { font-size: 1.5rem; font-weight: 700; }
+  .stat-tile .label { font-size: 0.8rem; opacity: 0.85; text-transform: uppercase; letter-spacing: 0.06em; }
+  .glass-card {
+    background: #fff;
+    border-radius: 14px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06);
+    overflow: hidden;
+  }
+  .glass-card .card-head {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid #eef2f7;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    background: linear-gradient(180deg, #fafbfc 0%, #fff 100%);
+  }
+  .btn-teal { background: #0d9488; border-color: #0d9488; color: #fff; }
+  .btn-teal:hover { background: #0f766e; border-color: #0f766e; color: #fff; }
+  /* Global base.html sets table { width: 100% } — that squashes wide payroll grids. */
+  .payroll-list-page table.table-payroll {
+    width: max-content;
+    min-width: 100%;
+    max-width: none;
+    table-layout: auto;
+  }
+  .payroll-list-page .table-payroll-scroll {
+    overflow-x: auto;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
+  .payroll-list-page .glass-card {
+    overflow-x: visible;
+    overflow-y: visible;
+  }
+  .table-payroll thead th {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #64748b;
+    border-bottom-width: 1px;
+    white-space: nowrap;
+  }
+  .table-payroll tbody td { vertical-align: middle; }
+  .table-payroll tr.payroll-run-start td {
+    border-top: 2px solid #cbd5e1;
+  }
+  .table-payroll tr.payroll-run-start:first-child td {
+    border-top: none;
+  }
+  .table-payroll .payroll-label-cell {
+    white-space: nowrap;
+    max-width: 14rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .table-payroll .text-money {
+    white-space: nowrap;
+  }
+  .badge-soft { font-weight: 600; padding: 0.35em 0.65em; border-radius: 6px; }
+  @media print {
+    .sidebar, .sidebar-overlay, .topbar, .activity-reminder-banner,
+    .no-print-payroll, #messages-container {
+      display: none !important;
+    }
+    .main-content {
+      margin-left: 0 !important;
+      width: 100% !important;
+      max-width: 100% !important;
+    }
+    .content-container {
+      padding: 0 !important;
+      max-width: 100% !important;
+    }
+    .payroll-hero {
+      background: #f1f5f9 !important;
+      color: #0f172a !important;
+      box-shadow: none !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .glass-card { box-shadow: none !important; border: 1px solid #cbd5e1 !important; }
+    .table-payroll { font-size: 10pt; }
+    .payroll-list-page table.table-payroll {
+      width: 100%;
+      max-width: 100%;
+    }
+    a[href]:after { content: none !important; }
+    @page { margin: 12mm; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid payroll-list-page">
+  <div class="payroll-hero">
+    <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
+      <div>
+        <h2 class="mb-2"><i class="bi bi-table me-2"></i>Accounting payroll</h2>
+        <p class="lead mb-0">Use the same columns as your <strong>Sample Salary-RMC</strong> workbook: basic pay, medical &amp; risk allowances, SSF/PF, PAYE, and net pay.</p>
+      </div>
+      <div class="d-flex flex-wrap gap-2 no-print-payroll">
+        <a href="{% url 'accountant_payroll_export_runs' %}" class="btn btn-light btn-sm shadow-sm">
+          <i class="bi bi-file-earmark-spreadsheet me-1"></i> Download runs (.xlsx)
+        </a>
+        <button type="button" class="btn btn-light btn-sm shadow-sm" onclick="window.print()" title="Print this page (all columns except Open links)">
+          <i class="bi bi-printer me-1"></i> Print list
+        </button>
+        <a href="{% url 'accountant_payroll_template' %}" class="btn btn-light btn-sm shadow-sm">
+          <i class="bi bi-download me-1"></i> Blank template (.xlsx)
+        </a>
+        <a href="{% url 'accountant_payroll_create' %}" class="btn btn-warning btn-sm shadow-sm text-dark fw-semibold">
+          <i class="bi bi-plus-lg me-1"></i> New payroll run
+        </a>
+      </div>
+    </div>
+    <div class="row g-3 mt-2">
+      <div class="col-md-4">
+        <div class="stat-tile">
+          <div class="label">Payroll runs</div>
+          <div class="value">{{ total_payroll_runs|intcomma }}</div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="stat-tile">
+          <div class="label">Total gross (all runs)</div>
+          <div class="value">GHS {{ sum_gross_all|floatformat:2|intcomma }}</div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="stat-tile">
+          <div class="label">Total net (all runs)</div>
+          <div class="value">GHS {{ sum_net_all|floatformat:2|intcomma }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="glass-card">
+    <div class="card-head">
+      <h5 class="mb-0 fw-semibold text-dark"><i class="bi bi-collection me-2 text-secondary"></i>Runs</h5>
+      <span class="text-muted small">One row per person on the run. Staff must exist in HMS with matching <strong>Emp. Code</strong> (employee ID).</span>
+    </div>
+    <div class="table-responsive table-payroll-scroll p-0 border-top">
+      <p class="small text-muted mb-0 px-3 py-2 no-print-payroll"><i class="bi bi-arrow-left-right me-1"></i>Scroll sideways here if <strong>Deductions</strong>, <strong>Net</strong>, or other columns are not visible.</p>
+      {% if payroll_rows %}
+      <table class="table table-hover table-payroll mb-0 align-middle" data-payroll-list="per-staff-v1">
+        <thead class="table-light">
+          <tr>
+            <th>Payroll #</th>
+            <th style="min-width: 11rem;">Staff name</th>
+            <th style="min-width: 8rem;">Emp. code <span class="text-muted fw-normal">(Staff ID)</span></th>
+            <th>Period</th>
+            <th class="payroll-label-col">Label</th>
+            <th>Pay date</th>
+            <th class="text-end">Gross</th>
+            <th class="text-end">Deductions</th>
+            <th class="text-end">Net</th>
+            <th>Status</th>
+            <th>Source</th>
+            <th class="no-print-payroll"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in payroll_rows %}
+          {% with p=row.payroll %}
+          <tr class="{% ifchanged p.pk %}payroll-run-start{% endifchanged %}">
+            <td><strong class="text-dark">{{ p.payroll_number }}</strong></td>
+            <td class="small text-body-secondary" style="max-width: 18rem;">
+              <span class="d-block text-wrap">{% firstof row.staff_name row.staff_names "—" %}</span>
+            </td>
+            <td class="small font-monospace text-body-secondary" style="max-width: 12rem;">
+              <span class="d-block text-wrap">{% firstof row.staff_emp_code row.staff_emp_codes "—" %}</span>
+            </td>
+            <td class="text-nowrap small">{{ p.payroll_period_start|date:"M j, Y" }} — {{ p.payroll_period_end|date:"M j, Y" }}</td>
+            <td class="small text-body-secondary payroll-label-cell" title="{{ row.label_display }}">{{ row.label_display }}</td>
+            <td class="text-nowrap">{{ p.pay_date|date:"M j, Y" }}</td>
+            <td class="text-end font-monospace small text-money">GHS {% if row.staff_names %}{{ p.total_gross_pay|floatformat:2|intcomma }}{% else %}{{ row.row_gross|floatformat:2|intcomma }}{% endif %}</td>
+            <td class="text-end font-monospace small text-money">GHS {% if row.staff_names %}{{ p.total_deductions|floatformat:2|intcomma }}{% else %}{{ row.row_deductions|floatformat:2|intcomma }}{% endif %}</td>
+            <td class="text-end fw-semibold font-monospace text-money">GHS {% if row.staff_names %}{{ p.total_net_pay|floatformat:2|intcomma }}{% else %}{{ row.row_net|floatformat:2|intcomma }}{% endif %}</td>
+            <td class="text-nowrap">
+              {% if p.status == 'paid' %}
+                <span class="badge-soft bg-success-subtle text-success">Paid</span>
+              {% elif p.status == 'approved' %}
+                <span class="badge-soft bg-info-subtle text-info">Approved</span>
+              {% elif p.status == 'pending_approval' %}
+                <span class="badge-soft bg-secondary-subtle text-secondary">Pending approval</span>
+              {% elif p.status == 'calculated' %}
+                <span class="badge-soft bg-primary-subtle text-primary">Calculated</span>
+              {% else %}
+                <span class="badge-soft bg-warning-subtle text-warning">Draft</span>
+              {% endif %}
+            </td>
+            <td class="small text-body-secondary text-money" style="max-width: 10rem;" title="{{ row.source_display }}"><span class="d-inline-block text-truncate" style="max-width: 10rem; vertical-align: bottom;">{{ row.source_display }}</span></td>
+            <td class="text-end text-nowrap no-print-payroll">
+              <a href="{% url 'accountant_payroll_detail' p.pk %}" class="btn btn-sm btn-teal">
+                <i class="bi bi-layout-text-sidebar-reverse"></i> Open
+              </a>
+            </td>
+          </tr>
+          {% endwith %}
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="p-5 text-center text-muted">
+        <i class="bi bi-inbox display-4 d-block mb-3 opacity-50"></i>
+        <p class="mb-2">No payroll runs yet.</p>
+        <a href="{% url 'accountant_payroll_create' %}" class="btn btn-teal">Create first run</a>
+      </div>
+      {% endif %}
+    </div>
+    {% if payrolls.has_other_pages %}
+    <div class="p-3 border-top bg-light no-print-payroll">
+      <nav>
+        <ul class="pagination pagination-sm mb-0 justify-content-center">
+          {% if payrolls.has_previous %}
+          <li class="page-item"><a class="page-link" href="?page={{ payrolls.previous_page_number }}">Previous</a></li>
+          {% endif %}
+          <li class="page-item disabled"><span class="page-link">Page {{ payrolls.number }} of {{ payrolls.paginator.num_pages }}</span></li>
+          {% if payrolls.has_next %}
+          <li class="page-item"><a class="page-link" href="?page={{ payrolls.next_page_number }}">Next</a></li>
+          {% endif %}
+        </ul>
+      </nav>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

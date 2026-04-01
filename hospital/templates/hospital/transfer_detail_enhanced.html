@@ -1,0 +1,276 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}{{ transfer.transfer_number }} - Enhanced Transfer Detail{% endblock %}
+{% block page_title %}Transfer Detail: {{ transfer.transfer_number }}{% endblock %}
+{% block page_subtitle %}{{ transfer.from_store.name }} → {{ transfer.to_store.name }}{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <!-- Transfer Information Card -->
+    <div class="col-md-8">
+        <div class="modern-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 style="font-weight: 600; margin-bottom: 0;">Transfer Information</h6>
+                <div>
+                    {% if transfer.status == 'pending' %}
+                        <span class="badge-modern badge-secondary">Pending</span>
+                    {% elif transfer.status == 'approved' %}
+                        <span class="badge-modern badge-warning">Approved</span>
+                    {% elif transfer.status == 'in_transit' %}
+                        <span class="badge-modern badge-info">In Transit</span>
+                    {% elif transfer.status == 'completed' %}
+                        <span class="badge-modern badge-success">Completed</span>
+                    {% else %}
+                        <span class="badge-modern badge-danger">Cancelled</span>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="text-muted small">Transfer Number</label>
+                    <div><strong>{{ transfer.transfer_number }}</strong></div>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="text-muted small">Transfer Date</label>
+                    <div>{{ transfer.transfer_date|date:"M d, Y" }}</div>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="text-muted small">From Store</label>
+                    <div><strong>{{ transfer.from_store.name }}</strong></div>
+                    <small class="text-muted">{{ transfer.from_store.code }}</small>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="text-muted small">To Store</label>
+                    <div><strong>{{ transfer.to_store.name }}</strong></div>
+                    <small class="text-muted">{{ transfer.to_store.code }}</small>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="text-muted small">Requested By</label>
+                    <div>
+                        {% if transfer.requested_by and transfer.requested_by.user %}
+                            {{ transfer.requested_by.user.get_full_name|default:transfer.requested_by.user.username }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </div>
+                    {% if transfer.created %}
+                    <small class="text-muted">{{ transfer.created|date:"M d, Y H:i" }}</small>
+                    {% endif %}
+                </div>
+                {% if transfer.approved_by %}
+                <div class="col-md-6 mb-3">
+                    <label class="text-muted small">Approved By</label>
+                    <div>
+                        {% if transfer.approved_by and transfer.approved_by.user %}
+                            {{ transfer.approved_by.user.get_full_name|default:transfer.approved_by.user.username }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </div>
+                    {% if transfer.approved_at %}
+                    <small class="text-muted">{{ transfer.approved_at|date:"M d, Y H:i" }}</small>
+                    {% endif %}
+                </div>
+                {% endif %}
+                {% if transfer.received_by %}
+                <div class="col-md-6 mb-3">
+                    <label class="text-muted small">Received By</label>
+                    <div>
+                        {% if transfer.received_by and transfer.received_by.user %}
+                            {{ transfer.received_by.user.get_full_name|default:transfer.received_by.user.username }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </div>
+                    {% if transfer.received_at %}
+                    <small class="text-muted">{{ transfer.received_at|date:"M d, Y H:i" }}</small>
+                    {% endif %}
+                </div>
+                {% endif %}
+                {% if transfer.notes %}
+                <div class="col-md-12 mb-3">
+                    <label class="text-muted small">Notes</label>
+                    <div class="p-2 bg-light rounded">{{ transfer.notes }}</div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Summary Card -->
+    <div class="col-md-4">
+        <div class="modern-card">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Summary</h6>
+            <div class="mb-3">
+                <label class="text-muted small">Total Items</label>
+                <div><strong style="font-size: 20px;">{{ total_items }}</strong></div>
+            </div>
+            <div class="mb-3">
+                <label class="text-muted small">Total Quantity</label>
+                <div><strong style="font-size: 20px;">{{ total_quantity|intcomma }}</strong></div>
+            </div>
+            <div class="mb-3">
+                <label class="text-muted small">Total Value</label>
+                <div><strong style="font-size: 24px; color: var(--primary);">GHS {{ total_value|floatformat:2|intcomma }}</strong></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Timeline -->
+{% if timeline %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="modern-card">
+            <h6 style="font-weight: 600; margin-bottom: 16px;">Transfer Timeline</h6>
+            <div class="timeline">
+                {% for event in timeline %}
+                <div class="timeline-item">
+                    <div class="timeline-marker bg-{{ event.color }}">
+                        <i class="bi bi-{{ event.icon }}"></i>
+                    </div>
+                    <div class="timeline-content">
+                        <div class="timeline-header">
+                            <strong>{{ event.event }}</strong>
+                            <span class="text-muted ms-2">{{ event.date|date:"M d, Y H:i" }}</span>
+                        </div>
+                        <div class="text-muted small">By: {{ event.user }}</div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Transfer Items -->
+<div class="modern-card">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 style="font-weight: 600; margin-bottom: 0;">Transfer Items</h6>
+        <span class="badge bg-primary">{{ total_items }} item{{ total_items|pluralize }}</span>
+    </div>
+    
+    {% if transfer.lines.all %}
+    <div class="table-responsive">
+        <table class="table modern-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Item Code</th>
+                    <th>Item Name</th>
+                    <th>Quantity</th>
+                    <th>Unit</th>
+                    <th>Unit Cost</th>
+                    <th>Line Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for line in transfer.lines.all %}
+                    {% if not line.is_deleted %}
+                    <tr>
+                        <td>{{ forloop.counter }}</td>
+                        <td><code>{{ line.item_code|default:"N/A" }}</code></td>
+                        <td><strong>{{ line.item_name|default:"N/A" }}</strong></td>
+                        <td>{{ line.quantity|intcomma }}</td>
+                        <td>{{ line.unit_of_measure|default:"Unit" }}</td>
+                        <td>GHS {{ line.unit_cost|floatformat:2|intcomma }}</td>
+                        <td><strong>GHS {{ line.line_total|floatformat:2|intcomma }}</strong></td>
+                    </tr>
+                    {% endif %}
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr style="background: var(--light);">
+                    <td colspan="6" style="text-align: right; font-weight: 600;">Total Value:</td>
+                    <td>
+                        <strong style="font-size: 18px; color: var(--primary);">
+                            GHS {{ total_value|floatformat:2|intcomma }}
+                        </strong>
+                    </td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+    {% else %}
+    <div class="text-center py-5">
+        <i class="bi bi-inbox" style="font-size: 48px; color: #ccc;"></i>
+        <p class="text-muted mt-3">No items in this transfer</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Action Buttons -->
+<div class="mt-4 d-flex gap-2">
+    <a href="{% url 'hospital:store_transfers_list' %}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Transfers
+    </a>
+    <a href="{% url 'hospital:transfer_dashboard' %}" class="btn btn-outline-primary">
+        <i class="bi bi-speedometer2"></i> Transfer Dashboard
+    </a>
+</div>
+
+<style>
+.timeline {
+    position: relative;
+    padding-left: 30px;
+}
+
+.timeline-item {
+    position: relative;
+    padding-bottom: 20px;
+    padding-left: 40px;
+}
+
+.timeline-item:not(:last-child)::before {
+    content: '';
+    position: absolute;
+    left: 15px;
+    top: 30px;
+    bottom: -20px;
+    width: 2px;
+    background: #e0e0e0;
+}
+
+.timeline-marker {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 14px;
+    z-index: 1;
+}
+
+.timeline-content {
+    padding-top: 4px;
+}
+
+.timeline-header {
+    margin-bottom: 4px;
+}
+
+.bg-primary {
+    background-color: var(--primary) !important;
+}
+
+.bg-success {
+    background-color: var(--success) !important;
+}
+
+.bg-warning {
+    background-color: var(--warning) !important;
+}
+
+.bg-danger {
+    background-color: var(--danger) !important;
+}
+</style>
+{% endblock %}

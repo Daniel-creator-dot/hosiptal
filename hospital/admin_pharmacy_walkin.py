@@ -20,7 +20,7 @@ class WalkInPharmacySaleAdmin(admin.ModelAdmin):
         'sale_number', 'customer_name_display', 'sale_date', 'total_amount_display',
         'payment_status_badge', 'dispensed_badge', 'served_by'
     ]
-    list_filter = ['payment_status', 'is_dispensed', 'customer_type', 'sale_date']
+    list_filter = ['payment_status', 'is_dispensed', 'customer_type', 'sale_date', 'payer']
     search_fields = ['sale_number', 'customer_name', 'customer_phone', 'patient__first_name', 'patient__last_name']
     readonly_fields = [
         'sale_number', 'subtotal', 'total_amount', 'amount_due', 
@@ -38,7 +38,7 @@ class WalkInPharmacySaleAdmin(admin.ModelAdmin):
             )
         }),
         ('Sale Details', {
-            'fields': ('sale_number', 'sale_date', 'served_by')
+            'fields': ('sale_number', 'sale_date', 'payer', 'served_by')
         }),
         ('Financial', {
             'fields': (

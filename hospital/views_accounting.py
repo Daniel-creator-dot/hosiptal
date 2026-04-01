@@ -1,6 +1,7 @@
 """
 Accounting and Financial Management Views
 """
+import logging
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib import messages
@@ -16,6 +17,8 @@ from .models_accounting import (
 )
 from .models_workflow import Bill, CashierSession
 
+logger = logging.getLogger(__name__)
+
 
 def is_accountant(user):
     """Check if user is an accountant"""
@@ -28,18 +31,62 @@ def accounting_dashboard(request):
     """Accounting main dashboard with FULL SYNC"""
     today = timezone.now().date()
     
-    # Accounts Receivable Summary
-    ar_total = AccountsReceivable.objects.filter(
-        outstanding_amount__gt=0,
-        is_deleted=False
-    ).aggregate(Sum('outstanding_amount'))['outstanding_amount__sum'] or Decimal('0.00')
+    # Accounts Receivable Summary - Use AdvancedAccountsReceivable (new model)
+    from .models_accounting_advanced import AdvancedAccountsReceivable
+    ar_total = Decimal('0.00')
+    overdue_receivable = Decimal('0.00')
+    try:
+        ar_total = AdvancedAccountsReceivable.objects.filter(
+            balance_due__gt=0,
+            is_deleted=False
+        ).aggregate(Sum('balance_due'))['balance_due__sum'] or Decimal('0.00')
+        
+        # Calculate overdue receivables
+        overdue_receivable = AdvancedAccountsReceivable.objects.filter(
+            balance_due__gt=0,
+            is_overdue=True,
+            is_deleted=False
+        ).aggregate(Sum('balance_due'))['balance_due__sum'] or Decimal('0.00')
+        
+        ar_by_aging = {
+            'current': AdvancedAccountsReceivable.objects.filter(aging_bucket='current', is_deleted=False).aggregate(Sum('balance_due'))['balance_due__sum'] or Decimal('0.00'),
+            'aging_31_60': AdvancedAccountsReceivable.objects.filter(aging_bucket='31-60', is_deleted=False).aggregate(Sum('balance_due'))['balance_due__sum'] or Decimal('0.00'),
+            'aging_61_90': AdvancedAccountsReceivable.objects.filter(aging_bucket='61-90', is_deleted=False).aggregate(Sum('balance_due'))['balance_due__sum'] or Decimal('0.00'),
+            'aging_90_plus': AdvancedAccountsReceivable.objects.filter(aging_bucket='90+', is_deleted=False).aggregate(Sum('balance_due'))['balance_due__sum'] or Decimal('0.00'),
+        }
+    except Exception as e:
+        # Fallback to old model if AdvancedAccountsReceivable doesn't exist
+        logger.error(f"Error calculating AR from AdvancedAccountsReceivable: {e}")
+        try:
+            ar_total = AccountsReceivable.objects.filter(
+                outstanding_amount__gt=0,
+                is_deleted=False
+            ).aggregate(Sum('outstanding_amount'))['outstanding_amount__sum'] or Decimal('0.00')
+            
+            overdue_receivable = AccountsReceivable.objects.filter(
+                outstanding_amount__gt=0,
+                is_overdue=True,
+                is_deleted=False
+            ).aggregate(Sum('outstanding_amount'))['outstanding_amount__sum'] or Decimal('0.00')
+            
+            ar_by_aging = {
+                'current': AccountsReceivable.objects.filter(aging_bucket='current', is_deleted=False).aggregate(Sum('outstanding_amount'))['outstanding_amount__sum'] or Decimal('0.00'),
+                'aging_31_60': AccountsReceivable.objects.filter(aging_bucket='31-60', is_deleted=False).aggregate(Sum('outstanding_amount'))['outstanding_amount__sum'] or Decimal('0.00'),
+                'aging_61_90': AccountsReceivable.objects.filter(aging_bucket='61-90', is_deleted=False).aggregate(Sum('outstanding_amount'))['outstanding_amount__sum'] or Decimal('0.00'),
+                'aging_90_plus': AccountsReceivable.objects.filter(aging_bucket='90+', is_deleted=False).aggregate(Sum('outstanding_amount'))['outstanding_amount__sum'] or Decimal('0.00'),
+            }
+        except:
+            ar_total = Decimal('0.00')
+            overdue_receivable = Decimal('0.00')
+            ar_by_aging = {
+                'current': Decimal('0.00'),
+                'aging_31_60': Decimal('0.00'),
+                'aging_61_90': Decimal('0.00'),
+                'aging_90_plus': Decimal('0.00'),
+            }
     
-    ar_by_aging = {
-        'current': AccountsReceivable.objects.filter(aging_bucket='current', is_deleted=False).aggregate(Sum('outstanding_amount'))['outstanding_amount__sum'] or Decimal('0.00'),
-        'aging_31_60': AccountsReceivable.objects.filter(aging_bucket='31-60', is_deleted=False).aggregate(Sum('outstanding_amount'))['outstanding_amount__sum'] or Decimal('0.00'),
-        'aging_61_90': AccountsReceivable.objects.filter(aging_bucket='61-90', is_deleted=False).aggregate(Sum('outstanding_amount'))['outstanding_amount__sum'] or Decimal('0.00'),
-        'aging_90_plus': AccountsReceivable.objects.filter(aging_bucket='90+', is_deleted=False).aggregate(Sum('outstanding_amount'))['outstanding_amount__sum'] or Decimal('0.00'),
-    }
+    # Calculate start of month for monthly revenue
+    start_of_month = today.replace(day=1)
     
     # Today's revenue from GENERAL LEDGER (source of truth)
     # Note: transaction_date is a DateField, so we don't use __date lookup
@@ -56,8 +103,59 @@ def accounting_dashboard(request):
         is_deleted=False
     ).aggregate(Sum('amount_paid'))['amount_paid__sum'] or Decimal('0.00')
     
-    # Use GL as primary, fallback to receipts if GL is empty
-    today_revenue = today_revenue_gl if today_revenue_gl > 0 else today_revenue_receipts
+    # Monthly revenue from GENERAL LEDGER (this month)
+    month_revenue_gl = GeneralLedger.objects.filter(
+        account__account_type='revenue',
+        transaction_date__gte=start_of_month,
+        transaction_date__lte=today,
+        is_deleted=False
+    ).aggregate(Sum('credit_amount'))['credit_amount__sum'] or Decimal('0.00')
+    
+    # Monthly revenue from PaymentReceipts (this month)
+    month_revenue_receipts = PaymentReceipt.objects.filter(
+        receipt_date__date__gte=start_of_month,
+        receipt_date__date__lte=today,
+        is_deleted=False
+    ).aggregate(Sum('amount_paid'))['amount_paid__sum'] or Decimal('0.00')
+    
+    # Today's revenue from Receivables - use invoice issued_at date (accrual basis)
+    # Revenue is recognized when invoice is issued, not when AR entry is created
+    today_revenue_from_ar = Decimal('0.00')
+    try:
+        today_ar_entries = AdvancedAccountsReceivable.objects.filter(
+            invoice__issued_at__date=today,
+            is_deleted=False
+        ).select_related('invoice')
+        for ar in today_ar_entries:
+            # Only include if invoice was issued today
+            if ar.invoice and ar.invoice.issued_at and ar.invoice.issued_at.date() == today:
+                today_revenue_from_ar += ar.invoice_amount
+    except Exception as e:
+        logger.warning(f"Error calculating today's revenue from AR: {e}")
+        pass
+    
+    # Also check invoices issued today (even if AR not created yet)
+    today_invoices_revenue = Decimal('0.00')
+    try:
+        today_invoices_revenue = Invoice.objects.filter(
+            issued_at__date=today,
+            status__in=['issued', 'partially_paid', 'overdue'],
+            is_deleted=False
+        ).aggregate(Sum('total_amount'))['total_amount__sum'] or Decimal('0.00')
+    except:
+        pass
+    
+    # Combine: Use highest value (accrual basis - recognize revenue when service provided)
+    # This ensures we show revenue when services are provided, not just when paid
+    today_revenue = max(
+        today_revenue_gl,
+        today_revenue_from_ar,
+        today_invoices_revenue,
+        today_revenue_receipts
+    )
+    
+    # Monthly revenue
+    month_revenue = month_revenue_gl if month_revenue_gl > 0 else month_revenue_receipts
     
     # Calculate sync variance (absolute difference)
     sync_variance = abs(today_revenue_gl - today_revenue_receipts)
@@ -113,12 +211,160 @@ def accounting_dashboard(request):
             'balance': balance
         }
     
+    # Calculate expenses (if Expense model exists)
+    total_expenses = Decimal('0.00')
+    try:
+        from .models_accounting_advanced import Expense
+        total_expenses = Expense.objects.filter(
+            expense_date__gte=start_of_month,
+            expense_date__lte=today,
+            status='paid',
+            is_deleted=False
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+    except Exception as e:
+        logger.warning(f"Could not calculate expenses: {e}")
+        total_expenses = Decimal('0.00')
+    
+    # Calculate net income
+    net_income = month_revenue - total_expenses
+    
+    # Get AR total (already calculated above)
+    total_receivable = ar_total
+    
+    # Calculate Accounts Payable
+    # Priority: Use General Ledger (Excel imported balances) if available, otherwise use AccountsPayable model
+    total_payable = Decimal('0.00')
+    try:
+        # First, check General Ledger for AP accounts (Excel imported balances)
+        # For Excel imports: debit amounts ARE the balances (independent, different companies)
+        from .models_accounting_advanced import AdvancedGeneralLedger
+        ap_accounts = Account.objects.filter(
+            account_type='liability',
+            account_name__icontains='payable',
+            is_deleted=False
+        )
+        
+        for ap_account in ap_accounts:
+            # Sum all debit amounts (each is an independent balance from Excel import)
+            ap_gl_total = AdvancedGeneralLedger.objects.filter(
+                account=ap_account,
+                is_voided=False,
+                is_deleted=False
+            ).aggregate(total=Sum('debit_amount'))['total'] or Decimal('0.00')
+            total_payable += ap_gl_total
+        
+        # If General Ledger has no AP data, fall back to AccountsPayable model
+        if total_payable == 0:
+            from .models_accounting_advanced import AccountsPayable
+            total_payable = AccountsPayable.objects.filter(
+                balance_due__gt=0,
+                is_deleted=False
+            ).aggregate(total=Sum('balance_due'))['total'] or Decimal('0.00')
+    except Exception as e:
+        logger.warning(f"Error calculating Accounts Payable: {e}")
+        # Fallback to AccountsPayable model
+        try:
+            from .models_accounting_advanced import AccountsPayable
+            total_payable = AccountsPayable.objects.filter(
+                balance_due__gt=0,
+                is_deleted=False
+            ).aggregate(total=Sum('balance_due'))['total'] or Decimal('0.00')
+        except:
+            total_payable = Decimal('0.00')
+    
+    # Payment Vouchers
+    try:
+        from .models_accounting_advanced import PaymentVoucher
+        pending_vouchers = PaymentVoucher.objects.filter(
+            status='pending_approval',
+            is_deleted=False
+        ).count()
+    except:
+        pending_vouchers = 0
+    
+    # Draft Journal Entries
+    try:
+        from .models_accounting_advanced import AdvancedJournalEntry
+        draft_entries = AdvancedJournalEntry.objects.filter(
+            status='draft',
+            is_deleted=False
+        ).count()
+        posted_entries_month = AdvancedJournalEntry.objects.filter(
+            entry_date__gte=start_of_month,
+            entry_date__lte=today,
+            status='posted',
+            is_deleted=False
+        ).count()
+    except:
+        draft_entries = 0
+        posted_entries_month = 0
+    
+    # Revenue by Category (from GL revenue accounts)
+    revenue_by_category = []
+    try:
+        revenue_accounts = Account.objects.filter(
+            account_type='revenue',
+            account_code__in=['4010', '4020', '4030', '4040', '4060'],
+            is_deleted=False
+        )
+        for account in revenue_accounts:
+            revenue = GeneralLedger.objects.filter(
+                account=account,
+                transaction_date__gte=start_of_month,
+                transaction_date__lte=today,
+                is_deleted=False
+            ).aggregate(Sum('credit_amount'))['credit_amount__sum'] or Decimal('0.00')
+            if revenue > 0:
+                revenue_by_category.append({
+                    'category__name': account.account_name,
+                    'total': revenue
+                })
+    except:
+        pass
+    
+    # Expenses by Category
+    expenses_by_category = []
+    try:
+        from .models_accounting_advanced import ExpenseCategory
+        expense_categories = ExpenseCategory.objects.filter(is_active=True, is_deleted=False)
+        for category in expense_categories:
+            expense_total = Expense.objects.filter(
+                category=category,
+                expense_date__gte=start_of_month,
+                expense_date__lte=today,
+                status='paid',
+                is_deleted=False
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+            if expense_total > 0:
+                expenses_by_category.append({
+                    'category__name': category.name,
+                    'total': expense_total
+                })
+    except:
+        pass
+    
     context = {
         'ar_total': ar_total,
         'ar_by_aging': ar_by_aging,
+        'overdue_receivable': overdue_receivable,
         'today_revenue': today_revenue,
+        'today_revenue_from_ar': today_revenue_from_ar,
+        'today_invoices_revenue': today_invoices_revenue,
+        'month_revenue': month_revenue,
+        'total_revenue': month_revenue,  # For template compatibility
+        'total_expenses': total_expenses,
+        'net_income': net_income,
+        'total_receivable': total_receivable,
+        'total_payable': total_payable,
+        'pending_vouchers': pending_vouchers,
+        'draft_entries': draft_entries,
+        'posted_entries_month': posted_entries_month,
+        'revenue_by_category': revenue_by_category,
+        'expenses_by_category': expenses_by_category,
         'today_revenue_gl': today_revenue_gl,
         'today_revenue_receipts': today_revenue_receipts,
+        'month_revenue_gl': month_revenue_gl,
+        'month_revenue_receipts': month_revenue_receipts,
         'sync_variance': sync_variance,
         'is_synced': is_synced,
         'recent_journal_entries': recent_journal_entries,
@@ -126,6 +372,7 @@ def accounting_dashboard(request):
         'open_sessions': open_sessions,
         'account_balances': account_balances,
         'today': today,
+        'start_of_month': start_of_month,
     }
     return render(request, 'hospital/accounting_dashboard.html', context)
 
@@ -221,12 +468,24 @@ def chart_of_accounts(request):
 @user_passes_test(is_accountant, login_url='/admin/login/')
 def accounts_receivable(request):
     """Accounts Receivable aging report"""
-    aging_filter = request.GET.get('aging', '')
+    from .models_accounting_advanced import AdvancedAccountsReceivable
     
-    ar_entries = AccountsReceivable.objects.filter(
-        outstanding_amount__gt=0,
-        is_deleted=False
-    ).select_related('invoice', 'patient').order_by('due_date')
+    aging_filter = request.GET.get('aging', '')
+
+    # Use AdvancedAccountsReceivable (new model) if available
+    use_advanced = False
+    try:
+        ar_entries = AdvancedAccountsReceivable.objects.filter(
+            balance_due__gt=0,
+            is_deleted=False
+        ).select_related('invoice', 'patient').order_by('due_date')
+        use_advanced = True
+    except:
+        # Fallback to old model
+        ar_entries = AccountsReceivable.objects.filter(
+            outstanding_amount__gt=0,
+            is_deleted=False
+        ).select_related('invoice', 'patient').order_by('due_date')
     
     if aging_filter:
         ar_entries = ar_entries.filter(aging_bucket=aging_filter)
@@ -238,6 +497,7 @@ def accounts_receivable(request):
     context = {
         'ar_entries': ar_entries,
         'aging_filter': aging_filter,
+        'use_advanced': use_advanced,  # Pass flag to template
     }
     return render(request, 'hospital/accounts_receivable.html', context)
 
@@ -283,7 +543,7 @@ def general_ledger(request):
 @login_required
 @user_passes_test(is_accountant, login_url='/admin/login/')
 def trial_balance(request):
-    """Trial Balance report"""
+    """Trial Balance report - includes both GeneralLedger and AdvancedGeneralLedger"""
     report_date = request.GET.get('date')
     
     if report_date:
@@ -294,38 +554,158 @@ def trial_balance(request):
     else:
         report_date = timezone.now().date()
     
-    accounts = Account.objects.filter(is_active=True, is_deleted=False)
+    # Try to import AdvancedGeneralLedger if available
+    try:
+        from .models_accounting_advanced import AdvancedGeneralLedger
+        HAS_ADVANCED = True
+    except ImportError:
+        HAS_ADVANCED = False
+        AdvancedGeneralLedger = None
     
-    trial_balance_data = []
+    accounts_list = Account.objects.filter(is_active=True, is_deleted=False).order_by('account_code')
+    
+    accounts_with_balance = []
     total_debits = Decimal('0.00')
     total_credits = Decimal('0.00')
     
-    for account in accounts:
-        entries = GeneralLedger.objects.filter(
+    for account in accounts_list:
+        # Get entries from GeneralLedger
+        gl_entries = GeneralLedger.objects.filter(
             account=account,
             transaction_date__lte=report_date,
             is_deleted=False
-        )
+        ).order_by('transaction_date', 'created')
         
-        debits = entries.aggregate(Sum('debit_amount'))['debit_amount__sum'] or Decimal('0.00')
-        credits = entries.aggregate(Sum('credit_amount'))['credit_amount__sum'] or Decimal('0.00')
-        balance = debits - credits
+        gl_debits = gl_entries.aggregate(Sum('debit_amount'))['debit_amount__sum'] or Decimal('0.00')
+        gl_credits = gl_entries.aggregate(Sum('credit_amount'))['credit_amount__sum'] or Decimal('0.00')
         
+        # Get entries from AdvancedGeneralLedger if available
+        adv_debits = Decimal('0.00')
+        adv_credits = Decimal('0.00')
+        adv_entries_list = []
+        
+        if HAS_ADVANCED and AdvancedGeneralLedger:
+            adv_entries = AdvancedGeneralLedger.objects.filter(
+                account=account,
+                transaction_date__lte=report_date,
+                is_voided=False,
+                is_deleted=False
+            ).order_by('transaction_date', 'created')
+            adv_debits = adv_entries.aggregate(Sum('debit_amount'))['debit_amount__sum'] or Decimal('0.00')
+            adv_credits = adv_entries.aggregate(Sum('credit_amount'))['credit_amount__sum'] or Decimal('0.00')
+            adv_entries_list = list(adv_entries)
+        
+        # Combine totals from both ledgers
+        debits = gl_debits + adv_debits
+        credits = gl_credits + adv_credits
+        
+        # Calculate balance based on account type
+        # For assets and expenses: Debit increases, Credit decreases (balance = debits - credits)
+        # For liabilities, equity, and revenue: Credit increases, Debit decreases (balance = credits - debits)
+        if account.account_type in ['asset', 'expense']:
+            balance = debits - credits
+        else:
+            # liability, equity, revenue
+            balance = credits - debits
+        
+        # Only include accounts with activity
         if debits > 0 or credits > 0:
-            trial_balance_data.append({
-                'account': account,
-                'debits': debits,
-                'credits': credits,
-                'balance': balance,
-            })
+            # Collect all transaction entries for this account
+            all_entries = []
+            
+            # Add GeneralLedger entries
+            try:
+                for entry in gl_entries:
+                    all_entries.append({
+                        'date': entry.transaction_date,
+                        'entry_number': entry.entry_number or 'N/A',
+                        'description': entry.description or '',
+                        'reference_number': entry.reference_number or '',
+                        'reference_type': entry.reference_type or '',
+                        'debit': entry.debit_amount or Decimal('0.00'),
+                        'credit': entry.credit_amount or Decimal('0.00'),
+                        'source': 'GeneralLedger'
+                    })
+            except Exception as e:
+                # Log error but continue
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error processing GeneralLedger entries for account {account.account_code}: {e}")
+            
+            # Add AdvancedGeneralLedger entries
+            try:
+                for entry in adv_entries_list:
+                    # Get reference from journal entry if available
+                    ref_number = ''
+                    ref_type = ''
+                    entry_number = 'N/A'
+                    
+                    try:
+                        if hasattr(entry, 'journal_entry') and entry.journal_entry:
+                            if hasattr(entry.journal_entry, 'entry_number'):
+                                entry_number = entry.journal_entry.entry_number or 'N/A'
+                            if hasattr(entry.journal_entry, 'reference_number'):
+                                ref_number = entry.journal_entry.reference_number or ''
+                            if hasattr(entry.journal_entry, 'entry_type'):
+                                ref_type = entry.journal_entry.entry_type or ''
+                    except:
+                        pass  # If journal_entry access fails, use defaults
+                    
+                    all_entries.append({
+                        'date': entry.transaction_date,
+                        'entry_number': entry_number,
+                        'description': getattr(entry, 'description', '') or '',
+                        'reference_number': ref_number,
+                        'reference_type': ref_type,
+                        'debit': entry.debit_amount or Decimal('0.00'),
+                        'credit': entry.credit_amount or Decimal('0.00'),
+                        'source': 'AdvancedGeneralLedger'
+                    })
+            except Exception as e:
+                # Log error but continue
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error processing AdvancedGeneralLedger entries for account {account.account_code}: {e}")
+            
+            # Sort all entries by date
+            try:
+                all_entries.sort(key=lambda x: (x['date'] if x['date'] else date(1900, 1, 1), x['entry_number']))
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error sorting entries for account {account.account_code}: {e}")
+            
+            # Ensure all values are Decimal, not None - always set defaults
+            debits = debits if debits is not None else Decimal('0.00')
+            credits = credits if credits is not None else Decimal('0.00')
+            balance = balance if balance is not None else Decimal('0.00')
+            
+            # Ensure entries list exists
+            if all_entries is None:
+                all_entries = []
+            
+            # Add balance and entries as attributes to the account object for template access
+            # Always set these attributes to prevent "INVALID" in templates
+            account.balance = balance
+            account.total_debits = debits
+            account.total_credits = credits
+            account.entries = all_entries
+            account.entry_count = len(all_entries) if all_entries else 0
+            accounts_with_balance.append(account)
+            
+            # For trial balance totals, we sum actual debits and credits
             total_debits += debits
             total_credits += credits
     
+    balance_difference = total_debits - total_credits
+    
     context = {
-        'trial_balance': trial_balance_data,
+        'accounts': accounts_with_balance,
         'total_debits': total_debits,
         'total_credits': total_credits,
-        'report_date': report_date,
+        'balance_difference': balance_difference,
+        'as_of_date': report_date,
+        'today': timezone.now(),
     }
     return render(request, 'hospital/trial_balance.html', context)
 

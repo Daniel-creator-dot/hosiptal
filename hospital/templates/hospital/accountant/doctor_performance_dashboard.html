@@ -1,0 +1,299 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Doctor Performance Tracking - Finance{% endblock %}
+{% block page_title %}Doctor Performance Tracking{% endblock %}
+{% block page_subtitle %}Real-time tracking of doctor-patient interactions and services rendered{% endblock %}
+
+{% block extra_css %}
+<style>
+    .performance-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+        border: 1px solid #e0e0e0;
+        transition: all 0.3s;
+    }
+    
+    .performance-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    
+    .stat-badge {
+        display: inline-block;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-weight: 600;
+        font-size: 12px;
+    }
+    
+    .metric-card {
+        text-align: center;
+        padding: 15px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 8px;
+        margin-bottom: 15px;
+    }
+    
+    .metric-value {
+        font-size: 32px;
+        font-weight: 700;
+        margin-bottom: 5px;
+    }
+    
+    .metric-label {
+        font-size: 12px;
+        opacity: 0.9;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Summary Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="metric-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                <div class="metric-value" id="totalDoctors">{{ summary.total_doctors }}</div>
+                <div class="metric-label">Active Doctors</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="metric-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                <div class="metric-value" id="totalPatients">{{ summary.total_patients }}</div>
+                <div class="metric-label">Total Patients Accessed</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="metric-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+                <div class="metric-value" id="totalServices">{{ summary.total_services }}</div>
+                <div class="metric-label">Total Services Rendered</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="metric-card" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);">
+                <div class="metric-value" id="totalRevenue">GHS {{ summary.total_revenue|floatformat:2|intcomma }}</div>
+                <div class="metric-label">Total Revenue Generated</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-3">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Time Period</label>
+                    <select name="period" class="form-select" onchange="this.form.submit()">
+                        <option value="today" {% if date_filter == 'today' %}selected{% endif %}>Today</option>
+                        <option value="week" {% if date_filter == 'week' %}selected{% endif %}>This Week</option>
+                        <option value="month" {% if date_filter == 'month' %}selected{% endif %}>This Month</option>
+                        <option value="all" {% if date_filter == 'all' %}selected{% endif %}>All Time</option>
+                    </select>
+                </div>
+                <div class="col-md-8">
+                    <label class="form-label">&nbsp;</label>
+                    <div>
+                        <button type="button" class="btn btn-primary" onclick="refreshData()">
+                            <i class="bi bi-arrow-clockwise me-2"></i>Refresh Data
+                        </button>
+                        <span class="text-muted ms-3">
+                            <i class="bi bi-info-circle"></i> Data updates automatically every 30 seconds
+                        </span>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Doctor Performance Table -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-people-fill me-2"></i>Doctor Performance Summary</h5>
+            <div>
+                <span class="badge bg-primary">Period: {{ date_filter|title }}</span>
+                {% if start_date %}
+                <span class="badge bg-info">{{ start_date|date:"M d, Y" }} - {{ end_date|date:"M d, Y" }}</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="card-body">
+            {% if doctor_performance %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Rank</th>
+                            <th>Doctor</th>
+                            <th>Department</th>
+                            <th>Patients</th>
+                            <th>Encounters</th>
+                            <th>Services</th>
+                            <th>Revenue</th>
+                            <th>Avg/Patient</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for perf in doctor_performance %}
+                        <tr>
+                            <td>
+                                <span class="badge bg-{% if forloop.counter <= 3 %}warning{% else %}secondary{% endif %}">
+                                    #{{ forloop.counter|add:doctor_performance.start_index|add:-1 }}
+                                </span>
+                            </td>
+                            <td>
+                                <strong>
+                                    {% if perf.doctor.user %}
+                                        {% if perf.doctor.user.get_full_name %}
+                                            {{ perf.doctor.user.get_full_name }}
+                                        {% elif perf.doctor.user.first_name or perf.doctor.user.last_name %}
+                                            {{ perf.doctor.user.first_name|default:"" }} {{ perf.doctor.user.last_name|default:"" }}
+                                        {% else %}
+                                            {{ perf.doctor.user.username }}
+                                        {% endif %}
+                                    {% else %}
+                                        Unknown
+                                    {% endif %}
+                                </strong>
+                                {% if perf.employee_id %}
+                                <br><small class="text-muted">ID: {{ perf.employee_id }}</small>
+                                {% endif %}
+                                {% if perf.services_by_category %}
+                                <br><small class="text-muted">
+                                    {% for cat in perf.services_by_category|slice:":3" %}
+                                        <span class="badge bg-secondary">{{ cat.service_code__category|default:"Other" }}</span>
+                                    {% endfor %}
+                                </small>
+                                {% endif %}
+                            </td>
+                            <td>{{ perf.department }}</td>
+                            <td>
+                                <span class="badge bg-info" style="font-size: 14px;">
+                                    {{ perf.unique_patients }}
+                                </span>
+                                {% if perf.avg_patients_per_day > 0 %}
+                                <br><small class="text-muted">{{ perf.avg_patients_per_day|floatformat:1 }}/day</small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge bg-primary">{{ perf.total_encounters }}</span>
+                            </td>
+                            <td>
+                                <span class="badge bg-success">{{ perf.total_services }}</span>
+                            </td>
+                            <td>
+                                <strong class="text-success">GHS {{ perf.total_revenue|floatformat:2|intcomma }}</strong>
+                            </td>
+                            <td>
+                                <small>GHS {{ perf.avg_revenue_per_patient|floatformat:2|intcomma }}</small>
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:doctor_performance_detail' perf.doctor.id %}?period={{ date_filter }}" 
+                                   class="btn btn-sm btn-outline-primary" title="View Details">
+                                    <i class="bi bi-eye"></i> Details
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            {% if doctor_performance.has_other_pages %}
+            <nav aria-label="Page navigation" class="mt-3">
+                <ul class="pagination justify-content-center">
+                    {% if doctor_performance.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page=1&period={{ date_filter }}">First</a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ doctor_performance.previous_page_number }}&period={{ date_filter }}">Previous</a>
+                    </li>
+                    {% endif %}
+                    <li class="page-item active">
+                        <span class="page-link">Page {{ doctor_performance.number }} of {{ doctor_performance.paginator.num_pages }}</span>
+                    </li>
+                    {% if doctor_performance.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ doctor_performance.next_page_number }}&period={{ date_filter }}">Next</a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ doctor_performance.paginator.num_pages }}&period={{ date_filter }}">Last</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>
+                No doctor performance data found for the selected period.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+// Real-time data refresh
+let refreshInterval = null;
+
+function refreshData() {
+    const period = new URLSearchParams(window.location.search).get('period') || 'month';
+    
+    fetch(`{% url 'hospital:doctor_performance_api' %}?period=${period}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Update summary cards
+                document.getElementById('totalDoctors').textContent = data.totals.total_doctors;
+                document.getElementById('totalPatients').textContent = data.totals.total_patients;
+                document.getElementById('totalServices').textContent = data.totals.total_services;
+                document.getElementById('totalRevenue').textContent = 'GHS ' + parseFloat(data.totals.total_revenue).toLocaleString('en-US', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2
+                });
+                
+                // Show update notification
+                showNotification('Data refreshed successfully', 'success');
+            }
+        })
+        .catch(error => {
+            console.error('Error refreshing data:', error);
+        });
+}
+
+// Auto-refresh every 30 seconds
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+        refreshInterval = setInterval(refreshData, 30000);
+    });
+} else {
+    refreshInterval = setInterval(refreshData, 30000);
+}
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', function() {
+    if (refreshInterval) {
+        clearInterval(refreshInterval);
+    }
+});
+
+function showNotification(message, type) {
+    const notification = document.createElement('div');
+    notification.className = `alert alert-${type === 'success' ? 'success' : 'info'} alert-dismissible fade show`;
+    notification.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+    notification.innerHTML = `
+        <i class="bi bi-${type === 'success' ? 'check-circle' : 'info-circle'}-fill me-2"></i>
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    document.body.appendChild(notification);
+    setTimeout(() => notification.remove(), 3000);
+}
+</script>
+{% endblock %}

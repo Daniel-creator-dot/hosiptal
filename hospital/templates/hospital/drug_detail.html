@@ -124,7 +124,10 @@
                                 <thead>
                                     <tr>
                                         <th>Batch Number</th>
-                                        <th>Quantity</th>
+                                        <th>Date Added</th>
+                                        <th>Initial Added</th>
+                                        <th>Used</th>
+                                        <th>Current Stock Left</th>
                                         <th>Expiry Date</th>
                                         <th>Location</th>
                                         <th>Status</th>
@@ -134,6 +137,9 @@
                                     {% for stock in stock_entries %}
                                     <tr>
                                         <td><code>{{ stock.batch_number }}</code></td>
+                                        <td>{{ stock.created|date:"M d, Y H:i" }}</td>
+                                        <td><strong>{{ stock.initial_quantity }}</strong> units</td>
+                                        <td><strong>{{ stock.used_quantity }}</strong> units</td>
                                         <td>
                                             <strong>{{ stock.quantity_on_hand }}</strong> units
                                             {% if stock.quantity_on_hand <= stock.reorder_level %}
@@ -163,8 +169,12 @@
                                 </tbody>
                                 <tfoot>
                                     <tr class="table-primary">
-                                        <th>Total Stock:</th>
-                                        <th colspan="4"><strong class="h5">{{ total_stock }} units</strong></th>
+                                        <th>Total:</th>
+                                        <th></th>
+                                        <th><strong>{{ total_initial_stock }} units</strong></th>
+                                        <th><strong>{{ total_used_stock }} units</strong></th>
+                                        <th><strong class="h5">{{ total_stock }} units</strong></th>
+                                        <th colspan="3"></th>
                                     </tr>
                                 </tfoot>
                             </table>
@@ -220,6 +230,14 @@
                     
                     <div class="mb-3">
                         <div class="d-flex justify-content-between mb-2">
+                            <span class="text-muted">Initial Added:</span>
+                            <strong>{{ total_initial_stock }}</strong>
+                        </div>
+                        <div class="d-flex justify-content-between mb-2">
+                            <span class="text-muted">Used:</span>
+                            <strong>{{ total_used_stock }}</strong>
+                        </div>
+                        <div class="d-flex justify-content-between mb-2">
                             <span class="text-muted">Total Stock:</span>
                             <strong class="h5 mb-0">{{ total_stock }}</strong>
                         </div>
@@ -230,6 +248,14 @@
                         <div class="d-flex justify-content-between mb-2">
                             <span class="text-muted">Stock Value:</span>
                             <strong class="text-primary">GHS {{ stock_value|floatformat:2 }}</strong>
+                        </div>
+                        <div class="d-flex justify-content-between mb-2">
+                            <span class="text-muted">Qty Dispensed:</span>
+                            <strong>{{ total_dispensed_qty }}</strong>
+                        </div>
+                        <div class="d-flex justify-content-between mb-2">
+                            <span class="text-muted">Times Dispensed:</span>
+                            <strong>{{ dispensed_txn_count }}</strong>
                         </div>
                         <div class="d-flex justify-content-between">
                             <span class="text-muted">Times Prescribed:</span>
@@ -253,6 +279,12 @@
                     <h6 class="mb-3">Actions</h6>
                     
                     <div class="d-grid gap-2">
+                        <a href="{% url 'hospital:drug_audit_trail' drug.pk %}" 
+                           class="btn btn-success">
+                            <i class="bi bi-clock-history"></i> View Audit Trail & Ledger
+                        </a>
+                        
+                        {% if can_edit_stock %}
                         <a href="/admin/hospital/drug/{{ drug.id }}/change/" 
                            class="btn btn-primary" target="_blank">
                             <i class="bi bi-pencil"></i> Edit Drug Details
@@ -262,6 +294,7 @@
                            class="btn btn-outline-primary" target="_blank">
                             <i class="bi bi-box"></i> Manage Stock
                         </a>
+                        {% endif %}
                         
                         <a href="{% url 'hospital:drug_formulary_list' %}" 
                            class="btn btn-outline-secondary">

@@ -1,0 +1,361 @@
+{% extends 'hospital/base.html' %}
+{% load static hospital_extras %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<style>
+    .flowboard-container {
+        padding: 20px;
+        background: #f8f9fa;
+        min-height: 100vh;
+    }
+    
+    .stage-column {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .stage-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 15px;
+        border-bottom: 2px solid #e9ecef;
+    }
+    
+    .stage-title {
+        font-size: 18px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: #1F2937 !important;
+    }
+    
+    .stage-count {
+        background: #667eea;
+        color: white;
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-weight: 600;
+    }
+    
+    .patient-card {
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 15px;
+        transition: all 0.3s;
+    }
+    
+    .patient-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        transform: translateY(-2px);
+    }
+    
+    .patient-name {
+        font-size: 16px;
+        font-weight: 600;
+        color: #212529 !important;
+        margin-bottom: 8px;
+    }
+    
+    .patient-meta {
+        font-size: 13px;
+        color: #6c757d !important;
+        margin-bottom: 10px;
+    }
+    
+    .wait-time {
+        font-size: 18px;
+        font-weight: 700;
+        padding: 8px 15px;
+        border-radius: 6px;
+        display: inline-block;
+        margin-top: 10px;
+        color: #1F2937 !important;
+    }
+    
+    .wait-time.urgent {
+        background: #f8d7da;
+        color: #721c24 !important;
+        animation: blink 1s infinite;
+    }
+    
+    @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    
+    .stats-row {
+        margin-bottom: 30px;
+    }
+    
+    .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .stat-value {
+        font-size: 32px;
+        font-weight: 700;
+        color: #667eea;
+        margin: 10px 0;
+    }
+    
+    .stat-label {
+        font-size: 14px;
+        color: #6c757d !important;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    /* Search Styles */
+    .search-container {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+    }
+    
+    .search-input-group {
+        min-width: 300px;
+    }
+    
+    .search-input-group .form-control {
+        border-radius: 8px 0 0 8px;
+        border-right: none;
+    }
+    
+    .search-input-group .btn {
+        border-radius: 0 8px 8px 0;
+        border-left: none;
+        padding: 8px 20px;
+        font-weight: 600;
+    }
+    
+    .search-input-group .form-control:focus {
+        border-color: #667eea;
+        box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+    }
+    
+    @media (max-width: 768px) {
+        .search-container {
+            flex-direction: column;
+            width: 100%;
+        }
+        
+        .search-input-group {
+            width: 100%;
+            min-width: auto;
+        }
+    }
+</style>
+
+<div class="flowboard-container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-people"></i> {{ title }}</h2>
+        <div class="search-container">
+            <!-- Search Form -->
+            <form method="GET" action="{% url 'hospital:nurse_patient_flowboard' %}" class="d-flex gap-2 align-items-center">
+                <div class="input-group search-input-group">
+                    <input 
+                        type="text" 
+                        name="search" 
+                        class="form-control" 
+                        placeholder="Search by name, MRN, phone..." 
+                        value="{{ request.GET.search|default:'' }}"
+                        autocomplete="off"
+                        id="searchInput"
+                    >
+                    <button class="btn btn-primary" type="submit" id="searchButton">
+                        <i class="bi bi-search me-1"></i> Search
+                    </button>
+                </div>
+                {% if request.GET.search %}
+                <a href="{% url 'hospital:nurse_patient_flowboard' %}" class="btn btn-outline-danger">
+                    <i class="bi bi-x-circle me-1"></i> Clear
+                </a>
+                {% endif %}
+            </form>
+            <a href="{% url 'hospital:nurse_dashboard' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i> Back to Dashboard
+            </a>
+        </div>
+    </div>
+    
+    <!-- Search Results Info -->
+    {% if request.GET.search %}
+    <div class="alert alert-info mb-3">
+        <i class="bi bi-info-circle me-2"></i>
+        <strong>Search Results:</strong> Showing results for "<strong>{{ request.GET.search }}</strong>"
+        <span class="badge bg-primary ms-2">{{ total_patients }} found</span>
+    </div>
+    {% endif %}
+    
+    <!-- Statistics -->
+    <div class="row stats-row">
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">Total Patients</div>
+                <div class="stat-value">{{ total_patients }}</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">Active</div>
+                <div class="stat-value text-primary">{{ total_active }}</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">Avg Wait Time</div>
+                <div class="stat-value">{{ avg_wait_time }} min</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">Delayed (>60 min)</div>
+                <div class="stat-value text-danger">{{ delayed_count }}</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Stage Columns -->
+    <div class="row">
+        {% for stage_type, stage_data in queue_by_stage.items %}
+        <div class="col-md-4 col-lg-3">
+            <div class="stage-column">
+                <div class="stage-header">
+                    <div class="stage-title">
+                        <i class="bi bi-{{ stage_data.icon }}" style="color: {{ stage_data.color }};"></i>
+                        {{ stage_data.name }}
+                    </div>
+                    <span class="stage-count" style="background: {{ stage_data.color }};">{{ stage_data.patients|length }}</span>
+                </div>
+                
+                {% if stage_data.patients %}
+                    {% for patient in stage_data.patients %}
+                    <div class="patient-card">
+                        <div class="patient-name">{{ patient.patient_name }}</div>
+                        {% if patient.django_patient %}
+                        <div class="mt-1 mb-1">{% patient_payer_badges patient.django_patient patient.django_encounter %}</div>
+                        {% endif %}
+                        <div class="patient-meta">
+                            <div><i class="bi bi-person-badge"></i> MRN: {{ patient.mrn }}</div>
+                            <div><i class="bi bi-hospital"></i> {{ patient.encounter_type }}</div>
+                            {% if patient.staff %}
+                                <div><i class="bi bi-person-circle"></i> {{ patient.staff }}</div>
+                            {% endif %}
+                        </div>
+                        <div class="wait-time {% if patient.wait_minutes > 60 %}urgent{% endif %}" 
+                             data-wait-minutes="{{ patient.wait_minutes }}"
+                             id="wait-{{ patient.encounter_id }}">
+                            <i class="bi bi-clock"></i> <span class="time-display">{{ patient.wait_minutes }}</span> min
+                        </div>
+                        <div class="mt-2">
+                            <a href="{% url 'hospital:patient_flow' patient.encounter_id %}" 
+                               class="btn btn-sm btn-primary">
+                                <i class="bi bi-eye"></i> View Flow
+                            </a>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center text-muted py-4">
+                        <i class="bi bi-inbox" style="font-size: 48px;"></i>
+                        <p class="mt-2">No patients</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <!-- Recent Completed -->
+    {% if recent_completed %}
+    <div class="card mt-4">
+        <div class="card-header bg-secondary text-white">
+            <h5 class="mb-0"><i class="bi bi-check-circle"></i> Recently Completed (Last 7 Days)</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                {% for encounter in recent_completed %}
+                <div class="col-md-4 mb-3">
+                    <div class="card">
+                        <div class="card-body">
+                            <h6>{{ encounter.patient.full_name }} {% patient_payer_badges encounter.patient encounter %}</h6>
+                            <p class="mb-1"><small>MRN: {{ encounter.patient.mrn }}</small></p>
+                            <p class="mb-1"><small>{{ encounter.get_encounter_type_display }}</small></p>
+                            <p class="mb-0"><small class="text-muted">Completed: {{ encounter.ended_at|date:"M d, Y H:i" }}</small></p>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+// Search input enter key handler
+document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('searchInput');
+    const searchButton = document.getElementById('searchButton');
+    
+    if (searchInput) {
+        searchInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (searchButton) {
+                    searchButton.click();
+                }
+            }
+        });
+        
+        // Focus search input on page load if no search query
+        {% if not request.GET.search %}
+        searchInput.focus();
+        {% endif %}
+    }
+});
+
+// Auto-refresh every 15 seconds (only if not searching)
+{% if not request.GET.search %}
+setInterval(function() {
+    location.reload();
+}, 15000);
+{% endif %}
+
+// Update wait times every minute (blinking effect)
+const startTime = Date.now();
+
+function updateWaitTimes() {
+    document.querySelectorAll('.wait-time').forEach(function(element) {
+        const waitMinutes = parseInt(element.getAttribute('data-wait-minutes')) || 0;
+        const timeDisplay = element.querySelector('.time-display');
+        if (timeDisplay) {
+            const elapsedMinutes = Math.floor((Date.now() - startTime) / 60000);
+            const newTime = waitMinutes + elapsedMinutes;
+            timeDisplay.textContent = newTime;
+            
+            if (newTime > 60 && !element.classList.contains('urgent')) {
+                element.classList.add('urgent');
+            }
+        }
+    });
+}
+
+setInterval(updateWaitTimes, 60000);
+updateWaitTimes();
+</script>
+{% endblock %}

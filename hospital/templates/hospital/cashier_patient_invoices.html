@@ -1,0 +1,557 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}{{ patient.full_name }} - Invoices - Cashier - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    .invoice-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 16px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+        border-left: 4px solid var(--primary);
+    }
+    
+    .invoice-card:hover {
+        transform: translateX(5px);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    }
+    
+    .invoice-card.status-paid {
+        border-left-color: #48bb78;
+    }
+    
+    .invoice-card.status-overdue {
+        border-left-color: #f56565;
+    }
+    
+    .invoice-card.status-issued,
+    .invoice-card.status-partially_paid {
+        border-left-color: #ed8936;
+    }
+    
+    .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 24px;
+        text-align: center;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        border-top: 4px solid var(--primary);
+    }
+    
+    .stat-card.danger {
+        border-top-color: #f56565;
+    }
+    
+    .stat-card.success {
+        border-top-color: #48bb78;
+    }
+    
+    .stat-card.info {
+        border-top-color: #4299e1;
+    }
+    /* Print: hide app chrome (do not use visibility:hidden on body — it breaks layout / tables) */
+    @page {
+        size: A4 portrait;
+        margin: 12mm 14mm;
+    }
+    @media print {
+        body {
+            background: #fff !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+        .sidebar, .sidebar-overlay, .topbar, .mobile-menu-toggle, .no-print {
+            display: none !important;
+        }
+        .content-container {
+            margin: 0 !important;
+            padding: 0 !important;
+            max-width: 100% !important;
+        }
+        .container-fluid { padding-left: 0 !important; padding-right: 0 !important; }
+        .invoice-print-area {
+            position: relative !important;
+            left: auto !important;
+            top: auto !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            padding: 0 !important;
+            background: #fff !important;
+        }
+        .invoice-print-area .card {
+            box-shadow: none !important;
+            border: 1px solid #dee2e6 !important;
+            page-break-inside: avoid;
+        }
+        .invoice-print-area .stat-card {
+            border: 1px solid #dee2e6 !important;
+            page-break-inside: avoid;
+        }
+        #combined-invoice .card-header {
+            background: #1e3a5f !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+            color: #fff !important;
+        }
+        .print-doc-title { display: block !important; }
+        .print-only-detail { display: block !important; }
+        #print-summary-footer { display: block !important; }
+        a[href]:after { content: none !important; }
+    }
+    .print-doc-title { display: none; }
+    .print-only-detail { display: none; }
+    #print-summary-footer { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header (screen only) -->
+    <div class="d-flex justify-content-between align-items-center mb-4 no-print">
+        <div>
+            <h1 style="font-weight: 700; color: var(--dark);">
+                <i class="bi bi-person-circle me-2"></i>{{ patient.full_name }} - Invoices
+            </h1>
+            <p class="text-muted mb-0">
+                MRN: {{ patient.mrn }}
+                {% if patient.phone_number %} | Phone: {{ patient.phone_number }}{% endif %}
+                {% if patient.primary_insurance %} | Payer: {{ patient.primary_insurance.name }}{% endif %}
+            </p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:cashier_invoices' %}" class="btn btn-outline-secondary me-2">
+                <i class="bi bi-arrow-left"></i> Back to All Invoices
+            </a>
+            <a href="{% url 'hospital:record_patient_deposit' patient.pk %}" class="btn btn-outline-success me-2">
+                <i class="bi bi-wallet2"></i> Record Deposit/Credit
+            </a>
+            <a href="{% url 'hospital:patient_deposit_history' patient.pk %}" class="btn btn-outline-info me-2" title="View deposit history">
+                <i class="bi bi-bank"></i> Deposit History
+            </a>
+            <a href="{% url 'hospital:cashier_patient_invoices_print' patient.pk %}" class="btn btn-primary me-2" target="_blank" rel="noopener" title="Opens a clean page for Print or Save as PDF">
+                <i class="bi bi-file-earmark-pdf"></i> Print / PDF
+            </a>
+            <a href="{% url 'hospital:cashier_patient_invoices_print' patient.pk %}?auto_print=1" class="btn btn-outline-primary me-2" target="_blank" rel="noopener" title="Open print view and trigger print dialog">
+                <i class="bi bi-printer"></i> Print dialog
+            </a>
+            <button type="button" class="btn btn-outline-secondary me-2" onclick="window.print(); return false;" title="Print this page (includes sidebar hidden via CSS)">
+                <i class="bi bi-printer-fill"></i> Quick print
+            </button>
+            <a href="{% url 'hospital:cashier_patient_total_bill' patient.pk %}" class="btn btn-primary">
+                <i class="bi bi-receipt"></i> View Total Bill
+            </a>
+        </div>
+    </div>
+    
+    <!-- Printable document: detailed summary + per-invoice breakdown + combined table -->
+    <div class="invoice-print-area">
+        <div class="print-doc-title" style="border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 16px;">
+            <h2 style="margin: 0 0 4px 0; font-size: 1.25rem; font-weight: 700;">{{ hospital_name|default:"Hospital" }}</h2>
+            <h3 style="margin: 8px 0 4px 0; font-size: 1.1rem; font-weight: 600;">DETAILED INVOICE SUMMARY</h3>
+            <p style="margin: 0; font-size: 0.9rem; color: #555;">{{ patient.full_name }} &nbsp;|&nbsp; MRN: {{ patient.mrn }}{% if patient.phone_number %} &nbsp;|&nbsp; {{ patient.phone_number }}{% endif %}</p>
+            <p style="margin: 4px 0 0 0; font-size: 0.8rem; color: #777;">Printed on: <span id="print-date"></span></p>
+        </div>
+        <script>
+            (function(){ var d = new Date(); document.getElementById('print-date').textContent = d.toLocaleString(); })();
+        </script>
+
+        <p class="d-none d-print-block small text-muted mb-2 border rounded p-2 bg-light">
+            For a cleaner document, use <strong>Print / PDF</strong> on screen (opens a page without menus). In the browser print dialog, disable <strong>Headers and footers</strong> to hide the URL.
+        </p>
+
+    <!-- Invoice roster: always included when printing from this page (even if line-item tables are empty) -->
+    {% if invoices %}
+    <div class="d-none d-print-block mb-3">
+        <h5 class="small fw-bold text-uppercase text-secondary mb-2">Invoice summary</h5>
+        <div class="table-responsive">
+            <table class="table table-bordered table-sm">
+                <thead class="table-light">
+                    <tr>
+                        <th>Invoice</th>
+                        <th>Issued</th>
+                        <th>Payer</th>
+                        <th class="text-end">Total (GHS)</th>
+                        <th class="text-end">Balance (GHS)</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for invoice in invoices %}
+                    <tr>
+                        <td><code>{{ invoice.invoice_number }}</code></td>
+                        <td>{{ invoice.issued_at|date:"M d, Y" }}</td>
+                        <td>{% if invoice.payer %}{{ invoice.payer.name }}{% else %}—{% endif %}</td>
+                        <td class="text-end">{{ invoice.total_amount|floatformat:2|intcomma }}</td>
+                        <td class="text-end">{{ invoice.balance|floatformat:2|intcomma }}</td>
+                        <td>{{ invoice.get_status_display }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Statistics Cards -->
+    <div class="row g-3 mb-4" id="stats-for-print">
+        <div class="col-md-3">
+            <div class="stat-card danger">
+                <h3 style="font-size: 2rem; margin: 10px 0; font-weight: bold; color: #f56565;">
+                    GHS {{ effective_outstanding|floatformat:2|intcomma|default:"0.00" }}
+                </h3>
+                <p style="margin: 0; color: var(--gray);">Net Amount Due</p>
+                {% if deposit_balance > 0 %}
+                <small class="text-success mt-2 d-block">
+                    <i class="bi bi-wallet2"></i> Credit: GHS {{ deposit_balance|floatformat:2|intcomma }} applied
+                </small>
+                {% endif %}
+                {% if effective_outstanding > 0 %}
+                <small class="text-danger mt-1 d-block">
+                    <i class="bi bi-exclamation-triangle"></i> Payment Required
+                </small>
+                {% endif %}
+            </div>
+        </div>
+        {% if deposit_balance > 0 %}
+        <div class="col-md-3">
+            <div class="stat-card success">
+                <h3 style="font-size: 2rem; margin: 10px 0; font-weight: bold; color: #48bb78;">
+                    GHS {{ deposit_balance|floatformat:2|intcomma }}
+                </h3>
+                <p style="margin: 0; color: var(--gray);">Deposit/Credit Balance</p>
+                <small class="text-muted mt-2 d-block">
+                    Reduces amount due
+                </small>
+            </div>
+        </div>
+        {% endif %}
+        <div class="col-md-3">
+            <div class="stat-card success">
+                <h3 style="font-size: 2rem; margin: 10px 0; font-weight: bold; color: #48bb78;">
+                    GHS {{ total_paid|default:0|floatformat:2|intcomma }}
+                </h3>
+                <p style="margin: 0; color: var(--gray); font-weight: 600;">Amount Paid</p>
+                <small class="text-muted">Total payments received to date</small>
+                {% if deposit_applied_to_bill and deposit_applied_to_bill > 0 %}
+                <small class="d-block mt-1 text-success"><i class="bi bi-wallet2"></i> From deposit: GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }}</small>
+                {% endif %}
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <h3 style="font-size: 2.5rem; margin: 10px 0; font-weight: bold; color: var(--primary);">
+                    {{ total_invoices|default:0 }}
+                </h3>
+                <p style="margin: 0; color: var(--gray);">Invoices</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Patient Quick Info -->
+    <div class="card shadow-sm mb-4" id="patient-info-print">
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6 class="text-muted mb-3">Patient Information</h6>
+                    <table class="table table-sm table-borderless">
+                        <tr>
+                            <th width="40%">Full Name:</th>
+                            <td><strong>{{ patient.full_name }}</strong></td>
+                        </tr>
+                        <tr>
+                            <th>MRN:</th>
+                            <td><code>{{ patient.mrn }}</code></td>
+                        </tr>
+                        <tr>
+                            <th>Date of Birth:</th>
+                            <td>{{ patient.date_of_birth|date:"M d, Y"|default:"N/A" }}</td>
+                        </tr>
+                        <tr>
+                            <th>Gender:</th>
+                            <td>{{ patient.get_gender_display|default:"N/A" }}</td>
+                        </tr>
+                    </table>
+                </div>
+                <div class="col-md-6">
+                    <h6 class="text-muted mb-3">Contact & Insurance</h6>
+                    <table class="table table-sm table-borderless">
+                        <tr>
+                            <th width="40%">Phone:</th>
+                            <td>{{ patient.phone_number|default:"N/A" }}</td>
+                        </tr>
+                        <tr>
+                            <th>Email:</th>
+                            <td>{{ patient.email|default:"N/A" }}</td>
+                        </tr>
+                        <tr>
+                            <th>Primary Payer:</th>
+                            <td>
+                                {% if patient.primary_insurance %}
+                                    <span class="badge bg-info">{{ patient.primary_insurance.name }}</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">Cash</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Address:</th>
+                            <td>{{ patient.address|default:"N/A"|truncatewords:10 }}</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detailed breakdown by invoice (shown only when printing) -->
+    {% if invoices %}
+    <div class="mb-4 print-only-detail" id="detailed-invoices-print">
+        <h5 class="mb-3" style="font-weight: 600;">Detailed breakdown by invoice</h5>
+        {% for invoice in invoices %}
+        <div class="card mb-3" style="page-break-inside: avoid;">
+            <div class="card-header bg-light py-2">
+                <strong>Invoice {{ invoice.invoice_number }}</strong>
+                <span class="text-muted ms-2">Issued: {{ invoice.issued_at|date:"M d, Y" }}</span>
+                <span class="ms-2">Total: GHS {{ invoice.total_amount|floatformat:2|intcomma }}</span>
+                <span class="ms-2">Balance: GHS {{ invoice.balance|floatformat:2|intcomma }}</span>
+                {% if invoice.payer %}<span class="ms-2 badge bg-secondary">{{ invoice.payer.name }}</span>{% endif %}
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm table-bordered mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>#</th>
+                            <th>Service Code</th>
+                            <th>Description</th>
+                            <th class="text-center">Qty</th>
+                            <th class="text-end">Unit Price (GHS)</th>
+                            <th class="text-end">Discount</th>
+                            <th class="text-end">Total (GHS)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for line in invoice.billable_lines %}
+                        <tr>
+                            <td>{{ forloop.counter }}</td>
+                            <td>{{ line.service_code.code|default:"–" }}</td>
+                            <td>{{ line.description }}</td>
+                            <td class="text-center">{{ line.quantity }}</td>
+                            <td class="text-end">{{ line.display_unit_price|floatformat:2 }}</td>
+                            <td class="text-end">{% if line.discount_amount and line.discount_amount > 0 %}-{{ line.discount_amount|floatformat:2 }}{% else %}–{% endif %}</td>
+                            <td class="text-end"><strong>{{ line.display_line_total|floatformat:2|intcomma }}</strong></td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="7" class="text-muted text-center">No line items</td></tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot class="table-light">
+                        <tr>
+                            <td colspan="6" class="text-end"><strong>Invoice total</strong></td>
+                            <td class="text-end"><strong>GHS {{ invoice.total_amount|floatformat:2|intcomma }}</strong></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Combined Invoice: all line items in one view -->
+    {% if combined_lines %}
+    <div class="card shadow-sm mb-4" id="combined-invoice">
+        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">
+                <i class="bi bi-receipt me-2"></i>Combined line items – all invoices
+                <span class="badge bg-light text-primary ms-2">{{ combined_lines|length }} line{{ combined_lines|length|pluralize }}</span>
+            </h5>
+            <button type="button" class="btn btn-light btn-sm no-print" onclick="window.print(); return false;" title="Print in proper form">
+                <i class="bi bi-printer"></i> Print
+            </button>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover table-modern mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 4%;">#</th>
+                            <th style="width: 12%;">Invoice</th>
+                            <th style="width: 10%;">Service Code</th>
+                            <th style="width: 28%;">Description</th>
+                            <th style="width: 6%;" class="text-center">Qty</th>
+                            <th style="width: 10%;" class="text-end">Unit Price</th>
+                            <th style="width: 8%;" class="text-end">Disc.</th>
+                            <th style="width: 10%;" class="text-end">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in combined_lines %}
+                        <tr>
+                            <td><span class="badge bg-light text-dark">{{ forloop.counter }}</span></td>
+                            <td><code>{{ item.invoice_number }}</code></td>
+                            <td>{{ item.line.service_code.code|default:"–" }}</td>
+                            <td>{{ item.line.description }}</td>
+                            <td class="text-center">{{ item.line.quantity }}</td>
+                            <td class="text-end">GHS {{ item.line.display_unit_price|floatformat:2 }}</td>
+                            <td class="text-end">
+                                {% if item.line.discount_amount and item.line.discount_amount > 0 %}
+                                -GHS {{ item.line.discount_amount|floatformat:2 }}
+                                {% else %}–{% endif %}
+                            </td>
+                            <td class="text-end"><strong>GHS {{ item.line.display_line_total|floatformat:2|intcomma }}</strong></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot class="table-light" style="font-weight: 600;">
+                        <tr>
+                            <td colspan="7" class="text-end">Subtotal:</td>
+                            <td class="text-end">GHS {{ combined_total|floatformat:2|intcomma }}</td>
+                        </tr>
+                        <tr>
+                            <td colspan="7" class="text-end text-success">Total Amount Paid{% if deposit_applied_to_bill and deposit_applied_to_bill > 0 %} <span class="text-muted fw-normal">(includes GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }} from deposit)</span>{% endif %}:</td>
+                            <td class="text-end text-success">GHS {{ total_paid|floatformat:2|intcomma }}</td>
+                        </tr>
+                        <tr style="border-top: 2px solid #dee2e6; font-size: 1.05rem;">
+                            <td colspan="7" class="text-end">Balance Due:</td>
+                            <td class="text-end" style="color: {% if combined_balance > 0 %}var(--danger){% else %}var(--success);{% endif %}">
+                                GHS {{ combined_balance|floatformat:2|intcomma }}
+                            </td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Print summary footer (totals repeated at end of print) -->
+    <div class="card border mt-4 mb-2 print-only-detail" id="print-summary-footer">
+        <div class="card-body py-3">
+            <table class="table table-sm table-borderless mb-0" style="max-width: 400px; margin-left: auto;">
+                <tr>
+                    <th class="text-end">Subtotal:</th>
+                    <td class="text-end">GHS {{ combined_total|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr>
+                    <th class="text-end text-success">Total Amount Paid{% if deposit_applied_to_bill and deposit_applied_to_bill > 0 %} <span class="text-muted fw-normal">(incl. GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }} deposit)</span>{% endif %}:</th>
+                    <td class="text-end text-success">GHS {{ total_paid|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr style="border-top: 2px solid #dee2e6;">
+                    <th class="text-end">Balance Due:</th>
+                    <td class="text-end fw-bold" style="color: {% if combined_balance > 0 %}var(--danger){% else %}var(--success);{% endif %}">GHS {{ combined_balance|floatformat:2|intcomma }}</td>
+                </tr>
+            </table>
+        </div>
+    </div>
+    </div><!-- end .invoice-print-area -->
+
+    <!-- Invoices List -->
+    {% if invoices %}
+    <div class="card shadow-sm no-print" id="all-invoices-list">
+        <div class="card-header bg-primary text-white">
+            <div class="d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="bi bi-receipt-cutoff me-2"></i>All Invoices
+                    <span class="badge bg-light text-primary ms-2">{{ invoices.count }}</span>
+                </h5>
+                {% if effective_outstanding > 0 %}
+                <span class="badge bg-warning text-dark">
+                    Net due: GHS {{ effective_outstanding|floatformat:2|intcomma }}
+                    {% if deposit_balance > 0 %}(Credit: GHS {{ deposit_balance|floatformat:2|intcomma }}){% endif %}
+                </span>
+                {% elif outstanding > 0 and deposit_balance >= outstanding %}
+                <span class="badge bg-success">
+                    <i class="bi bi-check-circle"></i> Fully covered by credit
+                </span>
+                {% else %}
+                <span class="badge bg-success">
+                    <i class="bi bi-check-circle"></i> All Paid
+                </span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="card-body">
+            {% for invoice in invoices %}
+            <div class="invoice-card status-{{ invoice.status }}">
+                <div class="row align-items-center">
+                    <div class="col-md-3">
+                        <h5 style="margin: 0 0 5px 0; font-weight: 600;">
+                            <a href="{% url 'hospital:cashier_invoice_detail' invoice.pk %}" style="text-decoration: none; color: inherit;">
+                                {{ invoice.invoice_number }}
+                            </a>
+                        </h5>
+                        <div style="font-size: 0.85rem; color: var(--gray); margin-bottom: 8px;">
+                            <i class="bi bi-calendar"></i> {{ invoice.issued_at|date:"M d, Y" }}
+                            {% if invoice.due_at %}
+                            <br><i class="bi bi-calendar-event"></i> Due: {{ invoice.due_at|date:"M d, Y" }}
+                            {% endif %}
+                        </div>
+                        {% if invoice.encounter %}
+                        <div style="font-size: 0.85rem; color: var(--gray);">
+                            <i class="bi bi-hospital"></i> {{ invoice.encounter.get_encounter_type_display }}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-2">
+                        <div style="font-size: 1.3rem; font-weight: bold; color: var(--dark);">
+                            GHS {{ invoice.total_amount|floatformat:2|intcomma }}
+                        </div>
+                        <div style="font-size: 0.85rem; color: var(--gray);">Total</div>
+                    </div>
+                    <div class="col-md-2">
+                        {% if invoice.balance > 0 %}
+                        <div style="font-size: 1.2rem; font-weight: bold; color: var(--danger);">
+                            GHS {{ invoice.balance|floatformat:2|intcomma }}
+                        </div>
+                        <div style="font-size: 0.85rem; color: var(--gray);">Balance</div>
+                        {% else %}
+                        <div style="font-size: 1rem; font-weight: bold; color: var(--success);">
+                            Paid
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-2 text-center">
+                        <span class="badge-modern badge-{% if invoice.status == 'paid' %}success{% elif invoice.status == 'overdue' %}danger{% elif invoice.status == 'issued' or invoice.status == 'partially_paid' %}warning{% else %}secondary{% endif %}">
+                            {{ invoice.get_status_display }}
+                        </span>
+                        {% if invoice.payer %}
+                        <div style="font-size: 0.85rem; color: var(--gray); margin-top: 4px;">
+                            <i class="bi bi-shield-check"></i> {{ invoice.payer.name }}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-3 text-end">
+                        {% if invoice.balance > 0 and invoice.status != 'paid' %}
+                        <a href="{% url 'hospital:process_payment_invoice' invoice.pk %}" class="btn btn-success-modern btn-modern mb-2 w-100">
+                            <i class="bi bi-credit-card"></i> Process Payment
+                        </a>
+                        {% endif %}
+                        <div class="btn-group-vertical w-100" style="gap: 4px;">
+                            <a href="{% url 'hospital:cashier_invoice_detail' invoice.pk %}" class="btn btn-outline-primary btn-modern">
+                                <i class="bi bi-eye"></i> View Details
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% else %}
+    <div class="card shadow-sm">
+        <div class="card-body text-center py-5">
+            <i class="bi bi-inbox" style="font-size: 64px; color: var(--gray); opacity: 0.3;"></i>
+            <h4 style="margin-top: 24px; color: var(--gray);">No invoices found</h4>
+            <p style="color: var(--gray);">This patient has no invoice records.</p>
+            <a href="{% url 'hospital:cashier_invoices' %}" class="btn btn-primary mt-3">
+                <i class="bi bi-arrow-left"></i> Back to All Invoices
+            </a>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

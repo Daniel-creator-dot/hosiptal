@@ -1,0 +1,137 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Create Imaging Study{% endblock %}
+{% block page_title %}🩻 Create New Imaging Study{% endblock %}
+{% block page_subtitle %}Schedule and configure imaging study for patient{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <div class="card shadow-sm">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-plus-circle me-2"></i>New Imaging Study
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="post" id="createStudyForm">
+                    {% csrf_token %}
+                    
+                    <!-- Order Selection -->
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Select Order <span class="text-danger">*</span></label>
+                        <select name="order_id" class="form-select" required id="orderSelect">
+                            <option value="">-- Select an imaging order --</option>
+                            {% for order in pending_orders %}
+                            <option value="{{ order.id }}" 
+                                    data-patient="{{ order.encounter.patient.full_name }}"
+                                    data-mrn="{{ order.encounter.patient.mrn }}"
+                                    data-priority="{{ order.priority }}">
+                                {{ order.encounter.patient.full_name }} (MRN: {{ order.encounter.patient.mrn }}) - 
+                                {{ order.get_priority_display }} - 
+                                {{ order.requested_at|date:"M d, Y H:i" }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <small class="text-muted">Select the imaging order to create a study for</small>
+                    </div>
+                    
+                    <!-- Patient Info Display -->
+                    <div id="patientInfo" class="alert alert-info" style="display: none;">
+                        <strong>Patient:</strong> <span id="patientName"></span><br>
+                        <strong>MRN:</strong> <span id="patientMRN"></span>
+                    </div>
+                    
+                    <!-- Modality -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Modality <span class="text-danger">*</span></label>
+                        <select name="modality" class="form-select" required>
+                            {% for value, label in modality_choices %}
+                            <option value="{{ value }}" {% if value == 'xray' %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <!-- Body Part -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Body Part <span class="text-danger">*</span></label>
+                        <input type="text" name="body_part" class="form-control" required 
+                               placeholder="e.g., Chest, Abdomen, Head, etc.">
+                    </div>
+                    
+                    <!-- Study Type -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Study Type</label>
+                        <input type="text" name="study_type" class="form-control" 
+                               placeholder="e.g., PA Chest X-Ray, CT Head with Contrast">
+                    </div>
+                    
+                    <!-- Priority -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Priority</label>
+                        <select name="priority" class="form-select">
+                            {% for value, label in priority_choices %}
+                            <option value="{{ value }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <!-- Scheduled Date/Time -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Scheduled Date & Time</label>
+                        <input type="datetime-local" name="scheduled_at" class="form-control" 
+                               value="{{ 'now'|date:'Y-m-d\TH:i' }}">
+                    </div>
+                    
+                    <!-- Buttons -->
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-circle me-1"></i>Create Study
+                        </button>
+                        <a href="{% url 'hospital:imaging_dashboard' %}" class="btn btn-secondary">
+                            <i class="bi bi-x-circle me-1"></i>Cancel
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const orderSelect = document.getElementById('orderSelect');
+    const patientInfo = document.getElementById('patientInfo');
+    const patientName = document.getElementById('patientName');
+    const patientMRN = document.getElementById('patientMRN');
+    const prioritySelect = document.querySelector('select[name="priority"]');
+    
+    orderSelect.addEventListener('change', function() {
+        const selectedOption = this.options[this.selectedIndex];
+        if (selectedOption.value) {
+            patientName.textContent = selectedOption.dataset.patient;
+            patientMRN.textContent = selectedOption.dataset.mrn;
+            patientInfo.style.display = 'block';
+            
+            // Set priority from order
+            if (selectedOption.dataset.priority) {
+                prioritySelect.value = selectedOption.dataset.priority;
+            }
+        } else {
+            patientInfo.style.display = 'none';
+        }
+    });
+});
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+

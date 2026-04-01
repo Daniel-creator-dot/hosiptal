@@ -75,6 +75,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config('SECRET_KEY', default='e77uf3k0c3!53--4jid)7%08=n(8vf)^)#utg-aq+590i%*qq0')
 
 # SECURITY WARNING: don't run with debug turned on in production!
+# Production MUST set DEBUG=False in .env. When DEBUG is True: cached template
+# loaders are disabled, APP_DIRS template discovery is slower, WhiteNoise static
+# cache is 0, and security checks are relaxed.
 DEBUG = config('DEBUG', default=True, cast=bool)
 
 # Allow all hosts in DEBUG mode, or use configured hosts in production
@@ -83,7 +86,7 @@ DEBUG = config('DEBUG', default=True, cast=bool)
 if DEBUG:
     # In DEBUG mode, allow common development hosts and IP addresses
     # Include all common local network IPs for easier access from other devices
-    default_hosts = 'localhost,127.0.0.1,0.0.0.0,192.168.2.97,192.168.233.1,192.168.64.1,172.20.112.1,192.168.1.1,192.168.0.1,10.0.0.1,10.132.245.143'
+    default_hosts = 'localhost,127.0.0.1,0.0.0.0,192.168.2.97,192.168.2.216,192.168.233.1,192.168.64.1,172.20.112.1,192.168.1.1,192.168.0.1,192.168.0.105,10.0.0.1,10.132.245.143'
 else:
     # In production, require explicit ALLOWED_HOSTS configuration
     # Default to localhost only if not set (will fail in production - user must configure)
@@ -106,9 +109,9 @@ if DEBUG:
     # Add common local IPs if not already present
     # Also add common private network ranges for easier network access
     common_hosts = [
-        '192.168.2.97', '127.0.0.1', 'localhost', '0.0.0.0',
+        '192.168.2.97', '192.168.2.216', '127.0.0.1', 'localhost', '0.0.0.0',
         '192.168.233.1', '192.168.64.1', '172.20.112.1',
-        '192.168.1.1', '192.168.0.1', '10.0.0.1', '10.132.245.143'
+        '192.168.1.1', '192.168.0.1', '192.168.0.105', '10.0.0.1', '10.132.245.143'
     ]
     for host in common_hosts:
         if host not in ALLOWED_HOSTS:
@@ -190,12 +193,16 @@ MIDDLEWARE = [
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'hospital.middleware_validation_error.ValidationErrorJSONMiddleware',  # Return safe JSON on ValidationError (e.g. invalid UUID)
+    'django.contrib.auth.middleware.AuthenticationMiddleware',  # Must come before BulkCreationMonitorMiddleware
+    'hospital.middleware_finance_admin_access.FinanceAccountAdminAccessMiddleware',  # Grant finance/account users admin access (is_staff) so they are not asked to log in again
+    'hospital.middleware_bulk_creation_monitor.BulkCreationMonitorMiddleware',  # Monitor and prevent bulk creation (after AuthenticationMiddleware)
     'django.contrib.messages.middleware.MessageMiddleware',  # Must come after SessionMiddleware and AuthenticationMiddleware
     'hospital.middleware_session_timeout.SessionTimeoutMiddleware',  # Auto-logout after 2 hours idle
     'hospital.middleware_audit.AuditMiddleware',  # Audit logging for compliance
-    'hospital.middleware_accountant_restriction.AccountantRestrictionMiddleware',  # Restrict accountants to accounting features only
-    'hospital.middleware_hr_restriction.HRRestrictionMiddleware',  # Restrict HR staff to HR features only
+    # 'hospital.middleware_accountant_restriction.AccountantRestrictionMiddleware',  # DISABLED: Restrict accountants to accounting features only - temporarily disabled to restore app access
+    # 'hospital.middleware_hr_restriction.HRRestrictionMiddleware',  # DISABLED: Restrict HR staff to HR features only - temporarily disabled to restore app access
+    'hospital.middleware_midwife_restriction.MidwifeRestrictionMiddleware',  # Block midwives from finance/lab/pharmacy; allow nurse-equivalent clinical paths
     'allauth.account.middleware.AccountMiddleware',  # Required by allauth
     # 'django_otp.middleware.OTPMiddleware',  # Disabled for performance
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -218,8 +225,16 @@ handler403 = 'hms.views.handler403'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [BASE_DIR / 'hms' / 'templates'],
-        'APP_DIRS': False,  # Using custom loaders with caching
+        # Keep project templates in `hms/templates/`, and also allow templates
+        # to be resolved directly from `hospital/templates/` (useful for shared
+        # deployments and avoids surprises when APP_DIRS is toggled).
+        'DIRS': [
+            BASE_DIR / 'hms' / 'templates',
+            BASE_DIR / 'hospital' / 'templates',
+        ],
+        # In DEBUG, do NOT use cached template loaders—otherwise missing-template
+        # errors can be cached and persist until restart.
+        'APP_DIRS': True if DEBUG else False,
         'OPTIONS': {
             'context_processors': [
                 'django.template.context_processors.debug',
@@ -229,21 +244,25 @@ TEMPLATES = [
                 'django.template.context_processors.media',
                 'django.template.context_processors.static',
                 'hospital.context_processors.global_csrf_token',
-            ],
-            # Use CACHED loaders for MUCH better performance
-            'loaders': [
-                ('django.template.loaders.cached.Loader', [
-                    'django.template.loaders.filesystem.Loader',
-                    'django.template.loaders.app_directories.Loader',
-                ]),
+                'hospital.context_processors.staff_activity_reminders',
             ],
             # Performance optimizations
             'debug': DEBUG,
-            'string_if_invalid': '' if not DEBUG else 'INVALID',  # Fail silently in production
+            'string_if_invalid': '',  # Never use 'INVALID' - it was breaking store transfer (UUID validation). Use '' so bad vars are empty.
             'autoescape': True,
         },
     },
 ]
+
+# Use CACHED loaders for MUCH better performance in production.
+# Important: Keep this OUT of DEBUG to avoid caching template misses while developing.
+if not DEBUG:
+    TEMPLATES[0]['OPTIONS']['loaders'] = [
+        ('django.template.loaders.cached.Loader', [
+            'django.template.loaders.filesystem.Loader',
+            'django.template.loaders.app_directories.Loader',
+        ]),
+    ]
 
 WSGI_APPLICATION = 'hms.wsgi.application'
 
@@ -272,6 +291,16 @@ DATABASES = {
         conn_health_checks=config('DATABASE_CONN_HEALTH_CHECKS', default=True, cast=bool),  # Check connection health before using
     )
 }
+
+# Server deployment: Ensure database connection settings are robust
+if not DEBUG:
+    # Production database settings - more robust connection handling
+    DATABASES['default']['CONN_MAX_AGE'] = 600  # Keep connections alive for 10 minutes
+    DATABASES['default']['OPTIONS'] = DATABASES['default'].get('OPTIONS', {})
+    DATABASES['default']['OPTIONS'].update({
+        'connect_timeout': 30,  # 30 second connection timeout
+        'options': '-c statement_timeout=30000',  # 30 second query timeout
+    })
 
 # Database-Specific Optimizations
 db_engine = DATABASES['default'].get('ENGINE', '')
@@ -359,9 +388,11 @@ DEFAULT_LOGIN_TIMEZONE = config('DEFAULT_LOGIN_TIMEZONE', default='Africa/Accra'
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
 STATIC_URL = '/static/'
+# Static files directories - only in development (not needed when using collectstatic)
+# In production, use collected static files from STATIC_ROOT only
 STATICFILES_DIRS = [
     BASE_DIR / 'hospital' / 'static',
-]
+] if DEBUG else []  # Empty in production - use collected static files only
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
@@ -383,9 +414,9 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
     'DEFAULT_FILTER_BACKENDS': [
-        'django_filters.rest_framework.DjangoFilterBackend',
         'rest_framework.filters.SearchFilter',
         'rest_framework.filters.OrderingFilter',
+        # 'django_filters.rest_framework.DjangoFilterBackend',  # Temporarily disabled - incompatible with Python 3.14 (pkgutil.find_loader removed)
     ],
 }
 
@@ -445,7 +476,9 @@ if USE_REDIS_CACHE:
         redis_client.ping()
         redis_available = True
     except Exception as e:
-        # Redis not available, fallback to local memory cache
+        # Redis not available, fallback to local memory cache (per-process, not
+        # shared across Gunicorn workers; sessions use DB). In production, ensure
+        # Redis is running and reachable to avoid this fallback.
         redis_available = False
         USE_REDIS_CACHE = False
         import logging
@@ -467,7 +500,7 @@ if USE_REDIS_CACHE and redis_available:
                     'max_connections': REDIS_MAX_CONNECTIONS,
                     'retry_on_timeout': True,
                 },
-                'SERIALIZER': 'django_redis.serializers.json.JSONSerializer',
+                'SERIALIZER': 'django_redis.serializers.pickle.PickleSerializer',  # Use pickle to support Django querysets
             },
             'KEY_PREFIX': 'hms',
             'TIMEOUT': 600,  # 10 minutes default cache timeout for better performance
@@ -486,7 +519,7 @@ if USE_REDIS_CACHE and redis_available:
                     'max_connections': REDIS_MAX_CONNECTIONS,
                     'retry_on_timeout': True,
                 },
-                'SERIALIZER': 'django_redis.serializers.json.JSONSerializer',
+                'SERIALIZER': 'django_redis.serializers.pickle.PickleSerializer',  # Use pickle to support Django querysets
             },
             'KEY_PREFIX': 'hms_sessions',
             'TIMEOUT': 86400,  # 24 hours for sessions
@@ -512,12 +545,23 @@ else:
 # Celery Configuration
 # Use the same Redis URL detection logic
 CELERY_BROKER_URL = config('CELERY_BROKER_URL', default=REDIS_URL)
-CELERY_RESULT_BACKEND = 'django-db'
+# Use Redis for result backend when available to avoid DB load from task results
+if USE_REDIS_CACHE and redis_available:
+    _celery_redis = REDIS_URL.replace('/0', '/3') if '/0' in REDIS_URL else f'{REDIS_URL}/3'
+    CELERY_RESULT_BACKEND = _celery_redis
+else:
+    CELERY_RESULT_BACKEND = 'django-db'
 CELERY_CACHE_BACKEND = 'django-cache'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
+# Throughput: lower prefetch avoids long tasks blocking other work; tune per deployment.
+CELERY_WORKER_PREFETCH_MULTIPLIER = config('CELERY_WORKER_PREFETCH_MULTIPLIER', default=4, cast=int)
+CELERY_TASK_ACKS_LATE = config('CELERY_TASK_ACKS_LATE', default=True, cast=bool)
+
+# Activity audit: async INSERT via Celery (faster requests). Set AUDIT_LOG_ASYNC=False for synchronous DB write.
+AUDIT_LOG_ASYNC = config('AUDIT_LOG_ASYNC', default=True, cast=bool)
 
 # Cacheops Configuration (if used)
 CACHEOPS_REDIS = config('CACHEOPS_REDIS', default=REDIS_URL.replace('/0', '/2') if '/0' in REDIS_URL else f'{REDIS_URL}/2')
@@ -530,7 +574,11 @@ LOGOUT_REDIRECT_URL = '/hms/'
 
 # Static files (CSS, JavaScript, Images) - Optimized for Performance
 STATIC_URL = '/static/'
-STATIC_ROOT = BASE_DIR / 'staticfiles'
+# Use environment variable for STATIC_ROOT if set (for server deployment)
+STATIC_ROOT = config('STATIC_ROOT', default=str(BASE_DIR / 'staticfiles'))
+# Ensure STATIC_ROOT is a Path object
+if isinstance(STATIC_ROOT, str):
+    STATIC_ROOT = Path(STATIC_ROOT)
 # WhiteNoise with compression and caching for maximum performance
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
@@ -549,7 +597,11 @@ STATICFILES_FINDERS = [
 
 # Media files
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+# Use environment variable for MEDIA_ROOT if set (for server deployment)
+MEDIA_ROOT = config('MEDIA_ROOT', default=str(BASE_DIR / 'media'))
+# Ensure MEDIA_ROOT is a Path object
+if isinstance(MEDIA_ROOT, str):
+    MEDIA_ROOT = Path(MEDIA_ROOT)
 
 # Crispy Forms
 CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
@@ -590,6 +642,9 @@ DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@primecare.com
 # Hospital Branding (for emails and notifications)
 HOSPITAL_NAME = config('HOSPITAL_NAME', default='PrimeCare Hospital')
 HOSPITAL_LOGO_URL = config('HOSPITAL_LOGO_URL', default='')
+
+# Queue SMS ticket prefix when department config would yield a bad code (e.g. ACC- from "Accounts")
+QUEUE_TICKET_PREFIX_FALLBACK = config('QUEUE_TICKET_PREFIX_FALLBACK', default='VIS')
 
 # WhatsApp Configuration (Twilio WhatsApp API)
 TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID', default='')
@@ -651,6 +706,68 @@ LOGGING = {
             'format': '{levelname} {message}',
             'style': '{',
         },
+        'bulk_creation': {
+            'format': '🚨 {levelname} {asctime} - {message}',
+            'style': '{',
+        },
+    },
+    'filters': {
+        'require_debug_false': {
+            '()': 'django.utils.log.RequireDebugFalse',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+        'bulk_creation_file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': BASE_DIR / 'logs' / 'bulk_creation.log',
+            'maxBytes': 10 * 1024 * 1024,  # 10MB
+            'backupCount': 5,
+            'formatter': 'bulk_creation',
+            'level': 'WARNING',
+        },
+        'file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': BASE_DIR / 'logs' / 'django.log',
+            'maxBytes': 10 * 1024 * 1024,  # 10MB
+            'backupCount': 5,
+            'formatter': 'verbose',
+        },
+    },
+    'loggers': {
+        'hospital.bulk_creation_monitor': {
+            'handlers': ['console', 'bulk_creation_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+}
+
+# Legacy LOGGING configuration (if exists, will be merged)
+_legacy_logging = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
     },
     'filters': {
         'require_debug_false': {
@@ -676,6 +793,14 @@ LOGGING = {
             'maxBytes': 10485760,  # 10MB
             'backupCount': 5,
             'formatter': 'verbose',
+        },
+        'bulk_creation_file': {
+            'level': 'WARNING',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(logs_dir / 'bulk_creation.log'),
+            'maxBytes': 10485760,  # 10MB
+            'backupCount': 5,
+            'formatter': 'bulk_creation',
         },
         'console': {
             'level': 'DEBUG',
@@ -711,6 +836,11 @@ LOGGING = {
         },
         'hospital': {
             'handlers': ['file', 'console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'hospital.bulk_creation_monitor': {
+            'handlers': ['file', 'console', 'bulk_creation_file'],
             'level': 'INFO',
             'propagate': False,
         },
@@ -785,7 +915,7 @@ CSRF_HEADER_NAME = 'HTTP_X_CSRFTOKEN'
 # In Docker, this should include the host machine's IP address
 # Also includes common local network IPs for development
 # In production, automatically add HTTPS origins based on ALLOWED_HOSTS
-default_csrf_origins = 'http://localhost:8000,http://127.0.0.1:8000,http://0.0.0.0:8000,http://192.168.2.97:8000,http://192.168.233.1:8000,http://192.168.64.1:8000,http://172.20.112.1:8000,http://10.132.245.143:8000'
+default_csrf_origins = 'http://localhost:8000,http://127.0.0.1:8000,http://0.0.0.0:8000,http://192.168.2.97:8000,http://192.168.233.1:8000,http://192.168.64.1:8000,http://192.168.0.105:8000,http://172.20.112.1:8000,http://10.132.245.143:8000'
 CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS', default=default_csrf_origins, cast=lambda v: [s.strip() for s in v.split(',') if s.strip()])
 
 # In production (non-DEBUG), automatically add HTTPS origins for all ALLOWED_HOSTS
@@ -831,6 +961,8 @@ if DEBUG:
         'http://192.168.2.97',
         'http://192.168.233.1',
         'http://192.168.64.1',
+        'http://192.168.0.105:8000',
+        'http://192.168.0.105',
         'http://172.20.112.1',
         'http://10.132.245.143:8000',
         'http://10.132.245.143',
@@ -871,12 +1003,40 @@ CSP_FONT_SRC = ("'self'", "fonts.gstatic.com")
 CSP_IMG_SRC = ("'self'", "data:", "https:")
 CSP_CONNECT_SRC = ("'self'",)
 
-# Debug Toolbar (only in development)
+# Debug Toolbar (development) and optional staging profiling (STAGING_PROFILING + requirements-dev.txt)
 if DEBUG:
     INTERNAL_IPS = [
         '127.0.0.1',
         'localhost',
     ]
+
+STAGING_PROFILING = config('STAGING_PROFILING', default=False, cast=bool)
+if STAGING_PROFILING:
+    try:
+        import debug_toolbar  # noqa: F401
+    except ImportError:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            'STAGING_PROFILING is True but debug_toolbar is not installed. '
+            'Run: pip install django-debug-toolbar'
+        )
+    else:
+        if 'debug_toolbar' not in INSTALLED_APPS:
+            INSTALLED_APPS = list(INSTALLED_APPS) + ['debug_toolbar']
+        _ddt_mw = 'debug_toolbar.middleware.DebugToolbarMiddleware'
+        if _ddt_mw not in MIDDLEWARE:
+            _mw = list(MIDDLEWARE)
+            try:
+                _ins = _mw.index('django.middleware.security.SecurityMiddleware') + 1
+            except ValueError:
+                _ins = 0
+            _mw.insert(_ins, _ddt_mw)
+            MIDDLEWARE = _mw
+        INTERNAL_IPS = ['127.0.0.1', 'localhost', '::1']
+        extra_ips = config('DEBUG_TOOLBAR_EXTRA_IPS', default='', cast=str)
+        if extra_ips.strip():
+            INTERNAL_IPS.extend(s.strip() for s in extra_ips.split(',') if s.strip())
 
 # Health Check
 HEALTH_CHECK = {
@@ -900,3 +1060,29 @@ if SENTRY_DSN:
         traces_sample_rate=0.1,
         send_default_pii=True,
     )
+
+# Fix for Python 3.14 compatibility with Django 4.2.7
+# This patches Django's BaseContext.__copy__ method to work with Python 3.14
+# The issue: Python 3.14 changed how __copy__ works, causing AttributeError
+# when Django tries to copy template contexts (especially with crispy_forms)
+if sys.version_info >= (3, 14):
+    try:
+        import copy
+        from django.template.context import BaseContext
+        
+        def _fixed_basecontext_copy(self):
+            """Fixed __copy__ method for Python 3.14 compatibility"""
+            # Create a new instance of the same class
+            duplicate = self.__class__()
+            # Copy the instance dictionary
+            duplicate.__dict__.update(copy.copy(self.__dict__))
+            # Manually copy the dicts list if it exists
+            if hasattr(self, 'dicts'):
+                duplicate.dicts = self.dicts[:]
+            return duplicate
+        
+        # Apply the monkey patch
+        BaseContext.__copy__ = _fixed_basecontext_copy
+    except (ImportError, AttributeError):
+        # If Django isn't loaded yet or the class doesn't exist, ignore
+        pass

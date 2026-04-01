@@ -102,7 +102,8 @@ def lab_cashier_ticket(request, lab_result_id):
         release_record.save(update_fields=['patient'])
     
     try:
-        AutoBillingService.create_lab_bill(lab_result)
+        # Do not notify here: consultation batch or cashier flow already informs patient; avoids duplicate SMS.
+        AutoBillingService.create_lab_bill(lab_result, notify_patient=False)
     except Exception:
         pass
     
@@ -137,7 +138,7 @@ def lab_cashier_ticket(request, lab_result_id):
             return redirect('hospital:centralized_cashier_dashboard')
         else:
             # Lab staff don't have cashier access, redirect back to lab dashboard
-            return redirect('hospital:lab_technician_dashboard')
+            return redirect('hospital:laboratory_dashboard')
     
     cashier_url = request.build_absolute_uri(
         reverse('hospital:cashier_process_service_payment', args=['lab', lab_result_id])

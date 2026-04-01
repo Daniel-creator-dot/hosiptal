@@ -4,15 +4,163 @@
 
 {% block title %}Profit & Loss Reports - HMS{% endblock %}
 {% block page_title %}Profit & Loss Reports{% endblock %}
+{% block page_subtitle %}Saved P&amp;L snapshots with roll-ups and charts for the current filters.{% endblock %}
+
+{% block extra_css %}
+<style>
+    .pl-kpi {
+        border-radius: 12px;
+        border: 1px solid rgba(0,0,0,0.08);
+        padding: 1rem 1.15rem;
+        height: 100%;
+        background: var(--bs-body-bg, #fff);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .pl-kpi .kpi-label {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--bs-secondary-color, #6c757d);
+        margin-bottom: 0.35rem;
+    }
+    .pl-kpi .kpi-value {
+        font-size: 1.3rem;
+        font-weight: 700;
+        line-height: 1.2;
+        color: var(--dark, #212529);
+    }
+    .pl-kpi .kpi-meta {
+        font-size: 0.8rem;
+        color: var(--bs-secondary-color, #6c757d);
+        margin-top: 0.35rem;
+    }
+    body.theme-dark .pl-kpi {
+        background: #0f172a;
+        border-color: #334155;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+    }
+    body.theme-dark .pl-kpi .kpi-value { color: #f8fafc !important; }
+    body.theme-dark .pl-kpi .kpi-label { color: #94a3b8 !important; }
+    body.theme-dark .pl-kpi .kpi-meta { color: #94a3b8 !important; }
+    .pl-kpi.kpi-accent-slate { border-left: 4px solid #495057; }
+    .pl-kpi.kpi-accent-green { border-left: 4px solid #198754; }
+    .pl-kpi.kpi-accent-red { border-left: 4px solid #dc3545; }
+    .pl-kpi.kpi-accent-purple { border-left: 4px solid #6f42c1; }
+    .chart-wrap {
+        position: relative;
+        height: 300px;
+    }
+    @media (min-width: 992px) {
+        .chart-wrap.tall { height: 340px; }
+    }
+</style>
+{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
+    <div class="alert alert-light border mb-3 py-2 px-3 small">
+        <i class="bi bi-graph-up-arrow text-primary"></i>
+        <strong>Analytics</strong> — KPIs and charts reflect <em>filtered</em> reports below (same as the table).
+        For a live income statement from the ledger, open
+        <a href="{% url 'hospital:profit_loss_statement' %}" class="fw-semibold">Accounting → Profit &amp; Loss statement</a>.
+    </div>
+
+    {{ chart_payload|json_script:"profit-loss-analytics-data" }}
+
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-xl-3">
+            <div class="pl-kpi kpi-accent-slate">
+                <div class="kpi-label">Reports (filtered)</div>
+                <div class="kpi-value">{{ analytics.report_count|intcomma }}</div>
+                <div class="kpi-meta text-success">{{ analytics.profitable_count }} profit · <span class="text-danger">{{ analytics.loss_count }}</span> loss</div>
+            </div>
+        </div>
+        <div class="col-6 col-xl-3">
+            <div class="pl-kpi kpi-accent-green">
+                <div class="kpi-label">Total revenue (GHS)</div>
+                <div class="kpi-value">GHS {{ analytics.sum_revenue|floatformat:2|intcomma }}</div>
+                <div class="kpi-meta">Sum across listed periods</div>
+            </div>
+        </div>
+        <div class="col-6 col-xl-3">
+            <div class="pl-kpi kpi-accent-red">
+                <div class="kpi-label">Total expenses (GHS)</div>
+                <div class="kpi-value">GHS {{ analytics.sum_expenses|floatformat:2|intcomma }}</div>
+                <div class="kpi-meta">Sum across listed periods</div>
+            </div>
+        </div>
+        <div class="col-6 col-xl-3">
+            <div class="pl-kpi kpi-accent-purple">
+                <div class="kpi-label">Net &amp; avg margin</div>
+                <div class="kpi-value text-{% if analytics.sum_net >= 0 %}success{% else %}danger{% endif %}">GHS {{ analytics.sum_net|floatformat:2|intcomma }}</div>
+                <div class="kpi-meta">Avg profit %: {{ analytics.avg_margin_pct|floatformat:2 }}%</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-lg-8">
+            <div class="card h-100">
+                <div class="card-header py-2">
+                    <strong><i class="bi bi-activity text-primary"></i> Revenue, expenses &amp; net by period end</strong>
+                    <span class="text-muted small ms-1">(chronological, up to 48 reports)</span>
+                </div>
+                <div class="card-body">
+                    <div class="chart-wrap tall">
+                        <canvas id="plTrendChart" aria-label="Profit and loss trend chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="card h-100">
+                <div class="card-header py-2">
+                    <strong><i class="bi bi-pie-chart text-primary"></i> Reports by period type</strong>
+                </div>
+                <div class="card-body">
+                    <div class="chart-wrap">
+                        <canvas id="plPeriodChart" aria-label="Report period mix chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header py-2">
+                    <strong><i class="bi bi-bar-chart-steps text-success"></i> Revenue by category</strong>
+                    <span class="text-muted small">(merged JSON on reports)</span>
+                </div>
+                <div class="card-body">
+                    <div class="chart-wrap tall">
+                        <canvas id="plRevenueCatsChart" aria-label="Revenue categories chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header py-2">
+                    <strong><i class="bi bi-bar-chart-steps text-danger"></i> Expenses by category</strong>
+                    <span class="text-muted small">(merged JSON on reports)</span>
+                </div>
+                <div class="card-body">
+                    <div class="chart-wrap tall">
+                        <canvas id="plExpenseCatsChart" aria-label="Expense categories chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="card mb-4">
         <div class="card-body">
             <form method="get" class="row g-3">
                 <div class="col-md-4">
                     <label class="form-label">Period</label>
-                    <select name="period" class="form-select">
+                    <select name="period" class="form-select" title="Select option" aria-label="Select option">
                         <option value="">All</option>
                         <option value="monthly" {% if period_filter == 'monthly' %}selected{% endif %}>Monthly</option>
                         <option value="quarterly" {% if period_filter == 'quarterly' %}selected{% endif %}>Quarterly</option>
@@ -21,10 +169,10 @@
                 </div>
                 <div class="col-md-4">
                     <label class="form-label">Fiscal Year</label>
-                    <select name="fiscal_year" class="form-select">
+                    <select name="fiscal_year" class="form-select" title="Select option" aria-label="Select option">
                         <option value="">All</option>
                         {% for fy in fiscal_years %}
-                        <option value="{{ fy.id }}" {% if request.GET.fiscal_year == fy.id|stringformat:"s" %}selected{% endif %}>
+                        <option value="{{ fy.id }}" {% if fiscal_year_filter == fy.id|stringformat:"s" %}selected{% endif %}>
                             {{ fy.name }}
                         </option>
                         {% endfor %}
@@ -41,8 +189,8 @@
     </div>
 
     <div class="card">
-        <div class="card-header d-flex justify-content-between">
-            <h5><i class="bi bi-graph-up"></i> Profit & Loss Reports</h5>
+        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <h5 class="mb-0"><i class="bi bi-graph-up"></i> Profit &amp; Loss Reports</h5>
             <a href="{% url 'hospital:profit_loss_create' %}" class="btn btn-primary">
                 <i class="bi bi-plus-circle"></i> Generate Report
             </a>
@@ -93,11 +241,146 @@
                     </tbody>
                 </table>
             </div>
+
+            {% if reports.has_other_pages %}
+            <nav aria-label="Page navigation" class="mt-3">
+                <ul class="pagination justify-content-center flex-wrap">
+                    {% if reports.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?{% if filter_query %}{{ filter_query }}&amp;{% endif %}page={{ reports.previous_page_number }}">Previous</a>
+                    </li>
+                    {% endif %}
+                    <li class="page-item active"><span class="page-link">Page {{ reports.number }} of {{ reports.paginator.num_pages }}</span></li>
+                    {% if reports.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?{% if filter_query %}{{ filter_query }}&amp;{% endif %}page={{ reports.next_page_number }}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
             {% else %}
-            <div class="alert alert-info">No profit & loss reports found.</div>
+            <div class="alert alert-info">No profit &amp; loss reports found.</div>
             {% endif %}
         </div>
     </div>
 </div>
 {% endblock %}
 
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    const root = document.getElementById('profit-loss-analytics-data');
+    if (!root || !window.Chart) return;
+    let payload;
+    try {
+        payload = JSON.parse(root.textContent);
+    } catch (e) { return; }
+
+    const isDark = document.body.classList.contains('theme-dark');
+    const gridColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(0,0,0,0.06)';
+    const tickColor = isDark ? '#cbd5e1' : '#6c757d';
+    const commonOpts = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: tickColor } } },
+        scales: {
+            x: { ticks: { color: tickColor, maxRotation: 45, minRotation: 0 }, grid: { color: gridColor } },
+            y: { ticks: { color: tickColor }, grid: { color: gridColor } }
+        }
+    };
+    const ghs = (v) => 'GHS ' + Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    const trend = payload.trend || {};
+    const tLabels = trend.labels || [];
+    const ctxT = document.getElementById('plTrendChart');
+    if (ctxT && tLabels.length) {
+        new Chart(ctxT, {
+            type: 'line',
+            data: {
+                labels: tLabels,
+                datasets: [
+                    { label: 'Revenue', data: trend.revenue || [], borderColor: 'rgb(25, 135, 84)', backgroundColor: 'rgba(25, 135, 84, 0.12)', fill: true, tension: 0.25 },
+                    { label: 'Expenses', data: trend.expenses || [], borderColor: 'rgb(220, 53, 69)', backgroundColor: 'rgba(220, 53, 69, 0.08)', fill: true, tension: 0.25 },
+                    { label: 'Net profit', data: trend.net || [], borderColor: 'rgb(111, 66, 193)', backgroundColor: 'rgba(111, 66, 193, 0.1)', fill: false, tension: 0.25 }
+                ]
+            },
+            options: {
+                ...commonOpts,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    ...commonOpts.plugins,
+                    tooltip: {
+                        callbacks: {
+                            label: (c) => (c.dataset.label || '') + ': ' + ghs(c.parsed.y)
+                        }
+                    }
+                }
+            }
+        });
+    } else if (ctxT) {
+        ctxT.parentElement.innerHTML = '<p class="text-muted text-center py-5 mb-0">No reports in this filter — create a report or widen filters to see trends.</p>';
+    }
+
+    const pm = payload.periodMix || [];
+    const ctxP = document.getElementById('plPeriodChart');
+    if (ctxP && pm.length) {
+        const colors = ['#0d6efd', '#198754', '#ffc107', '#6f42c1', '#0dcaf0'];
+        new Chart(ctxP, {
+            type: 'doughnut',
+            data: {
+                labels: pm.map(x => x.label),
+                datasets: [{ data: pm.map(x => x.count), backgroundColor: colors, borderWidth: 0 }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { color: tickColor, boxWidth: 12 } },
+                    tooltip: {
+                        callbacks: {
+                            label: (c) => (c.label || '') + ': ' + (c.parsed || 0) + ' report(s)'
+                        }
+                    }
+                }
+            }
+        });
+    } else if (ctxP) {
+        ctxP.parentElement.innerHTML = '<p class="text-muted text-center py-5 mb-0 small">No period mix data</p>';
+    }
+
+    function barHorizontal(canvasId, rows, colorRgb) {
+        const ctx = document.getElementById(canvasId);
+        if (!ctx) return;
+        if (!rows || !rows.length) {
+            ctx.parentElement.innerHTML = '<p class="text-muted text-center py-5 mb-0 small">No category JSON stored on these reports — totals still show in the table.</p>';
+            return;
+        }
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: rows.map(r => r.label),
+                datasets: [{ label: 'GHS', data: rows.map(r => r.amount), backgroundColor: colorRgb, borderRadius: 4 }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: c => ghs(c.parsed.x) } }
+                },
+                scales: {
+                    x: { ticks: { color: tickColor }, grid: { color: gridColor } },
+                    y: { ticks: { color: tickColor }, grid: { display: false } }
+                }
+            }
+        });
+    }
+
+    barHorizontal('plRevenueCatsChart', payload.revenueCats, 'rgba(25, 135, 84, 0.78)');
+    barHorizontal('plExpenseCatsChart', payload.expenseCats, 'rgba(220, 53, 69, 0.75)');
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,138 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load hospital_extras %}
+
+{% block title %}My Appointment Calendar{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="fw-bold mb-1">My Appointment Calendar</h2>
+            <p class="text-muted mb-0">Dr. {{ doctor.user.get_full_name|default:doctor.user.username }}</p>
+        </div>
+        <div class="d-flex gap-2">
+            {% if current_assignment %}
+            <span class="badge bg-success align-self-center">
+                <i class="bi bi-door-open me-1"></i>Room: {{ current_assignment.room.room_number }}
+            </span>
+            {% else %}
+            <a href="{% url 'hospital:doctor_room_selection' %}" class="btn btn-sm btn-primary">
+                <i class="bi bi-door-open me-1"></i>Select Room
+            </a>
+            {% endif %}
+            <a href="{% url 'hospital:my_consultations' %}#consultations-queue-panel" class="btn btn-outline-secondary">
+                <i class="bi bi-clipboard2-pulse me-2"></i>Consultations &amp; call queue
+            </a>
+        </div>
+    </div>
+
+    <!-- Week Navigation -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center">
+                {% with prev_week=week_start|date:'Y-m-d' %}
+                <a href="?start_date={{ week_start|date:'Y-m-d' }}" class="btn btn-outline-primary">
+                    <i class="bi bi-chevron-left me-2"></i>Previous Week
+                </a>
+                {% endwith %}
+                <h5 class="mb-0">{{ week_start|date:"M d" }} - {{ week_end|date:"M d, Y" }}</h5>
+                <a href="?start_date={{ week_end|date:'Y-m-d' }}" class="btn btn-outline-primary">
+                    Next Week<i class="bi bi-chevron-right ms-2"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Week Calendar -->
+    <div class="row g-3 mb-4">
+        {% for day in date_range %}
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header {% if day == today %}bg-primary text-white{% else %}bg-light{% endif %}">
+                    <h5 class="mb-0">
+                        {{ day|date:"l, F d" }}
+                        {% if day == today %}<span class="badge bg-light text-primary ms-2">Today</span>{% endif %}
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% with day_str=day|date:"Y-m-d" %}
+                    {% if day_str in appointments_by_date %}
+                        {% for appointment in appointments_by_date|get_item:day_str %}
+                        <div class="border rounded p-3 mb-2 {% if appointment.status == 'completed' %}bg-light{% elif appointment.status == 'cancelled' %}text-muted{% endif %}">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <h6 class="mb-1">{{ appointment.appointment_date|time:"g:i A" }}</h6>
+                                    <p class="mb-1"><strong>{{ appointment.patient.full_name }}</strong></p>
+                                    <p class="mb-1 small text-muted">{{ appointment.reason|truncatewords:15 }}</p>
+                                    {% if appointment.consulting_room %}
+                                    <small class="text-muted"><i class="bi bi-door-open"></i> {{ appointment.consulting_room.room_number|default:"" }}</small>
+                                    {% endif %}
+                                </div>
+                                <span class="badge 
+                                    {% if appointment.status == 'scheduled' %}bg-secondary
+                                    {% elif appointment.status == 'confirmed' %}bg-primary
+                                    {% elif appointment.status == 'completed' %}bg-success
+                                    {% elif appointment.status == 'cancelled' %}bg-danger
+                                    {% else %}bg-warning{% endif %}">
+                                    {{ appointment.get_status_display }}
+                                </span>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted mb-0">No appointments scheduled</p>
+                    {% endif %}
+                    {% endwith %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Today's Queue -->
+    {% if today_queue %}
+    <div class="card">
+        <div class="card-header bg-info text-white">
+            <h5 class="mb-0"><i class="bi bi-list-ol me-2"></i>Today's Queue</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Queue #</th>
+                            <th>Patient</th>
+                            <th>Priority</th>
+                            <th>Status</th>
+                            <th>Room</th>
+                            <th>Check-in Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for entry in today_queue %}
+                        <tr>
+                            <td><strong>{{ entry.display_ticket_number }}</strong></td>
+                            <td>{{ entry.patient.full_name }}</td>
+                            <td><span class="badge bg-secondary">{{ entry.get_priority_display }}</span></td>
+                            <td><span class="badge 
+                                {% if entry.status == 'checked_in' %}bg-warning
+                                {% elif entry.status == 'called' %}bg-info
+                                {% elif entry.status == 'in_progress' %}bg-primary
+                                {% elif entry.status == 'completed' %}bg-success
+                                {% else %}bg-secondary{% endif %}">
+                                {{ entry.get_status_display }}
+                            </span></td>
+                            <td>{% if entry.room_number %}{{ entry.room_number }}{% else %}-{% endif %}</td>
+                            <td>{{ entry.check_in_time|time:"g:i A" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+

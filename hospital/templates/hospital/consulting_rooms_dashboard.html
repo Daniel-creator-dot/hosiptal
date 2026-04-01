@@ -1,0 +1,98 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load hospital_extras %}
+
+{% block title %}Consulting Rooms Dashboard{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="fw-bold mb-1"><i class="bi bi-door-open me-2"></i>Consulting Rooms Dashboard</h2>
+            <p class="text-muted mb-0">View doctor-room assignments and patient queues</p>
+        </div>
+        <div class="text-end">
+            <div>
+                <a href="{% url 'hospital:frontdesk_queue_create' %}" class="btn btn-success me-2">
+                    <i class="bi bi-person-check me-2"></i>Add Patient to Queue
+                </a>
+                <a href="{% url 'hospital:reception_dashboard' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left me-2"></i>Back to Dashboard
+                </a>
+            </div>
+            <small class="text-muted d-block mt-2">{{ today|date:"l, F d, Y" }}</small>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        {% for room in rooms %}
+        <div class="col-md-6 col-lg-3">
+            <div class="card h-100 {% if room.status == 'available' %}border-success{% elif room.status == 'maintenance' %}border-danger{% else %}border-warning{% endif %}">
+                <div class="card-header {% if room.status == 'available' %}bg-success text-white{% elif room.status == 'maintenance' %}bg-danger text-white{% else %}bg-warning text-dark{% endif %}">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">{{ room.room_number }}</h5>
+                        <span class="badge bg-light text-dark">{{ room.get_status_display }}</span>
+                    </div>
+                    {% if room.room_name %}
+                    <small>{{ room.room_name }}</small>
+                    {% endif %}
+                </div>
+                <div class="card-body">
+                    {% with assignments=room_assignments|get_item:room.id %}
+                    {% if assignments %}
+                        <h6 class="mb-2">Assigned Doctors:</h6>
+                        {% for assignment in assignments %}
+                        <div class="mb-2 p-2 bg-light rounded">
+                            <strong>{{ assignment.doctor.get_full_name|default:assignment.doctor.username }}</strong>
+                            <br>
+                            <small class="text-muted">
+                                Started: {{ assignment.start_time|time:"g:i A" }}
+                                {% if not assignment.is_active %}
+                                <br>Ended: {{ assignment.end_time|time:"g:i A" }}
+                                {% endif %}
+                            </small>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted mb-0">No doctors assigned</p>
+                    {% endif %}
+                    {% endwith %}
+                    
+                    {% with queue_entries=room_queue_entries|get_item:room.id %}
+                        {% if queue_entries %}
+                            <hr>
+                            <h6 class="mb-2">Queue ({{ queue_entries|length }}):</h6>
+                            <div class="small">
+                                {% for entry in queue_entries|slice:":5" %}
+                                <div class="mb-1">
+                                    <strong>{{ entry.display_ticket_number }}</strong> - {{ entry.patient.full_name }}
+                                    {% if entry.assigned_doctor %}
+                                    <br><small class="text-muted">Dr. {{ entry.assigned_doctor.get_full_name|default:entry.assigned_doctor.username }}</small>
+                                    {% endif %}
+                                    <span class="badge bg-secondary ms-1">{{ entry.get_status_display }}</span>
+                                </div>
+                                {% endfor %}
+                                {% if queue_entries|length > 5 %}
+                                <small class="text-muted">... and {{ queue_entries|length|add:"-5" }} more</small>
+                                {% endif %}
+                            </div>
+                        {% endif %}
+                    {% endwith %}
+                    
+                    <div class="mt-3">
+                        <small class="text-muted">Capacity: {{ room.capacity }} doctor{{ room.capacity|pluralize }}</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="col-md-12">
+            <div class="alert alert-warning">
+                <i class="bi bi-exclamation-triangle me-2"></i>No consulting rooms configured.
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+

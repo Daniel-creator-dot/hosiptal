@@ -1,0 +1,387 @@
+{% extends "hospital/base.html" %}
+{% load static %}
+
+{% block title %}Shift Monitoring Dashboard - {{ department.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .status-badge {
+        padding: 0.25rem 0.75rem;
+        border-radius: 0.375rem;
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+    .status-present { background-color: #d1fae5; color: #065f46; }
+    .status-absent { background-color: #fee2e2; color: #991b1b; }
+    .status-late { background-color: #fef3c7; color: #92400e; }
+    .status-on_leave { background-color: #dbeafe; color: #1e40af; }
+    
+    .stat-card {
+        border-left: 4px solid;
+        transition: transform 0.2s;
+    }
+    .stat-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    
+    .shift-row {
+        border-left: 3px solid transparent;
+        transition: all 0.2s;
+    }
+    .shift-row:hover {
+        background-color: #f9fafb;
+    }
+    .shift-row.present { border-left-color: #10b981; }
+    .shift-row.absent { border-left-color: #ef4444; }
+    .shift-row.late { border-left-color: #f59e0b; }
+    .shift-row.on_leave { border-left-color: #3b82f6; }
+    
+    .compliance-meter {
+        height: 8px;
+        border-radius: 4px;
+        background-color: #e5e7eb;
+        overflow: hidden;
+    }
+    .compliance-fill {
+        height: 100%;
+        transition: width 0.3s;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-1">
+                <i class="fas fa-calendar-check text-primary"></i>
+                Shift Monitoring Dashboard
+            </h2>
+            <p class="text-muted mb-0">
+                {{ department.name }} - Monitor shifts vs attendance in real-time
+            </p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:hod_create_shift_enhanced' %}" class="btn btn-primary">
+                <i class="fas fa-plus"></i> Create Shift
+            </a>
+            <a href="{% url 'hospital:hod_shift_attendance_report' %}" class="btn btn-outline-primary">
+                <i class="fas fa-chart-line"></i> View Report
+            </a>
+        </div>
+    </div>
+
+    <!-- Date Selector -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label for="date" class="form-label">Select Date</label>
+                    <input type="date" class="form-control" id="date" name="date" 
+                           value="{{ selected_date|date:'Y-m-d' }}" onchange="this.form.submit()">
+                </div>
+                <div class="col-md-8">
+                    <div class="btn-group" role="group">
+                        <a href="?date={{ selected_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-calendar-day"></i> Today
+                        </a>
+                        <a href="?date={{ week_start|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-calendar-week"></i> Week Start
+                        </a>
+                        <a href="?date={{ week_end|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-calendar-week"></i> Week End
+                        </a>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card stat-card border-left-primary">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="text-muted mb-1">Total Shifts</h6>
+                            <h3 class="mb-0">{{ total_shifts }}</h3>
+                        </div>
+                        <div class="text-primary">
+                            <i class="fas fa-calendar-alt fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card border-left-success">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="text-muted mb-1">Present</h6>
+                            <h3 class="mb-0 text-success">{{ present_count }}</h3>
+                        </div>
+                        <div class="text-success">
+                            <i class="fas fa-check-circle fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card border-left-danger">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="text-muted mb-1">Absent</h6>
+                            <h3 class="mb-0 text-danger">{{ absent_count }}</h3>
+                        </div>
+                        <div class="text-danger">
+                            <i class="fas fa-times-circle fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card border-left-warning">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="text-muted mb-1">Compliance</h6>
+                            <h3 class="mb-0">{{ compliance_rate }}%</h3>
+                            <div class="compliance-meter mt-2">
+                                <div class="compliance-fill bg-success" style="width: {{ compliance_rate }}%"></div>
+                            </div>
+                        </div>
+                        <div class="text-warning">
+                            <i class="fas fa-chart-pie fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alerts for Shortages -->
+    {% if absent_count > 0 %}
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <h5 class="alert-heading">
+            <i class="fas fa-exclamation-triangle"></i> Staff Shortage Alert
+        </h5>
+        <p class="mb-0">
+            <strong>{{ absent_count }}</strong> staff member(s) scheduled but not present today.
+            This may cause operational shortages.
+        </p>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endif %}
+
+    {% if late_count > 0 %}
+    <div class="alert alert-warning alert-dismissible fade show" role="alert">
+        <h5 class="alert-heading">
+            <i class="fas fa-clock"></i> Late Arrivals
+        </h5>
+        <p class="mb-0">
+            <strong>{{ late_count }}</strong> staff member(s) arrived late to their shifts today.
+        </p>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endif %}
+
+    <!-- Main Monitoring Table -->
+    <div class="card">
+        <div class="card-header bg-white">
+            <h5 class="mb-0">
+                <i class="fas fa-list"></i> Shift vs Attendance - {{ selected_date|date:"F d, Y" }}
+            </h5>
+        </div>
+        <div class="card-body p-0">
+            {% if monitoring_data %}
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Staff Member</th>
+                            <th>Shift Type</th>
+                            <th>Time</th>
+                            <th>Location</th>
+                            <th>Check-In Time</th>
+                            <th>Status</th>
+                            <th>Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in monitoring_data %}
+                        <tr class="shift-row {{ item.status }}">
+                            <td>
+                                <div class="fw-semibold">
+                                    {{ item.staff.user.get_full_name|default:item.staff.user.username }}
+                                </div>
+                                <small class="text-muted">{{ item.staff.get_profession_display }}</small>
+                            </td>
+                            <td>
+                                <span class="badge bg-secondary">{{ item.shift_type }}</span>
+                            </td>
+                            <td>
+                                <div>
+                                    <i class="fas fa-clock text-muted"></i>
+                                    {{ item.shift_start|time:"H:i" }} - {{ item.shift_end|time:"H:i" }}
+                                </div>
+                            </td>
+                            <td>
+                                <small>{{ item.location }}</small>
+                            </td>
+                            <td>
+                                {% if item.check_in_time %}
+                                    <span class="text-success">
+                                        <i class="fas fa-check"></i> {{ item.check_in_time|time:"H:i" }}
+                                    </span>
+                                    {% if item.is_late %}
+                                        <br><small class="text-danger">
+                                            <i class="fas fa-exclamation-triangle"></i> {{ item.late_minutes }} min late
+                                        </small>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.status == 'present' %}
+                                    <span class="status-badge status-present">
+                                        <i class="fas fa-check-circle"></i> Present
+                                    </span>
+                                {% elif item.status == 'absent' %}
+                                    <span class="status-badge status-absent">
+                                        <i class="fas fa-times-circle"></i> Absent
+                                    </span>
+                                {% elif item.status == 'late' %}
+                                    <span class="status-badge status-late">
+                                        <i class="fas fa-clock"></i> Late
+                                    </span>
+                                {% elif item.status == 'on_leave' %}
+                                    <span class="status-badge status-on_leave">
+                                        <i class="fas fa-calendar-times"></i> On Leave
+                                    </span>
+                                {% else %}
+                                    <span class="status-badge bg-secondary">{{ item.status|title }}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.shift.assigned_duties %}
+                                    <small class="text-muted">{{ item.shift.assigned_duties|truncatewords:5 }}</small>
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="fas fa-calendar-times fa-3x text-muted mb-3"></i>
+                <p class="text-muted">No shifts scheduled for {{ selected_date|date:"F d, Y" }}</p>
+                <a href="{% url 'hospital:hod_create_shift_enhanced' %}" class="btn btn-primary">
+                    <i class="fas fa-plus"></i> Create Shifts
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Staff Present Without Shift -->
+    {% if staff_with_attendance_no_shift %}
+    <div class="card mt-4">
+        <div class="card-header bg-info text-white">
+            <h5 class="mb-0">
+                <i class="fas fa-info-circle"></i> Staff Present (No Shift Assigned)
+            </h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Staff Member</th>
+                            <th>Check-In Time</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in staff_with_attendance_no_shift %}
+                        <tr>
+                            <td>{{ item.staff.user.get_full_name|default:item.staff.user.username }}</td>
+                            <td>
+                                {% if item.check_in_time %}
+                                    {{ item.check_in_time|time:"H:i" }}
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge bg-success">Present</span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Upcoming Shifts -->
+    {% if upcoming_shifts %}
+    <div class="card mt-4">
+        <div class="card-header bg-white">
+            <h5 class="mb-0">
+                <i class="fas fa-calendar-alt"></i> Upcoming Shifts (Next 7 Days)
+            </h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Staff</th>
+                            <th>Shift</th>
+                            <th>Time</th>
+                            <th>Location</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for shift in upcoming_shifts %}
+                        <tr>
+                            <td>{{ shift.shift_date|date:"M d" }}</td>
+                            <td>{{ shift.staff.user.get_full_name|default:shift.staff.user.username }}</td>
+                            <td><span class="badge bg-secondary">{{ shift.get_shift_type_display }}</span></td>
+                            <td>{{ shift.start_time|time:"H:i" }} - {{ shift.end_time|time:"H:i" }}</td>
+                            <td><small>{{ shift.assigned_location|default:"—" }}</small></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+// Auto-refresh every 5 minutes
+setTimeout(function() {
+    location.reload();
+}, 300000);
+</script>
+{% endblock %}
+
+
+
+
+

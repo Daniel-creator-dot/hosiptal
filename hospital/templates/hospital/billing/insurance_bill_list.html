@@ -1,0 +1,248 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}{% if title and title|lower != 'invalid' %}{{ title }}{% else %}Insurance Bills{% endif %} - HMS{% endblock %}
+{% block page_title %}{% if title and title|lower != 'invalid' %}{{ title }}{% else %}Insurance Bills{% endif %}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">{% if title and title|lower != 'invalid' %}{{ title }}{% else %}Insurance Bills & Claims{% endif %}</h5>
+            <a href="{% url 'hospital:claims_bills_hub' %}" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Claims Bills Hub
+            </a>
+        </div>
+        <div class="card-body">
+            <!-- Filters -->
+            <form method="get" class="mb-3">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <input type="text" name="payer" class="form-control" placeholder="Search payer..." value="{% if payer_filter and payer_filter|lower != 'invalid' %}{{ payer_filter }}{% endif %}">
+                    </div>
+                    <div class="col-md-2">
+                        <select name="status" class="form-select">
+                            <option value="">All Status</option>
+                            <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
+                            <option value="submitted" {% if status_filter == 'submitted' %}selected{% endif %}>Submitted</option>
+                            <option value="approved" {% if status_filter == 'approved' %}selected{% endif %}>Approved</option>
+                            <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid</option>
+                            <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rejected</option>
+                            <option value="processing" {% if status_filter == 'processing' %}selected{% endif %}>Processing</option>
+                            <option value="partially_paid" {% if status_filter == 'partially_paid' %}selected{% endif %}>Partially Paid</option>
+                            <option value="reversed" {% if status_filter == 'reversed' %}selected{% endif %}>Reversed</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <input type="date" name="date_from" class="form-control" value="{% if date_from and date_from|lower != 'invalid' %}{{ date_from }}{% endif %}" placeholder="From">
+                    </div>
+                    <div class="col-md-2">
+                        <input type="date" name="date_to" class="form-control" value="{% if date_to and date_to|lower != 'invalid' %}{{ date_to }}{% endif %}" placeholder="To">
+                    </div>
+                    <div class="col-md-1">
+                        <button type="submit" class="btn btn-primary w-100">Filter</button>
+                    </div>
+                </div>
+            </form>
+
+            {% if total_payer_groups %}
+            <p class="text-muted small mb-2">
+                Showing {{ claim_groups.start_index }}–{{ claim_groups.end_index }} of <strong>{{ total_payer_groups }}</strong> payer{% if total_payer_groups != 1 %}s{% endif %}
+                (<strong>{{ total_claims_count }}</strong> claim line{{ total_claims_count|pluralize }} in this filter).
+                <span class="d-block mt-1">Expand a <strong>payer</strong> to see <strong>visits</strong> (combined per invoice / encounter, with date &amp; time). Expand a visit to see each billed line.</span>
+                <span class="d-block mt-1 text-muted small">Duplicate rows (same service code many times): <code class="small">manage.py fix_duplicate_invoice_lines --invoice INV…</code> then <code class="small">dedupe_insurance_claim_items --apply</code>.</span>
+            </p>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th style="width:2.5rem;"></th>
+                            <th>Claim / visit</th>
+                            <th>Patient</th>
+                            <th>Payer</th>
+                            <th>Service / visit time</th>
+                            <th>Billed Amount</th>
+                            <th>Paid Amount</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for group in claim_groups %}
+                        <tr class="table-secondary ins-payer-header" style="cursor: pointer;" data-ins-payer="{{ forloop.counter0 }}" aria-expanded="false" role="button" tabindex="0">
+                            <td class="text-center"><i class="bi bi-chevron-right expand-icon-payer" aria-hidden="true"></i></td>
+                            <td>
+                                <span class="badge bg-dark">{{ group.visit_count }} visit{{ group.visit_count|pluralize }}</span>
+                                <span class="badge bg-secondary ms-1">{{ group.claim_count }} line{{ group.claim_count|pluralize }}</span>
+                            </td>
+                            <td class="text-muted small">—</td>
+                            <td><strong>{{ group.payer_name }}</strong></td>
+                            <td class="text-muted small">—</td>
+                            <td><strong>GHS {{ group.billed_total|floatformat:2|intcomma }}</strong></td>
+                            <td>GHS {{ group.paid_total|floatformat:2|intcomma }}</td>
+                            <td><span class="text-muted small">Expand visits</span></td>
+                            <td></td>
+                        </tr>
+                        {% for vg in group.visit_groups %}
+                        <tr class="table-light ins-visit-row ins-pv-{{ forloop.parentloop.counter0 }} d-none" style="cursor: pointer;" data-ins-payer="{{ forloop.parentloop.counter0 }}" data-ins-visit="{{ forloop.counter0 }}" aria-expanded="false" role="button" tabindex="0">
+                            <td class="text-center ps-3"><i class="bi bi-chevron-right expand-icon-visit" aria-hidden="true"></i></td>
+                            <td>
+                                {% if vg.invoice %}
+                                <span class="badge bg-primary">Invoice</span>
+                                <strong class="ms-1">{{ vg.invoice.invoice_number }}</strong>
+                                {% else %}
+                                <span class="badge bg-info text-dark">Visit</span>
+                                {% endif %}
+                                <span class="text-muted small ms-1">
+                                    · {% if vg.invoice %}
+                                        {% if vg.invoice_duplicate_rows > 0 %}
+                                            <strong>{{ vg.invoice_distinct_services }}</strong> charge type{{ vg.invoice_distinct_services|pluralize }}
+                                            <span class="text-danger" title="Same service code repeated many times on this invoice">· {{ vg.invoice_line_rows }} rows ({{ vg.invoice_duplicate_rows }} duplicate)</span>
+                                        {% else %}
+                                            {{ vg.invoice_line_rows }} invoice line{{ vg.invoice_line_rows|pluralize }}
+                                        {% endif %}
+                                        {% if vg.claim_row_count != vg.line_count %}
+                                            <span class="text-muted">({{ vg.claim_row_count }} claim record{{ vg.claim_row_count|pluralize }})</span>
+                                        {% endif %}
+                                    {% else %}
+                                        {{ vg.line_count }} line{{ vg.line_count|pluralize }}
+                                    {% endif %}
+                                </span>
+                            </td>
+                            <td>{% if vg.patient %}{% if vg.patient.full_name and vg.patient.full_name|lower != 'invalid' %}{{ vg.patient.full_name }}{% else %}—{% endif %}{% else %}—{% endif %}</td>
+                            <td>{% if vg.payer %}{{ vg.payer.name }}{% else %}—{% endif %}</td>
+                            <td>
+                                {% if vg.visit_dt %}
+                                    {{ vg.visit_dt|date:"Y-m-d" }} <span class="text-muted">{{ vg.visit_dt|time:"H:i" }}</span>
+                                {% elif vg.service_date %}
+                                    {{ vg.service_date|date:"Y-m-d" }}
+                                {% else %}—{% endif %}
+                            </td>
+                            <td><strong>GHS {{ vg.billed_total|floatformat:2|intcomma }}</strong></td>
+                            <td>GHS {{ vg.paid_total|floatformat:2|intcomma }}</td>
+                            <td>
+                                <span class="badge bg-{% if vg.claim_status == 'paid' %}success{% elif vg.claim_status == 'approved' %}info{% elif vg.claim_status == 'rejected' %}danger{% elif vg.claim_status == 'pending' %}warning{% elif vg.claim_status == 'submitted' or vg.claim_status == 'processing' %}primary{% else %}secondary{% endif %}">
+                                    {{ vg.claim_status_label }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if vg.invoice %}
+                                <a href="{% url 'hospital:invoice_detail' vg.invoice.pk %}" class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation();">Invoice</a>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% for claim in vg.claims %}
+                        <tr class="ins-line-row ins-pvl-{{ forloop.parentloop.parentloop.counter0 }}-{{ forloop.parentloop.counter0 }} d-none">
+                            <td></td>
+                            <td class="small">
+                                <span class="text-muted">↳</span>
+                                {% if claim.claim_number and claim.claim_number|lower != 'invalid' %}<strong>{{ claim.claim_number }}</strong>{% else %}—{% endif %}
+                                <div class="text-muted text-truncate" style="max-width: 16rem;" title="{{ claim.service_description }}">{{ claim.service_description|truncatechars:80 }}</div>
+                            </td>
+                            <td class="small text-muted">{% if claim.patient %}{{ claim.patient.full_name }}{% else %}—{% endif %}</td>
+                            <td class="small text-muted">{% if claim.payer %}{{ claim.payer.name }}{% else %}—{% endif %}</td>
+                            <td class="small">{% if claim.service_date %}{{ claim.service_date|date:"Y-m-d" }}{% else %}—{% endif %}</td>
+                            <td><strong>GHS {{ claim.billed_amount|floatformat:2|intcomma }}</strong></td>
+                            <td>GHS {{ claim.paid_amount|floatformat:2|intcomma }}</td>
+                            <td>
+                                <span class="badge bg-{% if claim.claim_status == 'paid' %}success{% elif claim.claim_status == 'approved' %}info{% elif claim.claim_status == 'rejected' %}danger{% elif claim.claim_status == 'pending' %}warning{% elif claim.claim_status == 'submitted' or claim.claim_status == 'processing' %}primary{% else %}secondary{% endif %}">
+                                    {% if claim.claim_status|lower == "invalid" or claim.get_claim_status_display|lower == "invalid" %}Pending{% else %}{{ claim.get_claim_status_display|default:claim.claim_status|title|default:"Pending" }}{% endif %}
+                                </span>
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:claim_detail' claim.id %}" class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation();">View</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% endfor %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% if claim_groups.has_other_pages %}
+            <nav aria-label="Page navigation">
+                <ul class="pagination justify-content-center">
+                    {% if claim_groups.has_previous %}
+                    <li class="page-item"><a class="page-link" href="?page={{ claim_groups.previous_page_number }}{% if payer_filter %}&payer={{ payer_filter }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Previous</a></li>
+                    {% endif %}
+                    <li class="page-item active"><span class="page-link">Page {{ claim_groups.number }} of {{ claim_groups.paginator.num_pages }}</span></li>
+                    {% if claim_groups.has_next %}
+                    <li class="page-item"><a class="page-link" href="?page={{ claim_groups.next_page_number }}{% if payer_filter %}&payer={{ payer_filter }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Next</a></li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox" style="font-size: 48px; color: #ccc;"></i>
+                <p class="text-muted mt-3">No insurance claims found</p>
+                <p class="text-muted small">Clear filters above or try <a href="{% url 'hospital:claims_bills_hub' %}">Claims Bills Hub</a>.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  function setChevron(el, expanded) {
+    if (!el) return;
+    el.classList.toggle('bi-chevron-right', !expanded);
+    el.classList.toggle('bi-chevron-down', expanded);
+  }
+
+  function collapseAllVisitDetails(payerIdx) {
+    document.querySelectorAll('.ins-line-row').forEach(function (r) {
+      if (r.className.indexOf('ins-pvl-' + payerIdx + '-') !== -1) r.classList.add('d-none');
+    });
+    document.querySelectorAll('.ins-visit-row[data-ins-payer="' + payerIdx + '"]').forEach(function (vr) {
+      vr.setAttribute('aria-expanded', 'false');
+      setChevron(vr.querySelector('.expand-icon-visit'), false);
+    });
+  }
+
+  document.querySelectorAll('.ins-payer-header').forEach(function (row) {
+    var p = row.getAttribute('data-ins-payer');
+    row.addEventListener('click', function () {
+      var expanded = row.getAttribute('aria-expanded') === 'true';
+      row.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+      setChevron(row.querySelector('.expand-icon-payer'), !expanded);
+      document.querySelectorAll('.ins-pv-' + p).forEach(function (r) {
+        r.classList.toggle('d-none', expanded);
+      });
+      if (expanded) collapseAllVisitDetails(p);
+    });
+    row.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        row.click();
+      }
+    });
+  });
+
+  document.querySelectorAll('.ins-visit-row').forEach(function (row) {
+    var p = row.getAttribute('data-ins-payer');
+    var v = row.getAttribute('data-ins-visit');
+    row.addEventListener('click', function (e) {
+      if (e.target.closest('a')) return;
+      var expanded = row.getAttribute('aria-expanded') === 'true';
+      row.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+      setChevron(row.querySelector('.expand-icon-visit'), !expanded);
+      document.querySelectorAll('.ins-pvl-' + p + '-' + v).forEach(function (r) {
+        r.classList.toggle('d-none', expanded);
+      });
+    });
+    row.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        row.click();
+      }
+    });
+  });
+})();
+</script>
+{% endblock %}

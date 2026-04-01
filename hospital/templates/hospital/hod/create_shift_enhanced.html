@@ -1,0 +1,528 @@
+{% extends "hospital/base.html" %}
+{% load static %}
+
+{% block title %}Create Shift - {{ department.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2><i class="fas fa-calendar-plus text-primary"></i> Create Shift Assignment</h2>
+            <p class="text-muted mb-0">{{ department.name }}</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:hod_shift_monitoring_dashboard' %}" class="btn btn-outline-secondary">
+                <i class="fas fa-arrow-left"></i> Back to Monitoring
+            </a>
+        </div>
+    </div>
+
+    <!-- Tabs for different assignment methods -->
+    <ul class="nav nav-tabs mb-4" id="shiftTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="single-tab" data-bs-toggle="tab" data-bs-target="#single" type="button">
+                <i class="fas fa-user"></i> Single Assignment
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="bulk-tab" data-bs-toggle="tab" data-bs-target="#bulk" type="button">
+                <i class="fas fa-users"></i> Bulk Assignment
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="template-tab" data-bs-toggle="tab" data-bs-target="#template" type="button">
+                <i class="fas fa-file-alt"></i> Use Template
+            </button>
+        </li>
+    </ul>
+
+    <div class="tab-content" id="shiftTabsContent">
+        <!-- Single Assignment Tab -->
+        <div class="tab-pane fade show active" id="single" role="tabpanel">
+            <div class="card">
+                <div class="card-body">
+                    <form method="post">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="single">
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="staff" class="form-label">Staff Member <span class="text-danger">*</span></label>
+                                <select class="form-select" id="staff" name="staff" required>
+                                    <option value="">Select staff member...</option>
+                                    {% for staff in dept_staff %}
+                                    <option value="{{ staff.id }}">
+                                        {{ staff.user.get_full_name|default:staff.user.username }} - {{ staff.get_profession_display }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <label for="shift_date" class="form-label">Shift Date <span class="text-danger">*</span></label>
+                                <input type="date" class="form-control" id="shift_date" name="shift_date" 
+                                       value="{{ today|date:'Y-m-d' }}" required>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <label for="shift_type" class="form-label">Shift Type <span class="text-danger">*</span></label>
+                                <select class="form-select" id="shift_type" name="shift_type" required>
+                                    <option value="day">Day Shift</option>
+                                    <option value="evening">Evening Shift</option>
+                                    <option value="night">Night Shift</option>
+                                    <option value="on_call">On-Call</option>
+                                    <option value="weekend">Weekend</option>
+                                </select>
+                            </div>
+                            
+                            <div class="col-md-4 mb-3">
+                                <label for="start_time" class="form-label">Start Time <span class="text-danger">*</span></label>
+                                <input type="time" class="form-control" id="start_time" name="start_time" value="08:00" required>
+                            </div>
+                            
+                            <div class="col-md-4 mb-3">
+                                <label for="end_time" class="form-label">End Time <span class="text-danger">*</span></label>
+                                <input type="time" class="form-control" id="end_time" name="end_time" value="17:00" required>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="assigned_location" class="form-label">Location/Unit</label>
+                                <input type="text" class="form-control" id="assigned_location" name="assigned_location" 
+                                       placeholder="e.g., Ward A, Emergency Department">
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <label for="assigned_duties" class="form-label">Duties/Notes</label>
+                                <input type="text" class="form-control" id="assigned_duties" name="assigned_duties" 
+                                       placeholder="e.g., Patient care, medication rounds">
+                            </div>
+                        </div>
+
+                        <div class="d-flex justify-content-end">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-save"></i> Assign Shift
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bulk Assignment Tab -->
+        <div class="tab-pane fade" id="bulk" role="tabpanel">
+            <div class="card">
+                <div class="card-body">
+                    <form method="post">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="bulk">
+                        
+                        <div class="row mb-3">
+                            <div class="col-md-12">
+                                <label class="form-label">Select Staff Members <span class="text-danger">*</span></label>
+                                <div class="border rounded p-3" style="max-height: 200px; overflow-y: auto;">
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input" type="checkbox" id="select_all" onchange="toggleAllStaff(this)">
+                                        <label class="form-check-label fw-bold" for="select_all">
+                                            Select All
+                                        </label>
+                                    </div>
+                                    <hr>
+                                    {% for staff in dept_staff %}
+                                    <div class="form-check">
+                                        <input class="form-check-input staff-checkbox" type="checkbox" 
+                                               name="staff" value="{{ staff.id }}" id="staff_{{ staff.id }}">
+                                        <label class="form-check-label" for="staff_{{ staff.id }}">
+                                            {{ staff.user.get_full_name|default:staff.user.username }} - {{ staff.get_profession_display }}
+                                        </label>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <label for="bulk_start_date" class="form-label">Start Date <span class="text-danger">*</span></label>
+                                <input type="date" class="form-control" id="bulk_start_date" name="start_date" required>
+                            </div>
+                            
+                            <div class="col-md-4 mb-3">
+                                <label for="bulk_end_date" class="form-label">End Date <span class="text-danger">*</span></label>
+                                <input type="date" class="form-control" id="bulk_end_date" name="end_date" required>
+                            </div>
+                            
+                            <div class="col-md-4 mb-3">
+                                <label for="bulk_shift_type" class="form-label">Shift Type <span class="text-danger">*</span></label>
+                                <select class="form-select" id="bulk_shift_type" name="shift_type" required>
+                                    <option value="day">Day Shift</option>
+                                    <option value="evening">Evening Shift</option>
+                                    <option value="night">Night Shift</option>
+                                    <option value="on_call">On-Call</option>
+                                    <option value="weekend">Weekend</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- Days of Week Selection for Bulk -->
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Select Days of Week <span class="text-danger">*</span></label>
+                            <small class="text-muted d-block mb-2">Shifts will be created only for selected days</small>
+                            <div class="row g-2">
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="form-check form-check-lg">
+                                        <input class="form-check-input bulk-day-checkbox" type="checkbox" name="days_of_week" value="0" id="bulk_day_monday" checked>
+                                        <label class="form-check-label fw-bold" for="bulk_day_monday">
+                                            <i class="bi bi-calendar-day me-1"></i>Monday
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="form-check form-check-lg">
+                                        <input class="form-check-input bulk-day-checkbox" type="checkbox" name="days_of_week" value="1" id="bulk_day_tuesday" checked>
+                                        <label class="form-check-label fw-bold" for="bulk_day_tuesday">
+                                            <i class="bi bi-calendar-day me-1"></i>Tuesday
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="form-check form-check-lg">
+                                        <input class="form-check-input bulk-day-checkbox" type="checkbox" name="days_of_week" value="2" id="bulk_day_wednesday" checked>
+                                        <label class="form-check-label fw-bold" for="bulk_day_wednesday">
+                                            <i class="bi bi-calendar-day me-1"></i>Wednesday
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="form-check form-check-lg">
+                                        <input class="form-check-input bulk-day-checkbox" type="checkbox" name="days_of_week" value="3" id="bulk_day_thursday" checked>
+                                        <label class="form-check-label fw-bold" for="bulk_day_thursday">
+                                            <i class="bi bi-calendar-day me-1"></i>Thursday
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="form-check form-check-lg">
+                                        <input class="form-check-input bulk-day-checkbox" type="checkbox" name="days_of_week" value="4" id="bulk_day_friday" checked>
+                                        <label class="form-check-label fw-bold" for="bulk_day_friday">
+                                            <i class="bi bi-calendar-day me-1"></i>Friday
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="form-check form-check-lg">
+                                        <input class="form-check-input bulk-day-checkbox" type="checkbox" name="days_of_week" value="5" id="bulk_day_saturday">
+                                        <label class="form-check-label fw-bold" for="bulk_day_saturday">
+                                            <i class="bi bi-calendar-day me-1"></i>Saturday
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="form-check form-check-lg">
+                                        <input class="form-check-input bulk-day-checkbox" type="checkbox" name="days_of_week" value="6" id="bulk_day_sunday">
+                                        <label class="form-check-label fw-bold" for="bulk_day_sunday">
+                                            <i class="bi bi-calendar-day me-1"></i>Sunday
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mt-2">
+                                <button type="button" class="btn btn-sm btn-outline-primary" id="bulkSelectWeekdays">
+                                    <i class="bi bi-calendar-range me-1"></i>Select Weekdays (Mon-Fri)
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="bulkSelectWeekend">
+                                    <i class="bi bi-calendar-range me-1"></i>Select Weekend (Sat-Sun)
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-info" id="bulkSelectAll">
+                                    <i class="bi bi-calendar-range me-1"></i>Select All Days
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-danger" id="bulkClearDays">
+                                    <i class="bi bi-x-circle me-1"></i>Clear All
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="bulk_start_time" class="form-label">Start Time <span class="text-danger">*</span></label>
+                                <input type="time" class="form-control" id="bulk_start_time" name="start_time" value="08:00" required>
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <label for="bulk_end_time" class="form-label">End Time <span class="text-danger">*</span></label>
+                                <input type="time" class="form-control" id="bulk_end_time" name="end_time" value="17:00" required>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="bulk_location" class="form-label">Location/Unit</label>
+                                <input type="text" class="form-control" id="bulk_location" name="assigned_location">
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <label for="bulk_duties" class="form-label">Duties/Notes</label>
+                                <input type="text" class="form-control" id="bulk_duties" name="assigned_duties">
+                            </div>
+                        </div>
+
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle"></i>
+                            Shifts will be created for all selected staff members <strong>only on the selected days</strong> within the date range.
+                        </div>
+
+                        <div class="d-flex justify-content-end">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-save"></i> Create Bulk Shifts
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Template Tab -->
+        <div class="tab-pane fade" id="template" role="tabpanel">
+            <div class="card">
+                <div class="card-body">
+                    {% if shift_templates %}
+                    <form method="post">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="template">
+                        
+                        <div class="row mb-3">
+                            <div class="col-md-12">
+                                <label class="form-label">Select Template <span class="text-danger">*</span></label>
+                                <select class="form-select" id="template_id" name="template_id" required>
+                                    <option value="">Select a template...</option>
+                                    {% for template in shift_templates %}
+                                    <option value="{{ template.id }}">
+                                        {{ template.name }} - {{ template.get_shift_type_display }} 
+                                        ({{ template.start_time|time:"H:i" }} - {{ template.end_time|time:"H:i" }})
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="row mb-3">
+                            <div class="col-md-12">
+                                <label class="form-label">Select Staff Members <span class="text-danger">*</span></label>
+                                <div class="border rounded p-3" style="max-height: 200px; overflow-y: auto;">
+                                    {% for staff in dept_staff %}
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" 
+                                               name="staff" value="{{ staff.id }}" id="template_staff_{{ staff.id }}">
+                                        <label class="form-check-label" for="template_staff_{{ staff.id }}">
+                                            {{ staff.user.get_full_name|default:staff.user.username }}
+                                        </label>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="template_start_date" class="form-label">Start Date <span class="text-danger">*</span></label>
+                                <input type="date" class="form-control" id="template_start_date" name="start_date" required>
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <label for="template_end_date" class="form-label">End Date <span class="text-danger">*</span></label>
+                                <input type="date" class="form-control" id="template_end_date" name="end_date" required>
+                            </div>
+                        </div>
+                        
+                        <!-- Days of Week Selection for Template -->
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Select Days of Week <span class="text-danger">*</span></label>
+                            <small class="text-muted d-block mb-2">Shifts will be created only for selected days</small>
+                            <div class="row g-2">
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="form-check form-check-lg">
+                                        <input class="form-check-input template-day-checkbox" type="checkbox" name="days_of_week" value="0" id="template_day_monday" checked>
+                                        <label class="form-check-label fw-bold" for="template_day_monday">
+                                            <i class="bi bi-calendar-day me-1"></i>Monday
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="form-check form-check-lg">
+                                        <input class="form-check-input template-day-checkbox" type="checkbox" name="days_of_week" value="1" id="template_day_tuesday" checked>
+                                        <label class="form-check-label fw-bold" for="template_day_tuesday">
+                                            <i class="bi bi-calendar-day me-1"></i>Tuesday
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="form-check form-check-lg">
+                                        <input class="form-check-input template-day-checkbox" type="checkbox" name="days_of_week" value="2" id="template_day_wednesday" checked>
+                                        <label class="form-check-label fw-bold" for="template_day_wednesday">
+                                            <i class="bi bi-calendar-day me-1"></i>Wednesday
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="form-check form-check-lg">
+                                        <input class="form-check-input template-day-checkbox" type="checkbox" name="days_of_week" value="3" id="template_day_thursday" checked>
+                                        <label class="form-check-label fw-bold" for="template_day_thursday">
+                                            <i class="bi bi-calendar-day me-1"></i>Thursday
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="form-check form-check-lg">
+                                        <input class="form-check-input template-day-checkbox" type="checkbox" name="days_of_week" value="4" id="template_day_friday" checked>
+                                        <label class="form-check-label fw-bold" for="template_day_friday">
+                                            <i class="bi bi-calendar-day me-1"></i>Friday
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="form-check form-check-lg">
+                                        <input class="form-check-input template-day-checkbox" type="checkbox" name="days_of_week" value="5" id="template_day_saturday">
+                                        <label class="form-check-label fw-bold" for="template_day_saturday">
+                                            <i class="bi bi-calendar-day me-1"></i>Saturday
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="form-check form-check-lg">
+                                        <input class="form-check-input template-day-checkbox" type="checkbox" name="days_of_week" value="6" id="template_day_sunday">
+                                        <label class="form-check-label fw-bold" for="template_day_sunday">
+                                            <i class="bi bi-calendar-day me-1"></i>Sunday
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mt-2">
+                                <button type="button" class="btn btn-sm btn-outline-primary" id="templateSelectWeekdays">
+                                    <i class="bi bi-calendar-range me-1"></i>Select Weekdays (Mon-Fri)
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="templateSelectWeekend">
+                                    <i class="bi bi-calendar-range me-1"></i>Select Weekend (Sat-Sun)
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-info" id="templateSelectAll">
+                                    <i class="bi bi-calendar-range me-1"></i>Select All Days
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-danger" id="templateClearDays">
+                                    <i class="bi bi-x-circle me-1"></i>Clear All
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="d-flex justify-content-end">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-save"></i> Apply Template
+                            </button>
+                        </div>
+                    </form>
+                    {% else %}
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        No shift templates available. Please create templates first in the scheduling dashboard.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleAllStaff(checkbox) {
+    const staffCheckboxes = document.querySelectorAll('.staff-checkbox');
+    staffCheckboxes.forEach(cb => {
+        cb.checked = checkbox.checked;
+    });
+}
+
+// Set default dates for bulk assignment
+document.addEventListener('DOMContentLoaded', function() {
+    const today = new Date();
+    const nextWeek = new Date(today);
+    nextWeek.setDate(today.getDate() + 7);
+    
+    document.getElementById('bulk_start_date').value = today.toISOString().split('T')[0];
+    document.getElementById('bulk_end_date').value = nextWeek.toISOString().split('T')[0];
+    
+    document.getElementById('template_start_date').value = today.toISOString().split('T')[0];
+    document.getElementById('template_end_date').value = nextWeek.toISOString().split('T')[0];
+    
+    // Day selection helpers for bulk
+    document.getElementById('bulkSelectWeekdays')?.addEventListener('click', function() {
+        const weekdays = ['bulk_day_monday', 'bulk_day_tuesday', 'bulk_day_wednesday', 'bulk_day_thursday', 'bulk_day_friday'];
+        document.querySelectorAll('.bulk-day-checkbox').forEach(cb => cb.checked = false);
+        weekdays.forEach(id => document.getElementById(id).checked = true);
+    });
+    
+    document.getElementById('bulkSelectWeekend')?.addEventListener('click', function() {
+        const weekend = ['bulk_day_saturday', 'bulk_day_sunday'];
+        document.querySelectorAll('.bulk-day-checkbox').forEach(cb => cb.checked = false);
+        weekend.forEach(id => document.getElementById(id).checked = true);
+    });
+    
+    document.getElementById('bulkSelectAll')?.addEventListener('click', function() {
+        document.querySelectorAll('.bulk-day-checkbox').forEach(cb => cb.checked = true);
+    });
+    
+    document.getElementById('bulkClearDays')?.addEventListener('click', function() {
+        document.querySelectorAll('.bulk-day-checkbox').forEach(cb => cb.checked = false);
+    });
+    
+    // Day selection helpers for template
+    document.getElementById('templateSelectWeekdays')?.addEventListener('click', function() {
+        const weekdays = ['template_day_monday', 'template_day_tuesday', 'template_day_wednesday', 'template_day_thursday', 'template_day_friday'];
+        document.querySelectorAll('.template-day-checkbox').forEach(cb => cb.checked = false);
+        weekdays.forEach(id => document.getElementById(id).checked = true);
+    });
+    
+    document.getElementById('templateSelectWeekend')?.addEventListener('click', function() {
+        const weekend = ['template_day_saturday', 'template_day_sunday'];
+        document.querySelectorAll('.template-day-checkbox').forEach(cb => cb.checked = false);
+        weekend.forEach(id => document.getElementById(id).checked = true);
+    });
+    
+    document.getElementById('templateSelectAll')?.addEventListener('click', function() {
+        document.querySelectorAll('.template-day-checkbox').forEach(cb => cb.checked = true);
+    });
+    
+    document.getElementById('templateClearDays')?.addEventListener('click', function() {
+        document.querySelectorAll('.template-day-checkbox').forEach(cb => cb.checked = false);
+    });
+    
+    // Form validation for bulk and template
+    const forms = document.querySelectorAll('form');
+    forms.forEach(form => {
+        form.addEventListener('submit', function(e) {
+            const action = this.querySelector('input[name="action"]')?.value;
+            
+            if (action === 'bulk') {
+                const selectedDays = document.querySelectorAll('.bulk-day-checkbox:checked');
+                if (selectedDays.length === 0) {
+                    e.preventDefault();
+                    alert('⚠️ Please select at least one day of the week for bulk shift creation.');
+                    return false;
+                }
+            } else if (action === 'template') {
+                const selectedDays = document.querySelectorAll('.template-day-checkbox:checked');
+                if (selectedDays.length === 0) {
+                    e.preventDefault();
+                    alert('⚠️ Please select at least one day of the week for template shift creation.');
+                    return false;
+                }
+            }
+        });
+    });
+});
+</script>
+{% endblock %}
+
+
+
+
+

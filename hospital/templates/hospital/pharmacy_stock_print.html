@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pharmacy Inventory — {{ settings.hospital_name|default:"Hospital" }}</title>
+    <style>
+        @page { size: A4 landscape; margin: 12mm; }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            font-size: 9pt;
+            line-height: 1.35;
+            color: #1a1a1a;
+            margin: 0;
+            padding: 16px;
+        }
+        .no-print {
+            margin-bottom: 16px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+        .no-print button, .no-print a {
+            font-size: 14px;
+            padding: 8px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            text-decoration: none;
+            border: none;
+            font-weight: 600;
+        }
+        .btn-print { background: #7c3aed; color: #fff; }
+        .btn-back { background: #e5e7eb; color: #111; display: inline-block; }
+        .header {
+            border-bottom: 3px solid {{ settings.report_header_color|default:'#7c3aed' }};
+            padding-bottom: 12px;
+            margin-bottom: 14px;
+        }
+        .header h1 {
+            margin: 0 0 4px 0;
+            font-size: 18pt;
+            color: {{ settings.report_header_color|default:'#7c3aed' }};
+        }
+        .meta { font-size: 8.5pt; color: #555; }
+        .filters { font-size: 8.5pt; color: #444; margin-top: 6px; }
+        h2.section {
+            font-size: 11pt;
+            margin: 18px 0 8px 0;
+            color: #5b21b6;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 16px;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 5px 6px;
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            background: {{ settings.report_header_color|default:'#7c3aed' }};
+            color: #fff;
+            font-weight: 600;
+            font-size: 8pt;
+        }
+        tr:nth-child(even) { background: #f9fafb; }
+        .num { text-align: right; white-space: nowrap; }
+        @media print {
+            .no-print { display: none !important; }
+            body { padding: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="no-print">
+        <button type="button" class="btn-print" onclick="window.print()">Print / Save as PDF</button>
+        <a href="{% url 'hospital:pharmacy_stock_list' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn-back">Back to pharmacy inventory</a>
+    </div>
+
+    <div class="header">
+        <h1>Pharmacy inventory</h1>
+        <div class="meta">
+            {{ settings.hospital_name|default:"Hospital" }}
+            <br>
+            Generated {{ generated_at|date:"Y-m-d H:i" }}
+            — {{ stock_list|length }} batch row{{ stock_list|length|pluralize }}
+            {% if pharmacy_category %}, {{ inventory_items|length }} inventory item{{ inventory_items|length|pluralize }}{% endif %}
+        </div>
+        {% if query or category_filter or filter_type != 'all' %}
+        <div class="filters">
+            <strong>Filters:</strong>
+            {% if query %}Search “{{ query }}”{% endif %}
+            {% if category_filter %}{% if query %} · {% endif %}Drug category: {{ category_filter_label|default:category_filter }}{% endif %}
+            {% if filter_type != 'all' %}{% if query or category_filter %} · {% endif %}View: {{ filter_type }}{% endif %}
+        </div>
+        {% endif %}
+    </div>
+
+    <h2 class="section">Pharmacy stock (batch-wise)</h2>
+    {% if stock_list %}
+    <table>
+        <thead>
+            <tr>
+                <th>Drug</th>
+                <th>Strength / form</th>
+                <th>Batch</th>
+                <th>Added</th>
+                <th>Location</th>
+                <th class="num">Qty</th>
+                <th class="num">Reorder</th>
+                <th>Expiry</th>
+                <th class="num">Unit cost (GHS)</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for stock in stock_list %}
+            <tr>
+                <td><strong>{{ stock.drug.name }}</strong></td>
+                <td>{{ stock.drug.strength }} {{ stock.drug.form }}</td>
+                <td>{{ stock.batch_number }}</td>
+                <td>{{ stock.created|date:"Y-m-d H:i" }}</td>
+                <td>{{ stock.location }}</td>
+                <td class="num">{{ stock.quantity_on_hand }}</td>
+                <td class="num">{{ stock.reorder_level }}</td>
+                <td>{{ stock.expiry_date|date:"Y-m-d" }}</td>
+                <td class="num">{{ stock.unit_cost }}</td>
+                <td>
+                    {% with ed=stock.expiry_date|date:"Y-m-d" %}
+                    {% if ed <= expiry_threshold %}Expiring soon
+                    {% elif stock.quantity_on_hand <= stock.reorder_level %}Low stock
+                    {% else %}OK{% endif %}
+                    {% endwith %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="meta">No batch stock rows for these filters.</p>
+    {% endif %}
+
+    {% if pharmacy_category %}
+    <h2 class="section">Pharmacy inventory items ({{ pharmacy_category.name }})</h2>
+    {% if inventory_items %}
+    <table>
+        <thead>
+            <tr>
+                <th>Item</th>
+                <th>Code</th>
+                <th>Store</th>
+                <th>Linked drug</th>
+                <th class="num">Qty</th>
+                <th>UoM</th>
+                <th class="num">Reorder</th>
+                <th class="num">Unit cost (GHS)</th>
+                <th class="num">Line value (GHS)</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in inventory_items %}
+            <tr>
+                <td><strong>{{ item.item_name }}</strong></td>
+                <td>{{ item.item_code|default:"—" }}</td>
+                <td>{{ item.store.name }}</td>
+                <td>{% if item.drug %}{{ item.drug.name }}{% else %}—{% endif %}</td>
+                <td class="num">{{ item.quantity_on_hand }}</td>
+                <td>{{ item.unit_of_measure }}</td>
+                <td class="num">{{ item.reorder_level }}</td>
+                <td class="num">{{ item.unit_cost }}</td>
+                <td class="num">{{ item.get_total_value }}</td>
+                <td>
+                    {% if item.quantity_on_hand <= item.reorder_level %}Low stock
+                    {% elif item.is_active %}Active
+                    {% else %}Inactive{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="meta">No pharmacy-category inventory items.</p>
+    {% endif %}
+    {% endif %}
+
+    {% if settings.report_footer_text %}
+    <p class="meta" style="margin-top: 20px;">{{ settings.report_footer_text|linebreaksbr }}</p>
+    {% endif %}
+</body>
+</html>

@@ -1,0 +1,234 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Lab Equipment Dashboard - HMS{% endblock %}
+{% block page_title %}🔬 Lab Equipment Management{% endblock %}
+{% block page_subtitle %}Equipment status, maintenance, and calibration tracking{% endblock %}
+
+{% block extra_css %}
+<style>
+    .equipment-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        transition: all 0.3s;
+        border-left: 4px solid #e0e0e0;
+    }
+    .equipment-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    }
+    .equipment-card.operational { border-left-color: #4CAF50; }
+    .equipment-card.in_use { border-left-color: #2196F3; }
+    .equipment-card.maintenance { border-left-color: #FF9800; }
+    .equipment-card.out_of_order { border-left-color: #f44336; }
+    
+    .stat-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+    }
+    .stat-value {
+        font-size: 36px;
+        font-weight: 700;
+        margin: 10px 0;
+    }
+    .stat-label {
+        font-size: 14px;
+        opacity: 0.9;
+    }
+    
+    .alert-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        margin-left: 8px;
+    }
+    .alert-maintenance { background: #FF9800; color: white; }
+    .alert-calibration { background: #2196F3; color: white; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Statistics Row -->
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="stat-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+            <div class="stat-label">Total Equipment</div>
+            <div class="stat-value">{{ stats.total }}</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card" style="background: linear-gradient(135deg, #4CAF50 0%, #388E3C 100%);">
+            <div class="stat-label">Operational</div>
+            <div class="stat-value">{{ stats.operational }}</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card" style="background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);">
+            <div class="stat-label">Needs Maintenance</div>
+            <div class="stat-value">{{ stats.needs_maintenance }}</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card" style="background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);">
+            <div class="stat-label">Needs Calibration</div>
+            <div class="stat-value">{{ stats.needs_calibration }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- Alerts -->
+{% if active_alerts %}
+<div class="alert alert-warning mb-4">
+    <h5><i class="bi bi-exclamation-triangle me-2"></i>Active Alerts ({{ active_alerts|length }})</h5>
+    <ul class="mb-0">
+        {% for alert in active_alerts %}
+        <li>
+            <strong>{{ alert.get_priority_display }}:</strong> {{ alert.title }}
+            <a href="{% url 'hospital:resolve_alert' alert.id %}" class="btn btn-sm btn-outline-primary ms-2">Resolve</a>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<div class="row">
+    <!-- Equipment List -->
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-gear me-2"></i>All Equipment</h5>
+                {% if can_add_equipment %}
+                <a href="{% url 'hospital:lab_equipment_add' %}" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg me-1"></i>Add Equipment</a>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                {% for eq in equipment %}
+                <div class="equipment-card {{ eq.status }}">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <h6 class="mb-1">
+                                <a href="{% url 'hospital:equipment_detail' eq.id %}" style="text-decoration: none; color: inherit;">
+                                    {{ eq.name }}
+                                </a>
+                                <span class="badge bg-secondary ms-2">{{ eq.get_equipment_type_display }}</span>
+                                <span class="badge bg-{% if eq.status == 'operational' %}success{% elif eq.status == 'in_use' %}primary{% elif eq.status == 'maintenance' %}warning{% else %}danger{% endif %} ms-1">
+                                    {{ eq.get_status_display }}
+                                </span>
+                            </h6>
+                            <p class="text-muted small mb-1">
+                                <strong>Code:</strong> {{ eq.equipment_code }} | 
+                                <strong>Location:</strong> {{ eq.location }}
+                                {% if eq.manufacturer %} | <strong>Manufacturer:</strong> {{ eq.manufacturer }}{% endif %}
+                            </p>
+                            {% if eq.needs_maintenance %}
+                            <span class="alert-badge alert-maintenance">Maintenance Due</span>
+                            {% endif %}
+                            {% if eq.needs_calibration %}
+                            <span class="alert-badge alert-calibration">Calibration Due</span>
+                            {% endif %}
+                            {% if eq.next_calibration_due %}
+                            <small class="text-muted d-block mt-1">
+                                Next Calibration: {{ eq.next_calibration_due }} 
+                                {% if eq.days_until_calibration is not None %}
+                                    ({{ eq.days_until_calibration }} days)
+                                {% endif %}
+                            </small>
+                            {% endif %}
+                        </div>
+                        <div class="text-end">
+                            <div class="fw-bold">{{ eq.total_tests_run }}</div>
+                            <small class="text-muted">Tests Run</small>
+                        </div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="text-center py-5 text-muted">
+                    <i class="bi bi-gear" style="font-size: 48px;"></i>
+                    <p class="mt-3">No equipment registered yet.</p>
+                    {% if can_add_equipment %}
+                    <a href="{% url 'hospital:lab_equipment_add' %}" class="btn btn-primary"><i class="bi bi-plus-lg me-1"></i>Add First Equipment</a>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Sidebar -->
+    <div class="col-lg-4">
+        <!-- Upcoming Maintenance -->
+        {% if upcoming_maintenance %}
+        <div class="card mb-4">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-tools me-2"></i>Upcoming Maintenance</h6>
+            </div>
+            <div class="card-body">
+                {% for eq in upcoming_maintenance %}
+                <div class="mb-3 pb-3 border-bottom">
+                    <strong>{{ eq.name }}</strong><br>
+                    <small class="text-muted">Due: {{ eq.next_maintenance_due }}</small>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Upcoming Calibrations -->
+        {% if upcoming_calibrations %}
+        <div class="card mb-4">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-check-circle me-2"></i>Upcoming Calibrations</h6>
+            </div>
+            <div class="card-body">
+                {% for eq in upcoming_calibrations %}
+                <div class="mb-3 pb-3 border-bottom">
+                    <strong>{{ eq.name }}</strong><br>
+                    <small class="text-muted">Due: {{ eq.next_calibration_due }}</small>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Recent Maintenance -->
+        {% if recent_maintenance %}
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Recent Maintenance</h6>
+            </div>
+            <div class="card-body">
+                {% for maint in recent_maintenance %}
+                <div class="mb-3 pb-3 border-bottom">
+                    <strong>{{ maint.equipment.name }}</strong><br>
+                    <small class="text-muted">
+                        {{ maint.get_maintenance_type_display }} - {{ maint.service_date }}
+                        {% if maint.technician %}
+                            by {{ maint.technician.user.get_full_name|default:maint.technician.user.username }}
+                        {% endif %}
+                    </small>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+

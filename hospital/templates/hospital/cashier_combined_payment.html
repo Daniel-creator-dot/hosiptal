@@ -19,18 +19,21 @@
                             <strong>MRN:</strong> {{ patient.mrn }} | 
                             <strong>Phone:</strong> {{ patient.phone_number|default:"N/A" }}
                         </p>
+                        <p class="mb-0 small text-muted mt-1"><i class="bi bi-check2-circle"></i> This outstanding total matches Total Bill and Record Deposit.</p>
                     </div>
                     
-                    <!-- Services Summary -->
+                    <!-- Services Summary (cashier can edit quantity and amount before payment) -->
                     <div class="mb-4">
                         <h5>Services Summary ({{ service_count }} service(s)):</h5>
+                        <p class="text-muted small mb-2"><i class="bi bi-pencil-square"></i> You may edit quantity and amount before processing payment.</p>
                         <div class="table-responsive">
                             <table class="table table-bordered">
                                 <thead>
                                     <tr>
                                         <th>Type</th>
                                         <th>Service</th>
-                                        <th class="text-end">Amount</th>
+                                        <th class="text-center" style="width: 100px;">Qty</th>
+                                        <th class="text-end" style="width: 130px;">Amount (GHS)</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -41,45 +44,81 @@
                                                 <span class="badge bg-info">🧪 Lab</span>
                                             {% elif service.type == 'pharmacy' %}
                                                 <span class="badge bg-success">💊 Pharmacy</span>
+                                            {% elif service.type == 'pharmacy_walkin' %}
+                                                <span class="badge bg-success">🛒 Prescribe</span>
                                             {% elif service.type == 'imaging' %}
                                                 <span class="badge" style="background: linear-gradient(135deg, #6f42c1 0%, #8e44ad 100%); color: white;">📷 Imaging</span>
                                             {% elif service.type == 'consultation' %}
                                                 <span class="badge bg-primary">👨‍⚕️ Consultation</span>
+                                            {% elif service.type == 'bed' %}
+                                                <span class="badge bg-warning text-dark">🛏️ Bed</span>
+                                            {% elif service.type == 'invoice' %}
+                                                <span class="badge bg-secondary">📄 Invoice</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary">{{ service.type|title }}</span>
                                             {% endif %}
                                         </td>
                                         <td>{{ service.name }}</td>
-                                        <td class="text-end"><strong>GHS {{ service.price|floatformat:2 }}</strong></td>
+                                        <td class="text-center">
+                                            <input type="number" name="service_{{ forloop.counter0 }}_qty" 
+                                                   value="{{ service.quantity|floatformat:0 }}" 
+                                                   min="1" step="1" class="form-control form-control-sm text-center"
+                                                   style="max-width: 70px; margin: 0 auto;" 
+                                                   onchange="recalcRow(this)">
+                                        </td>
+                                        <td class="text-end">
+                                            <input type="number" name="service_{{ forloop.counter0 }}_amount" 
+                                                   value="{{ service.price|floatformat:2 }}" 
+                                                   data-unit-price="{{ service.unit_price|floatformat:2 }}"
+                                                   min="0" step="0.01" class="form-control form-control-sm text-end"
+                                                   style="max-width: 110px; margin-left: auto;" 
+                                                   onchange="updateTotal()">
+                                        </td>
                                     </tr>
                                     {% endfor %}
                                 </tbody>
                                 <tfoot>
                                     <tr>
                                         <th colspan="2" class="text-end">TOTAL:</th>
-                                        <th class="text-end text-success">GHS {{ total_amount|floatformat:2 }}</th>
+                                        <th></th>
+                                        <th class="text-end text-success"><span id="totalDisplay">GHS {{ total_amount|floatformat:2 }}</span></th>
                                     </tr>
+                                    {% if patient_deposit_balance > 0 %}
+                                    <tr class="table-info">
+                                        <th colspan="2" class="text-end">Deposit available (GHS {{ patient_deposit_balance|floatformat:2 }}):</th>
+                                        <th></th>
+                                        <th class="text-end"><strong>After deposit (info): GHS {{ amount_due_after_deposit|floatformat:2 }}</strong></th>
+                                    </tr>
+                                    <tr class="table-info small text-muted">
+                                        <td colspan="4">Deposit is <strong>not</strong> applied automatically here. Use <strong>Apply deposit to total bill</strong> on the Total Bill page to consume deposit; this form collects cash/MoMo/card against the outstanding.</td>
+                                    </tr>
+                                    {% endif %}
                                 </tfoot>
                             </table>
                         </div>
                     </div>
                     
                     <!-- Payment Form -->
-                    <form method="POST">
+                    <form method="POST" id="paymentForm">
                         {% csrf_token %}
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Amount to Pay</label>
+                                <label class="form-label">Amount to collect (full or part payment)</label>
                                 <input type="number" 
                                        class="form-control form-control-lg" 
                                        name="amount" 
-                                       value="{{ total_amount }}" 
+                                       id="amountToPay"
+                                       value="{{ total_amount|floatformat:2 }}" 
+                                       data-max-due="{{ total_amount|floatformat:2 }}"
+                                       data-deposit="{{ patient_deposit_balance|default:0 }}"
                                        step="0.01" 
-                                       min="0.01" 
-                                       required>
-                                <small class="text-muted">Total due: GHS {{ total_amount|floatformat:2 }}</small>
+                                       min="0"
+                                       required title="Enter amount to collect" placeholder="0.00">
+                                <small class="text-muted">You may enter a <strong>partial amount</strong>; the rest will remain outstanding. Updates when you change item amounts (set to 0 to waive).</small>
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Payment Method</label>
-                                <select class="form-select form-select-lg" name="payment_method" required>
+                                <select class="form-select form-select-lg" name="payment_method" required title="Select option" aria-label="Select option">
                                     {% for method_code, method_name in payment_methods %}
                                     <option value="{{ method_code }}" {% if method_code == 'cash' %}selected{% endif %}>
                                         {{ method_name }}
@@ -95,14 +134,14 @@
                                 <input type="text" 
                                        class="form-control" 
                                        name="reference_number" 
-                                       placeholder="Transaction reference">
+                                       placeholder="Transaction reference" title="Enter text" placeholder="Enter text">
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Notes (Optional)</label>
                                 <input type="text" 
                                        class="form-control" 
                                        name="notes" 
-                                       placeholder="Additional notes">
+                                       placeholder="Additional notes" title="Enter text" placeholder="Enter text">
                             </div>
                         </div>
                         
@@ -111,7 +150,7 @@
                                 <i class="bi bi-arrow-left"></i> Cancel
                             </a>
                             <button type="submit" class="btn btn-success btn-lg">
-                                <i class="bi bi-check-circle"></i> Process Payment & Generate Bill
+                                <i class="bi bi-cash-coin"></i> Process Payment &amp; Generate Bill
                             </button>
                         </div>
                     </form>
@@ -120,6 +159,40 @@
         </div>
     </div>
 </div>
+<script>
+function updateTotal() {
+    var total = 0;
+    document.querySelectorAll('input[name^="service_"][name$="_amount"]').forEach(function(inp) {
+        var v = parseFloat(inp.value) || 0;
+        if (v < 0) v = 0;
+        total += v;
+    });
+    var amountEl = document.getElementById('amountToPay');
+    document.getElementById('totalDisplay').textContent = 'GHS ' + total.toFixed(2);
+    amountEl.value = total.toFixed(2);
+}
+function recalcRow(qtyInput) {
+    var row = qtyInput.closest('tr');
+    var qty = parseInt(qtyInput.value) || 1;
+    if (qty < 1) { qtyInput.value = 1; qty = 1; }
+    var amtInput = row.querySelector('input[name$="_amount"]');
+    if (amtInput && amtInput.dataset.unitPrice) {
+        var unitPrice = parseFloat(amtInput.dataset.unitPrice);
+        amtInput.value = (qty * unitPrice).toFixed(2);
+    }
+    updateTotal();
+}
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('input[name^="service_"][name$="_amount"]').forEach(function(inp) {
+        inp.addEventListener('input', updateTotal);
+        inp.addEventListener('change', updateTotal);
+    });
+    document.querySelectorAll('input[name^="service_"][name$="_qty"]').forEach(function(inp) {
+        inp.addEventListener('change', updateTotal);
+    });
+    updateTotal();
+});
+</script>
 {% endblock %}
 
 

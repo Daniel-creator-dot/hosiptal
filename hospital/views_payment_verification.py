@@ -13,7 +13,7 @@ from decimal import Decimal
 import json
 import logging
 
-from .models import Patient, Encounter
+from .models import Patient, Encounter, Payer, Invoice
 from .models_workflow import Bill, PaymentRequest
 from .models_accounting import PaymentReceipt, Transaction
 from .models_payment_verification import (
@@ -39,7 +39,7 @@ def payment_verification_dashboard(request):
             is_deleted=False,
             verified_by__isnull=False
         ).select_related(
-            'test', 'order__encounter__patient'
+            'test', 'order__encounter__patient', 'release_record'
         ).order_by('-created')[:50]
         
         # Filter for those without release record or pending payment
@@ -63,7 +63,7 @@ def payment_verification_dashboard(request):
         pending_prescriptions = Prescription.objects.filter(
             is_deleted=False
         ).select_related(
-            'drug', 'order__encounter__patient', 'prescribed_by'
+            'drug', 'order__encounter__patient', 'prescribed_by', 'dispensing_record'
         ).order_by('-created')[:50]
         
         # Filter for those without dispensing record or pending payment
@@ -251,7 +251,7 @@ def verify_payment_for_lab_result(request, lab_result_id):
                 if patient.phone_number:
                     message = (
                         f"Dear {patient.first_name},\n\n"
-                        f"Your lab result for {lab_result.test.name} is ready.\n"
+                        f"Your lab results are ready.\n"
                         f"Collected by: {released_to}\n"
                         f"Receipt: {receipt_number}\n\n"
                         f"- PrimeCare Medical Center"
@@ -287,24 +287,29 @@ def pharmacy_dispensing_workflow(request):
     """
     Workflow for dispensing medications after payment verification
     """
-    from .models import Prescription
-    
-    # Get all prescriptions
+    from .models import Prescription, InvoiceLine, Invoice
+    from .views_departments import _get_patient_payer_info
+    from .services.auto_billing_service import AutoBillingService
+
+    # Get all prescriptions; prefetch patient and encounter for payer lookup
     prescriptions = Prescription.objects.filter(
         is_deleted=False
     ).select_related(
-        'drug', 'order__encounter__patient', 'prescribed_by'
+        'drug', 'order__encounter__patient', 'order__encounter__patient__primary_insurance',
+        'prescribed_by'
     ).order_by('-created')
-    
-    # Add dispensing status to each
+
+    # Cache encounter -> invoice (with non-cash payer) so we show company from visit's invoice
+    encounter_invoices = {}
+
+    # Add dispensing status to each; ensure corporate/insurance are on invoice and ready_to_dispense
     prescriptions_with_status = []
     for rx in prescriptions:
         try:
             dispensing_record = rx.dispensing_record
             status = dispensing_record.dispensing_status
             payment_verified = dispensing_record.payment_receipt is not None
-        except:
-            # No dispensing record - create one
+        except Exception:
             dispensing_record = PharmacyDispensing.objects.create(
                 prescription=rx,
                 patient=rx.order.encounter.patient,
@@ -313,12 +318,79 @@ def pharmacy_dispensing_workflow(request):
             )
             status = 'pending_payment'
             payment_verified = False
-        
+
+        payer_label = None
+        payer_display = None
+        payer_id_on_file = None
+        try:
+            encounter = rx.order.encounter if rx.order else None
+            patient = encounter.patient if encounter else None
+        except Exception:
+            encounter = None
+            patient = None
+
+        # 1) Prefer encounter's invoice payer (set when visit was created as corporate/insurance)
+        inv = None
+        if encounter and getattr(encounter, 'id', None):
+            if encounter.id not in encounter_invoices:
+                inv_obj = Invoice.objects.filter(encounter_id=encounter.id, is_deleted=False).select_related('payer').first()
+                encounter_invoices[encounter.id] = inv_obj if (inv_obj and inv_obj.payer_id and getattr(inv_obj.payer, 'payer_type', '') != 'cash') else None
+            inv = encounter_invoices[encounter.id]
+        if inv and inv.payer:
+            payer_display = getattr(inv.payer, 'name', '') or 'Corporate/Insurance'
+            payer_label = payer_display
+            payer_id_on_file = inv.payer_id
+            if status == 'pending_payment':
+                has_invoice_line = InvoiceLine.objects.filter(
+                    prescription=rx,
+                    is_deleted=False,
+                    waived_at__isnull=True
+                ).exists()
+                if has_invoice_line:
+                    status = 'ready_to_dispense'
+                    payment_verified = True
+                    dispensing_record.dispensing_status = 'ready_to_dispense'
+                    dispensing_record.payment_verified_at = timezone.now()
+                    dispensing_record.save(update_fields=['dispensing_status', 'payment_verified_at', 'modified'])
+                # If no invoice line: leave as pending_payment; pharmacy must send from Pharmacy dashboard (Send to Cashier/Insurance)
+
+        # 2) Otherwise use get_patient_payer_info + primary_insurance fallback
+        if not payer_display and patient:
+            payer_info = _get_patient_payer_info(patient, encounter)
+            if payer_info.get('is_insurance_or_corporate'):
+                payer_display = payer_info.get('name') or 'Corporate/Insurance'
+                payer_label = payer_display
+                p = payer_info.get('payer')
+                if p and getattr(p, 'pk', None):
+                    payer_id_on_file = p.pk
+                if status == 'pending_payment':
+                    has_invoice_line = InvoiceLine.objects.filter(
+                        prescription=rx,
+                        is_deleted=False,
+                        waived_at__isnull=True
+                    ).exists()
+                    if has_invoice_line:
+                        status = 'ready_to_dispense'
+                        payment_verified = True
+                        dispensing_record.dispensing_status = 'ready_to_dispense'
+                        dispensing_record.payment_verified_at = timezone.now()
+                        dispensing_record.save(update_fields=['dispensing_status', 'payment_verified_at', 'modified'])
+                    # If no invoice line: leave as pending_payment; pharmacy must send from Pharmacy dashboard
+            else:
+                # Fallback: show company/payer from patient.primary_insurance when set (so it's always visible)
+                pi = getattr(patient, 'primary_insurance', None)
+                if pi and getattr(pi, 'payer_type', '') != 'cash' and getattr(pi, 'name', None):
+                    payer_display = pi.name
+                    payer_id_on_file = getattr(pi, 'pk', None)
+
         prescriptions_with_status.append({
             'prescription': rx,
             'dispensing_record': dispensing_record,
             'status': status,
             'payment_verified': payment_verified,
+            'payer_label': payer_label,
+            'payer_display': payer_display,
+            'payer_id_on_file': payer_id_on_file,
         })
     
     # Filter by status (optional)
@@ -482,7 +554,15 @@ def verify_payment_for_pharmacy(request, prescription_id):
                 instructions=instructions,
                 notes=notes
             )
-            
+            drug_to_dispense = dispensing_record.drug_to_dispense or prescription.drug
+            if drug_to_dispense and quantity > 0 and not getattr(dispensing_record, 'stock_reduced_at', None):
+                from .pharmacy_stock_utils import reduce_pharmacy_stock
+                shortfall = reduce_pharmacy_stock(drug_to_dispense, quantity)
+                if shortfall > 0:
+                    messages.warning(
+                        request,
+                        f'Insufficient stock for {drug_to_dispense.name}. Short by {shortfall} units.'
+                    )
             # Create payment verification record
             PaymentVerification.objects.create(
                 receipt=receipt,
@@ -541,6 +621,149 @@ def verify_payment_for_pharmacy(request, prescription_id):
 
 
 @login_required
+def bill_prescription_to_insurance_corporate(request, prescription_id):
+    """
+    Let pharmacy mark a pending prescription as "Bill to insurance/corporate":
+    if the patient already has a company/insurance on file, send the bill straight to them;
+    otherwise show payer selection.
+    """
+    from .models import Prescription
+    from .services.auto_billing_service import AutoBillingService
+    from .views_departments import _get_patient_payer_info
+
+    prescription = get_object_or_404(Prescription, pk=prescription_id, is_deleted=False)
+    patient = prescription.order.encounter.patient
+    encounter = prescription.order.encounter
+    payer_info = {'type': 'cash', 'name': 'Cash', 'is_insurance_or_corporate': False, 'payer': None}
+    # 1) Encounter invoice payer (set when visit created as corporate/insurance)
+    try:
+        inv = Invoice.objects.filter(encounter=encounter, is_deleted=False).select_related('payer').first()
+        if inv and inv.payer_id and getattr(inv.payer, 'payer_type', '') != 'cash':
+            payer_info = {'type': getattr(inv.payer, 'payer_type', 'corporate'), 'name': getattr(inv.payer, 'name', ''), 'is_insurance_or_corporate': True, 'payer': inv.payer}
+    except Exception:
+        pass
+    if not payer_info.get('payer'):
+        try:
+            payer_info = _get_patient_payer_info(patient, encounter)
+        except Exception:
+            pass
+    if not payer_info.get('is_insurance_or_corporate') or not payer_info.get('payer'):
+        pi = getattr(patient, 'primary_insurance', None)
+        if pi and getattr(pi, 'payer_type', '') != 'cash' and getattr(pi, 'name', None):
+            payer_info = {'type': getattr(pi, 'payer_type', 'corporate'), 'name': pi.name, 'is_insurance_or_corporate': True, 'payer': pi}
+    payers = Payer.objects.filter(
+        payer_type__in=('insurance', 'private', 'nhis', 'corporate'),
+        is_active=True,
+        is_deleted=False,
+    ).order_by('name')
+
+    # If patient has company/insurance on file and caller asked to use it, send bill straight there (no form)
+    use_patient_payer = request.GET.get('use_patient_payer') == '1'
+    if use_patient_payer and payer_info.get('is_insurance_or_corporate') and payer_info.get('payer'):
+        payer = payer_info['payer']
+        try:
+            dispensing_record = getattr(prescription, 'dispensing_record', None)
+            if not dispensing_record:
+                ensure = AutoBillingService.create_pharmacy_dispensing_record_only(prescription)
+                if not ensure.get('success'):
+                    messages.error(
+                        request,
+                        ensure.get('message') or ensure.get('error') or 'Could not queue prescription at pharmacy.',
+                    )
+                    return redirect('hospital:bill_prescription_to_insurance_corporate', prescription_id=prescription_id)
+                dispensing_record = PharmacyDispensing.objects.filter(
+                    prescription=prescription, is_deleted=False
+                ).first()
+            substitute = getattr(dispensing_record, 'substitute_drug', None) if dispensing_record else None
+            qty_override = getattr(dispensing_record, 'quantity_ordered', None) if dispensing_record else None
+            result = AutoBillingService.create_pharmacy_bill(
+                prescription,
+                substitute_drug=substitute,
+                quantity_override=int(qty_override) if qty_override is not None else None,
+                payer=payer,
+            )
+            if result.get('success'):
+                messages.success(
+                    request,
+                    f'Bill sent to {payer.name}. You can now dispense from Payment Verification.'
+                )
+                return redirect('hospital:pharmacy_dispensing_workflow')
+            messages.error(request, result.get('message') or result.get('error') or 'Could not create bill.')
+        except Exception as e:
+            logger.exception('bill_prescription_to_insurance_corporate')
+            messages.error(request, str(e))
+        return redirect('hospital:bill_prescription_to_insurance_corporate', prescription_id=prescription_id)
+
+    if request.method == 'POST':
+        payer_id = request.POST.get('payer_id')
+        if not payer_id:
+            messages.error(request, 'Please select a payer (insurance or corporate).')
+            return render(request, 'hospital/bill_prescription_to_insurance_corporate.html', {
+                'prescription': prescription,
+                'patient': patient,
+                'payers': payers,
+                'payer_info': payer_info,
+                'single_payer': payer_info.get('payer') if payer_info.get('is_insurance_or_corporate') else None,
+            })
+        payer = get_object_or_404(Payer, pk=payer_id, is_deleted=False)
+        if payer.payer_type not in ('insurance', 'private', 'nhis', 'corporate'):
+            messages.error(request, 'Selected payer must be insurance or corporate.')
+            return render(request, 'hospital/bill_prescription_to_insurance_corporate.html', {
+                'prescription': prescription,
+                'patient': patient,
+                'payers': payers,
+                'payer_info': payer_info,
+                'single_payer': payer_info.get('payer') if payer_info.get('is_insurance_or_corporate') else None,
+            })
+        try:
+            dispensing_record = getattr(prescription, 'dispensing_record', None)
+            if not dispensing_record:
+                ensure = AutoBillingService.create_pharmacy_dispensing_record_only(prescription)
+                if not ensure.get('success'):
+                    messages.error(
+                        request,
+                        ensure.get('message') or ensure.get('error') or 'Could not queue prescription at pharmacy.',
+                    )
+                    return render(request, 'hospital/bill_prescription_to_insurance_corporate.html', {
+                        'prescription': prescription,
+                        'patient': patient,
+                        'payers': payers,
+                        'payer_info': payer_info,
+                        'single_payer': payer_info.get('payer') if payer_info.get('is_insurance_or_corporate') else None,
+                    })
+                dispensing_record = PharmacyDispensing.objects.filter(
+                    prescription=prescription, is_deleted=False
+                ).first()
+            substitute = getattr(dispensing_record, 'substitute_drug', None) if dispensing_record else None
+            qty_override = getattr(dispensing_record, 'quantity_ordered', None) if dispensing_record else None
+            result = AutoBillingService.create_pharmacy_bill(
+                prescription,
+                substitute_drug=substitute,
+                quantity_override=int(qty_override) if qty_override is not None else None,
+                payer=payer,
+            )
+            if result.get('success'):
+                messages.success(
+                    request,
+                    f'Prescription billed to {payer.name}. You can now dispense from Payment Verification.'
+                )
+                return redirect('hospital:pharmacy_dispensing_workflow')
+            messages.error(request, result.get('message') or result.get('error') or 'Could not create bill.')
+        except Exception as e:
+            logger.exception('bill_prescription_to_insurance_corporate')
+            messages.error(request, str(e))
+
+    single_payer = payer_info.get('payer') if payer_info.get('is_insurance_or_corporate') else None
+    return render(request, 'hospital/bill_prescription_to_insurance_corporate.html', {
+        'prescription': prescription,
+        'patient': patient,
+        'payers': payers,
+        'payer_info': payer_info,
+        'single_payer': single_payer,
+    })
+
+
+@login_required
 def auto_generate_bill_for_lab_order(order):
     """
     Automatically generate bill when lab tests are ordered
@@ -573,7 +796,7 @@ def auto_generate_bill_for_lab_order(order):
                     bill_type='cash',
                     total_amount=total,
                     patient_portion=total,
-                    issued_by=order.ordered_by,
+                    issued_by=order.requested_by,
                     due_date=timezone.now().date() + timezone.timedelta(days=1),
                     status='issued',
                     notes=f'Laboratory tests for Order {order.id}'
@@ -597,10 +820,13 @@ def auto_generate_bill_for_prescription(prescription):
     from decimal import Decimal
     
     try:
-        # Get drug price
-        if hasattr(prescription.drug, 'unit_price') and prescription.drug.unit_price:
+        from .utils_billing import get_drug_price_for_prescription
+        patient = prescription.order.encounter.patient
+        payer = getattr(patient, 'primary_insurance', None)
+        drug_price = get_drug_price_for_prescription(prescription.drug, payer=payer)
+        if drug_price and drug_price > 0:
             quantity = prescription.quantity if hasattr(prescription, 'quantity') else 1
-            total = prescription.drug.unit_price * quantity
+            total = drug_price * quantity
             
             # Check if bill already exists
             existing_bill = Bill.objects.filter(

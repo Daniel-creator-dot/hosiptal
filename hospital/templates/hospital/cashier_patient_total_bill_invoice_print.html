@@ -1,0 +1,342 @@
+{% load humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice – {{ patient.full_name }} – {{ hospital_settings.hospital_name|default:"Hospital" }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --primary-color: #1e40af;
+            --primary-light: #3b82f6;
+            --danger-color: #ef4444;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-500: #6b7280;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-800: #1f2937;
+            --gray-900: #111827;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 10px;
+            line-height: 1.4;
+            color: var(--gray-800);
+            background: #f1f5f9;
+            padding: 15px;
+            min-height: 100vh;
+        }
+        .invoice-wrapper { max-width: 100%; margin: 0 auto; }
+        .invoice-container { padding: 15px; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .invoice-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding-bottom: 12px;
+            border-bottom: 2px solid var(--gray-300);
+            margin-bottom: 12px;
+        }
+        .header-left { flex: 1; }
+        .hospital-logo {
+            width: 50px;
+            height: 50px;
+            object-fit: contain;
+            margin-bottom: 5px;
+            border-radius: 4px;
+        }
+        .hospital-name { font-size: 14px; font-weight: 700; color: var(--gray-900); margin-bottom: 2px; }
+        .hospital-tagline { font-size: 8px; color: var(--gray-600); }
+        .header-right { text-align: right; }
+        .invoice-title { font-size: 18px; font-weight: 700; color: var(--primary-color); margin-bottom: 4px; }
+        .invoice-number-label { font-size: 7px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--gray-500); font-weight: 600; margin-bottom: 2px; }
+        .invoice-number-value { font-size: 12px; font-weight: 700; color: var(--gray-900); font-family: 'Courier New', monospace; }
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+        .info-card { background: white; border: 1px solid var(--gray-300); border-radius: 4px; padding: 8px; }
+        .info-card-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 6px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid var(--gray-200);
+        }
+        .info-card-icon {
+            width: 16px; height: 16px; border-radius: 3px;
+            background: var(--primary-color);
+            display: flex; align-items: center; justify-content: center;
+            margin-right: 6px; font-size: 10px;
+        }
+        .info-card-title { font-size: 9px; font-weight: 700; color: var(--gray-900); text-transform: uppercase; letter-spacing: 0.3px; }
+        .info-row { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--gray-100); }
+        .info-row:last-child { border-bottom: none; }
+        .info-label { font-size: 8px; font-weight: 600; color: var(--gray-600); text-transform: uppercase; min-width: 70px; }
+        .info-value { font-size: 9px; font-weight: 600; color: var(--gray-900); text-align: right; flex: 1; }
+        .section-header {
+            display: flex; align-items: center;
+            margin: 10px 0 6px 0; padding: 6px 10px;
+            background: var(--primary-color); border-radius: 3px;
+        }
+        .section-icon { font-size: 12px; margin-right: 6px; }
+        .section-title { font-size: 10px; font-weight: 700; color: white; text-transform: uppercase; letter-spacing: 0.3px; }
+        .category-subheader { font-weight: 700; color: var(--primary-color); font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 0; border-bottom: 1px solid var(--gray-300); margin-bottom: 2px; }
+        .services-table {
+            width: 100%; border-collapse: collapse; margin-bottom: 10px;
+            background: white; border: 1px solid var(--gray-300);
+        }
+        .services-table thead { background: var(--gray-700); }
+        .services-table th {
+            padding: 4px 6px; text-align: left; font-weight: 700; font-size: 7px;
+            color: white; text-transform: uppercase; letter-spacing: 0.2px; border: 1px solid var(--gray-500);
+        }
+        .services-table th.text-center { text-align: center; }
+        .services-table th.text-right { text-align: right; }
+        .services-table tbody tr { border-bottom: 1px solid var(--gray-200); }
+        .services-table tbody tr:nth-child(even) { background: var(--gray-50); }
+        .services-table td { padding: 4px 6px; border: 1px solid var(--gray-200); font-size: 8px; }
+        .service-code { font-family: 'Courier New', monospace; font-weight: 700; color: var(--primary-color); font-size: 7px; background: var(--gray-100); padding: 1px 4px; border-radius: 2px; display: inline-block; }
+        .totals-wrapper { display: flex; justify-content: flex-start; margin: 12px 0; width: 100%; }
+        .totals-card { width: 100%; max-width: 520px; background: white; border: 1px solid var(--gray-300); border-radius: 3px; padding: 8px; }
+        .totals-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+        .totals-table tr { border-bottom: 1px solid var(--gray-200); }
+        .totals-table tr:last-child { border-bottom: none; }
+        .totals-table td { padding: 4px 6px 4px 0; font-size: 8px; vertical-align: top; }
+        .totals-table td:first-child { text-align: left; font-weight: 600; color: var(--gray-700); width: 62%; }
+        .totals-table td:last-child { text-align: right; font-weight: 700; color: var(--gray-900); font-size: 9px; white-space: nowrap; }
+        .balance-row { background: var(--danger-color); color: white; border-radius: 2px; padding: 4px; margin-top: 4px; }
+        .balance-row td { color: white !important; font-size: 10px !important; font-weight: 800 !important; border: none; }
+        .summary-box { background: #eff6ff; border-left: 3px solid var(--primary-color); border-radius: 3px; padding: 8px; margin-top: 10px; }
+        .summary-title { font-size: 9px; font-weight: 700; color: var(--gray-900); margin-bottom: 4px; }
+        .summary-content { font-size: 7px; color: var(--gray-700); line-height: 1.4; }
+        .summary-alert { margin-top: 6px; padding: 4px 6px; border-radius: 2px; font-weight: 600; font-size: 7px; }
+        .summary-alert.payment-required { background: #fee2e2; border-left: 2px solid var(--danger-color); color: var(--gray-900); }
+        .invoice-footer { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--gray-300); text-align: center; }
+        .footer-content { color: var(--gray-600); font-size: 7px; line-height: 1.4; }
+        .footer-name { font-weight: 700; font-size: 8px; color: var(--gray-900); margin-bottom: 2px; }
+        .footer-note { margin-top: 4px; padding: 4px; background: var(--gray-50); border-radius: 2px; font-size: 6px; color: var(--gray-600); }
+        .action-buttons { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid var(--gray-200); visibility: visible !important; display: block !important; }
+        .btn { display: inline-block; padding: 14px 32px; font-size: 15px; font-weight: 600; text-decoration: none; border-radius: 10px; cursor: pointer; border: none; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 8px; }
+        .btn-primary { background: linear-gradient(135deg, var(--primary-color), var(--primary-light)); color: white; }
+        .btn-secondary { background: var(--gray-200); color: var(--gray-800); }
+        .btn-success { background: #15803d; color: #fff; }
+        .btn-outline-primary { background: #fff; color: var(--primary-color); border: 2px solid var(--primary-color); }
+        .btn-outline-secondary { background: #f3f4f6; color: var(--gray-600); border: 2px solid var(--gray-300); }
+        @media print {
+            body { padding: 0; font-size: 9px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .no-print { display: none !important; }
+            .invoice-header, .info-grid, .section-header, .services-table { page-break-inside: avoid; }
+            /* Browsers often drop backgrounds: keep outstanding row readable */
+            .balance-row { background: #fff !important; border: 2px solid #111 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .balance-row td { color: #111 !important; }
+            .totals-card { page-break-inside: avoid; border: 1px solid #333 !important; }
+            .summary-box { page-break-inside: avoid; border: 1px solid #333 !important; }
+        }
+    </style>
+</head>
+<body>
+    <div class="invoice-wrapper">
+        <div class="invoice-container">
+            <div class="invoice-header">
+                <div class="header-left">
+                    {% if hospital_settings.logo %}
+                    <img src="{{ hospital_settings.logo.url }}" alt="{{ hospital_settings.hospital_name|default:'Hospital' }}" class="hospital-logo">
+                    {% endif %}
+                    <div class="hospital-name">{{ hospital_settings.hospital_name|default:"Primecare Medical Center" }}</div>
+                    <div class="hospital-tagline">{% if hospital_settings.hospital_tagline %}{{ hospital_settings.hospital_tagline }}{% else %}Quality Healthcare for All{% endif %}</div>
+                </div>
+                <div class="header-right">
+                    <div class="invoice-title">INVOICE</div>
+                    <div class="invoice-number-label">Invoice #</div>
+                    <div class="invoice-number-value">BILL-{{ patient.mrn }}-{% now "Ymd" %}</div>
+                </div>
+            </div>
+
+            <div class="info-grid">
+                <div class="info-card">
+                    <div class="info-card-header">
+                        <div class="info-card-icon">&#128100;</div>
+                        <div class="info-card-title">Patient Information</div>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Full Name</span>
+                        <span class="info-value">{{ patient.full_name }}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">MRN</span>
+                        <span class="info-value" style="font-family: 'Courier New', monospace;">{{ patient.mrn }}</span>
+                    </div>
+                    {% if patient.phone_number %}
+                    <div class="info-row">
+                        <span class="info-label">Phone</span>
+                        <span class="info-value">{{ patient.phone_number }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="info-card">
+                    <div class="info-card-header">
+                        <div class="info-card-icon">&#128203;</div>
+                        <div class="info-card-title">Invoice Details</div>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Issue Date</span>
+                        <span class="info-value">{% now "M d, Y" %}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Due Date</span>
+                        <span class="info-value">{% now "M d, Y" %}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Payer</span>
+                        <span class="info-value">{% if patient.primary_insurance %}{{ patient.primary_insurance.name }}{% else %}Cash{% endif %}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Status</span>
+                        <span class="info-value"><span style="display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 7px; font-weight: 700; background: #fef3c7; color: #92400e;">OUTSTANDING</span></span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Amount billed</span>
+                        <span class="info-value">GHS {{ initial_total|default:total|floatformat:2 }}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Deposit taken</span>
+                        <span class="info-value">{% if deposit_applied_to_bill > 0 %}GHS {{ deposit_applied_to_bill|floatformat:2 }}{% else %}GHS 0.00{% endif %}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Outstanding due (this bill)</span>
+                        <span class="info-value">GHS {{ bill_outstanding|floatformat:2 }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="totals-wrapper">
+                <div class="totals-card">
+                    <div style="font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--gray-600); margin-bottom: 6px;">Bill summary</div>
+                    <table class="totals-table">
+                        <tr>
+                            <td><strong>Amount billed</strong> <span style="font-weight: 400; color: var(--gray-500);">(charges on this bill)</span></td>
+                            <td class="text-right"><strong>GHS {{ initial_total|default:total|floatformat:2 }}</strong></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Deposit taken</strong> <span style="font-weight: 400; color: var(--gray-500);">(applied from patient deposit)</span></td>
+                            <td class="text-right">{% if deposit_applied_to_bill > 0 %}- GHS {{ deposit_applied_to_bill|floatformat:2 }}{% else %}GHS 0.00{% endif %}</td>
+                        </tr>
+                        {% if patient_deposit_balance > 0 %}
+                        <tr>
+                            <td style="font-size: 8px; color: var(--gray-600);">Deposit still on account <span style="font-weight: 400;">(not yet applied)</span></td>
+                            <td class="text-right" style="font-size: 8px;">GHS {{ patient_deposit_balance|floatformat:2 }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if payment_filter_active %}
+                        <tr>
+                            <td>Payments in date range</td>
+                            <td class="text-right">GHS {{ total_paid|floatformat:2 }}</td>
+                        </tr>
+                        <tr>
+                            <td>Payments all-time</td>
+                            <td class="text-right">GHS {{ total_paid_all_time|floatformat:2 }}</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td>Total payments received <span style="font-weight: 400; color: var(--gray-500);">(all receipts)</span></td>
+                            <td class="text-right">GHS {{ total_paid_all_time|default:total_paid|floatformat:2 }}</td>
+                        </tr>
+                        {% endif %}
+                        <tr class="balance-row">
+                            <td><strong>Outstanding due (this bill)</strong></td>
+                            <td class="text-right"><strong>GHS {{ bill_outstanding|floatformat:2 }}</strong></td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+
+            <div class="summary-box">
+                <div class="summary-title">Invoice Summary</div>
+                <div class="summary-content">
+                    Billed <strong>GHS {{ initial_total|default:total|floatformat:2 }}</strong>,
+                    deposit taken <strong>{% if deposit_applied_to_bill > 0 %}GHS {{ deposit_applied_to_bill|floatformat:2 }}{% else %}GHS 0.00{% endif %}</strong>,
+                    outstanding <strong>GHS {{ bill_outstanding|floatformat:2 }}</strong>.
+                    {% if total_invoice_items or services_count %}Includes <strong>{{ total_invoice_items|default:services_count }}</strong> line item{{ total_invoice_items|default:services_count|pluralize }}.{% endif %}
+                </div>
+                {% if bill_outstanding > 0 %}
+                <div class="summary-alert payment-required">
+                    <strong>PAYMENT REQUIRED:</strong> Outstanding balance of <strong>GHS {{ bill_outstanding|floatformat:2 }}</strong> is due. Please pay at the cashier.
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="section-header">
+                <span class="section-icon">&#128202;</span>
+                <span class="section-title">Charges by Category</span>
+            </div>
+
+            {% for category in charges_by_category %}
+            <div style="margin-bottom: 8px;">
+                <div class="category-subheader">{{ category.category_name }}</div>
+                <table class="services-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 4%;">#</th>
+                            <th style="width: 12%;">Code</th>
+                            <th style="width: 30%;">Description</th>
+                            <th style="width: 12%;" class="text-center">Date</th>
+                            <th style="width: 8%;" class="text-center">Qty</th>
+                            <th style="width: 12%;" class="text-right">Unit</th>
+                            <th style="width: 10%;" class="text-right">Discount</th>
+                            <th style="width: 12%;" class="text-right">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for line in category.lines %}
+                        <tr>
+                            <td class="text-center" style="font-weight: 600; color: var(--gray-600); font-size: 8px;">{{ forloop.counter }}</td>
+                            <td><span class="service-code">{{ line.code }}</span></td>
+                            <td><span style="font-weight: 600; color: var(--gray-900); font-size: 8px;">{{ line.description }}</span></td>
+                            <td class="text-center" style="font-size: 7px; white-space: nowrap;">{% if line.date %}{{ line.date|date:"d M Y" }}{% else %}—{% endif %}</td>
+                            <td class="text-center"><span style="background: var(--primary-color); color: white; padding: 1px 4px; border-radius: 2px; font-weight: 700; font-size: 7px;">{{ line.qty }}</span></td>
+                            <td class="text-right" style="font-weight: 600; font-size: 8px;">GHS {{ line.unit|floatformat:2 }}</td>
+                            <td class="text-right" style="color: var(--gray-500);">—</td>
+                            <td class="text-right" style="font-weight: 700; font-size: 8px; color: var(--gray-900);">GHS {{ line.total|floatformat:2 }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% empty %}
+            <div style="padding: 16px; text-align: center; background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 4px; margin-bottom: 12px; color: var(--gray-600); font-size: 10px;">
+                No line items on this bill. Add services from the Total Bill page first, then generate the invoice again.
+            </div>
+            {% endfor %}
+
+            <div class="invoice-footer">
+                <div class="footer-content">
+                    <div class="footer-name">{{ hospital_settings.hospital_name|default:"Primecare Medical Center" }}</div>
+                    <div class="footer-note">
+                        This is a computer-generated invoice and does not require a signature.<br>
+                        For inquiries, please contact the billing department.<br>
+                        <span style="margin-top: 4px; display: inline-block;">Generated on {% now "M d, Y H:i" %}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="action-buttons no-print" style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px;">
+                <button type="button" onclick="window.print();" class="btn btn-primary">&#128424; Print Invoice</button>
+                {% if patient_deposit_balance > 0 %}
+                <form method="post" action="{% url 'hospital:cashier_apply_deposit_to_bill' patient.id %}" style="display: inline; margin: 0;">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-success" title="Apply patient deposit to unpaid invoices on this account">&#10003; Apply deposit to total bill</button>
+                </form>
+                {% else %}
+                <button type="button" class="btn btn-outline-secondary" disabled title="No deposit balance to apply">Apply deposit to total bill</button>
+                {% endif %}
+                <a href="{% url 'hospital:cashier_patient_total_bill' patient.id %}{% if total_bill_preserve_query %}?{{ total_bill_preserve_query }}{% endif %}" class="btn btn-outline-primary">Back to Total Bill</a>
+                <button type="button" onclick="window.close();" class="btn btn-secondary">&#10005; Close</button>
+            </div>
+        </div>
+    </div>
+    <script>
+        (function(){ if (window.location.search.indexOf('print=1') !== -1) { window.onload = function(){ window.print(); }; } })();
+    </script>
+</body>
+</html>

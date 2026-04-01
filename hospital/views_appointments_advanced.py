@@ -161,23 +161,34 @@ def smart_appointment_booking(request):
                     status='scheduled'
                 )
                 
-                # Send SMS with booking confirmation
+                # Send SMS with booking confirmation to patient
+                patient_sms_sent = False
                 try:
                     if patient.phone_number:
                         from .views_appointment_confirmation import send_booking_confirmation_sms
-                        sms_sent = send_booking_confirmation_sms(appointment, request=request)
-                        if sms_sent:
+                        patient_sms_sent = send_booking_confirmation_sms(appointment, request=request)
+                        if patient_sms_sent:
                             messages.success(request, f'Appointment created successfully! SMS confirmation with link sent to patient.')
                         else:
-                            messages.warning(request, f'Appointment created, but SMS failed to send. Please check SMS logs.')
+                            messages.warning(request, f'Appointment created, but patient SMS failed to send. Please check SMS logs.')
                     else:
                         messages.success(request, 'Appointment created successfully.')
                 except Exception as e:
                     import logging
                     logger = logging.getLogger(__name__)
-                    logger.error(f"Error sending appointment SMS: {str(e)}")
-                    logger.error(f"Error sending SMS: {str(e)}")
+                    logger.error(f"Error sending patient appointment SMS: {str(e)}")
                     messages.success(request, 'Appointment created successfully.')
+                
+                # Send SMS notification to doctor
+                try:
+                    from .views_appointment_confirmation import send_appointment_notification_to_doctor
+                    doctor_sms_sent = send_appointment_notification_to_doctor(appointment)
+                    if doctor_sms_sent:
+                        logger.info(f"Doctor SMS sent successfully for appointment {appointment.id}")
+                    else:
+                        logger.warning(f"Doctor SMS failed to send for appointment {appointment.id}")
+                except Exception as e:
+                    logger.error(f"Error sending doctor appointment SMS: {str(e)}", exc_info=True)
                 
                 return redirect('hospital:appointment_calendar_view')
         

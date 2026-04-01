@@ -1,0 +1,234 @@
+{% extends "hospital/base.html" %}
+{% load static %}
+
+{% block title %}Create Activity{% endblock %}
+
+{% block extra_css %}
+<style>
+    .form-section {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+    .form-section h5 {
+        color: #495057;
+        margin-bottom: 15px;
+        border-bottom: 2px solid #dee2e6;
+        padding-bottom: 10px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2><i class="fas fa-calendar-plus text-primary"></i> Create Activity</h2>
+            <p class="text-muted mb-0">Add a new hospital-wide activity or event</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:activity_list' %}" class="btn btn-outline-secondary">
+                <i class="fas fa-arrow-left"></i> Back to List
+            </a>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <form method="post" enctype="multipart/form-data">
+                {% csrf_token %}
+                
+                <!-- Basic Information -->
+                <div class="form-section">
+                    <h5><i class="fas fa-info-circle"></i> Basic Information</h5>
+                    <div class="row">
+                        <div class="col-md-8 mb-3">
+                            <label for="title" class="form-label">Title <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="title" name="title" required 
+                                   placeholder="e.g., Monthly Staff Meeting">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="activity_type" class="form-label">Activity Type <span class="text-danger">*</span></label>
+                            <select class="form-select" id="activity_type" name="activity_type" required>
+                                {% for value, label in activity_types %}
+                                <option value="{{ value }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="priority" class="form-label">Priority</label>
+                            <select class="form-select" id="priority" name="priority">
+                                {% for value, label in priority_levels %}
+                                <option value="{{ value }}" {% if value == 'normal' %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="location" class="form-label">Location</label>
+                            <input type="text" class="form-control" id="location" name="location" 
+                                   placeholder="e.g., Conference Room A, Main Hall">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="description" class="form-label">Description</label>
+                        <textarea class="form-control" id="description" name="description" rows="4" 
+                                  placeholder="Detailed description of the activity..."></textarea>
+                    </div>
+                </div>
+
+                <!-- Schedule -->
+                <div class="form-section">
+                    <h5><i class="fas fa-clock"></i> Schedule</h5>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label for="start_date" class="form-label">Start Date <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" id="start_date" name="start_date" 
+                                   value="{{ default_start|date:'Y-m-d' }}" required>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="end_date" class="form-label">End Date <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" id="end_date" name="end_date" 
+                                   value="{{ default_end|date:'Y-m-d' }}" required>
+                        </div>
+                        <div class="col-md-2 mb-3">
+                            <label for="start_time" class="form-label">Start Time</label>
+                            <input type="time" class="form-control" id="start_time" name="start_time">
+                        </div>
+                        <div class="col-md-2 mb-3">
+                            <label for="end_time" class="form-label">End Time</label>
+                            <input type="time" class="form-control" id="end_time" name="end_time">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Target Audience -->
+                <div class="form-section">
+                    <h5><i class="fas fa-users"></i> Target Audience</h5>
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="all_staff" name="all_staff" checked>
+                            <label class="form-check-label" for="all_staff">
+                                Visible to all staff
+                            </label>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Specific Departments (optional)</label>
+                            <div style="max-height: 200px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 4px; padding: 10px;">
+                                {% for dept in departments %}
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="departments" 
+                                           value="{{ dept.id }}" id="dept_{{ dept.id }}">
+                                    <label class="form-check-label" for="dept_{{ dept.id }}">
+                                        {{ dept.name }}
+                                    </label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <small class="text-muted">Select specific departments if not all staff</small>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Specific Staff Members (optional)</label>
+                            <div style="max-height: 200px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 4px; padding: 10px;">
+                                {% for staff in all_staff %}
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="specific_staff" 
+                                           value="{{ staff.id }}" id="staff_{{ staff.id }}">
+                                    <label class="form-check-label" for="staff_{{ staff.id }}">
+                                        {{ staff.user.get_full_name|default:staff.user.username }}
+                                    </label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <small class="text-muted">Select specific staff if targeting individuals</small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Settings -->
+                <div class="form-section">
+                    <h5><i class="fas fa-cog"></i> Settings</h5>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="is_mandatory" name="is_mandatory">
+                                <label class="form-check-label" for="is_mandatory">
+                                    Mandatory attendance
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="requires_rsvp" name="requires_rsvp">
+                                <label class="form-check-label" for="requires_rsvp">
+                                    Requires RSVP
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="is_published" name="is_published" checked>
+                                <label class="form-check-label" for="is_published">
+                                    Publish immediately
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="max_participants" class="form-label">Max Participants (optional)</label>
+                            <input type="number" class="form-control" id="max_participants" name="max_participants" 
+                                   min="1" placeholder="Leave blank for unlimited">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Attachments -->
+                <div class="form-section">
+                    <h5><i class="fas fa-paperclip"></i> Attachments</h5>
+                    <div class="mb-3">
+                        <label for="attachment" class="form-label">Attachment (optional)</label>
+                        <input type="file" class="form-control" id="attachment" name="attachment" 
+                               accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png">
+                        <small class="text-muted">Upload documents, images, or other files related to this activity</small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="external_link" class="form-label">External Link (optional)</label>
+                        <input type="url" class="form-control" id="external_link" name="external_link" 
+                               placeholder="https://example.com">
+                        <small class="text-muted">Link to external resources or registration pages</small>
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-end gap-2">
+                    <a href="{% url 'hospital:activity_list' %}" class="btn btn-outline-secondary">
+                        <i class="fas fa-times"></i> Cancel
+                    </a>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save"></i> Create Activity
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+// Auto-set end date to start date if not set
+document.getElementById('start_date').addEventListener('change', function() {
+    const endDate = document.getElementById('end_date');
+    if (!endDate.value || endDate.value < this.value) {
+        endDate.value = this.value;
+    }
+});
+</script>
+{% endblock %}
+
+
+
+
+

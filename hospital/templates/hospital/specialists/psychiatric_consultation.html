@@ -1,0 +1,618 @@
+{% extends 'hospital/base.html' %}
+{% load humanize static %}
+
+{% block title %}Psychiatric Consultation - {{ patient.full_name|default:"Patient" }}{% endblock %}
+
+{% block page_title %}Psychiatric Consultation{% endblock %}
+{% block page_subtitle %}{% if patient %}{{ patient.full_name }} (MRN: {{ patient.mrn }}){% endif %}{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    <a href="{% url 'hospital:psychiatric_dashboard' %}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Dashboard
+    </a>
+    {% if encounter %}
+    <a href="{% url 'hospital:encounter_detail' encounter.pk %}" class="btn btn-outline-primary">
+        <i class="bi bi-clipboard-pulse"></i> View Encounter
+    </a>
+    {% endif %}
+</div>
+
+<!-- Patient Info -->
+{% if patient %}
+<div class="modern-card mb-4">
+    <div class="row">
+        <div class="col-md-6">
+            <h5><i class="bi bi-person"></i> Patient Information</h5>
+            <table class="table table-sm">
+                <tr>
+                    <th style="width: 140px;">Name:</th>
+                    <td><strong>{{ patient.full_name }}</strong></td>
+                </tr>
+                <tr>
+                    <th>MRN:</th>
+                    <td>{{ patient.mrn }}</td>
+                </tr>
+                <tr>
+                    <th>Age/Gender:</th>
+                    <td>{{ patient.age }} years / {{ patient.get_gender_display }}</td>
+                </tr>
+                <tr>
+                    <th>Phone:</th>
+                    <td>{{ patient.phone_number|default:"—" }}</td>
+                </tr>
+            </table>
+        </div>
+        {% if encounter %}
+        <div class="col-md-6">
+            <h5><i class="bi bi-clipboard-pulse"></i> Encounter Information</h5>
+            <table class="table table-sm">
+                <tr>
+                    <th style="width: 140px;">Type:</th>
+                    <td><span class="badge bg-primary">{{ encounter.get_encounter_type_display }}</span></td>
+                </tr>
+                <tr>
+                    <th>Started:</th>
+                    <td>{{ encounter.started_at|date:"M d, Y H:i" }}</td>
+                </tr>
+                <tr>
+                    <th>Status:</th>
+                    <td><span class="badge bg-success">{{ encounter.get_status_display }}</span></td>
+                </tr>
+                <tr>
+                    <th>Chief Complaint:</th>
+                    <td>{{ encounter.chief_complaint|default:"—" }}</td>
+                </tr>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Psychiatric Assessment Form -->
+<div class="modern-card mb-4">
+    <h5 class="mb-4"><i class="bi bi-heart-pulse"></i> Psychiatric Assessment</h5>
+    
+    <form method="post" id="psychiatric-form">
+        {% csrf_token %}
+        
+        <!-- Chief Complaint & Presenting Problem -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-primary"><i class="bi bi-chat-dots"></i> Chief Complaint & Presenting Problem</h6>
+                <div class="mb-3">
+                    <label class="form-label">Chief Complaint</label>
+                    <textarea name="chief_complaint" class="form-control" rows="2" 
+                              placeholder="Patient's main concern">{{ psychiatric_chart.chief_complaint|default:'' }}</textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Presenting Problem</label>
+                    <textarea name="presenting_problem" class="form-control" rows="3" 
+                              placeholder="Detailed description of the presenting problem">{{ psychiatric_chart.presenting_problem|default:'' }}</textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Duration of Symptoms</label>
+                    <input type="text" name="duration_of_symptoms" class="form-control" 
+                           value="{{ psychiatric_chart.duration_of_symptoms|default:'' }}" 
+                           placeholder="e.g., 3 months, 2 years">
+                </div>
+            </div>
+        </div>
+
+        <!-- Mental Status Examination -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-success"><i class="bi bi-clipboard-check"></i> Mental Status Examination (MSE)</h6>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Appearance</label>
+                        <textarea name="appearance" class="form-control" rows="2" 
+                                  placeholder="General appearance, grooming, dress">{{ psychiatric_chart.appearance|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Behavior</label>
+                        <textarea name="behavior" class="form-control" rows="2" 
+                                  placeholder="Motor activity, eye contact, rapport">{{ psychiatric_chart.behavior|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Speech</label>
+                        <textarea name="speech" class="form-control" rows="2" 
+                                  placeholder="Rate, rhythm, volume, quality">{{ psychiatric_chart.speech|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Mood (Subjective)</label>
+                        <input type="text" name="mood" class="form-control" 
+                               value="{{ psychiatric_chart.mood|default:'' }}" 
+                               placeholder="e.g., depressed, anxious">
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Affect (Observed)</label>
+                        <input type="text" name="affect" class="form-control" 
+                               value="{{ psychiatric_chart.affect|default:'' }}" 
+                               placeholder="e.g., flat, constricted, labile">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Thought Process</label>
+                        <textarea name="thought_process" class="form-control" rows="2" 
+                                  placeholder="Form of thought, flow, organization">{{ psychiatric_chart.thought_process|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Thought Content</label>
+                        <textarea name="thought_content" class="form-control" rows="2" 
+                                  placeholder="Delusions, obsessions, suicidal/homicidal ideation">{{ psychiatric_chart.thought_content|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Perception</label>
+                        <textarea name="perception" class="form-control" rows="2" 
+                                  placeholder="Hallucinations, illusions, depersonalization">{{ psychiatric_chart.perception|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Cognition</label>
+                        <textarea name="cognition" class="form-control" rows="2" 
+                                  placeholder="Orientation, memory, attention, concentration">{{ psychiatric_chart.cognition|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Insight</label>
+                        <select name="insight" class="form-select">
+                            <option value="">Select...</option>
+                            <option value="poor" {% if psychiatric_chart.insight == 'poor' %}selected{% endif %}>Poor</option>
+                            <option value="fair" {% if psychiatric_chart.insight == 'fair' %}selected{% endif %}>Fair</option>
+                            <option value="good" {% if psychiatric_chart.insight == 'good' %}selected{% endif %}>Good</option>
+                            <option value="excellent" {% if psychiatric_chart.insight == 'excellent' %}selected{% endif %}>Excellent</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Judgment</label>
+                        <select name="judgment" class="form-select">
+                            <option value="">Select...</option>
+                            <option value="poor" {% if psychiatric_chart.judgment == 'poor' %}selected{% endif %}>Poor</option>
+                            <option value="fair" {% if psychiatric_chart.judgment == 'fair' %}selected{% endif %}>Fair</option>
+                            <option value="good" {% if psychiatric_chart.judgment == 'good' %}selected{% endif %}>Good</option>
+                            <option value="excellent" {% if psychiatric_chart.judgment == 'excellent' %}selected{% endif %}>Excellent</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Standardized Assessment Scales -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-warning"><i class="bi bi-graph-up"></i> Standardized Assessment Scales</h6>
+                <div class="row">
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">PHQ-9 Score (0-27)</label>
+                        <input type="number" name="phq9_score" class="form-control" min="0" max="27"
+                               value="{{ psychiatric_chart.phq9_score|default:'' }}" 
+                               placeholder="Depression scale">
+                        {% if psychiatric_chart.phq9_score %}
+                        <small class="text-muted">
+                            Severity: <strong>{{ psychiatric_chart.get_depression_severity }}</strong>
+                        </small>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">GAD-7 Score (0-21)</label>
+                        <input type="number" name="gad7_score" class="form-control" min="0" max="21"
+                               value="{{ psychiatric_chart.gad7_score|default:'' }}" 
+                               placeholder="Anxiety scale">
+                        {% if psychiatric_chart.gad7_score %}
+                        <small class="text-muted">
+                            Severity: <strong>{{ psychiatric_chart.get_anxiety_severity }}</strong>
+                        </small>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-2 mb-3">
+                        <label class="form-label">PCL-5 Score (0-80)</label>
+                        <input type="number" name="pcl5_score" class="form-control" min="0" max="80"
+                               value="{{ psychiatric_chart.pcl5_score|default:'' }}" 
+                               placeholder="PTSD scale">
+                    </div>
+                    <div class="col-md-2 mb-3">
+                        <label class="form-label">MMSE Score (0-30)</label>
+                        <input type="number" name="mmse_score" class="form-control" min="0" max="30"
+                               value="{{ psychiatric_chart.mmse_score|default:'' }}" 
+                               placeholder="Cognitive">
+                    </div>
+                    <div class="col-md-2 mb-3">
+                        <label class="form-label">Y-BOCS Score (0-40)</label>
+                        <input type="number" name="ybocs_score" class="form-control" min="0" max="40"
+                               value="{{ psychiatric_chart.ybocs_score|default:'' }}" 
+                               placeholder="OCD scale">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Risk Assessment -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-danger"><i class="bi bi-exclamation-triangle-fill"></i> Risk Assessment</h6>
+                <div class="alert alert-warning">
+                    <i class="bi bi-info-circle"></i> <strong>Important:</strong> Complete risk assessment for all patients
+                </div>
+                <div class="row">
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Suicide Risk</label>
+                        <select name="suicide_risk" class="form-select">
+                            <option value="">Select...</option>
+                            <option value="none" {% if psychiatric_chart.suicide_risk == 'none' %}selected{% endif %}>None</option>
+                            <option value="low" {% if psychiatric_chart.suicide_risk == 'low' %}selected{% endif %}>Low</option>
+                            <option value="moderate" {% if psychiatric_chart.suicide_risk == 'moderate' %}selected{% endif %}>Moderate</option>
+                            <option value="high" {% if psychiatric_chart.suicide_risk == 'high' %}selected{% endif %}>High</option>
+                            <option value="imminent" {% if psychiatric_chart.suicide_risk == 'imminent' %}selected{% endif %}>Imminent</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Homicide Risk</label>
+                        <select name="homicide_risk" class="form-select">
+                            <option value="">Select...</option>
+                            <option value="none" {% if psychiatric_chart.homicide_risk == 'none' %}selected{% endif %}>None</option>
+                            <option value="low" {% if psychiatric_chart.homicide_risk == 'low' %}selected{% endif %}>Low</option>
+                            <option value="moderate" {% if psychiatric_chart.homicide_risk == 'moderate' %}selected{% endif %}>Moderate</option>
+                            <option value="high" {% if psychiatric_chart.homicide_risk == 'high' %}selected{% endif %}>High</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Violence Risk</label>
+                        <select name="violence_risk" class="form-select">
+                            <option value="">Select...</option>
+                            <option value="none" {% if psychiatric_chart.violence_risk == 'none' %}selected{% endif %}>None</option>
+                            <option value="low" {% if psychiatric_chart.violence_risk == 'low' %}selected{% endif %}>Low</option>
+                            <option value="moderate" {% if psychiatric_chart.violence_risk == 'moderate' %}selected{% endif %}>Moderate</option>
+                            <option value="high" {% if psychiatric_chart.violence_risk == 'high' %}selected{% endif %}>High</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Self-Harm Risk</label>
+                        <select name="self_harm_risk" class="form-select">
+                            <option value="">Select...</option>
+                            <option value="none" {% if psychiatric_chart.self_harm_risk == 'none' %}selected{% endif %}>None</option>
+                            <option value="low" {% if psychiatric_chart.self_harm_risk == 'low' %}selected{% endif %}>Low</option>
+                            <option value="moderate" {% if psychiatric_chart.self_harm_risk == 'moderate' %}selected{% endif %}>Moderate</option>
+                            <option value="high" {% if psychiatric_chart.self_harm_risk == 'high' %}selected{% endif %}>High</option>
+                        </select>
+                    </div>
+                    <div class="col-md-12 mb-3">
+                        <label class="form-label">Suicidal Ideation</label>
+                        <textarea name="suicide_ideation" class="form-control" rows="2" 
+                                  placeholder="Describe suicidal thoughts if present">{{ psychiatric_chart.suicide_ideation|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Suicide Plan</label>
+                        <textarea name="suicide_plan" class="form-control" rows="2" 
+                                  placeholder="If plan exists, describe">{{ psychiatric_chart.suicide_plan|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Means Available</label>
+                        <textarea name="suicide_means" class="form-control" rows="2" 
+                                  placeholder="Means available for suicide">{{ psychiatric_chart.suicide_means|default:'' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Psychiatric History -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-info"><i class="bi bi-clock-history"></i> Psychiatric History</h6>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Psychiatric History</label>
+                        <textarea name="psychiatric_history" class="form-control" rows="3" 
+                                  placeholder="Previous psychiatric history">{{ psychiatric_chart.psychiatric_history|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Previous Diagnoses</label>
+                        <textarea name="previous_diagnoses" class="form-control" rows="3" 
+                                  placeholder="Previous psychiatric diagnoses">{{ psychiatric_chart.previous_diagnoses|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Previous Treatments</label>
+                        <textarea name="previous_treatments" class="form-control" rows="3" 
+                                  placeholder="Previous treatments and responses">{{ psychiatric_chart.previous_treatments|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Hospitalizations</label>
+                        <textarea name="hospitalizations" class="form-control" rows="3" 
+                                  placeholder="Psychiatric hospitalizations">{{ psychiatric_chart.hospitalizations|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Family Psychiatric History</label>
+                        <textarea name="family_psychiatric_history" class="form-control" rows="3" 
+                                  placeholder="Family history of mental illness">{{ psychiatric_chart.family_psychiatric_history|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Substance Use History</label>
+                        <textarea name="substance_use_history" class="form-control" rows="3" 
+                                  placeholder="Alcohol, drugs, tobacco use">{{ psychiatric_chart.substance_use_history|default:'' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Current Medications -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-primary"><i class="bi bi-capsule"></i> Current Medications</h6>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Current Medications</label>
+                        <textarea name="current_medications" class="form-control" rows="3" 
+                                  placeholder="List all current psychiatric medications">{{ psychiatric_chart.current_medications|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Medication Compliance</label>
+                        <select name="medication_compliance" class="form-select">
+                            <option value="">Select...</option>
+                            <option value="compliant" {% if psychiatric_chart.medication_compliance == 'compliant' %}selected{% endif %}>Compliant</option>
+                            <option value="partial" {% if psychiatric_chart.medication_compliance == 'partial' %}selected{% endif %}>Partially Compliant</option>
+                            <option value="non_compliant" {% if psychiatric_chart.medication_compliance == 'non_compliant' %}selected{% endif %}>Non-Compliant</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Side Effects</label>
+                        <textarea name="medication_side_effects" class="form-control" rows="3" 
+                                  placeholder="Reported side effects">{{ psychiatric_chart.medication_side_effects|default:'' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Social History -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-secondary"><i class="bi bi-people"></i> Social History</h6>
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Living Situation</label>
+                        <textarea name="living_situation" class="form-control" rows="2" 
+                                  placeholder="Current living arrangements">{{ psychiatric_chart.living_situation|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Occupation</label>
+                        <input type="text" name="occupation" class="form-control" 
+                               value="{{ psychiatric_chart.occupation|default:'' }}" 
+                               placeholder="Current occupation">
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Education</label>
+                        <input type="text" name="education" class="form-control" 
+                               value="{{ psychiatric_chart.education|default:'' }}" 
+                               placeholder="Education level">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Social Support</label>
+                        <textarea name="social_support" class="form-control" rows="2" 
+                                  placeholder="Family, friends, community support">{{ psychiatric_chart.social_support|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Stressors</label>
+                        <textarea name="stressors" class="form-control" rows="2" 
+                                  placeholder="Current life stressors">{{ psychiatric_chart.stressors|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-12 mb-3">
+                        <label class="form-label">Coping Mechanisms</label>
+                        <textarea name="coping_mechanisms" class="form-control" rows="2" 
+                                  placeholder="How patient copes with stress">{{ psychiatric_chart.coping_mechanisms|default:'' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Diagnosis -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-success"><i class="bi bi-clipboard-check"></i> Diagnosis</h6>
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Primary Diagnosis (ICD-10/DSM-5)</label>
+                        <input type="text" name="primary_diagnosis" class="form-control" 
+                               value="{{ psychiatric_chart.primary_diagnosis|default:'' }}" 
+                               placeholder="e.g., F32.1 Major Depressive Disorder">
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Secondary Diagnosis</label>
+                        <input type="text" name="secondary_diagnosis" class="form-control" 
+                               value="{{ psychiatric_chart.secondary_diagnosis|default:'' }}" 
+                               placeholder="Additional diagnoses">
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Provisional Diagnosis</label>
+                        <input type="text" name="provisional_diagnosis" class="form-control" 
+                               value="{{ psychiatric_chart.provisional_diagnosis|default:'' }}" 
+                               placeholder="If diagnosis is provisional">
+                    </div>
+                    <div class="col-md-12 mb-3">
+                        <label class="form-label">Differential Diagnosis</label>
+                        <textarea name="differential_diagnosis" class="form-control" rows="2" 
+                                  placeholder="Other diagnoses considered">{{ psychiatric_chart.differential_diagnosis|default:'' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Treatment Plan -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-primary"><i class="bi bi-clipboard-heart"></i> Treatment Plan</h6>
+                <div class="row">
+                    <div class="col-md-12 mb-3">
+                        <label class="form-label">Overall Treatment Plan</label>
+                        <textarea name="treatment_plan" class="form-control" rows="3" 
+                                  placeholder="Comprehensive treatment plan">{{ psychiatric_chart.treatment_plan|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Psychotherapy Plan</label>
+                        <textarea name="psychotherapy_plan" class="form-control" rows="3" 
+                                  placeholder="Type and frequency of therapy">{{ psychiatric_chart.psychotherapy_plan|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Medication Plan</label>
+                        <textarea name="medication_plan" class="form-control" rows="3" 
+                                  placeholder="Medications to start/continue/adjust">{{ psychiatric_chart.medication_plan|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Behavioral Interventions</label>
+                        <textarea name="behavioral_interventions" class="form-control" rows="3" 
+                                  placeholder="Behavioral strategies and interventions">{{ psychiatric_chart.behavioral_interventions|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Treatment Goals</label>
+                        <textarea name="goals" class="form-control" rows="3" 
+                                  placeholder="Short-term and long-term goals">{{ psychiatric_chart.goals|default:'' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress & Follow-up -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-info"><i class="bi bi-calendar-check"></i> Progress & Follow-up</h6>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Progress Notes</label>
+                        <textarea name="progress_notes" class="form-control" rows="3" 
+                                  placeholder="Progress since last visit">{{ psychiatric_chart.progress_notes|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Response to Treatment</label>
+                        <select name="response_to_treatment" class="form-select">
+                            <option value="">Select...</option>
+                            <option value="excellent" {% if psychiatric_chart.response_to_treatment == 'excellent' %}selected{% endif %}>Excellent</option>
+                            <option value="good" {% if psychiatric_chart.response_to_treatment == 'good' %}selected{% endif %}>Good</option>
+                            <option value="fair" {% if psychiatric_chart.response_to_treatment == 'fair' %}selected{% endif %}>Fair</option>
+                            <option value="poor" {% if psychiatric_chart.response_to_treatment == 'poor' %}selected{% endif %}>Poor</option>
+                            <option value="worsening" {% if psychiatric_chart.response_to_treatment == 'worsening' %}selected{% endif %}>Worsening</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Follow-up Date</label>
+                        <input type="date" name="follow_up_date" class="form-control" 
+                               value="{% if psychiatric_chart.follow_up_date %}{{ psychiatric_chart.follow_up_date|date:'Y-m-d' }}{% endif %}">
+                    </div>
+                    <div class="col-md-12 mb-3">
+                        <label class="form-label">Follow-up Instructions</label>
+                        <textarea name="follow_up_instructions" class="form-control" rows="2" 
+                                  placeholder="Instructions for patient">{{ psychiatric_chart.follow_up_instructions|default:'' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Additional Notes -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3"><i class="bi bi-journal-text"></i> Additional Notes</h6>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Clinical Notes</label>
+                        <textarea name="notes" class="form-control" rows="4" 
+                                  placeholder="Additional clinical notes">{{ psychiatric_chart.notes|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Recommendations</label>
+                        <textarea name="recommendations" class="form-control" rows="4" 
+                                  placeholder="Recommendations and referrals">{{ psychiatric_chart.recommendations|default:'' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Submit Button -->
+        <div class="row">
+            <div class="col-12">
+                <button type="submit" class="btn btn-primary btn-lg">
+                    <i class="bi bi-save"></i> Save Psychiatric Consultation
+                </button>
+                <a href="{% url 'hospital:psychiatric_dashboard' %}" class="btn btn-outline-secondary btn-lg">
+                    <i class="bi bi-x-circle"></i> Cancel
+                </a>
+            </div>
+        </div>
+    </form>
+</div>
+
+<!-- Previous Charts History -->
+{% if previous_charts %}
+<div class="modern-card">
+    <h5 class="mb-3"><i class="bi bi-clock-history"></i> Previous Consultations</h5>
+    <div class="table-responsive">
+        <table class="table table-sm">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Primary Diagnosis</th>
+                    <th>PHQ-9</th>
+                    <th>GAD-7</th>
+                    <th>Risk</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for chart in previous_charts %}
+                <tr>
+                    <td>{{ chart.chart_date|date:"M d, Y" }}</td>
+                    <td>{{ chart.primary_diagnosis|default:"—"|truncatewords:5 }}</td>
+                    <td>
+                        {% if chart.phq9_score %}
+                        <span class="badge bg-{% if chart.phq9_score >= 20 %}danger{% elif chart.phq9_score >= 15 %}warning{% elif chart.phq9_score >= 10 %}info{% else %}success{% endif %}">
+                            {{ chart.phq9_score }}
+                        </span>
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if chart.gad7_score %}
+                        <span class="badge bg-{% if chart.gad7_score >= 15 %}danger{% elif chart.gad7_score >= 10 %}warning{% else %}info{% endif %}">
+                            {{ chart.gad7_score }}
+                        </span>
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if chart.suicide_risk == 'high' or chart.suicide_risk == 'imminent' %}
+                        <span class="badge bg-danger">High Risk</span>
+                        {% elif chart.suicide_risk == 'moderate' %}
+                        <span class="badge bg-warning">Moderate</span>
+                        {% else %}
+                        <span class="badge bg-success">Low</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{% url 'hospital:psychiatric_consultation' patient_id=patient.pk %}" class="btn btn-sm btn-outline-primary">
+                            View
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<style>
+.modern-card {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    margin-bottom: 24px;
+}
+.form-label {
+    font-weight: 600;
+    color: #2c3e50;
+    margin-bottom: 8px;
+}
+</style>
+{% endblock %}
+
+
+
+
+

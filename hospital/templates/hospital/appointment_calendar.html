@@ -1,0 +1,189 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<link href="https://cdn.jsdelivr.net/npm/fullcalendar@5.11.5/main.min.css" rel="stylesheet">
+<style>
+    .fc-event {
+        cursor: pointer;
+    }
+    .calendar-filters {
+        background: white;
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    #calendar {
+        background: white;
+        padding: 1rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2><i class="bi bi-calendar3"></i> {{ title }}</h2>
+            <p class="text-muted">View and manage all appointments</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:frontdesk_appointment_create' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> Create Appointment
+            </a>
+            <a href="{% url 'hospital:frontdesk_appointment_dashboard' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-list"></i> List View
+            </a>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="calendar-filters">
+        <form method="get" class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label">Department</label>
+                <select name="department" class="form-select">
+                    <option value="">All Departments</option>
+                    {% for dept in departments %}
+                    <option value="{{ dept.id }}" {% if selected_department == dept.id|stringformat:"s" %}selected{% endif %}>
+                        {{ dept.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Provider (Doctor)</label>
+                <select name="provider" class="form-select">
+                    <option value="">All Providers</option>
+                    {% for provider in providers %}
+                    {% if provider.profession == 'doctor' %}
+                    <option value="{{ provider.id }}" {% if selected_provider == provider.id|stringformat:"s" %}selected{% endif %}>
+                        {{ provider.user.get_full_name|default:provider.user.username }}
+                    </option>
+                    {% endif %}
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">View</label>
+                <select name="view" class="form-select">
+                    <option value="day" {% if view_type == 'day' %}selected{% endif %}>Day</option>
+                    <option value="week" {% if view_type == 'week' %}selected{% endif %}>Week</option>
+                    <option value="month" {% if view_type == 'month' %}selected{% endif %}>Month</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Date</label>
+                <input type="date" name="date" class="form-control" value="{{ current_date|date:'Y-m-d' }}">
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-filter"></i> Filter
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Calendar -->
+    <div id="calendar"></div>
+
+    <!-- Appointment Detail Modal -->
+    <div class="modal fade" id="appointmentModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Appointment Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="appointmentModalBody">
+                    <!-- Details will be loaded here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@5.11.5/main.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var calendarEl = document.getElementById('calendar');
+    var calendarEventsData = {{ calendar_events|safe }};
+    
+    var viewType = '{{ view_type }}';
+    var initialView = 'timeGridWeek';
+    if (viewType === 'day') {
+        initialView = 'timeGridDay';
+    } else if (viewType === 'month') {
+        initialView = 'dayGridMonth';
+    }
+    
+    var calendar = new FullCalendar.Calendar(calendarEl, {
+        initialView: initialView,
+        headerToolbar: {
+            left: 'prev,next today',
+            center: 'title',
+            right: 'dayGridMonth,timeGridWeek,timeGridDay'
+        },
+        events: calendarEventsData,
+        eventClick: function(info) {
+            var event = info.event;
+            var extendedProps = event.extendedProps || {};
+            
+            var modalBody = document.getElementById('appointmentModalBody');
+            modalBody.innerHTML = `
+                <div class="mb-3">
+                    <strong>Patient:</strong> ${extendedProps.patient || 'N/A'}<br>
+                    <strong>Provider:</strong> ${extendedProps.provider || 'N/A'}<br>
+                    <strong>Department:</strong> ${extendedProps.department || 'N/A'}<br>
+                    <strong>Status:</strong> <span class="badge bg-primary">${extendedProps.status || 'N/A'}</span><br>
+                    <strong>Time:</strong> ${event.start ? event.start.toLocaleString() : 'N/A'}<br>
+                    <strong>Phone:</strong> ${extendedProps.phone || 'N/A'}
+                </div>
+                <div>
+                    <a href="/hms/frontdesk/appointments/${event.id}/" class="btn btn-sm btn-primary">
+                        <i class="bi bi-eye"></i> View Details
+                    </a>
+                    <a href="/hms/frontdesk/appointments/${event.id}/edit/" class="btn btn-sm btn-warning">
+                        <i class="bi bi-pencil"></i> Edit
+                    </a>
+                </div>
+            `;
+            
+            var modalElement = document.getElementById('appointmentModal');
+            var modal = new bootstrap.Modal(modalElement);
+            modal.show();
+        },
+        eventTimeFormat: {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+        },
+        slotMinTime: '08:00:00',
+        slotMaxTime: '18:00:00',
+        height: 'auto',
+        navLinks: true,
+        dayMaxEvents: true,
+        weekends: true,
+        editable: false,
+        selectable: false,
+        businessHours: {
+            daysOfWeek: [1, 2, 3, 4, 5],
+            startTime: '08:00',
+            endTime: '17:00'
+        }
+    });
+    
+    calendar.render();
+});
+</script>
+{% endblock %}

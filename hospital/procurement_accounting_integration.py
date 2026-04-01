@@ -22,19 +22,21 @@ class ProcurementAccountingIntegration:
     """
     
     @staticmethod
-    def create_accounting_entries_for_procurement(procurement_request):
+    def create_accounting_entries_for_procurement(procurement_request, expense_account=None,
+                                                  liability_account=None, payment_account=None):
         """
-        Create complete accounting entries when procurement is approved
+        Create complete accounting entries when procurement is approved.
+        
+        Optional accounts (for finance to choose debit/credit):
+        - expense_account: Account to DEBIT (expense recognition). If None, uses default 5100.
+        - liability_account: Account to CREDIT for AP (e.g. 2100 Accounts Payable). If None, uses default 2100.
+        - payment_account: Bank/Cash account to CREDIT when payment is made (for voucher). If None, uses default 1010.
         
         This creates:
         1. Accounts Payable (AP) - Records liability to vendor
         2. Expense Entry - Recognizes the expense
         3. Payment Voucher - Authorizes payment
-        
-        This follows proper accounting principles:
-        - Accrual basis accounting (expense recognized when incurred)
-        - Proper segregation of duties (procurement → accounts → payment)
-        - Audit trail (all entries linked)
+        All post to General Ledger and update finance reports.
         """
         try:
             with db_transaction.atomic():
@@ -50,9 +52,6 @@ class ProcurementAccountingIntegration:
                     vendor_name = procurement_request.purchase_order.supplier.name
                 
                 # 1. CREATE ACCOUNTS PAYABLE
-                # This records our liability to pay the vendor
-                
-                # Generate unique bill number
                 from datetime import datetime
                 bill_prefix = "AP"
                 year_month = datetime.now().strftime('%Y%m')
@@ -75,12 +74,14 @@ class ProcurementAccountingIntegration:
                 
                 print(f"[ACCOUNTING] ✅ Created AP: {vendor_name} - GHS {total_amount}")
                 
-                # 2. CREATE EXPENSE ENTRY
-                # This recognizes the expense (accrual accounting)
-                expense_account, _ = Account.objects.get_or_create(
-                    account_code='5100',
-                    defaults={'account_name': 'Operating Expenses', 'account_type': 'expense'}
-                )
+                # 2. EXPENSE ACCOUNT (Debit) - use selected or default
+                if expense_account is None:
+                    expense_account, _ = Account.objects.get_or_create(
+                        account_code='5100',
+                        defaults={'account_name': 'Operating Expenses', 'account_type': 'expense'}
+                    )
+                else:
+                    expense_account = Account.objects.get(pk=expense_account) if isinstance(expense_account, (int, str)) else expense_account
                 
                 expense_category, _ = ExpenseCategory.objects.get_or_create(
                     code='EXP-PROC',
@@ -90,6 +91,9 @@ class ProcurementAccountingIntegration:
                         'requires_approval': True,
                     }
                 )
+                if expense_category.account_id != expense_account.pk:
+                    expense_category.account = expense_account
+                    expense_category.save(update_fields=['account'])
                 
                 # Get User for expense recording
                 expense_user = None
@@ -111,12 +115,15 @@ class ProcurementAccountingIntegration:
                 
                 print(f"[ACCOUNTING] ✅ Created Expense: {expense.expense_number} - GHS {total_amount}")
                 
-                # 3. CREATE PAYMENT VOUCHER
-                # This authorizes payment to be made
-                bank_account, _ = Account.objects.get_or_create(
-                    account_code='1010',
-                    defaults={'account_name': 'Bank Account - Main', 'account_type': 'asset'}
-                )
+                # 3. PAYMENT ACCOUNT (Credit when paying) - use selected or default
+                if payment_account is None:
+                    payment_account, _ = Account.objects.get_or_create(
+                        account_code='1010',
+                        defaults={'account_name': 'Bank Account - Main', 'account_type': 'asset'}
+                    )
+                else:
+                    payment_account = Account.objects.get(pk=payment_account) if isinstance(payment_account, (int, str)) else payment_account
+                bank_account = payment_account
                 
                 # Get User objects (PaymentVoucher needs User, not Staff)
                 requested_user = None
@@ -157,13 +164,14 @@ class ProcurementAccountingIntegration:
                 
                 print(f"[ACCOUNTING] ✅ Linked all entries together for complete traceability")
                 
-                # Post to General Ledger
+                # Post to General Ledger (using selected liability account for AP if provided)
                 try:
                     journal_entry = create_procurement_journal_entry(
                         procurement_request=procurement_request,
                         expense=expense,
                         ap=ap,
-                        voucher=voucher
+                        voucher=voucher,
+                        liability_account=liability_account,
                     )
                     if journal_entry:
                         print(f"[ACCOUNTING] ✅ Posted to General Ledger: {journal_entry.entry_number}")
@@ -466,16 +474,13 @@ class ProcurementAccountingIntegration:
         return summary
 
 
-def create_procurement_journal_entry(procurement_request, expense, ap, voucher):
+def create_procurement_journal_entry(procurement_request, expense, ap, voucher, liability_account=None):
     """
-    Create General Ledger entries for procurement
-    Proper double-entry bookkeeping:
-    
+    Create General Ledger entries for procurement (double-entry).
     Debit: Expense Account (increases expenses)
-    Credit: Accounts Payable (increases liability)
+    Credit: Accounts Payable account (increases liability).
     """
     try:
-        # Get or create expense journal
         expense_journal, _ = Journal.objects.get_or_create(
             journal_type='general',
             defaults={
@@ -485,18 +490,17 @@ def create_procurement_journal_entry(procurement_request, expense, ap, voucher):
             }
         )
         
-        # Create journal entry
         journal_entry = AdvancedJournalEntry.objects.create(
             journal=expense_journal,
             entry_date=expense.expense_date,
             description=f"Procurement Expense - {procurement_request.request_number}",
             reference=procurement_request.request_number,
-            status='posted',  # Auto-post for procurement
+            status='posted',
         )
         
-        # Debit: Expense Account (Dr. Expense = increase expense)
+        # Debit: Expense Account
         AdvancedJournalEntryLine.objects.create(
-            journal_entry=journal_entry,  # FIXED: Changed from 'entry' to 'journal_entry'
+            journal_entry=journal_entry,
             line_number=1,
             account=expense.category.account,
             debit_amount=expense.amount,
@@ -504,11 +508,14 @@ def create_procurement_journal_entry(procurement_request, expense, ap, voucher):
             description=f"Procurement expense - {expense.vendor_name}"
         )
         
-        # Credit: Accounts Payable (Cr. AP = increase liability)
-        ap_account, _ = Account.objects.get_or_create(
-            account_code='2100',
-            defaults={'account_name': 'Accounts Payable', 'account_type': 'liability'}
-        )
+        # Credit: Liability (AP) account - use selected or default
+        if liability_account is not None:
+            ap_account = Account.objects.get(pk=liability_account) if isinstance(liability_account, (int, str)) else liability_account
+        else:
+            ap_account, _ = Account.objects.get_or_create(
+                account_code='2100',
+                defaults={'account_name': 'Accounts Payable', 'account_type': 'liability'}
+            )
         
         AdvancedJournalEntryLine.objects.create(
             journal_entry=journal_entry,  # FIXED: Changed from 'entry' to 'journal_entry'
@@ -645,19 +652,20 @@ def post_payment_to_ledger(payment_voucher):
         return None
 
 
-def auto_create_accounting_on_approval(procurement_request):
+def auto_create_accounting_on_approval(procurement_request, expense_account=None,
+                                        liability_account=None, payment_account=None):
     """
-    Helper function to automatically create accounting entries
-    when procurement is approved by accounts department
-    
-    Call this after accounts approval:
-    auto_create_accounting_on_approval(procurement_request)
+    Create accounting entries when procurement is approved by accounts.
+    Optional: expense_account (debit), liability_account (credit for AP), payment_account (credit when paying).
     """
     try:
         print(f"\n[ACCOUNTING] Starting auto-creation for {procurement_request.request_number}")
         
         result = ProcurementAccountingIntegration.create_accounting_entries_for_procurement(
-            procurement_request
+            procurement_request,
+            expense_account=expense_account,
+            liability_account=liability_account,
+            payment_account=payment_account,
         )
         
         if result and result.get('success'):

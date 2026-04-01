@@ -1,0 +1,401 @@
+{% extends 'hospital/base.html' %}
+{% load humanize static %}
+
+{% block title %}Gynecology Consultation - {{ patient.full_name|default:"Patient" }}{% endblock %}
+
+{% block page_title %}Gynecology Consultation{% endblock %}
+{% block page_subtitle %}{% if patient %}{{ patient.full_name }} (MRN: {{ patient.mrn }}){% endif %}{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    <a href="{% url 'hospital:specialist_personal_dashboard' %}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Dashboard
+    </a>
+    {% if encounter %}
+    <a href="{% url 'hospital:encounter_detail' encounter.pk %}" class="btn btn-outline-primary">
+        <i class="bi bi-clipboard-pulse"></i> View Encounter
+    </a>
+    {% endif %}
+</div>
+
+<!-- Patient Info -->
+{% if patient %}
+<div class="modern-card mb-4">
+    <div class="row">
+        <div class="col-md-6">
+            <h5><i class="bi bi-person"></i> Patient Information</h5>
+            <table class="table table-sm">
+                <tr>
+                    <th style="width: 140px;">Name:</th>
+                    <td><strong>{{ patient.full_name }}</strong></td>
+                </tr>
+                <tr>
+                    <th>MRN:</th>
+                    <td>{{ patient.mrn }}</td>
+                </tr>
+                <tr>
+                    <th>Age/Gender:</th>
+                    <td>{{ patient.age }} years / {{ patient.get_gender_display }}</td>
+                </tr>
+                <tr>
+                    <th>Phone:</th>
+                    <td>{{ patient.phone_number|default:"—" }}</td>
+                </tr>
+            </table>
+        </div>
+        {% if encounter %}
+        <div class="col-md-6">
+            <h5><i class="bi bi-clipboard-pulse"></i> Encounter Information</h5>
+            <table class="table table-sm">
+                <tr>
+                    <th style="width: 140px;">Type:</th>
+                    <td><span class="badge bg-primary">{{ encounter.get_encounter_type_display }}</span></td>
+                </tr>
+                <tr>
+                    <th>Started:</th>
+                    <td>{{ encounter.started_at|date:"M d, Y H:i" }}</td>
+                </tr>
+                <tr>
+                    <th>Status:</th>
+                    <td><span class="badge bg-success">{{ encounter.get_status_display }}</span></td>
+                </tr>
+                <tr>
+                    <th>Chief Complaint:</th>
+                    <td>{{ encounter.chief_complaint|default:"—" }}</td>
+                </tr>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Gynecology Assessment Form -->
+<div class="modern-card mb-4">
+    <h5 class="mb-4"><i class="bi bi-gender-female"></i> Gynecology Assessment</h5>
+    
+    <form method="post" id="gynecology-form">
+        {% csrf_token %}
+        
+        <!-- Chief Complaint & History -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-primary"><i class="bi bi-chat-dots"></i> Chief Complaint & History</h6>
+                <div class="mb-3">
+                    <label class="form-label">Chief Complaint</label>
+                    <textarea name="chief_complaint" class="form-control" rows="2" 
+                              placeholder="Patient's main concern">{{ gynecology_chart.chief_complaint|default:'' }}</textarea>
+                </div>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Menstrual History</label>
+                        <textarea name="menstrual_history" class="form-control" rows="3" 
+                                  placeholder="LMP, cycle regularity, duration, flow">{{ gynecology_chart.menstrual_history|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Obstetric History</label>
+                        <textarea name="obstetric_history" class="form-control" rows="3" 
+                                  placeholder="Gravida, Para, abortions, deliveries">{{ gynecology_chart.obstetric_history|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Gynecological History</label>
+                        <textarea name="gynecological_history" class="form-control" rows="3" 
+                                  placeholder="Previous conditions, surgeries">{{ gynecology_chart.gynecological_history|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Contraceptive History</label>
+                        <textarea name="contraceptive_history" class="form-control" rows="3" 
+                                  placeholder="Current and past methods">{{ gynecology_chart.contraceptive_history|default:'' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Current Pregnancy -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-success"><i class="bi bi-heart-pulse"></i> Current Pregnancy</h6>
+                <div class="mb-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="is_pregnant" id="is_pregnant" 
+                               {% if gynecology_chart.is_pregnant %}checked{% endif %}>
+                        <label class="form-check-label" for="is_pregnant">
+                            Patient is currently pregnant
+                        </label>
+                    </div>
+                </div>
+                <div class="row" id="pregnancy_fields">
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Gestational Age (weeks)</label>
+                        <input type="number" name="gestational_age_weeks" class="form-control" 
+                               value="{{ gynecology_chart.gestational_age_weeks|default:'' }}" min="0" max="42">
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Expected Due Date (EDD)</label>
+                        <input type="date" name="edd" class="form-control" 
+                               value="{% if gynecology_chart.edd %}{{ gynecology_chart.edd|date:'Y-m-d' }}{% endif %}">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Pregnancy Complications</label>
+                        <textarea name="pregnancy_complications" class="form-control" rows="2" 
+                                  placeholder="Any complications">{{ gynecology_chart.pregnancy_complications|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Prenatal Care</label>
+                        <textarea name="prenatal_care" class="form-control" rows="2" 
+                                  placeholder="Prenatal care details">{{ gynecology_chart.prenatal_care|default:'' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Physical Examination -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-info"><i class="bi bi-clipboard-check"></i> Physical Examination</h6>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">General Examination</label>
+                        <textarea name="general_examination" class="form-control" rows="2" 
+                                  placeholder="General appearance, vital signs">{{ gynecology_chart.general_examination|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Abdominal Examination</label>
+                        <textarea name="abdominal_examination" class="form-control" rows="2" 
+                                  placeholder="Abdominal findings">{{ gynecology_chart.abdominal_examination|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Pelvic Examination</label>
+                        <textarea name="pelvic_examination" class="form-control" rows="3" 
+                                  placeholder="Inspection, speculum, bimanual findings">{{ gynecology_chart.pelvic_examination|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Breast Examination</label>
+                        <textarea name="breast_examination" class="form-control" rows="2" 
+                                  placeholder="Breast examination findings">{{ gynecology_chart.breast_examination|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-12 mb-3">
+                        <label class="form-label">Cervical Examination</label>
+                        <textarea name="cervical_examination" class="form-control" rows="2" 
+                                  placeholder="Cervix appearance, discharge, lesions">{{ gynecology_chart.cervical_examination|default:'' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Vital Signs -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-warning"><i class="bi bi-activity"></i> Vital Signs</h6>
+                <div class="row">
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Blood Pressure</label>
+                        <input type="text" name="blood_pressure" class="form-control" 
+                               value="{{ gynecology_chart.blood_pressure|default:'' }}" 
+                               placeholder="e.g., 120/80">
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Pulse (bpm)</label>
+                        <input type="number" name="pulse" class="form-control" 
+                               value="{{ gynecology_chart.pulse|default:'' }}" min="0">
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Temperature (°C)</label>
+                        <input type="number" name="temperature" class="form-control" step="0.1" 
+                               value="{{ gynecology_chart.temperature|default:'' }}">
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Weight (kg)</label>
+                        <input type="number" name="weight" class="form-control" step="0.1" 
+                               value="{{ gynecology_chart.weight|default:'' }}">
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Height (cm)</label>
+                        <input type="number" name="height" class="form-control" step="0.1" 
+                               value="{{ gynecology_chart.height|default:'' }}">
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">BMI</label>
+                        <input type="number" name="bmi" class="form-control" step="0.1" 
+                               value="{{ gynecology_chart.bmi|default:'' }}">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Investigations -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-secondary"><i class="bi bi-clipboard-data"></i> Investigations</h6>
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Pap Smear Result</label>
+                        <input type="text" name="pap_smear_result" class="form-control" 
+                               value="{{ gynecology_chart.pap_smear_result|default:'' }}" 
+                               placeholder="Pap smear result">
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Pap Smear Date</label>
+                        <input type="date" name="pap_smear_date" class="form-control" 
+                               value="{% if gynecology_chart.pap_smear_date %}{{ gynecology_chart.pap_smear_date|date:'Y-m-d' }}{% endif %}">
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">HIV Status</label>
+                        <select name="hiv_status" class="form-select">
+                            <option value="">Select...</option>
+                            <option value="negative" {% if gynecology_chart.hiv_status == 'negative' %}selected{% endif %}>Negative</option>
+                            <option value="positive" {% if gynecology_chart.hiv_status == 'positive' %}selected{% endif %}>Positive</option>
+                            <option value="not_tested" {% if gynecology_chart.hiv_status == 'not_tested' %}selected{% endif %}>Not Tested</option>
+                            <option value="declined" {% if gynecology_chart.hiv_status == 'declined' %}selected{% endif %}>Declined</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">HIV Test Date</label>
+                        <input type="date" name="hiv_test_date" class="form-control" 
+                               value="{% if gynecology_chart.hiv_test_date %}{{ gynecology_chart.hiv_test_date|date:'Y-m-d' }}{% endif %}">
+                    </div>
+                    <div class="col-md-12 mb-3">
+                        <label class="form-label">Other Investigations</label>
+                        <textarea name="other_investigations" class="form-control" rows="3" 
+                                  placeholder="Ultrasound, lab tests, etc.">{{ gynecology_chart.other_investigations|default:'' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Diagnosis -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-success"><i class="bi bi-clipboard-check"></i> Diagnosis</h6>
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Primary Diagnosis</label>
+                        <input type="text" name="primary_diagnosis" class="form-control" 
+                               value="{{ gynecology_chart.primary_diagnosis|default:'' }}" 
+                               placeholder="Primary diagnosis">
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Secondary Diagnosis</label>
+                        <input type="text" name="secondary_diagnosis" class="form-control" 
+                               value="{{ gynecology_chart.secondary_diagnosis|default:'' }}" 
+                               placeholder="Secondary diagnosis">
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Provisional Diagnosis</label>
+                        <input type="text" name="provisional_diagnosis" class="form-control" 
+                               value="{{ gynecology_chart.provisional_diagnosis|default:'' }}" 
+                               placeholder="If provisional">
+                    </div>
+                    <div class="col-md-12 mb-3">
+                        <label class="form-label">Differential Diagnosis</label>
+                        <textarea name="differential_diagnosis" class="form-control" rows="2" 
+                                  placeholder="Other diagnoses considered">{{ gynecology_chart.differential_diagnosis|default:'' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Treatment Plan -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-primary"><i class="bi bi-clipboard-heart"></i> Treatment Plan</h6>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Treatment Plan</label>
+                        <textarea name="treatment_plan" class="form-control" rows="3" 
+                                  placeholder="Overall treatment plan">{{ gynecology_chart.treatment_plan|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Medications Prescribed</label>
+                        <textarea name="medications_prescribed" class="form-control" rows="3" 
+                                  placeholder="Medications prescribed">{{ gynecology_chart.medications_prescribed|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Procedures Planned</label>
+                        <textarea name="procedures_planned" class="form-control" rows="3" 
+                                  placeholder="Procedures planned">{{ gynecology_chart.procedures_planned|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Lifestyle Advice</label>
+                        <textarea name="lifestyle_advice" class="form-control" rows="3" 
+                                  placeholder="Lifestyle recommendations">{{ gynecology_chart.lifestyle_advice|default:'' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Follow-up -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h6 class="mb-3 text-info"><i class="bi bi-calendar-check"></i> Follow-up</h6>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Follow-up Date</label>
+                        <input type="date" name="follow_up_date" class="form-control" 
+                               value="{% if gynecology_chart.follow_up_date %}{{ gynecology_chart.follow_up_date|date:'Y-m-d' }}{% endif %}">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Follow-up Instructions</label>
+                        <textarea name="follow_up_instructions" class="form-control" rows="2" 
+                                  placeholder="Instructions for patient">{{ gynecology_chart.follow_up_instructions|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Progress Notes</label>
+                        <textarea name="progress_notes" class="form-control" rows="3" 
+                                  placeholder="Progress since last visit">{{ gynecology_chart.progress_notes|default:'' }}</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Additional Notes</label>
+                        <textarea name="notes" class="form-control" rows="3" 
+                                  placeholder="Additional clinical notes">{{ gynecology_chart.notes|default:'' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Submit Button -->
+        <div class="row">
+            <div class="col-12">
+                <button type="submit" class="btn btn-primary btn-lg">
+                    <i class="bi bi-save"></i> Save Gynecology Consultation
+                </button>
+                <a href="{% url 'hospital:specialist_personal_dashboard' %}" class="btn btn-outline-secondary btn-lg">
+                    <i class="bi bi-x-circle"></i> Cancel
+                </a>
+            </div>
+        </div>
+    </form>
+</div>
+
+<style>
+.modern-card {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    margin-bottom: 24px;
+}
+.form-label {
+    font-weight: 600;
+    color: #2c3e50;
+    margin-bottom: 8px;
+}
+</style>
+
+<script>
+// Show/hide pregnancy fields based on checkbox
+document.getElementById('is_pregnant').addEventListener('change', function() {
+    const fields = document.getElementById('pregnancy_fields');
+    fields.style.display = this.checked ? 'flex' : 'none';
+});
+// Initialize on page load
+if (!document.getElementById('is_pregnant').checked) {
+    document.getElementById('pregnancy_fields').style.display = 'none';
+}
+</script>
+{% endblock %}
+
+
+
+
+

@@ -1,0 +1,320 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Add Services - {{ patient.full_name }} - Cashier - HMS{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-lg-8 offset-lg-2">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Add Services to Bill</h5>
+                    <a href="{% url 'hospital:cashier_patient_total_bill' patient.id %}" class="btn btn-light btn-sm">
+                        <i class="bi bi-arrow-left"></i> Back
+                    </a>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info mb-4">
+                        <strong>{{ patient.full_name }}</strong> (MRN: {{ patient.mrn }})<br>
+                        <small>Payer: {{ patient.primary_insurance.name|default:"Cash" }} — Pricing: {{ payer_type|title }}</small>
+                    </div>
+
+                    <div class="alert alert-success mb-4 py-2">
+                        <strong><i class="bi bi-tooth me-2"></i>Dental:</strong> <strong>Scaling and Polishing</strong> — 460 GHS (select below to add to bill).
+                    </div>
+
+                    <p class="fw-bold mb-3">Search and add services, labs, and scans to bill:</p>
+                    <form method="post">
+                        {% csrf_token %}
+                        <input type="hidden" name="selected_items_json" id="selected_items_json">
+
+                        <div class="card border-primary mb-3">
+                            <div class="card-body">
+                                <label for="bill_item_search" class="form-label"><strong>Search item</strong></label>
+                                <input type="text" id="bill_item_search" class="form-control" autocomplete="off"
+                                       placeholder="Type service/lab/scan name (e.g. physio, FBC, chest xray)">
+                                <div id="search_results" class="list-group mt-2 d-none"></div>
+                                <small class="text-muted">Selecting an item auto-fills price from system.</small>
+                            </div>
+                        </div>
+
+                        <div class="card border-secondary mb-3">
+                            <div class="card-header py-2">
+                                <strong><i class="bi bi-receipt me-1"></i>Selected items to add</strong>
+                            </div>
+                            <div class="card-body py-2">
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle mb-0">
+                                        <thead>
+                                            <tr>
+                                                <th>Item</th>
+                                                <th style="width: 100px;">Qty</th>
+                                                <th style="width: 170px;">Unit Price (GHS)</th>
+                                                <th style="width: 80px;">Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="selected_items_body">
+                                            <tr id="selected_items_empty_row">
+                                                <td colspan="4" class="text-muted">No searched items selected yet.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        {% if can_edit_invoice_amounts %}
+                        <div class="card border-secondary mt-3">
+                            <div class="card-header py-2">
+                                <strong><i class="bi bi-pencil-square me-1"></i>Custom service</strong> — type item name and price
+                            </div>
+                            <div class="card-body py-3">
+                                <div class="row g-2 align-items-end">
+                                    <div class="col-md-6">
+                                        <label for="custom_service_name" class="form-label small mb-0">Item name</label>
+                                        <input type="text" class="form-control" name="custom_service_name" id="custom_service_name"
+                                               placeholder="e.g. Special procedure, Equipment hire" maxlength="200">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="custom_service_amount" class="form-label small mb-0">Amount (GHS)</label>
+                                        <input type="number" class="form-control" name="custom_service_amount" id="custom_service_amount"
+                                               placeholder="0.00" step="0.01" min="0">
+                                    </div>
+                                </div>
+                                <small class="text-muted">Fill both fields to add a custom item. You can add custom with or without selecting services above.</small>
+                            </div>
+                        </div>
+                        {% else %}
+                        <div class="alert alert-light border mb-0">
+                            <small class="text-muted"><i class="bi bi-lock me-1"></i>Custom amounts are set by <strong>accounting</strong>. Add items from search using system prices.</small>
+                        </div>
+                        {% endif %}
+                        <div class="mt-4 d-flex gap-2">
+                            <button type="submit" class="btn btn-success btn-lg">
+                                <i class="bi bi-check-circle me-1"></i>Add Selected to Bill
+                            </button>
+                            <a href="{% url 'hospital:cashier_patient_total_bill' patient.id %}" class="btn btn-outline-secondary btn-lg">Cancel</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    (function () {
+        const canEditInvoiceAmounts = {{ can_edit_invoice_amounts|yesno:"true,false" }};
+        const searchInput = document.getElementById('bill_item_search');
+        const resultsBox = document.getElementById('search_results');
+        const selectedBody = document.getElementById('selected_items_body');
+        const selectedJson = document.getElementById('selected_items_json');
+        const manualItems = [
+            {% for svc in services %}
+            {% if svc.code == 'physio' %}
+            {
+                item_type: 'manual',
+                item_key: 'physio_first',
+                display_name: 'Physiotherapy (First Session)',
+                service_code: 'PHYSIO',
+                unit_price: '250.00',
+                source: 'service'
+            },
+            {
+                item_type: 'manual',
+                item_key: 'physio_subsequent',
+                display_name: 'Physiotherapy (Subsequent Session)',
+                service_code: 'PHYSIO-SUB',
+                unit_price: '150.00',
+                source: 'service'
+            },
+            {% else %}
+            {
+                item_type: 'manual',
+                item_key: '{{ svc.code|escapejs }}',
+                display_name: '{{ svc.label|escapejs }}',
+                service_code: '',
+                unit_price: '{{ svc.price|stringformat:".2f" }}',
+                source: 'service'
+            },
+            {% endif %}
+            {% endfor %}
+        ];
+        let selectedItems = [];
+        let debounceTimer = null;
+
+        function escapeHtml(value) {
+            return String(value || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function syncHiddenJson() {
+            selectedJson.value = JSON.stringify(selectedItems);
+        }
+
+        function renderSelectedItems() {
+            if (!selectedItems.length) {
+                selectedBody.innerHTML = '<tr id="selected_items_empty_row"><td colspan="4" class="text-muted">No searched items selected yet.</td></tr>';
+                syncHiddenJson();
+                return;
+            }
+
+            selectedBody.innerHTML = selectedItems.map((item, idx) => {
+                const sourceLabel = item.source ? ` <span class="badge bg-light text-dark">${escapeHtml(item.source)}</span>` : '';
+                const priceCell = canEditInvoiceAmounts
+                    ? `<input type="number" min="0" step="0.01" class="form-control form-control-sm js-price" value="${escapeHtml(item.unit_price)}">`
+                    : `<span class="text-success fw-semibold">GHS ${escapeHtml(item.unit_price)}</span>`;
+                return `
+                    <tr data-index="${idx}">
+                        <td>${escapeHtml(item.display_name)}${sourceLabel}</td>
+                        <td><input type="number" min="1" step="1" class="form-control form-control-sm js-qty" value="${escapeHtml(item.quantity)}"></td>
+                        <td>${priceCell}</td>
+                        <td><button type="button" class="btn btn-sm btn-outline-danger js-remove">Remove</button></td>
+                    </tr>
+                `;
+            }).join('');
+            syncHiddenJson();
+        }
+
+        function hideResults() {
+            resultsBox.classList.add('d-none');
+            resultsBox.innerHTML = '';
+        }
+
+        function itemAlreadySelected(candidate) {
+            return selectedItems.some(item => item.item_type === candidate.item_type && item.item_key === candidate.item_key);
+        }
+
+        function getLocalManualResults(query) {
+            const q = (query || '').toLowerCase();
+            return manualItems.filter(item => {
+                return item.display_name.toLowerCase().includes(q) || item.item_key.toLowerCase().includes(q);
+            }).slice(0, 20);
+        }
+
+        async function fetchSearchResults(query) {
+            const url = `{% url 'hospital:cashier_search_billable_items' %}?q=${encodeURIComponent(query)}`;
+            try {
+                const response = await fetch(url, { credentials: 'same-origin' });
+                if (!response.ok) return [];
+                const payload = await response.json();
+                return Array.isArray(payload.results) ? payload.results : [];
+            } catch (err) {
+                return [];
+            }
+        }
+
+        function renderResults(items) {
+            if (!items.length) {
+                resultsBox.classList.remove('d-none');
+                resultsBox.innerHTML = '<div class="list-group-item text-muted">No matching item found.</div>';
+                return;
+            }
+
+            resultsBox.classList.remove('d-none');
+            resultsBox.innerHTML = items.map((item, idx) => `
+                <button type="button" class="list-group-item list-group-item-action js-result"
+                        data-index="${idx}">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span><strong>${escapeHtml(item.display_name)}</strong></span>
+                        <span class="text-success">GHS ${escapeHtml(item.unit_price)}</span>
+                    </div>
+                    <small class="text-muted text-uppercase">${escapeHtml(item.source)}</small>
+                </button>
+            `).join('');
+
+            const actionEls = resultsBox.querySelectorAll('.js-result');
+            actionEls.forEach(el => {
+                el.addEventListener('click', function () {
+                    const idx = Number(this.getAttribute('data-index'));
+                    const choice = items[idx];
+                    if (!choice || itemAlreadySelected(choice)) {
+                        hideResults();
+                        searchInput.value = '';
+                        return;
+                    }
+                    selectedItems.push({
+                        item_type: choice.item_type,
+                        item_key: choice.item_key,
+                        display_name: choice.display_name,
+                        service_code: choice.service_code,
+                        source: choice.source,
+                        quantity: 1,
+                        unit_price: choice.unit_price
+                    });
+                    renderSelectedItems();
+                    hideResults();
+                    searchInput.value = '';
+                });
+            });
+        }
+
+        searchInput.addEventListener('input', function () {
+            const query = this.value.trim();
+            if (debounceTimer) {
+                clearTimeout(debounceTimer);
+            }
+            if (query.length < 2) {
+                hideResults();
+                return;
+            }
+            debounceTimer = setTimeout(async () => {
+                const localItems = getLocalManualResults(query);
+                renderResults(localItems);
+                const remoteItems = await fetchSearchResults(query);
+                if (!remoteItems.length) {
+                    return;
+                }
+                const merged = [...localItems];
+                remoteItems.forEach(item => {
+                    const exists = merged.some(x => x.item_type === item.item_type && x.item_key === item.item_key);
+                    if (!exists) merged.push(item);
+                });
+                renderResults(merged);
+            }, 250);
+        });
+
+        document.addEventListener('click', function (evt) {
+            if (!resultsBox.contains(evt.target) && evt.target !== searchInput) {
+                hideResults();
+            }
+        });
+
+        selectedBody.addEventListener('input', function (evt) {
+            const row = evt.target.closest('tr[data-index]');
+            if (!row) return;
+            const idx = Number(row.getAttribute('data-index'));
+            if (!selectedItems[idx]) return;
+
+            if (evt.target.classList.contains('js-qty')) {
+                const val = Math.max(1, Number(evt.target.value || 1));
+                selectedItems[idx].quantity = val;
+                syncHiddenJson();
+            }
+            if (canEditInvoiceAmounts && evt.target.classList.contains('js-price')) {
+                const val = Math.max(0, Number(evt.target.value || 0)).toFixed(2);
+                selectedItems[idx].unit_price = val;
+                syncHiddenJson();
+            }
+        });
+
+        selectedBody.addEventListener('click', function (evt) {
+            if (!evt.target.classList.contains('js-remove')) return;
+            const row = evt.target.closest('tr[data-index]');
+            if (!row) return;
+            const idx = Number(row.getAttribute('data-index'));
+            selectedItems = selectedItems.filter((_, i) => i !== idx);
+            renderSelectedItems();
+        });
+
+        renderSelectedItems();
+    })();
+</script>
+{% endblock %}

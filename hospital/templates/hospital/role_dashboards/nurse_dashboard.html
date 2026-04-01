@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load static %}
+{% load static hospital_extras %}
 
 {% block title %}Nurse Dashboard{% endblock %}
 
@@ -121,11 +121,181 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 45000;
                         <span class="badge bg-success fs-6">{{ staff.get_profession_display }}</span>
                         <br>
                         <small class="text-muted">{{ staff.department.name }}</small>
+                        {% if is_hod %}
+                        <br><br>
+                        <a href="{% url 'hospital:hod_shift_monitoring_dashboard' %}" class="btn btn-primary btn-sm">
+                            <i class="bi bi-calendar-check me-1"></i> Manage Shifts
+                        </a>
+                        {% endif %}
+                        <br><br>
+                        <a href="{% url 'hospital:consulting_rooms_dashboard' %}" class="btn btn-outline-primary btn-sm">
+                            <i class="bi bi-door-open me-1"></i> View Rooms & Doctors
+                        </a>
                     </div>
                 </div>
             </div>
         </div>
     </div>
+
+    <!-- MY SHIFTS SECTION - ALWAYS VISIBLE -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card" style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border-left: 4px solid #fff;">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <h3 class="mb-2" style="color: white;">
+                            <i class="bi bi-calendar-week me-2"></i>My Shifts & Schedule
+                            <span class="badge bg-white text-primary ms-2" style="font-size: 16px; padding: 8px 16px;">
+                                {% if weekly_shifts %}{{ weekly_shifts.count }} shift{{ weekly_shifts.count|pluralize }}{% else %}0 shifts{% endif %}
+                            </span>
+                        </h3>
+                        <p class="mb-0" style="opacity: 0.95; font-size: 16px; color: white;">
+                            Week of {{ week_start|date:"M d" }} - {{ week_end|date:"M d, Y" }}
+                            {% if todays_shifts %}
+                            | <strong>{{ todays_shifts.count }}</strong> shift{{ todays_shifts.count|pluralize }} today
+                            {% endif %}
+                        </p>
+                    </div>
+                    <div>
+                        <a href="{% url 'hospital:staff_schedule_dashboard' %}" class="btn btn-light btn-lg">
+                            <i class="bi bi-calendar-week me-2"></i>View Full Schedule
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- THIS WEEK'S SCHEDULE TABLE - ALWAYS VISIBLE -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card" style="border-left: 4px solid #3b82f6;">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h4 class="mb-0">
+                        <i class="bi bi-calendar-range me-2" style="color: #3b82f6;"></i>This Week's Schedule
+                        <small class="text-muted">({{ week_start|date:"M d" }} - {{ week_end|date:"M d" }})</small>
+                        {% if weekly_shifts %}
+                        <span class="badge bg-primary ms-2">{{ weekly_shifts.count }} shift{{ weekly_shifts.count|pluralize }}</span>
+                        {% else %}
+                        <span class="badge bg-warning text-dark ms-2">⚠️ No shifts assigned</span>
+                        {% endif %}
+                    </h4>
+                    <a href="{% url 'hospital:staff_schedule_dashboard' %}" class="btn btn-primary">
+                        <i class="bi bi-calendar3 me-1"></i>View Full Schedule
+                    </a>
+                </div>
+                
+                {% if weekly_shifts %}
+                <div class="table-responsive">
+                    <table class="table table-hover table-striped">
+                        <thead style="background: linear-gradient(135deg, #3b82f6, #2563eb); color: white;">
+                            <tr>
+                                <th style="font-weight: 600; color: white;">Date</th>
+                                <th style="font-weight: 600; color: white;">Day</th>
+                                <th style="font-weight: 600; color: white;">Shift Type</th>
+                                <th style="font-weight: 600; color: white;">Time</th>
+                                <th style="font-weight: 600; color: white;">Location</th>
+                                <th style="font-weight: 600; color: white;">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for shift in weekly_shifts %}
+                            <tr {% if shift.shift_date == today %}style="background-color: #eff6ff; font-weight: 600; border-left: 4px solid #3b82f6;"{% endif %}>
+                                <td>
+                                    {% if shift.shift_date == today %}
+                                        <span class="badge bg-primary me-2">TODAY</span>
+                                    {% endif %}
+                                    {{ shift.shift_date|date:"M d" }}
+                                </td>
+                                <td>
+                                    <strong>{{ shift.shift_date|date:"l" }}</strong>
+                                </td>
+                                <td>
+                                    <span class="badge bg-primary" style="font-size: 12px; padding: 6px 12px;">
+                                        {{ shift.get_shift_type_display }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <strong>{{ shift.start_time|time:"g:i A" }}</strong> - {{ shift.end_time|time:"g:i A" }}
+                                </td>
+                                <td>
+                                    {% if shift.assigned_location %}
+                                        <i class="bi bi-geo-alt me-1"></i>{{ shift.assigned_location }}
+                                    {% elif shift.location %}
+                                        <i class="bi bi-building me-1"></i>{{ shift.location.name }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if shift.is_confirmed %}
+                                    <span class="badge bg-success">
+                                        <i class="bi bi-check-circle me-1"></i>Confirmed
+                                    </span>
+                                    {% else %}
+                                    <span class="badge bg-warning text-dark">
+                                        <i class="bi bi-clock me-1"></i>Pending
+                                    </span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div style="text-align: center; padding: 60px 40px; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 12px; border: 3px solid #f59e0b;">
+                    <i class="bi bi-calendar-x" style="font-size: 72px; color: #f59e0b; margin-bottom: 20px;"></i>
+                    <h3 style="color: #92400e; margin-bottom: 12px; font-weight: 700;">⚠️ No Shifts Scheduled This Week</h3>
+                    <p style="color: #78350f; font-size: 18px; margin-bottom: 12px; font-weight: 600;">You don't have any shifts assigned for this week.</p>
+                    <p style="color: #78350f; font-size: 16px; margin-bottom: 8px;">Week: {{ week_start|date:"M d" }} - {{ week_end|date:"M d, Y" }}</p>
+                    <p style="color: #92400e; font-weight: 700; margin-bottom: 24px; font-size: 18px;">
+                        <i class="bi bi-exclamation-triangle me-2"></i>Please contact your department head or HR to assign shifts.
+                    </p>
+                    <div class="d-flex gap-2 justify-content-center">
+                        <a href="{% url 'hospital:staff_schedule_dashboard' %}" class="btn btn-primary btn-lg">
+                            <i class="bi bi-calendar-week me-2"></i>View Full Schedule
+                        </a>
+                        {% if staff.department %}
+                        <a href="{% url 'hospital:hod_scheduling_dashboard' %}" class="btn btn-warning btn-lg">
+                            <i class="bi bi-person-badge me-2"></i>Contact HOD
+                        </a>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- HOD Shift Management Card (if HOD) -->
+    {% if is_hod %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; border-left: 4px solid #fff;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h4 class="mb-2">
+                            <i class="bi bi-calendar-check me-2"></i>
+                            Shift Management - Head of Nurses
+                        </h4>
+                        <p class="mb-0" style="opacity: 0.9;">
+                            Create shifts, monitor attendance, and track compliance for your department staff
+                        </p>
+                    </div>
+                    <div>
+                        <a href="{% url 'hospital:hod_shift_monitoring_dashboard' %}" class="btn btn-light btn-lg me-2">
+                            <i class="bi bi-calendar-check me-2"></i> Manage Shifts
+                        </a>
+                        <a href="{% url 'hospital:hod_create_shift_enhanced' %}" class="btn btn-outline-light btn-lg">
+                            <i class="bi bi-plus-circle me-2"></i> Create Shift
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 
     {% include 'hospital/includes/performance_snapshot.html' with snapshot=performance_snapshot heading="Clinical Support Impact (Last 14 Days)" %}
 
@@ -157,24 +327,192 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 45000;
         </div>
     </div>
 
-    <!-- Quick Actions -->
+    <!-- Patient Care & Note-Taking Guide -->
+    <div class="dashboard-card mb-4" style="background: linear-gradient(135deg, #10B981 0%, #059669 100%); color: white; border-left: 4px solid #fff;">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h4 class="mb-2" style="color: white;">
+                    <i class="bi bi-clipboard-heart me-2"></i>Patient Care & Documentation
+                </h4>
+                <p class="mb-0" style="opacity: 0.95;">
+                    <strong>Add Clinical Notes:</strong> Click any patient below → Click "Note" button → Add your nursing notes, observations, and care updates.
+                    All notes are saved to the patient's medical record and visible to doctors and other staff.
+                </p>
+            </div>
+            <div class="col-md-4 text-end">
+                <a href="{% url 'hospital:patient_list' %}" class="btn btn-light btn-lg me-2">
+                    <i class="bi bi-people me-2"></i>All Patients
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Comprehensive Quick Actions -->
+    <div class="dashboard-card mb-4" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-left: 4px solid #fff;">
+        <h5 class="mb-3" style="color: white;">
+            <i class="bi bi-tools me-2"></i>Essential Tools & Quick Access
+        </h5>
+        <div class="row g-3">
+            <!-- Patient Care Section -->
+            <div class="col-md-4">
+                <h6 style="color: rgba(255,255,255,0.9); margin-bottom: 12px;">
+                    <i class="bi bi-heart-pulse me-2"></i>Patient Care
+                </h6>
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="{% url 'hospital:patient_list' %}" class="btn btn-light btn-sm">
+                        <i class="bi bi-people me-1"></i> All Patients
+                    </a>
+                    <a href="{% url 'hospital:flow_dashboard' %}" class="btn btn-light btn-sm">
+                        <i class="bi bi-diagram-3 me-1"></i> Patient Flow
+                    </a>
+                    <a href="{% url 'hospital:vitals_dashboard_legacy' %}" class="btn btn-light btn-sm">
+                        <i class="bi bi-heart-pulse me-1"></i> Vitals Queue
+                    </a>
+                    <a href="{% url 'hospital:global_search' %}" class="btn btn-light btn-sm">
+                        <i class="bi bi-search me-1"></i> Search
+                    </a>
+                </div>
+            </div>
+            <!-- Bed Management Section -->
+            <div class="col-md-4">
+                <h6 style="color: rgba(255,255,255,0.9); margin-bottom: 12px;">
+                    <i class="bi bi-bed me-2"></i>Bed Management
+                </h6>
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="{% url 'hospital:bed_management_worldclass' %}" class="btn btn-light btn-sm">
+                        <i class="bi bi-columns-gap me-1"></i> Bed Manager
+                    </a>
+                    <a href="{% url 'hospital:admission_list' %}" class="btn btn-light btn-sm">
+                        <i class="bi bi-hospital me-1"></i> Admissions
+                    </a>
+                    <a href="{% url 'hospital:admission_create' %}" class="btn btn-light btn-sm">
+                        <i class="bi bi-plus-circle me-1"></i> New Admission
+                    </a>
+                </div>
+            </div>
+            <!-- Documentation Section -->
+            <div class="col-md-4">
+                <h6 style="color: rgba(255,255,255,0.9); margin-bottom: 12px;">
+                    <i class="bi bi-clipboard-check me-2"></i>Documentation
+                </h6>
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="{% url 'hospital:patient_list' %}" class="btn btn-light btn-sm">
+                        <i class="bi bi-journal-text me-1"></i> Add Notes
+                    </a>
+                    <a href="{% url 'hospital:vitals_dashboard_legacy' %}" class="btn btn-light btn-sm">
+                        <i class="bi bi-activity me-1"></i> Record Vitals
+                    </a>
+                    <a href="{% url 'hospital:flow_dashboard' %}" class="btn btn-light btn-sm">
+                        <i class="bi bi-clipboard-data me-1"></i> Care Plans
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Patient Flow Board -->
     <div class="dashboard-card mb-4">
-        <div class="d-flex flex-wrap gap-2">
-            <a href="{% url 'hospital:flow_dashboard' %}" class="action-btn btn-primary">
-                <i class="bi bi-diagram-3 me-1"></i> Patient Flow
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="mb-0">
+                <i class="bi bi-diagram-3 me-2"></i>
+                Patient Flow Board
+            </h5>
+            <a href="{% url 'hospital:flow_dashboard' %}" class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-arrow-right me-1"></i> View Full Dashboard
             </a>
-            <a href="{% url 'hospital:vitals_dashboard_legacy' %}" class="action-btn btn-warning">
-                <i class="bi bi-heart-pulse me-1"></i> Vitals Queue
-            </a>
-            <a href="{% url 'hospital:admission_list' %}" class="action-btn btn-info">
-                <i class="bi bi-hospital me-1"></i> Admissions
-            </a>
-            <a href="{% url 'hospital:bed_management_worldclass' %}" class="action-btn btn-primary">
-                <i class="bi bi-columns-gap me-1"></i> Bed Manager
-            </a>
-            <a href="{% url 'hospital:patient_list' %}" class="action-btn">
-                <i class="bi bi-people me-1"></i> Patients
-            </a>
+        </div>
+        
+        <!-- Flow Statistics -->
+        <div class="row mb-3">
+            <div class="col-md-3">
+                <div class="text-center p-2" style="background: rgba(102, 126, 234, 0.1); border-radius: 8px;">
+                    <div style="font-size: 24px; font-weight: bold; color: #667eea;">{{ total_flow_patients }}</div>
+                    <small class="text-muted">Active Patients</small>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="text-center p-2" style="background: rgba(16, 185, 129, 0.1); border-radius: 8px;">
+                    <div style="font-size: 24px; font-weight: bold; color: #10B981;">{{ completed_today }}</div>
+                    <small class="text-muted">Completed Today</small>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="text-center p-2" style="background: rgba(245, 158, 11, 0.1); border-radius: 8px;">
+                    <div style="font-size: 24px; font-weight: bold; color: #F59E0B;">{{ avg_wait_time }} min</div>
+                    <small class="text-muted">Avg Wait Time</small>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="text-center p-2" style="background: rgba(239, 68, 68, 0.1); border-radius: 8px;">
+                    <div style="font-size: 24px; font-weight: bold; color: #EF4444;">{{ delayed_count }}</div>
+                    <small class="text-muted">Delayed Patients</small>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Flow Queue Columns -->
+        <div class="row g-3">
+            {% for stage_type, stage_data in queue_by_stage.items %}
+            <div class="col-md-4 col-lg-2">
+                <div style="background: {{ stage_data.bg }}; border-radius: 12px; padding: 16px; border-left: 4px solid {{ stage_data.color }};">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div class="d-flex align-items-center">
+                            <div style="width: 32px; height: 32px; background: {{ stage_data.color }}; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-right: 8px;">
+                                <i class="bi bi-{{ stage_data.icon }}" style="color: white; font-size: 16px;"></i>
+                            </div>
+                            <div>
+                                <div style="font-weight: 600; font-size: 13px; color: #1E293B;">{{ stage_data.name }}</div>
+                            </div>
+                        </div>
+                        <span style="background: {{ stage_data.color }}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+                            {{ stage_data.patients|length }}
+                        </span>
+                    </div>
+                    
+                    {% if stage_data.patients %}
+                        <div style="max-height: 300px; overflow-y: auto;">
+                            {% for patient_data in stage_data.patients|slice:":5" %}
+                            <a href="{% url 'hospital:patient_flow' patient_data.encounter_id %}" 
+                               class="d-block p-2 mb-2" 
+                               style="background: white; border-radius: 8px; text-decoration: none; border: 1px solid #e5e7eb; transition: all 0.2s;"
+                               onmouseover="this.style.transform='translateX(4px)'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)';"
+                               onmouseout="this.style.transform=''; this.style.boxShadow='';">
+                                <div style="font-weight: 600; font-size: 13px; color: #1E293B; margin-bottom: 4px;">
+                                    {{ patient_data.patient_name }}
+                                </div>
+                                {% if patient_data.django_patient %}
+                                <div class="mt-1 mb-1">{% patient_payer_badges patient_data.django_patient patient_data.django_encounter %}</div>
+                                {% endif %}
+                                <div style="font-size: 11px; color: #64748B; margin-bottom: 4px;">
+                                    <i class="bi bi-person-badge me-1"></i>{{ patient_data.mrn }}
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <span style="font-size: 11px; color: #64748B;">
+                                        <i class="bi bi-clock me-1"></i>{{ patient_data.wait_minutes }} min
+                                    </span>
+                                    {% if patient_data.wait_minutes > 60 %}
+                                    <span style="background: #EF4444; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold;">
+                                        URGENT
+                                    </span>
+                                    {% endif %}
+                                </div>
+                            </a>
+                            {% endfor %}
+                            {% if stage_data.patients|length > 5 %}
+                            <div class="text-center mt-2">
+                                <small class="text-muted">+{{ stage_data.patients|length|add:"-5" }} more</small>
+                            </div>
+                            {% endif %}
+                        </div>
+                    {% else %}
+                        <div class="text-center py-3">
+                            <i class="bi bi-check-circle" style="color: #94A3B8; font-size: 24px;"></i>
+                            <div style="font-size: 12px; color: #94A3B8; margin-top: 8px;">No patients</div>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
         </div>
     </div>
 
@@ -214,34 +552,59 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 45000;
             </div>
         </div>
 
-        <!-- Bed Status -->
+        <!-- Enhanced Bed Management -->
         <div class="col-md-6">
             <div class="dashboard-card">
-                <h5 class="mb-3">
-                    <i class="bi bi-bed me-2"></i>
-                    Bed Status
-                </h5>
-                <div class="row">
-                    <div class="col-6">
-                        <div class="text-center">
-                            <div class="stat-number text-primary">{{ stats.occupied_beds }}</div>
-                            <div class="stat-label text-muted">Occupied</div>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0">
+                        <i class="bi bi-bed me-2"></i>
+                        Bed Management
+                    </h5>
+                    <a href="{% url 'hospital:bed_management_worldclass' %}" class="btn btn-sm btn-primary">
+                        <i class="bi bi-arrow-right me-1"></i> Full Bed Manager
+                    </a>
+                </div>
+                <div class="row mb-3">
+                    <div class="col-4">
+                        <div class="text-center p-2" style="background: rgba(239, 68, 68, 0.1); border-radius: 8px;">
+                            <div style="font-size: 24px; font-weight: bold; color: #EF4444;">{{ bed_stats.occupied }}</div>
+                            <small class="text-muted">Occupied</small>
                         </div>
                     </div>
-                    <div class="col-6">
-                        <div class="text-center">
-                            <div class="stat-number text-success">{{ stats.total_beds|add:"-"|add:stats.occupied_beds }}</div>
-                            <div class="stat-label text-muted">Available</div>
+                    <div class="col-4">
+                        <div class="text-center p-2" style="background: rgba(16, 185, 129, 0.1); border-radius: 8px;">
+                            <div style="font-size: 24px; font-weight: bold; color: #10B981;">{{ bed_stats.available }}</div>
+                            <small class="text-muted">Available</small>
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <div class="text-center p-2" style="background: rgba(245, 158, 11, 0.1); border-radius: 8px;">
+                            <div style="font-size: 24px; font-weight: bold; color: #F59E0B;">{{ bed_stats.utilization_rate }}%</div>
+                            <small class="text-muted">Utilization</small>
                         </div>
                     </div>
                 </div>
                 <hr>
+                <div class="mb-3">
+                    <strong>Quick Actions:</strong>
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                        <a href="{% url 'hospital:bed_management_worldclass' %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-columns-gap me-1"></i> View All Beds
+                        </a>
+                        <a href="{% url 'hospital:admission_create' %}" class="btn btn-sm btn-outline-success">
+                            <i class="bi bi-plus-circle me-1"></i> Assign Bed
+                        </a>
+                    </div>
+                </div>
                 <div class="d-flex flex-wrap gap-2">
-                    {% for bed in bed_status %}
-                    <span class="bed-status bed-{{ bed.status }}">
+                    {% for bed in bed_status|slice:":10" %}
+                    <span class="bed-status bed-{{ bed.status }}" title="{{ bed.ward.name }} - {{ bed.bed_number }}">
                         {{ bed.bed_number }}
                     </span>
                     {% endfor %}
+                    {% if bed_status|length > 10 %}
+                    <span class="text-muted">+{{ bed_status|length|add:"-10" }} more</span>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -264,6 +627,7 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 45000;
                                     <a href="{% url 'hospital:patient_detail' encounter.patient.pk %}" class="text-decoration-none">
                                         {{ encounter.patient.full_name }}
                                     </a>
+                                    {% patient_payer_badges encounter.patient encounter %}
                                 </h6>
                                 <p class="text-muted mb-1">
                                     <i class="bi bi-hospital me-1"></i>
@@ -273,9 +637,17 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 45000;
                                     Bed: {{ encounter.admission.bed.bed_number }}
                                 </small>
                             </div>
-                            <div>
-                                <a href="{% url 'hospital:record_vitals' encounter.pk %}" class="action-btn btn-warning">
-                                    <i class="bi bi-plus-circle me-1"></i>Record Vitals
+                            <div class="d-flex flex-column gap-1">
+                                {% if encounter.status == 'active' %}
+                                <a href="{% url 'hospital:consultation_view' encounter_id=encounter.pk %}" class="btn btn-sm btn-info">
+                                    <i class="bi bi-stethoscope me-1"></i>Consult
+                                </a>
+                                {% endif %}
+                                <a href="{% url 'hospital:record_vitals' encounter.pk %}" class="btn btn-sm btn-warning">
+                                    <i class="bi bi-heart-pulse me-1"></i>Vitals
+                                </a>
+                                <a href="{% url 'hospital:encounter_detail' encounter.pk %}#add-note" class="btn btn-sm btn-success">
+                                    <i class="bi bi-clipboard-plus me-1"></i>Note
                                 </a>
                             </div>
                         </div>
@@ -306,6 +678,7 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 45000;
                                     <a href="{% url 'hospital:patient_detail' med.patient.pk %}" class="text-decoration-none">
                                         {{ med.patient.full_name }}
                                     </a>
+                                    {% patient_payer_badges med.patient med.encounter %}
                                 </h6>
                                 <p class="text-muted mb-1">
                                     <i class="bi bi-capsule me-1"></i>
@@ -333,6 +706,237 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 45000;
         </div>
     </div>
 
+    <!-- Doctor Plans / Care Plans -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-clipboard-pulse me-2"></i>
+                    Doctor Plans & Care Plans
+                </h5>
+                {% if doctor_plans %}
+                    <div class="row">
+                        {% for plan in doctor_plans %}
+                        <div class="col-md-6 mb-3">
+                            <div class="patient-card" style="border-left: 4px solid #007bff;">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div class="flex-grow-1">
+                                        <h6 class="mb-1">
+                                            <a href="{% url 'hospital:patient_detail' plan.encounter.patient.pk %}" class="text-decoration-none">
+                                                {{ plan.encounter.patient.full_name }}
+                                            </a>
+                                            {% patient_payer_badges plan.encounter.patient plan.encounter %}
+                                        </h6>
+                                        <p class="text-muted mb-2" style="font-size: 0.85rem;">
+                                            <i class="bi bi-person-badge me-1"></i>{{ plan.encounter.patient.mrn }}
+                                            <span class="ms-2">
+                                                <i class="bi bi-calendar me-1"></i>{{ plan.created|date:"M d, Y" }}
+                                            </span>
+                                        </p>
+                                        <div class="mb-2">
+                                            <strong style="color: #007bff;">Plan:</strong>
+                                            <div style="background: #f8f9fa; padding: 10px; border-radius: 6px; margin-top: 5px; font-size: 0.9rem; color: #212529;">
+                                                {{ plan.plan|truncatewords:30 }}
+                                            </div>
+                                        </div>
+                                        {% if plan.created_by %}
+                                        <small class="text-muted">
+                                            <i class="bi bi-person-circle me-1"></i>Dr. {{ plan.created_by.user.get_full_name|default:plan.created_by.user.username }}
+                                        </small>
+                                        {% endif %}
+                                    </div>
+                                    <div>
+                                        <a href="{% url 'hospital:encounter_detail' plan.encounter.pk %}" class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-eye me-1"></i>View
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-clipboard text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No doctor plans available</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Patients for Care -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0">
+                        <i class="bi bi-heart-pulse me-2"></i>
+                        Active Patients - Patient Care
+                    </h5>
+                    <div>
+                        <a href="{% url 'hospital:patient_list' %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-arrow-right me-1"></i> View All Patients
+                        </a>
+                    </div>
+                </div>
+                {% if all_active_encounters %}
+                    <div class="row">
+                        {% for encounter in all_active_encounters|slice:":12" %}
+                        <div class="col-md-4 col-lg-3 mb-3">
+                            <div class="patient-card" style="border-left: 4px solid #28a745;">
+                                <div class="mb-2">
+                                    <h6 class="mb-1" style="font-weight: 600;">
+                                        <a href="{% url 'hospital:patient_detail' encounter.patient.pk %}" class="text-decoration-none">
+                                            {{ encounter.patient.full_name }}
+                                        </a>
+                                        {% patient_payer_badges encounter.patient encounter %}
+                                    </h6>
+                                    <small class="text-muted d-block">
+                                        <i class="bi bi-person-badge me-1"></i>{{ encounter.patient.mrn }}
+                                    </small>
+                                    {% if encounter.admission %}
+                                    <small class="text-muted d-block">
+                                        <i class="bi bi-hospital me-1"></i>{{ encounter.admission.ward.name|default:"Ward" }}
+                                        {% if encounter.admission.bed %}
+                                        | <i class="bi bi-bed me-1"></i>Bed {{ encounter.admission.bed.bed_number }}
+                                        {% endif %}
+                                    </small>
+                                    {% endif %}
+                                </div>
+                                <div class="d-flex flex-wrap gap-1">
+                                    <a href="{% url 'hospital:encounter_detail' encounter.pk %}" class="btn btn-sm btn-outline-primary" style="flex: 1;">
+                                        <i class="bi bi-eye me-1"></i>View
+                                    </a>
+                                    {% if encounter.status == 'active' %}
+                                    <a href="{% url 'hospital:consultation_view' encounter_id=encounter.pk %}" class="btn btn-sm btn-outline-info" style="flex: 1;" title="Start Consultation">
+                                        <i class="bi bi-stethoscope me-1"></i>Consult
+                                    </a>
+                                    {% endif %}
+                                    <a href="{% url 'hospital:record_vitals' encounter.pk %}" class="btn btn-sm btn-outline-warning" style="flex: 1;">
+                                        <i class="bi bi-heart-pulse me-1"></i>Vitals
+                                    </a>
+                                    <a href="{% url 'hospital:encounter_detail' encounter.pk %}#add-note" class="btn btn-sm btn-outline-success" style="flex: 1;">
+                                        <i class="bi bi-clipboard-plus me-1"></i>Note
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% if all_active_encounters|length > 12 %}
+                    <div class="text-center mt-3">
+                        <a href="{% url 'hospital:patient_list' %}" class="btn btn-outline-primary">
+                            View All {{ all_active_encounters|length }} Active Patients
+                        </a>
+                    </div>
+                    {% endif %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-person text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No active patients at this time</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Admissions - Bed Management -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0">
+                        <i class="bi bi-hospital me-2"></i>
+                        Active Admissions - Bed Management
+                    </h5>
+                    <div>
+                        <a href="{% url 'hospital:bed_management_worldclass' %}" class="btn btn-sm btn-outline-primary me-2">
+                            <i class="bi bi-columns-gap me-1"></i> Full Bed Manager
+                        </a>
+                        <a href="{% url 'hospital:admission_list' %}" class="btn btn-sm btn-outline-info">
+                            <i class="bi bi-list me-1"></i> All Admissions
+                        </a>
+                    </div>
+                </div>
+                {% if active_admissions %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Patient</th>
+                                    <th>MRN</th>
+                                    <th>Ward</th>
+                                    <th>Bed</th>
+                                    <th>Admitted</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for admission in active_admissions|slice:":15" %}
+                                <tr>
+                                    <td>
+                                        <a href="{% url 'hospital:patient_detail' admission.encounter.patient.pk %}" class="text-decoration-none">
+                                            {{ admission.encounter.patient.full_name }}
+                                        </a>
+                                        <div class="mt-1">{% patient_payer_badges admission.encounter.patient admission.encounter %}</div>
+                                    </td>
+                                    <td>{{ admission.encounter.patient.mrn }}</td>
+                                    <td>
+                                        {% if admission.ward %}
+                                            <span class="badge bg-info">{{ admission.ward.name }}</span>
+                                        {% else %}
+                                            <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if admission.bed %}
+                                            <span class="badge bg-primary">{{ admission.bed.bed_number }}</span>
+                                        {% else %}
+                                            <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ admission.admit_date|date:"M d, Y" }}</td>
+                                    <td>
+                                        <div class="d-flex gap-1">
+                                            <a href="{% url 'hospital:encounter_detail' admission.encounter.pk %}" class="btn btn-sm btn-outline-primary" title="View Patient">
+                                                <i class="bi bi-eye"></i>
+                                            </a>
+                                            {% if admission.encounter.status == 'active' %}
+                                            <a href="{% url 'hospital:consultation_view' encounter_id=admission.encounter.pk %}" class="btn btn-sm btn-outline-info" title="Start Consultation">
+                                                <i class="bi bi-stethoscope"></i>
+                                            </a>
+                                            {% endif %}
+                                            <a href="{% url 'hospital:record_vitals' admission.encounter.pk %}" class="btn btn-sm btn-outline-warning" title="Record Vitals">
+                                                <i class="bi bi-heart-pulse"></i>
+                                            </a>
+                                            <a href="{% url 'hospital:encounter_detail' admission.encounter.pk %}#add-note" class="btn btn-sm btn-outline-success" title="Add Note">
+                                                <i class="bi bi-clipboard-plus"></i>
+                                            </a>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% if active_admissions|length > 15 %}
+                    <div class="text-center mt-3">
+                        <a href="{% url 'hospital:admission_list' %}" class="btn btn-outline-primary">
+                            View All {{ active_admissions|length }} Active Admissions
+                        </a>
+                    </div>
+                    {% endif %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-hospital text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No active admissions</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
     <!-- Ward Patients -->
     <div class="row">
         <div class="col-12">
@@ -343,7 +947,7 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 45000;
                 </h5>
                 {% if ward_patients %}
                     <div class="row">
-                        {% for patient in ward_patients %}
+                        {% for patient in ward_patients|slice:":12" %}
                         <div class="col-md-4 mb-3">
                             <div class="patient-card">
                                 <div class="d-flex justify-content-between align-items-start">
@@ -352,10 +956,15 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 45000;
                                             <a href="{% url 'hospital:patient_detail' patient.pk %}" class="text-decoration-none">
                                                 {{ patient.full_name }}
                                             </a>
+                                            {% patient_payer_badges patient %}
                                         </h6>
                                         <p class="text-muted mb-1">
                                             <i class="bi bi-hospital me-1"></i>
-                                            {{ patient.encounters.first.admission.ward.name }}
+                                            {% if patient.encounters.first.admission.ward %}
+                                                {{ patient.encounters.first.admission.ward.name }}
+                                            {% else %}
+                                                Ward
+                                            {% endif %}
                                         </p>
                                         <small class="text-muted">
                                             MRN: {{ patient.mrn }} | Age: {{ patient.age }}
@@ -371,6 +980,13 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 45000;
                         </div>
                         {% endfor %}
                     </div>
+                    {% if ward_patients|length > 12 %}
+                    <div class="text-center mt-3">
+                        <a href="{% url 'hospital:patient_list' %}" class="btn btn-outline-primary">
+                            View All {{ ward_patients|length }} Ward Patients
+                        </a>
+                    </div>
+                    {% endif %}
                 {% else %}
                     <div class="text-center py-4">
                         <i class="bi bi-person text-muted" style="font-size: 3rem;"></i>
@@ -381,30 +997,103 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 45000;
         </div>
     </div>
 
-    <!-- Quick Actions -->
+    <!-- Recent Notes Added by Nurse -->
+    {% if recent_nurse_notes %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <h5 class="mb-3">
+                    <i class="bi bi-clipboard-check me-2"></i>
+                    Your Recent Clinical Notes
+                </h5>
+                <div class="row">
+                    {% for note in recent_nurse_notes %}
+                    <div class="col-md-6 mb-3">
+                        <div class="patient-card" style="border-left: 4px solid #10B981;">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div class="flex-grow-1">
+                                    <h6 class="mb-1">
+                                        <a href="{% url 'hospital:patient_detail' note.encounter.patient.pk %}" class="text-decoration-none">
+                                            {{ note.encounter.patient.full_name }}
+                                        </a>
+                                        {% patient_payer_badges note.encounter.patient note.encounter %}
+                                    </h6>
+                                    <p class="text-muted mb-2" style="font-size: 0.85rem;">
+                                        <i class="bi bi-clipboard me-1"></i>{{ note.get_note_type_display }}
+                                        <span class="ms-2">
+                                            <i class="bi bi-calendar me-1"></i>{{ note.created|date:"M d, Y H:i" }}
+                                        </span>
+                                    </p>
+                                    <div style="background: #f8f9fa; padding: 10px; border-radius: 6px; font-size: 0.9rem; color: #212529;">
+                                        {{ note.notes|truncatewords:20 }}
+                                    </div>
+                                </div>
+                                <div>
+                                    <a href="{% url 'hospital:encounter_detail' note.encounter.pk %}" class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-eye me-1"></i>View
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Comprehensive Quick Actions -->
     <div class="row">
         <div class="col-12">
             <div class="dashboard-card">
                 <h5 class="mb-3">
                     <i class="bi bi-lightning me-2"></i>
-                    Quick Actions
+                    Quick Actions & Tools
                 </h5>
-                <div class="d-flex flex-wrap gap-2">
-                    <a href="{% url 'hospital:patient_create' %}" class="action-btn">
-                        <i class="bi bi-person-plus me-1"></i>New Patient
-                    </a>
-                    <a href="{% url 'hospital:encounter_create' %}" class="action-btn">
-                        <i class="bi bi-plus-circle me-1"></i>New Encounter
-                    </a>
-                    <a href="#" class="action-btn btn-warning">
-                        <i class="bi bi-activity me-1"></i>Record Vitals
-                    </a>
-                    <a href="#" class="action-btn btn-info">
-                        <i class="bi bi-capsule me-1"></i>Medication
-                    </a>
-                    <a href="{% url 'hospital:global_search' %}" class="action-btn">
-                        <i class="bi bi-search me-1"></i>Search
-                    </a>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <h6 class="text-muted mb-2">Patient Management</h6>
+                        <div class="d-flex flex-wrap gap-2">
+                            <a href="{% url 'hospital:patient_create' %}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-person-plus me-1"></i>New Patient
+                            </a>
+                            <a href="{% url 'hospital:encounter_create' %}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-plus-circle me-1"></i>New Encounter
+                            </a>
+                            <a href="{% url 'hospital:global_search' %}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-search me-1"></i>Search
+                            </a>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <h6 class="text-muted mb-2">Clinical Care</h6>
+                        <div class="d-flex flex-wrap gap-2">
+                            <a href="{% url 'hospital:vitals_dashboard_legacy' %}" class="btn btn-sm btn-outline-warning">
+                                <i class="bi bi-heart-pulse me-1"></i>Vitals Queue
+                            </a>
+                            <a href="{% url 'hospital:flow_dashboard' %}" class="btn btn-sm btn-outline-info">
+                                <i class="bi bi-diagram-3 me-1"></i>Patient Flow
+                            </a>
+                            <a href="{% url 'hospital:nurse_patient_flowboard' %}" class="btn btn-sm btn-outline-info">
+                                <i class="bi bi-people me-1"></i>All Visitors
+                            </a>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <h6 class="text-muted mb-2">Bed & Admission</h6>
+                        <div class="d-flex flex-wrap gap-2">
+                            <a href="{% url 'hospital:bed_management_worldclass' %}" class="btn btn-sm btn-outline-success">
+                                <i class="bi bi-columns-gap me-1"></i>Bed Manager
+                            </a>
+                            <a href="{% url 'hospital:admission_create' %}" class="btn btn-sm btn-outline-success">
+                                <i class="bi bi-plus-circle me-1"></i>New Admission
+                            </a>
+                            <a href="{% url 'hospital:admission_list' %}" class="btn btn-sm btn-outline-success">
+                                <i class="bi bi-hospital me-1"></i>Admissions
+                            </a>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

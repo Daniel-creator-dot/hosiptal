@@ -8,12 +8,12 @@
     <!-- Header -->
     <div class="row mb-4">
         <div class="col-md-8">
-            <h2 style="font-weight: 700; color: #1f2937;">💊 Walk-in Pharmacy Sales</h2>
-            <p class="text-muted">Direct medication sales to customers</p>
+            <h2 style="font-weight: 700; color: #1f2937;">💊 Prescribe Pharmacy Sales</h2>
+            <p class="text-muted">Prescribe & dispense medication. Payment at Cashier only.</p>
         </div>
         <div class="col-md-4 text-end">
             <a href="{% url 'hospital:pharmacy_walkin_sale_create' %}" class="btn btn-primary btn-lg">
-                <i class="bi bi-plus-circle"></i> New Walk-in Sale
+                <i class="bi bi-plus-circle"></i> New Prescribe Sale
             </a>
         </div>
     </div>
@@ -42,7 +42,7 @@
                     <div class="d-flex justify-content-between align-items-center">
                         <div>
                             <p class="text-muted mb-1">Today's Revenue</p>
-                            <h3 class="mb-0">GHS {{ stats.today_revenue }}</h3>
+                            <h3 class="mb-0">{% if show_prices %}GHS {{ stats.today_revenue }}{% else %}—{% endif %}</h3>
                         </div>
                         <div class="bg-success bg-opacity-10 rounded-circle p-3">
                             <i class="bi bi-cash-coin text-success" style="font-size: 24px;"></i>
@@ -85,6 +85,12 @@
         </div>
     </div>
 
+    <!-- Info: Insurance/Corporate can dispense without payment -->
+    <div class="alert alert-info border-0 shadow-sm mb-4" role="alert">
+        <i class="bi bi-info-circle me-2"></i>
+        <strong>Insurance &amp; Corporate:</strong> Sales billed to a company show <span class="badge bg-info">To [Company]</span> and can be <strong>dispensed immediately</strong> (no payment at till). Invoice goes to the company; stock moves when you dispense.
+    </div>
+
     <!-- Filters -->
     <div class="card shadow-sm mb-4">
         <div class="card-body">
@@ -92,11 +98,11 @@
                 <div class="col-md-4">
                     <label class="form-label">Search</label>
                     <input type="text" class="form-control" name="q" value="{{ search_query }}" 
-                           placeholder="Sale number, customer name, phone...">
+                           placeholder="Sale number, customer name, phone..." title="Enter text" placeholder="Enter text">
                 </div>
                 <div class="col-md-3">
                     <label class="form-label">Payment Status</label>
-                    <select class="form-select" name="status">
+                    <select class="form-select" name="status" title="Select option" aria-label="Select option">
                         <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All</option>
                         <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
                         <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid</option>
@@ -124,7 +130,7 @@
                                 <th>Customer</th>
                                 <th>Phone</th>
                                 <th>Date</th>
-                                <th>Amount</th>
+                                {% if show_prices %}<th>Amount</th>{% endif %}
                                 <th>Payment Status</th>
                                 <th>Dispensed</th>
                                 <th>Served By</th>
@@ -139,20 +145,40 @@
                                     {% if sale.customer_type == 'registered' %}
                                         <span class="badge bg-info">Registered</span>
                                     {% else %}
-                                        <span class="badge bg-secondary">Walk-in</span>
+                                        <span class="badge bg-secondary">Prescribe</span>
                                     {% endif %}
                                 </td>
-                                <td>{{ sale.customer_name }}</td>
-                                <td>{{ sale.customer_phone|default:"—" }}</td>
+                                <td>
+                                    {% if sale.customer_name %}
+                                        {{ sale.customer_name }}
+                                    {% elif sale.patient %}
+                                        {{ sale.patient.full_name }}
+                                    {% else %}
+                                        —
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if sale.customer_phone %}
+                                        {{ sale.customer_phone }}
+                                    {% elif sale.patient and sale.patient.phone_number %}
+                                        {{ sale.patient.phone_number }}
+                                    {% else %}
+                                        —
+                                    {% endif %}
+                                </td>
                                 <td>{{ sale.sale_date|date:"d M Y H:i" }}</td>
+                                {% if show_prices %}
                                 <td>
                                     <strong>GHS {{ sale.total_amount }}</strong><br>
                                     {% if sale.amount_due > 0 %}
                                         <small class="text-danger">Due: GHS {{ sale.amount_due }}</small>
                                     {% endif %}
                                 </td>
+                                {% endif %}
                                 <td>
-                                    {% if sale.payment_status == 'paid' %}
+                                    {% if sale.is_billed_to_company and sale.payment_status != 'paid' %}
+                                        <span class="badge bg-info">To {{ sale.payer.name|default:"Company" }}</span>
+                                    {% elif sale.payment_status == 'paid' %}
                                         <span class="badge bg-success">Paid</span>
                                     {% elif sale.payment_status == 'partial' %}
                                         <span class="badge bg-warning">Partial</span>
@@ -180,7 +206,7 @@
                                            class="btn btn-sm btn-outline-primary" title="View Details">
                                             <i class="bi bi-eye"></i>
                                         </a>
-                                        {% if sale.payment_status == 'paid' and not sale.is_dispensed %}
+                                        {% if not sale.is_dispensed and sale.payment_status == 'paid' or not sale.is_dispensed and sale.is_billed_to_company %}
                                             <a href="{% url 'hospital:pharmacy_walkin_dispense' sale.id %}" 
                                                class="btn btn-sm btn-success" title="Dispense">
                                                 <i class="bi bi-capsule"></i>
@@ -196,7 +222,7 @@
             {% else %}
                 <div class="text-center py-5">
                     <i class="bi bi-cart-x" style="font-size: 64px; opacity: 0.3;"></i>
-                    <p class="text-muted mt-3">No walk-in sales found</p>
+                    <p class="text-muted mt-3">No prescribe sales found</p>
                     <a href="{% url 'hospital:pharmacy_walkin_sale_create' %}" class="btn btn-primary">
                         <i class="bi bi-plus-circle"></i> Create First Sale
                     </a>

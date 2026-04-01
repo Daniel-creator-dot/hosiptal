@@ -13,6 +13,12 @@
         transition: transform 0.2s, box-shadow 0.2s;
         height: 100%;
     }
+    .theme-dark .analytics-card {
+        background: #0f172a;
+        color: #e2e8f0;
+        box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+        border: 1px solid #1f2937;
+    }
     
     .analytics-card:hover {
         transform: translateY(-4px);
@@ -51,6 +57,7 @@
         text-transform: uppercase;
         letter-spacing: 1px;
     }
+    .theme-dark .stat-label { color: #e2e8f0; }
     
     .chart-container {
         position: relative;
@@ -366,6 +373,21 @@ Chart.defaults.plugins.legend.position = 'bottom';
 Chart.defaults.plugins.legend.labels.padding = 15;
 Chart.defaults.plugins.legend.labels.usePointStyle = true;
 
+const charts = [];
+
+function themeColors() {
+    const isDark = document.body.classList.contains('theme-dark');
+    return {
+        isDark,
+        grid: isDark ? 'rgba(226,232,240,0.08)' : 'rgba(0,0,0,0.05)',
+        tick: isDark ? '#cbd5e1' : '#475569',
+        tooltipBg: isDark ? 'rgba(15,23,42,0.92)' : 'rgba(0,0,0,0.8)',
+        tooltipBorder: isDark ? 'rgba(226,232,240,0.08)' : 'rgba(255,255,255,0.1)'
+    };
+}
+
+const theme = themeColors();
+
 // Department Chart (Doughnut)
 const departmentCtx = document.getElementById('departmentChart');
 if (departmentCtx) {
@@ -396,7 +418,7 @@ if (departmentCtx) {
         }]
     };
 
-    new Chart(departmentCtx, {
+    const deptChart = new Chart(departmentCtx, {
         type: 'doughnut',
         data: departmentData,
         options: {
@@ -405,9 +427,15 @@ if (departmentCtx) {
             plugins: {
                 legend: {
                     display: true,
-                    position: 'right'
+                    position: 'right',
+                    labels: {
+                        color: theme.tick
+                    }
                 },
                 tooltip: {
+                    backgroundColor: theme.tooltipBg,
+                    borderColor: theme.tooltipBorder,
+                    borderWidth: 1,
                     callbacks: {
                         label: function(context) {
                             const total = context.dataset.data.reduce((a, b) => a + b, 0);
@@ -419,6 +447,7 @@ if (departmentCtx) {
             }
         }
     });
+    charts.push({ instance: deptChart, type: 'doughnut' });
 }
 
 // Profession Chart (Bar)
@@ -445,7 +474,7 @@ if (professionCtx) {
         }]
     };
 
-    new Chart(professionCtx, {
+    const profChart = new Chart(professionCtx, {
         type: 'bar',
         data: professionData,
         options: {
@@ -460,13 +489,17 @@ if (professionCtx) {
                 y: {
                     beginAtZero: true,
                     ticks: {
-                        stepSize: 1
+                        stepSize: 1,
+                        color: theme.tick
                     },
                     grid: {
-                        color: 'rgba(0, 0, 0, 0.05)'
+                        color: theme.grid
                     }
                 },
                 x: {
+                    ticks: {
+                        color: theme.tick
+                    },
                     grid: {
                         display: false
                     }
@@ -474,6 +507,7 @@ if (professionCtx) {
             }
         }
     });
+    charts.push({ instance: profChart, type: 'bar' });
 }
 
 // Leave Status Chart (Horizontal Bar)
@@ -503,7 +537,7 @@ if (leaveCtx) {
         }]
     };
 
-    new Chart(leaveCtx, {
+    const leaveChart = new Chart(leaveCtx, {
         type: 'bar',
         data: leaveData,
         options: {
@@ -519,13 +553,17 @@ if (leaveCtx) {
                 x: {
                     beginAtZero: true,
                     ticks: {
-                        stepSize: 1
+                        stepSize: 1,
+                        color: theme.tick
                     },
                     grid: {
-                        color: 'rgba(0, 0, 0, 0.05)'
+                        color: theme.grid
                     }
                 },
                 y: {
+                    ticks: {
+                        color: theme.tick
+                    },
                     grid: {
                         display: false
                     }
@@ -533,7 +571,34 @@ if (leaveCtx) {
             }
         }
     });
+    charts.push({ instance: leaveChart, type: 'bar' });
 }
+
+// Observe theme changes to update chart colors
+const themeObserver = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+        if (mutation.attributeName === 'class') {
+            const colors = themeColors();
+            charts.forEach(({ instance }) => {
+                if (instance.options.scales) {
+                    if (instance.options.scales.x?.ticks) instance.options.scales.x.ticks.color = colors.tick;
+                    if (instance.options.scales.y?.ticks) instance.options.scales.y.ticks.color = colors.tick;
+                    if (instance.options.scales.x?.grid) instance.options.scales.x.grid.color = instance.options.scales.x.grid.display === false ? instance.options.scales.x.grid.color : colors.grid;
+                    if (instance.options.scales.y?.grid) instance.options.scales.y.grid.color = instance.options.scales.y.grid.display === false ? instance.options.scales.y.grid.color : colors.grid;
+                }
+                if (instance.options.plugins?.tooltip) {
+                    instance.options.plugins.tooltip.backgroundColor = colors.tooltipBg;
+                    instance.options.plugins.tooltip.borderColor = colors.tooltipBorder;
+                }
+                if (instance.options.plugins?.legend?.labels) {
+                    instance.options.plugins.legend.labels.color = colors.tick;
+                }
+                instance.update();
+            });
+        }
+    });
+});
+themeObserver.observe(document.body, { attributes: true });
 </script>
 {% endblock %}
 

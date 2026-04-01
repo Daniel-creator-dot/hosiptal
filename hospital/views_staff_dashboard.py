@@ -24,9 +24,21 @@ def staff_dashboard(request):
     - Upcoming activities calendar
     - Alerts and notifications
     """
+    # Check if user is IT staff - redirect to IT Operations dashboard
+    from .utils_roles import get_user_role
+    user_role = get_user_role(request.user)
+    if user_role in ['it', 'it_staff']:
+        from django.shortcuts import redirect
+        return redirect('hospital:it_operations_dashboard')
+
+    # Lab staff: personal HR page is not their work queue — send them to Laboratory Control Center
+    if user_role == 'lab_technician':
+        from django.shortcuts import redirect
+        return redirect('hospital:laboratory_dashboard')
+    
     # Get staff record for current user
     try:
-        staff = Staff.objects.get(user=request.user, is_deleted=False)
+        staff = Staff.objects.select_related('user', 'department').get(user=request.user, is_deleted=False)
     except Staff.DoesNotExist:
         # User is not a staff member
         return render(request, 'hospital/staff/not_staff.html')
@@ -78,13 +90,36 @@ def staff_dashboard(request):
         is_deleted=False
     ).order_by('-created')[:5]
     
+    # Get today's shifts (most important - show prominently)
+    # Use select_related to optimize queries
+    todays_shifts = StaffShift.objects.filter(
+        staff=staff,
+        shift_date=today,
+        is_deleted=False
+    ).select_related('location', 'department', 'assigned_by').order_by('start_time')
+    
     # Get upcoming shifts (next 7 days)
     upcoming_shifts = StaffShift.objects.filter(
         staff=staff,
         shift_date__gte=today,
         shift_date__lte=today + timedelta(days=7),
         is_deleted=False
-    ).order_by('shift_date', 'start_time')
+    ).select_related('location', 'department', 'assigned_by').order_by('shift_date', 'start_time')
+    
+    # Get this week's shifts (for weekly view)
+    week_start = today - timedelta(days=today.weekday())
+    week_end = week_start + timedelta(days=6)
+    weekly_shifts = StaffShift.objects.filter(
+        staff=staff,
+        shift_date__gte=week_start,
+        shift_date__lte=week_end,
+        is_deleted=False
+    ).select_related('location', 'department', 'assigned_by').order_by('shift_date', 'start_time')
+    
+    # Debug: Log shift counts for troubleshooting
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Staff {staff.user.username} - Today's shifts: {todays_shifts.count()}, Upcoming: {upcoming_shifts.count()}, Weekly: {weekly_shifts.count()}")
     
     # Get pending leave requests
     pending_leaves = LeaveRequest.objects.filter(
@@ -126,8 +161,11 @@ def staff_dashboard(request):
         from .models_hr_activities import HospitalActivity
         
         # Urgent/important messages (high priority announcements for next 7 days)
+        activity_q = Q(all_staff=True) | Q(specific_staff=staff)
+        if staff.department_id:
+            activity_q |= Q(departments=staff.department)
         important_messages = HospitalActivity.objects.filter(
-            Q(all_staff=True) | Q(departments=staff.department) | Q(specific_staff=staff),
+            activity_q,
             activity_type__in=['announcement', 'drill', 'maintenance'],
             priority__in=['urgent', 'high'],
             start_date__lte=today + timedelta(days=7),
@@ -138,7 +176,7 @@ def staff_dashboard(request):
         
         # Mandatory upcoming events
         mandatory_events = HospitalActivity.objects.filter(
-            Q(all_staff=True) | Q(departments=staff.department) | Q(specific_staff=staff),
+            activity_q,
             is_mandatory=True,
             start_date__gte=today,
             start_date__lte=today + timedelta(days=30),
@@ -146,14 +184,14 @@ def staff_dashboard(request):
             is_published=True
         ).order_by('start_date')[:5]
         
-        # Get all hospital activities for this staff (next 7 days)
+        # Get all hospital activities for this staff (next 30 days) - prominent reminders
         upcoming_hospital_activities = HospitalActivity.objects.filter(
-            Q(all_staff=True) | Q(departments=staff.department) | Q(specific_staff=staff),
+            activity_q,
             start_date__gte=today,
-            start_date__lte=today + timedelta(days=7),
+            start_date__lte=today + timedelta(days=30),
             is_deleted=False,
             is_published=True
-        ).order_by('start_date', 'start_time')[:10]
+        ).order_by('start_date', 'start_time')[:15]
     except (ImportError, AttributeError, Exception):
         pass
     
@@ -162,7 +200,11 @@ def staff_dashboard(request):
         'messages': len(important_messages),
         'mandatory': len(mandatory_events),
         'alerts': leave_alerts.count(),
+        'activities': len(upcoming_hospital_activities),
     }
+    
+    # Next activity for countdown (first upcoming)
+    next_activity = upcoming_hospital_activities[0] if upcoming_hospital_activities else None
     
     # Quick stats for staff
     last_review = None
@@ -190,7 +232,11 @@ def staff_dashboard(request):
         'upcoming_activities': upcoming_activities,
         'today_activities': today_activities,
         'leave_alerts': leave_alerts,
+        'todays_shifts': todays_shifts,
         'upcoming_shifts': upcoming_shifts,
+        'weekly_shifts': weekly_shifts,
+        'week_start': week_start,
+        'week_end': week_end,
         'pending_leaves': pending_leaves,
         'today': today,
         # New world-class features
@@ -198,6 +244,7 @@ def staff_dashboard(request):
         'mandatory_events': mandatory_events,
         'upcoming_hospital_activities': upcoming_hospital_activities,
         'unread_count': unread_count,
+        'next_activity': next_activity,
         'last_review': last_review,
         'days_employed': days_employed,
     }

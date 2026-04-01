@@ -1,0 +1,330 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Encounter Report - HMS{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Encounter Report</h1>
+    <a href="{% url 'hospital:reports_dashboard' %}" class="btn btn-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Reports
+    </a>
+</div>
+
+<!-- Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card bg-primary text-white">
+            <div class="card-body text-center">
+                <h3>{{ report.total|intcomma }}</h3>
+                <p class="mb-0">Total Encounters</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card bg-info text-white">
+            <div class="card-body text-center">
+                <h3>{% if report.by_type %}{{ report.by_type|length }}{% else %}0{% endif %}</h3>
+                <p class="mb-0">Encounter Types</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card bg-success text-white">
+            <div class="card-body text-center">
+                <h3>{% if report.by_status %}{{ report.by_status|length }}{% else %}0{% endif %}</h3>
+                <p class="mb-0">Status Categories</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Encounter Type Distribution -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-clipboard-pulse"></i> Encounters by Type</h5>
+            </div>
+            <div class="card-body">
+                {% if report.by_type %}
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Encounter Type</th>
+                            <th class="text-end">Count</th>
+                            <th class="text-end">Percentage</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for encounter_type, count in report.by_type.items %}
+                        <tr>
+                            <td>
+                                {% if encounter_type == 'outpatient' %}
+                                    <i class="bi bi-person-walking text-primary"></i> Outpatient
+                                {% elif encounter_type == 'inpatient' %}
+                                    <i class="bi bi-hospital text-danger"></i> Inpatient
+                                {% elif encounter_type == 'emergency' %}
+                                    <i class="bi bi-exclamation-triangle text-warning"></i> Emergency
+                                {% elif encounter_type == 'consultation' %}
+                                    <i class="bi bi-chat-dots text-info"></i> Consultation
+                                {% else %}
+                                    <i class="bi bi-clipboard-check"></i> {{ encounter_type|title|default:"Not Specified" }}
+                                {% endif %}
+                            </td>
+                            <td class="text-end">{{ count|intcomma }}</td>
+                            <td class="text-end">
+                                {% if report.total > 0 %}
+                                    {% widthratio count report.total 100 as percentage %}
+                                    {{ percentage|floatformat:1 }}%
+                                {% else %}
+                                    0.0%
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr class="table-primary">
+                            <th>Total</th>
+                            <th class="text-end">{{ report.total|intcomma }}</th>
+                            <th class="text-end">100.0%</th>
+                        </tr>
+                    </tfoot>
+                </table>
+                {% else %}
+                <p class="text-muted text-center">No encounter type data available</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Encounter Status Distribution -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-activity"></i> Encounters by Status</h5>
+            </div>
+            <div class="card-body">
+                {% if report.by_status %}
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Status</th>
+                            <th class="text-end">Count</th>
+                            <th class="text-end">Percentage</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for status, count in report.by_status.items %}
+                        <tr>
+                            <td>
+                                {% if status == 'active' or status == 'in_progress' %}
+                                    <span class="badge bg-primary">{{ status|title }}</span>
+                                {% elif status == 'completed' or status == 'finished' %}
+                                    <span class="badge bg-success">{{ status|title }}</span>
+                                {% elif status == 'cancelled' or status == 'cancelled' %}
+                                    <span class="badge bg-danger">{{ status|title }}</span>
+                                {% elif status == 'pending' %}
+                                    <span class="badge bg-warning">{{ status|title }}</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ status|title|default:"Not Specified" }}</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">{{ count|intcomma }}</td>
+                            <td class="text-end">
+                                {% if report.total > 0 %}
+                                    {% widthratio count report.total 100 as percentage %}
+                                    {{ percentage|floatformat:1 }}%
+                                {% else %}
+                                    0.0%
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr class="table-primary">
+                            <th>Total</th>
+                            <th class="text-end">{{ report.total|intcomma }}</th>
+                            <th class="text-end">100.0%</th>
+                        </tr>
+                    </tfoot>
+                </table>
+                {% else %}
+                <p class="text-muted text-center">No status data available</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Visual Charts Section -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-pie-chart"></i> Encounter Type Distribution Chart</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="typeChart" height="250"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-bar-chart"></i> Encounter Status Distribution Chart</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="statusChart" height="250"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Additional Statistics -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-info-circle"></i> Report Information</h5>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-6">
+                <p><strong>Report Generated:</strong> {{ "now"|date:"F d, Y H:i" }}</p>
+                <p><strong>Total Encounters:</strong> {{ report.total|intcomma }}</p>
+            </div>
+            <div class="col-md-6">
+                <p><strong>Data Source:</strong> Active Encounter Records</p>
+                <p><strong>Last Updated:</strong> Data is cached and refreshed every 5 minutes</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Encounter Type Distribution Pie Chart
+    const typeCtx = document.getElementById('typeChart');
+    if (typeCtx) {
+        const typeData = {
+            labels: [
+                {% for encounter_type, count in report.by_type.items %}
+                    {% if encounter_type == 'outpatient' %} 'Outpatient'
+                    {% elif encounter_type == 'inpatient' %} 'Inpatient'
+                    {% elif encounter_type == 'emergency' %} 'Emergency'
+                    {% elif encounter_type == 'consultation' %} 'Consultation'
+                    {% else %} '{{ encounter_type|title|default:"Other" }}'
+                    {% endif %}{% if not forloop.last %},{% endif %}
+                {% endfor %}
+            ],
+            datasets: [{
+                data: [
+                    {% for encounter_type, count in report.by_type.items %}
+                        {{ count }}{% if not forloop.last %},{% endif %}
+                    {% endfor %}
+                ],
+                backgroundColor: [
+                    '#3b82f6', // Blue
+                    '#ec4899', // Pink
+                    '#f59e0b', // Orange
+                    '#10b981', // Green
+                    '#8b5cf6', // Purple
+                    '#ef4444', // Red
+                ],
+                borderWidth: 2,
+                borderColor: '#fff'
+            }]
+        };
+
+        new Chart(typeCtx, {
+            type: 'pie',
+            data: typeData,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.label || '';
+                                if (label) {
+                                    label += ': ';
+                                }
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const percentage = ((context.parsed / total) * 100).toFixed(1);
+                                label += context.parsed.toLocaleString() + ' (' + percentage + '%)';
+                                return label;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Encounter Status Bar Chart
+    const statusCtx = document.getElementById('statusChart');
+    if (statusCtx) {
+        const statusData = {
+            labels: [
+                {% for status, count in report.by_status.items %}
+                    '{{ status|title }}'{% if not forloop.last %},{% endif %}
+                {% endfor %}
+            ],
+            datasets: [{
+                label: 'Number of Encounters',
+                data: [
+                    {% for status, count in report.by_status.items %}
+                        {{ count }}{% if not forloop.last %},{% endif %}
+                    {% endfor %}
+                ],
+                backgroundColor: '#6366f1',
+                borderColor: '#4f46e5',
+                borderWidth: 2
+            }]
+        };
+
+        new Chart(statusCtx, {
+            type: 'bar',
+            data: statusData,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return 'Encounters: ' + context.parsed.y.toLocaleString();
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return value.toLocaleString();
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+});
+</script>
+{% endblock %}

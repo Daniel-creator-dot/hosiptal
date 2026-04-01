@@ -32,6 +32,7 @@ urlpatterns = [
     
     # API Endpoints
     path('api/stats/', inventory_views.inventory_api_stats, name='api_stats'),
+    path('api/store-items/', inventory_views.api_store_items_for_requisition, name='api_store_items'),
 ]
 
 

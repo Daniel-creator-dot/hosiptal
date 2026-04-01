@@ -1,0 +1,96 @@
+{% extends 'hospital/base.html' %}
+{% load humanize static %}
+
+{% block title %}Screening templates – HMS{% endblock %}
+{% block page_title %}Screening check templates{% endblock %}
+{% block page_subtitle %}{% if encounter %}Apply to: {{ encounter.patient.full_name }}{% else %}Choose a template to use{% endif %}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .template-section { margin-bottom: 32px; }
+    .template-section h3 { font-size: 20px; font-weight: 700; margin-bottom: 16px; color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
+    .template-card {
+        background: white;
+        border-radius: 14px;
+        padding: 20px;
+        margin-bottom: 16px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        border: 1px solid #e2e8f0;
+        transition: all 0.25s;
+    }
+    .template-card:hover { box-shadow: 0 6px 20px rgba(0,0,0,0.08); border-color: #0d9488; }
+    .template-card.pre-admission:hover { border-color: #7c3aed; }
+    .template-name { font-size: 17px; font-weight: 700; color: #1e293b; margin-bottom: 6px; }
+    .template-meta { font-size: 13px; color: #64748b; margin-bottom: 12px; }
+    .template-desc { font-size: 14px; color: #475569; margin-bottom: 14px; }
+    .apply-form { display: inline; }
+    .btn-apply { border-radius: 10px; font-weight: 600; }
+    .back-encounter { margin-bottom: 16px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    {% if encounter %}
+    <div class="back-encounter">
+        <a href="{% url 'hospital:encounter_detail' pk=encounter.pk %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left me-1"></i> Back to encounter: {{ encounter.patient.full_name }}
+        </a>
+    </div>
+    {% endif %}
+
+    <div id="pre-employment" class="template-section">
+        <h3><i class="bi bi-briefcase me-2 text-teal"></i>Pre-employment (Company)</h3>
+        {% if pre_employment_templates %}
+            {% for t in pre_employment_templates %}
+            <div class="template-card">
+                <div class="template-name">{{ t.name }}{% if t.code %} <span class="text-muted small">({{ t.code }})</span>{% endif %}</div>
+                <div class="template-meta">{{ t.lab_test_count }} lab test(s) · {{ t.imaging_count }} imaging study(ies)</div>
+                {% if t.description %}<div class="template-desc">{{ t.description }}</div>{% endif %}
+                {% if encounter %}
+                <form class="apply-form" method="post" action="{% url 'hospital:apply_screening_template' encounter_id=encounter.pk template_id=t.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-success btn-apply">
+                        <i class="bi bi-check2-square me-1"></i> Apply to this encounter
+                    </button>
+                </form>
+                {% else %}
+                <span class="text-muted small">Open an encounter first, then use “Apply screening template” to use this template.</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        {% else %}
+            <p class="text-muted">No pre-employment templates. Add templates in Admin → Screening check templates.</p>
+        {% endif %}
+    </div>
+
+    <div id="pre-admission" class="template-section">
+        <h3><i class="bi bi-mortarboard me-2 text-violet"></i>Pre-admission (School)</h3>
+        {% if pre_admission_templates %}
+            {% for t in pre_admission_templates %}
+            <div class="template-card pre-admission">
+                <div class="template-name">{{ t.name }}{% if t.code %} <span class="text-muted small">({{ t.code }})</span>{% endif %}</div>
+                <div class="template-meta">{{ t.lab_test_count }} lab test(s) · {{ t.imaging_count }} imaging study(ies)</div>
+                {% if t.description %}<div class="template-desc">{{ t.description }}</div>{% endif %}
+                {% if encounter %}
+                <form class="apply-form" method="post" action="{% url 'hospital:apply_screening_template' encounter_id=encounter.pk template_id=t.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary btn-apply">
+                        <i class="bi bi-check2-square me-1"></i> Apply to this encounter
+                    </button>
+                </form>
+                {% else %}
+                <span class="text-muted small">Open an encounter first, then use “Apply screening template” to use this template.</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        {% else %}
+            <p class="text-muted">No pre-admission templates. Add templates in Admin → Screening check templates.</p>
+        {% endif %}
+    </div>
+
+    <div class="mt-4">
+        <a href="{% url 'hospital:screening_dashboard' %}" class="btn btn-outline-secondary">Back to Screening</a>
+    </div>
+</div>
+{% endblock %}

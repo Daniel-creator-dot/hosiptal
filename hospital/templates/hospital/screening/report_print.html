@@ -1,0 +1,122 @@
+{% extends 'hospital/base.html' %}
+{% load humanize static %}
+
+{% block title %}Screening report – {{ patient.full_name }} – HMS{% endblock %}
+{% block extra_css %}
+<style>
+    @media print {
+        .no-print { display: none !important; }
+        body { background: white; }
+        .print-container { box-shadow: none; border: none; }
+    }
+    .print-container { max-width: 800px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+    .report-header { text-align: center; border-bottom: 2px solid #0d9488; padding-bottom: 20px; margin-bottom: 24px; }
+    .report-header h1 { font-size: 24px; font-weight: 700; color: #1e293b; margin-bottom: 4px; }
+    .report-header .sub { font-size: 14px; color: #64748b; }
+    .result-block { display: inline-block; padding: 10px 20px; border-radius: 10px; font-weight: 700; font-size: 16px; margin: 16px 0; }
+    .result-fit { background: #d1fae5; color: #065f46; }
+    .result-unfit { background: #fee2e2; color: #991b1b; }
+    .result-restrictions { background: #fef3c7; color: #92400e; }
+    .result-pending { background: #e0e7ff; color: #3730a3; }
+    .section-title { font-size: 14px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.5px; margin: 20px 0 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; }
+    .section-body { font-size: 14px; line-height: 1.6; color: #334155; white-space: pre-wrap; }
+    .signature-line { margin-top: 32px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 13px; color: #64748b; }
+    .lab-table, .imaging-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+    .lab-table th, .lab-table td, .imaging-table th, .imaging-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+    .lab-table th, .imaging-table th { background: #f8fafc; font-weight: 600; color: #475569; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="no-print mb-4">
+    <a href="{% url 'hospital:screening_report_form' encounter_id=encounter.pk %}" class="btn btn-outline-secondary me-2"><i class="bi bi-pencil me-1"></i> Edit report</a>
+    <a href="{% url 'hospital:encounter_detail' pk=encounter.pk %}" class="btn btn-outline-secondary me-2">Back to encounter</a>
+    <button type="button" class="btn btn-primary" onclick="window.print();"><i class="bi bi-printer me-1"></i> Print / PDF</button>
+</div>
+
+<div class="print-container">
+    <div class="report-header">
+        <h1>Medical Screening Report</h1>
+        <p class="sub">Pre-employment / Pre-admission – {{ encounter.get_encounter_type_display }}</p>
+    </div>
+
+    <p><strong>Patient:</strong> {{ patient.full_name }}</p>
+    <p><strong>MRN:</strong> {{ patient.mrn }} &nbsp; <strong>DOB:</strong> {{ patient.date_of_birth|date:"F j, Y" }} &nbsp; <strong>Age:</strong> {{ patient.age }} &nbsp; <strong>Gender:</strong> {{ patient.get_gender_display }}</p>
+    <p><strong>Date of examination:</strong> {{ encounter.started_at|date:"F j, Y" }}</p>
+
+    {% if report.requesting_organization or report.requesting_contact %}
+    <p><strong>Requesting organization:</strong> {{ report.requesting_organization|default:"—" }} {% if report.requesting_contact %}({{ report.requesting_contact }}){% endif %}</p>
+    {% endif %}
+
+    <p><strong>Overall result:</strong></p>
+    <p>
+        <span class="result-block result-{{ report.overall_result }}">{{ report.get_overall_result_display }}</span>
+    </p>
+    {% if report.result_notes %}
+    <p>{{ report.result_notes }}</p>
+    {% endif %}
+
+    <div class="section-title">Laboratory findings</div>
+    {% if lab_results %}
+    <table class="lab-table">
+        <thead><tr><th>Test</th><th>Result</th><th>Reference</th><th>Status</th></tr></thead>
+        <tbody>
+            {% for lr in lab_results %}
+            <tr>
+                <td>{{ lr.test.name }}</td>
+                <td>{{ lr.qualitative_result|default:lr.value|default:"—" }}</td>
+                <td>{% if lr.range_low or lr.range_high %}{{ lr.range_low|default:"" }}-{{ lr.range_high|default:"" }}{% else %}—{% endif %}</td>
+                <td>{{ lr.get_status_display }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    {% if report.lab_summary %}
+    <div class="section-body">{{ report.lab_summary }}</div>
+    {% elif not lab_results %}
+    <div class="section-body text-muted">No laboratory results recorded.</div>
+    {% endif %}
+
+    <div class="section-title">Imaging / Radiology findings</div>
+    {% if imaging_studies %}
+    <table class="imaging-table">
+        <thead><tr><th>Modality</th><th>Body part / Study</th><th>Impression / Findings</th></tr></thead>
+        <tbody>
+            {% for s in imaging_studies %}
+            <tr>
+                <td>{{ s.get_modality_display }}</td>
+                <td>{{ s.body_part }} {{ s.study_type }}</td>
+                <td>{{ s.impression|default:s.findings|default:s.report_text|truncatewords:30|default:"—" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    {% if report.imaging_summary %}
+    <div class="section-body">{{ report.imaging_summary }}</div>
+    {% elif not imaging_studies %}
+    <div class="section-body text-muted">No imaging studies recorded.</div>
+    {% endif %}
+
+    {% if report.physical_exam_notes %}
+    <div class="section-title">Physical examination</div>
+    <div class="section-body">{{ report.physical_exam_notes }}</div>
+    {% endif %}
+
+    {% if report.general_remarks %}
+    <div class="section-title">Remarks</div>
+    <div class="section-body">{{ report.general_remarks }}</div>
+    {% endif %}
+
+    {% if report.recommended_actions %}
+    <div class="section-title">Recommendations</div>
+    <div class="section-body">{{ report.recommended_actions }}</div>
+    {% endif %}
+
+    <div class="signature-line">
+        <strong>Reported by:</strong> {% if report.reported_by %}{{ report.reported_by.user.get_full_name }}{% else %}—{% endif %}
+        {% if report.reported_at %} on {{ report.reported_at|date:"F j, Y H:i" }}{% endif %}
+    </div>
+</div>
+{% endblock %}

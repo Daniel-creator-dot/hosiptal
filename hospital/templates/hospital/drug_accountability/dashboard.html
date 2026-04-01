@@ -1,0 +1,204 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Drug Accountability Dashboard - HMS{% endblock %}
+{% block page_title %}Drug Accountability Dashboard{% endblock %}
+{% block page_subtitle %}Complete accountability and audit trail{% endblock %}
+
+{% block content %}
+<!-- Quick Stats -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body text-center">
+                <div class="text-primary mb-2">
+                    <i class="bi bi-list-ul" style="font-size: 32px;"></i>
+                </div>
+                <h3 class="mb-0">{{ stats.transactions_today }}</h3>
+                <small class="text-muted">Transactions Today</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body text-center">
+                <div class="text-info mb-2">
+                    <i class="bi bi-calendar-week" style="font-size: 32px;"></i>
+                </div>
+                <h3 class="mb-0">{{ stats.transactions_7_days }}</h3>
+                <small class="text-muted">Last 7 Days</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body text-center">
+                <div class="text-success mb-2">
+                    <i class="bi bi-calendar-month" style="font-size: 32px;"></i>
+                </div>
+                <h3 class="mb-0">{{ stats.transactions_30_days }}</h3>
+                <small class="text-muted">Last 30 Days</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm border-warning">
+            <div class="card-body text-center">
+                <div class="text-warning mb-2">
+                    <i class="bi bi-exclamation-triangle" style="font-size: 32px;"></i>
+                </div>
+                <h3 class="mb-0">{{ stats.pending_returns }}</h3>
+                <small class="text-muted">Pending Returns</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="row g-3 mb-4">
+    <div class="col-md-12">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-lightning-charge me-2"></i>Quick Actions
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <a href="{% url 'hospital:drug_returns_list' %}" class="btn btn-outline-primary w-100">
+                            <i class="bi bi-arrow-return-left me-2"></i>Drug Returns
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{% url 'hospital:inventory_history' %}" class="btn btn-outline-info w-100">
+                            <i class="bi bi-clock-history me-2"></i>Inventory History
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{% url 'hospital:drug_administration_history' %}" class="btn btn-outline-success w-100">
+                            <i class="bi bi-capsule me-2"></i>Administration History
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{% url 'hospital:drug_return_create' %}" class="btn btn-primary w-100">
+                            <i class="bi bi-plus-circle me-2"></i>Create Return
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Transactions -->
+<div class="row">
+    <div class="col-md-12">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="bi bi-arrow-left-right me-2"></i>Recent Inventory Transactions
+                </h5>
+                <a href="{% url 'hospital:inventory_history' %}" class="btn btn-sm btn-outline-primary">
+                    View All
+                </a>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover table-sm">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Type</th>
+                                <th>Item</th>
+                                <th>Quantity</th>
+                                <th>Value</th>
+                                <th>Performed By</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for txn in recent_transactions %}
+                            <tr>
+                                <td>{{ txn.transaction_date|date:"M d, Y H:i" }}</td>
+                                <td>
+                                    <span class="badge 
+                                        {% if txn.transaction_type == 'receipt' %}bg-success
+                                        {% elif txn.transaction_type == 'issue' %}bg-warning
+                                        {% elif txn.transaction_type == 'transfer_in' %}bg-info
+                                        {% elif txn.transaction_type == 'transfer_out' %}bg-secondary
+                                        {% elif txn.transaction_type == 'return_from_dept' %}bg-primary
+                                        {% else %}bg-dark{% endif %}">
+                                        {{ txn.get_transaction_type_display }}
+                                    </span>
+                                </td>
+                                <td>{{ txn.inventory_item.item_name|truncatewords:3 }}</td>
+                                <td>
+                                    <span class="badge 
+                                        {% if txn.quantity > 0 %}bg-success
+                                        {% else %}bg-danger{% endif %}">
+                                        {% if txn.quantity > 0 %}+{% endif %}{{ txn.quantity }}
+                                    </span>
+                                </td>
+                                <td>GHS {{ txn.total_value|floatformat:2 }}</td>
+                                <td>{{ txn.performed_by.full_name|default:"N/A" }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="6" class="text-center text-muted py-4">
+                                    <i class="bi bi-inbox" style="font-size: 32px;"></i>
+                                    <p class="mt-2 mb-0">No recent transactions</p>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Transaction Types Breakdown -->
+{% if transaction_types %}
+<div class="row mt-4">
+    <div class="col-md-12">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-pie-chart me-2"></i>Transaction Types (Last 30 Days)
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Transaction Type</th>
+                                <th>Count</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in transaction_types %}
+                            <tr>
+                                <td>{{ entry.transaction_type|title }}</td>
+                                <td>
+                                    <span class="badge bg-primary">{{ entry.count }}</span>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+
+
+
+
+
+

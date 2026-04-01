@@ -141,25 +141,52 @@ def all_login_activity(request):
 def security_alerts_dashboard(request):
     """
     View all security alerts
-    Requires admin permissions
+    Requires admin or IT permissions
     """
-    if not request.user.is_staff and not request.user.is_superuser:
+    # Check if user is admin, superuser, or IT staff
+    is_authorized = False
+    if request.user.is_superuser or request.user.is_staff:
+        is_authorized = True
+    else:
+        # Check if user is in IT group
+        user_groups = request.user.groups.values_list('name', flat=True)
+        for group_name in user_groups:
+            group_lower = group_name.lower().replace(' ', '_')
+            if group_lower in ['it', 'it_staff', 'it_operations', 'it_support']:
+                is_authorized = True
+                break
+        # Check if user has IT-related profession
+        if not is_authorized:
+            try:
+                from .models import Staff
+                staff = Staff.objects.filter(user=request.user, is_deleted=False).first()
+                if staff and staff.profession:
+                    profession_lower = staff.profession.lower()
+                    if profession_lower in ['it', 'it_staff', 'it_operations', 'it_support'] or 'it' in profession_lower:
+                        is_authorized = True
+            except Exception:
+                pass
+    
+    if not is_authorized:
         messages.error(request, 'You do not have permission to view this page.')
         return redirect('hospital:dashboard')
     
-    # Get all unresolved alerts
-    unresolved_alerts = SecurityAlert.objects.filter(
+    # Base queryset for unresolved alerts (don't slice yet - need it for stats)
+    unresolved_alerts_base = SecurityAlert.objects.filter(
         is_resolved=False,
         is_deleted=False
-    ).select_related('user', 'login_history').order_by('-alert_time')[:50]
+    ).select_related('user', 'login_history')
     
-    # Statistics
+    # Statistics (calculate before slicing)
     stats = {
-        'total_unresolved': unresolved_alerts.count(),
-        'critical': unresolved_alerts.filter(severity='critical').count(),
-        'high': unresolved_alerts.filter(severity='high').count(),
-        'medium': unresolved_alerts.filter(severity='medium').count(),
+        'total_unresolved': unresolved_alerts_base.count(),
+        'critical': unresolved_alerts_base.filter(severity='critical').count(),
+        'high': unresolved_alerts_base.filter(severity='high').count(),
+        'medium': unresolved_alerts_base.filter(severity='medium').count(),
     }
+    
+    # Now slice for display (limit to 50 most recent)
+    unresolved_alerts = unresolved_alerts_base.order_by('-alert_time')[:50]
     
     context = {
         'title': 'Security Alerts',

@@ -1,0 +1,244 @@
+{% extends "hospital/base.html" %}
+{% load humanize %}
+{% load static %}
+
+{% block title %}Inventory Requisitions - World-Class Inventory Management{% endblock %}
+
+{% block extra_css %}
+<style>
+    .filter-section {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .requisitions-table {
+        background: white;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .table thead {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    
+    .table thead th {
+        border: none;
+        padding: 15px;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.875rem;
+        letter-spacing: 0.5px;
+    }
+    
+    .table tbody tr {
+        transition: all 0.3s ease;
+    }
+    
+    .table tbody tr:hover {
+        background: #f9fafb;
+        transform: scale(1.01);
+    }
+    
+    .status-badge {
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        text-transform: capitalize;
+    }
+    
+    .status-draft { background: rgba(107, 114, 128, 0.1); color: #6b7280; }
+    .status-submitted { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+    .status-approved { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+    .status-partially_issued { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
+    .status-completed { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+    .status-cancelled { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+    
+    .priority-badge {
+        padding: 4px 10px;
+        border-radius: 15px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    
+    .priority-low { background: rgba(107, 114, 128, 0.1); color: #6b7280; }
+    .priority-normal { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+    .priority-high { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
+    .priority-urgent { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1 style="font-weight: 700; color: var(--dark);">
+                <i class="bi bi-clipboard-check"></i> Inventory Requisitions
+            </h1>
+            <p class="text-muted mb-0">View and manage inventory requisitions from departments</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:inventory:inventory_dashboard' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Dashboard
+            </a>
+            <a href="{% url 'hospital:inventory:create_requisition' %}" class="btn btn-primary ms-2">
+                <i class="bi bi-plus-circle"></i> Create Requisition
+            </a>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="filter-section">
+        <form method="get" class="row g-3">
+            <div class="col-md-4">
+                <label for="status" class="form-label fw-semibold">Status</label>
+                <select name="status" id="status" class="form-select">
+                    <option value="all" {% if selected_status == 'all' %}selected{% endif %}>All Statuses</option>
+                    <option value="draft" {% if selected_status == 'draft' %}selected{% endif %}>Draft</option>
+                    <option value="submitted" {% if selected_status == 'submitted' %}selected{% endif %}>Submitted</option>
+                    <option value="approved" {% if selected_status == 'approved' %}selected{% endif %}>Approved</option>
+                    <option value="partially_issued" {% if selected_status == 'partially_issued' %}selected{% endif %}>Partially Issued</option>
+                    <option value="completed" {% if selected_status == 'completed' %}selected{% endif %}>Completed</option>
+                    <option value="cancelled" {% if selected_status == 'cancelled' %}selected{% endif %}>Cancelled</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label for="department" class="form-label fw-semibold">Department</label>
+                <select name="department" id="department" class="form-select">
+                    <option value="">All Departments</option>
+                    {% for dept in departments %}
+                    <option value="{{ dept.id }}" {% if selected_department == dept.id|stringformat:"s" %}selected{% endif %}>{{ dept.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-funnel"></i> Apply Filters
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Requisitions Table -->
+    <div class="requisitions-table">
+        {% if requisitions %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Requisition #</th>
+                        <th>Department</th>
+                        <th>Requested By</th>
+                        <th>Store</th>
+                        <th>Request Date</th>
+                        <th>Required By</th>
+                        <th>Priority</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for req in requisitions %}
+                    <tr>
+                        <td>
+                            <strong>{{ req.requisition_number }}</strong>
+                        </td>
+                        <td>
+                            {{ req.requesting_department.name }}
+                        </td>
+                        <td>
+                            {{ req.requested_by.user.get_full_name|default:req.requested_by.user.username }}
+                        </td>
+                        <td>
+                            {{ req.requested_from_store.name }}
+                        </td>
+                        <td>
+                            {{ req.request_date|date:"M d, Y H:i" }}
+                        </td>
+                        <td>
+                            {% if req.required_by_date %}
+                                {{ req.required_by_date|date:"M d, Y" }}
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="priority-badge priority-{{ req.priority }}">
+                                {{ req.get_priority_display }}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="status-badge status-{{ req.status }}">
+                                {{ req.get_status_display }}
+                            </span>
+                        </td>
+                        <td>
+                            <a href="{% url 'hospital:inventory:requisition_detail' req.id %}" class="btn btn-sm btn-outline-primary" title="View Details">
+                                <i class="bi bi-eye"></i> View
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5">
+            <i class="bi bi-inbox" style="font-size: 4rem; color: #d1d5db;"></i>
+            <h4 class="mt-3 text-muted">No Requisitions Found</h4>
+            <p class="text-muted">There are no requisitions matching your criteria.</p>
+            <a href="{% url 'hospital:inventory:create_requisition' %}" class="btn btn-primary mt-3">
+                <i class="bi bi-plus-circle"></i> Create First Requisition
+            </a>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Statistics -->
+    {% if requisitions %}
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-body">
+                    <h6 class="card-title mb-3">Summary Statistics</h6>
+                    <div class="row">
+                        <div class="col-md-3">
+                            <div class="text-center">
+                                <h4 class="text-primary mb-1">{{ stats.total }}</h4>
+                                <small class="text-muted">Total Requisitions</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="text-center">
+                                <h4 class="text-info mb-1">{{ stats.draft }}</h4>
+                                <small class="text-muted">Draft</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="text-center">
+                                <h4 class="text-warning mb-1">{{ stats.submitted }}</h4>
+                                <small class="text-muted">Pending Approval</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="text-center">
+                                <h4 class="text-success mb-1">{{ stats.completed }}</h4>
+                                <small class="text-muted">Completed</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+

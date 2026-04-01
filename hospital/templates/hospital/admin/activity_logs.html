@@ -3,26 +3,139 @@
 
 {% block title %}Activity Logs - Admin{% endblock %}
 
+{% block extra_css %}
+<style>
+    .activity-stat-card {
+        border: none;
+        border-radius: 0.5rem;
+        box-shadow: 0 0.125rem 0.25rem rgba(0,0,0,.075);
+    }
+    .activity-stat-card .stat-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    .chart-wrap {
+        position: relative;
+        min-height: 260px;
+    }
+    .table-activity-row:hover {
+        background-color: rgba(13, 110, 253, 0.06);
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid">
     <div class="row mb-4">
-        <div class="col-12">
-            <div class="d-flex justify-content-between align-items-center">
-                <div>
-                    <h4 class="mb-1">Activity Logs</h4>
-                    <p class="text-muted mb-0">User activity tracking and system usage logs</p>
+        <div class="col-12 d-flex flex-wrap justify-content-between align-items-center gap-3">
+            <div>
+                <h4 class="mb-1"><i class="bi bi-activity me-2"></i>Activity Logs</h4>
+                <p class="text-muted mb-0">User activity tracking — analytics match your filters below.</p>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                <a href="?{{ preset_7d }}" class="btn btn-sm btn-outline-primary">Last 7 days</a>
+                <a href="?{{ preset_30d }}" class="btn btn-sm btn-outline-primary">Last 30 days</a>
+                <a href="{% url 'hospital:audit_logs' %}" class="btn btn-sm btn-primary">
+                    <i class="bi bi-shield-check me-1"></i>Audit logs
+                </a>
+            </div>
+        </div>
+    </div>
+
+    {{ analytics|json_script:"activity-analytics-data" }}
+
+    <!-- Summary KPIs -->
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3">
+            <div class="card activity-stat-card h-100">
+                <div class="card-body">
+                    <small class="text-muted text-uppercase">Events (filtered)</small>
+                    <div class="stat-value text-primary">{{ analytics.total|intcomma }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card activity-stat-card h-100">
+                <div class="card-body">
+                    <small class="text-muted text-uppercase">Active users</small>
+                    <div class="stat-value text-success">{{ analytics.unique_users|intcomma }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card activity-stat-card h-100">
+                <div class="card-body">
+                    <small class="text-muted text-uppercase">Activity types</small>
+                    <div class="stat-value text-info">{{ analytics.distinct_types|intcomma }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card activity-stat-card h-100">
+                <div class="card-body">
+                    <small class="text-muted text-uppercase">This page</small>
+                    <div class="stat-value text-secondary">{{ logs|length }} <span class="fs-6 fw-normal text-muted">rows</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="row g-4 mb-4">
+        <div class="col-lg-5">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-0 py-3">
+                    <h6 class="mb-0"><i class="bi bi-pie-chart me-2"></i>By activity type</h6>
+                    <small class="text-muted">Top types in current filter</small>
+                </div>
+                <div class="card-body chart-wrap">
+                    <canvas id="chartByType" aria-label="Activity by type chart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-7">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-0 py-3">
+                    <h6 class="mb-0"><i class="bi bi-people me-2"></i>Top users</h6>
+                    <small class="text-muted">Most events in current filter</small>
+                </div>
+                <div class="card-body chart-wrap">
+                    <canvas id="chartByUser" aria-label="Top users chart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-0 py-3">
+                    <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>By hour of day</h6>
+                    <small class="text-muted">When activity happens (server timezone)</small>
+                </div>
+                <div class="card-body chart-wrap">
+                    <canvas id="chartByHour" aria-label="Activity by hour chart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-0 py-3">
+                    <h6 class="mb-0"><i class="bi bi-graph-up me-2"></i>By day</h6>
+                    <small class="text-muted">Daily volume (up to 90 days in filter)</small>
+                </div>
+                <div class="card-body chart-wrap">
+                    <canvas id="chartByDay" aria-label="Activity by day chart"></canvas>
                 </div>
             </div>
         </div>
     </div>
 
     <!-- Filters -->
-    <div class="card mb-4">
+    <div class="card mb-4 border-0 shadow-sm">
         <div class="card-body">
             <form method="get" class="row g-3">
                 <div class="col-md-3">
                     <label class="form-label">Activity Type</label>
-                    <select class="form-select" name="activity_type">
+                    <select class="form-select" name="activity_type" title="Activity type" aria-label="Activity type">
                         <option value="">All Types</option>
                         {% for activity_type in activity_types %}
                         <option value="{{ activity_type }}" {% if filters.activity_type == activity_type %}selected{% endif %}>{{ activity_type }}</option>
@@ -39,14 +152,14 @@
                 </div>
                 <div class="col-md-5">
                     <label class="form-label">Search</label>
-                    <input type="text" class="form-control" name="q" placeholder="Search description, user, IP..." value="{{ filters.search }}">
+                    <input type="text" class="form-control" name="q" placeholder="Search description, user, IP..." value="{{ filters.search }}" title="Search" aria-label="Search">
                 </div>
-                <div class="col-md-12">
+                <div class="col-md-12 d-flex flex-wrap gap-2">
                     <button type="submit" class="btn btn-primary">
-                        <i class="bi bi-filter"></i> Apply Filters
+                        <i class="bi bi-funnel me-1"></i> Apply Filters
                     </button>
                     <a href="{% url 'hospital:activity_logs' %}" class="btn btn-outline-secondary">
-                        <i class="bi bi-x-circle"></i> Clear
+                        <i class="bi bi-x-circle me-1"></i> Clear
                     </a>
                 </div>
             </form>
@@ -54,35 +167,45 @@
     </div>
 
     <!-- Activity Logs Table -->
-    <div class="card">
-        <div class="card-body">
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <h6 class="mb-0">Detailed log</h6>
+            <small class="text-muted">Click a row or <strong>Details</strong> for full context</small>
+        </div>
+        <div class="card-body p-0">
             <div class="table-responsive">
-                <table class="table table-hover">
+                <table class="table table-hover mb-0 align-middle">
                     <thead class="table-light">
                         <tr>
                             <th>Timestamp</th>
                             <th>User</th>
                             <th>Activity Type</th>
                             <th>Description</th>
-                            <th>IP Address</th>
+                            <th>IP</th>
+                            <th class="text-end" style="width:1%">Details</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for log in logs %}
-                        <tr>
+                        <tr class="table-activity-row activity-log-row"
+                            style="cursor:pointer"
+                            data-href="{% url 'hospital:activity_log_detail' log.id %}">
                             <td>
-                                <small>{{ log.created|date:"Y-m-d H:i:s" }}</small>
+                                <small class="text-nowrap">{{ log.created|date:"Y-m-d H:i:s" }}</small>
                             </td>
-                            <td>{{ log.user.username|default:"Anonymous" }}</td>
+                            <td>{{ log.user.username|default:"—" }}</td>
                             <td>
-                                <span class="badge bg-info">{{ log.activity_type }}</span>
+                                <span class="badge bg-info text-dark">{{ log.activity_type }}</span>
                             </td>
-                            <td>{{ log.description }}</td>
-                            <td><small>{{ log.ip_address|default:"-" }}</small></td>
+                            <td><small class="text-break">{{ log.description }}</small></td>
+                            <td><small class="text-muted">{{ log.ip_address|default:"—" }}</small></td>
+                            <td class="text-end" onclick="event.stopPropagation();">
+                                <a href="{% url 'hospital:activity_log_detail' log.id %}" class="btn btn-sm btn-outline-primary">Details</a>
+                            </td>
                         </tr>
                         {% empty %}
                         <tr>
-                            <td colspan="5" class="text-center text-muted py-5">
+                            <td colspan="6" class="text-center text-muted py-5">
                                 No activity logs found for the selected filters.
                             </td>
                         </tr>
@@ -91,13 +214,12 @@
                 </table>
             </div>
 
-            <!-- Pagination -->
             {% if page_obj.has_other_pages %}
-            <nav aria-label="Page navigation">
-                <ul class="pagination justify-content-center">
+            <nav class="p-3 border-top" aria-label="Page navigation">
+                <ul class="pagination justify-content-center mb-0">
                     {% if page_obj.has_previous %}
                     <li class="page-item">
-                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% for key, value in filters.items %}{% if value %}&{{ key }}={{ value }}{% endif %}{% endfor %}">Previous</a>
+                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if filter_query %}&amp;{{ filter_query }}{% endif %}">Previous</a>
                     </li>
                     {% endif %}
                     <li class="page-item active">
@@ -105,7 +227,7 @@
                     </li>
                     {% if page_obj.has_next %}
                     <li class="page-item">
-                        <a class="page-link" href="?page={{ page_obj.next_page_number }}{% for key, value in filters.items %}{% if value %}&{{ key }}={{ value }}{% endif %}{% endfor %}">Next</a>
+                        <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if filter_query %}&amp;{{ filter_query }}{% endif %}">Next</a>
                     </li>
                     {% endif %}
                 </ul>
@@ -116,8 +238,157 @@
 </div>
 {% endblock %}
 
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+    const el = document.getElementById('activity-analytics-data');
+    if (!el) return;
+    let data;
+    try {
+        data = JSON.parse(el.textContent);
+    } catch (e) {
+        console.error('Activity analytics JSON parse failed', e);
+        return;
+    }
 
+    const colors = {
+        primary: 'rgba(13, 110, 253, 0.85)',
+        success: 'rgba(25, 135, 84, 0.85)',
+        info: 'rgba(13, 202, 240, 0.85)',
+        warning: 'rgba(255, 193, 7, 0.85)',
+        purple: 'rgba(111, 66, 193, 0.85)',
+    };
 
+    const palette = [
+        colors.primary, colors.success, colors.info, colors.warning, colors.purple,
+        'rgba(220, 53, 69, 0.8)', 'rgba(108, 117, 125, 0.8)', 'rgba(32, 201, 151, 0.8)',
+    ];
 
+    function emptyChart(canvasId, message) {
+        const c = document.getElementById(canvasId);
+        if (!c) return;
+        const p = c.parentElement;
+        if (p) {
+            p.innerHTML = '<p class="text-muted text-center py-5 mb-0">' + message + '</p>';
+        }
+    }
 
+    if (!data.total) {
+        ['chartByType', 'chartByUser', 'chartByHour', 'chartByDay'].forEach(function(id) {
+            emptyChart(id, 'No data for current filters.');
+        });
+        return;
+    }
 
+    if (data.by_type && data.by_type.labels && data.by_type.labels.length) {
+        new Chart(document.getElementById('chartByType'), {
+            type: 'doughnut',
+            data: {
+                labels: data.by_type.labels,
+                datasets: [{
+                    data: data.by_type.data,
+                    backgroundColor: data.by_type.labels.map(function(_, i) {
+                        return palette[i % palette.length];
+                    }),
+                    borderWidth: 1,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+                },
+            },
+        });
+    } else {
+        emptyChart('chartByType', 'No type breakdown.');
+    }
+
+    if (data.by_user && data.by_user.labels && data.by_user.labels.length) {
+        new Chart(document.getElementById('chartByUser'), {
+            type: 'bar',
+            data: {
+                labels: data.by_user.labels,
+                datasets: [{
+                    label: 'Events',
+                    data: data.by_user.data,
+                    backgroundColor: colors.primary,
+                    borderRadius: 4,
+                }],
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { beginAtZero: true, ticks: { precision: 0 } },
+                },
+            },
+        });
+    } else {
+        emptyChart('chartByUser', 'No user breakdown (anonymous only?).');
+    }
+
+    if (data.by_hour && data.by_hour.data) {
+        new Chart(document.getElementById('chartByHour'), {
+            type: 'line',
+            data: {
+                labels: data.by_hour.labels,
+                datasets: [{
+                    label: 'Events',
+                    data: data.by_hour.data,
+                    borderColor: colors.success,
+                    backgroundColor: 'rgba(25, 135, 84, 0.15)',
+                    fill: true,
+                    tension: 0.3,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { beginAtZero: true, ticks: { precision: 0 } },
+                },
+            },
+        });
+    }
+
+    if (data.by_day && data.by_day.labels && data.by_day.labels.length) {
+        new Chart(document.getElementById('chartByDay'), {
+            type: 'bar',
+            data: {
+                labels: data.by_day.labels,
+                datasets: [{
+                    label: 'Events / day',
+                    data: data.by_day.data,
+                    backgroundColor: colors.purple,
+                    borderRadius: 4,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { ticks: { maxRotation: 45, minRotation: 45, font: { size: 10 } } },
+                    y: { beginAtZero: true, ticks: { precision: 0 } },
+                },
+            },
+        });
+    } else {
+        emptyChart('chartByDay', 'No daily series (empty range).');
+    }
+
+    document.querySelectorAll('.activity-log-row').forEach(function(row) {
+        row.addEventListener('click', function() {
+            const href = this.getAttribute('data-href');
+            if (href) window.location.href = href;
+        });
+    });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,237 @@
+{% extends 'hospital/base.html' %}
+{% load humanize hospital_extras %}
+
+{% block title %}Lab Test - {{ test.name }}{% endblock %}
+{% block page_title %}<i class="bi bi-flask me-2"></i>Lab Test Details{% endblock %}
+{% block page_subtitle %}{{ test.name }} ({{ test.code }}){% endblock %}
+
+{% block extra_css %}
+<style>
+    .detail-card {
+        background: #fff;
+        border-radius: 14px;
+        padding: 1.25rem;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        margin-bottom: 1rem;
+    }
+    .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: .4rem;
+        padding: 6px 12px;
+        border-radius: 999px;
+        font-weight: 600;
+        font-size: 12px;
+        border: 1px solid transparent;
+        white-space: nowrap;
+    }
+    .chip-active { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+    .chip-inactive { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+    .chip-specimen { background: #eef2ff; color: #3730a3; border-color: #c7d2fe; }
+    .stat-tile {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 14px;
+        padding: 16px 18px;
+        box-shadow: 0 10px 25px rgba(102, 126, 234, 0.22);
+        height: 100%;
+    }
+    .stat-tile.secondary { background: linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%); }
+    .stat-tile.success { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
+    .stat-tile.danger { background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); }
+    .stat-value { font-size: 28px; font-weight: 800; line-height: 1; }
+    .stat-label { opacity: .92; font-weight: 600; margin-top: 6px; }
+    .table thead th { white-space: nowrap; }
+    .muted-kv { color: #64748b; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            <span class="chip chip-specimen" title="Specimen type">
+                <i class="bi bi-droplet-half"></i>
+                {{ test.specimen_type|default:"Not specified" }}
+            </span>
+            <span class="chip {% if test.is_active %}chip-active{% else %}chip-inactive{% endif %}">
+                <i class="bi {% if test.is_active %}bi-check-circle{% else %}bi-x-circle{% endif %}"></i>
+                {{ test.is_active|yesno:"Active,Inactive" }}
+            </span>
+        </div>
+
+        <div class="d-flex gap-2 flex-wrap">
+            <a href="{% url 'hospital:lab_tests_catalog' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i>Back to Catalog
+            </a>
+            {% if can_manage_catalog %}
+            <a href="{% url 'hospital:lab_test_edit' test.pk %}" class="btn btn-primary">
+                <i class="bi bi-pencil-square me-1"></i>Edit Test
+            </a>
+            {% if lab_test_delete_url %}
+            <a href="{{ lab_test_delete_url }}" class="btn btn-outline-danger">
+                <i class="bi bi-trash me-1"></i>Delete
+            </a>
+            {% endif %}
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-lg-6">
+            <div class="detail-card">
+                <h5 class="mb-3"><i class="bi bi-info-circle me-2 text-primary"></i>Test Information</h5>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="muted-kv small">Code</div>
+                        <div class="fw-semibold">{{ test.code }}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="muted-kv small">Turnaround Time</div>
+                        <div class="fw-semibold">{{ test.tat_minutes|default:"N/A" }} min</div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="muted-kv small">Price</div>
+                        <div class="fw-semibold">GHS {{ test.price|default:"0.00" }}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="muted-kv small">Specimen Type</div>
+                        <div class="fw-semibold">{{ test.specimen_type|default:"Not specified" }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <div class="stat-tile secondary">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <div class="stat-value">{{ total_results|intcomma }}</div>
+                                <div class="stat-label">Total Results</div>
+                            </div>
+                            <i class="bi bi-collection fs-3" style="opacity:.9;"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="stat-tile success">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <div class="stat-value">{{ completed_results|intcomma }}</div>
+                                <div class="stat-label">Completed</div>
+                            </div>
+                            <i class="bi bi-check2-circle fs-3" style="opacity:.9;"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="stat-tile danger">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <div class="stat-value">{{ abnormal_results|intcomma }}</div>
+                                <div class="stat-label">Abnormal</div>
+                            </div>
+                            <i class="bi bi-exclamation-triangle fs-3" style="opacity:.9;"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <div class="detail-card">
+                        <h6 class="mb-2"><i class="bi bi-lightning-charge me-2 text-primary"></i>Quick Notes</h6>
+                        <div class="text-muted">
+                            This page shows the most recent 10 results recorded for this test.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="detail-card">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+            <h5 class="mb-0"><i class="bi bi-list-check me-2 text-primary"></i>Recent Results</h5>
+            <span class="text-muted small">Showing latest 10</span>
+        </div>
+
+        {% if recent_results %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Patient</th>
+                            <th>Status</th>
+                            <th>Result</th>
+                            <th>Created</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for result in recent_results %}
+                        <tr>
+                            <td>
+                                {% if result.order and result.order.encounter and result.order.encounter.patient %}
+                                    <div class="fw-semibold">
+                                        <a href="{% url 'hospital:patient_detail' result.order.encounter.patient.pk %}">
+                                            {{ result.order.encounter.patient.full_name|default:result.order.encounter.patient }}
+                                        </a>
+                                    </div>
+                                    <div class="text-muted small">
+                                        MRN: {{ result.order.encounter.patient.mrn|default:"-" }}
+                                    </div>
+                                {% else %}
+                                    <span class="text-muted">Unknown patient</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge {% if result.status == 'completed' %}text-bg-success{% elif result.status == 'in_progress' %}text-bg-info{% else %}text-bg-warning{% endif %}">
+                                    {{ result.get_status_display|default:result.status|default:"-" }}
+                                </span>
+                                {% if result.is_abnormal %}
+                                    <span class="badge text-bg-danger ms-1">Abnormal</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if result.value %}
+                                    <span class="fw-semibold">{{ result.value }}</span>
+                                    <span class="text-muted">{{ result.units|default:"" }}</span>
+                                {% elif result.qualitative_result %}
+                                    <span class="fw-semibold">{{ result.qualitative_result }}</span>
+                                {% elif result.details %}
+                                    <span class="text-muted">Panel test (see report)</span>
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-muted">
+                                {{ result.created|date:"d M Y H:i" }}
+                            </td>
+                            <td class="text-end">
+                                <a class="btn btn-outline-primary btn-sm" href="{% lab_result_entry_url result %}">
+                                    <i class="bi bi-table me-1"></i>Report
+                                </a>
+                                {% if result.status != 'completed' %}
+                                <a class="btn btn-outline-success btn-sm" href="{% url 'hospital:edit_lab_result' result.pk %}">
+                                    <i class="bi bi-pencil me-1"></i>Enter
+                                </a>
+                                {% endif %}
+                                <a class="btn btn-outline-secondary btn-sm" target="_blank" href="{% url 'hospital:print_lab_report' result.pk %}">
+                                    <i class="bi bi-printer me-1"></i>Print
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="text-center py-5 text-muted">
+                <i class="bi bi-inbox" style="font-size: 3rem;"></i>
+                <div class="mt-2">No results recorded for this test yet.</div>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+

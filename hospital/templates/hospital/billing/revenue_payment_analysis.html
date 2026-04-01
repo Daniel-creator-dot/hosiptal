@@ -1,0 +1,370 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Revenue/Payment Analysis - HMS{% endblock %}
+{% block page_title %}Revenue & Payment Analysis{% endblock %}
+
+{% block extra_css %}
+<style>
+    .rpa-chart-wrap { position: relative; height: 280px; }
+    @media (min-width: 992px) {
+        .rpa-chart-wrap.tall { height: 320px; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="card">
+        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <h5 class="mb-0"><i class="bi bi-graph-up-arrow me-2"></i>Revenue & Payment Analysis</h5>
+            <div class="d-flex flex-wrap gap-2">
+                <a href="{% url 'hospital:bills_list' %}?date_from={{ date_from }}&date_to={{ date_to }}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-receipt"></i> Bills (this range)
+                </a>
+                <a href="{% url 'hospital:claims_bills_hub' %}" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Claims Bills Hub
+                </a>
+            </div>
+        </div>
+        <div class="card-body">
+            <form method="get" class="mb-4">
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-3">
+                        <label class="form-label">From</label>
+                        <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">To</label>
+                        <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+                    </div>
+                    <div class="col-md-3">
+                        <button type="submit" class="btn btn-primary w-100"><i class="bi bi-funnel"></i> Update</button>
+                    </div>
+                </div>
+            </form>
+
+            <p class="text-muted small mb-4">
+                Based on workflow <strong>bills</strong> issued in the selected period.
+                Trend chart uses <strong>daily</strong> buckets for ranges up to 62 days, otherwise <strong>weekly</strong>.
+            </p>
+
+            <!-- KPI strip -->
+            <div class="row g-3 mb-4">
+                <div class="col-6 col-md-3 col-xl-2">
+                    <div class="card border-0 bg-success text-white h-100">
+                        <div class="card-body py-3">
+                            <div class="small opacity-75">Billed revenue</div>
+                            <div class="fs-5 fw-semibold">GHS {{ bill_revenue.total_revenue|default:0|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                    <div class="card border-0 bg-primary text-white h-100">
+                        <div class="card-body py-3">
+                            <div class="small opacity-75">Collected (paid bills)</div>
+                            <div class="fs-5 fw-semibold">GHS {{ payments.total_paid|default:0|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                    <div class="card border-0 bg-warning text-dark h-100">
+                        <div class="card-body py-3">
+                            <div class="small opacity-75">Outstanding (patient portion)</div>
+                            <div class="fs-5 fw-semibold">GHS {{ outstanding.total_outstanding|default:0|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                    <div class="card border-0 bg-light border h-100">
+                        <div class="card-body py-3">
+                            <div class="small text-muted">Collection rate</div>
+                            <div class="fs-5 fw-semibold text-dark">{{ collection_rate_pct }}%</div>
+                            <div class="small text-muted">of billed total</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                    <div class="card border-0 bg-light border h-100">
+                        <div class="card-body py-3">
+                            <div class="small text-muted">Bills closed</div>
+                            <div class="fs-5 fw-semibold text-dark">{{ bill_close_rate_pct }}%</div>
+                            <div class="small text-muted">{{ payments.count|default:0|intcomma }} / {{ total_bills|intcomma }} paid</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                    <div class="card border-0 bg-light border h-100">
+                        <div class="card-body py-3">
+                            <div class="small text-muted">Avg bill / avg paid</div>
+                            <div class="small fw-semibold">GHS {{ avg_bill|floatformat:2|intcomma }}</div>
+                            <div class="small text-muted">GHS {{ avg_paid|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-3 mb-4">
+                <div class="col-md-3">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <div class="text-muted small">Cash bills (amount)</div>
+                            <div class="fs-5 fw-semibold">GHS {{ bill_revenue.cash_revenue|default:0|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <div class="text-muted small">Insurance covered (sum)</div>
+                            <div class="fs-5 fw-semibold">GHS {{ bill_revenue.insurance_revenue|default:0|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <div class="text-muted small">Patient portion (all bills)</div>
+                            <div class="fs-5 fw-semibold">GHS {{ bill_revenue.patient_payments|default:0|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card h-100 border-info">
+                        <div class="card-body">
+                            <div class="text-muted small">Invoices (same period)</div>
+                            <div class="fs-5 fw-semibold">{{ invoice_count|intcomma }} invoices</div>
+                            <div class="small text-muted">GHS {{ invoice_total|default:0|floatformat:2|intcomma }} total</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts -->
+            <div class="row g-4 mb-4">
+                <div class="col-lg-8">
+                    <div class="card h-100">
+                        <div class="card-header py-2">
+                            <span class="fw-semibold">Trend: billed vs collected</span>
+                            <span class="text-muted small ms-2">(<span id="rpa-granularity-label">period</span>)</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="rpa-chart-wrap tall">
+                                <canvas id="rpaChartTrend"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-4">
+                    <div class="card mb-3">
+                        <div class="card-header py-2"><span class="fw-semibold">By status</span></div>
+                        <div class="card-body">
+                            <div class="rpa-chart-wrap">
+                                <canvas id="rpaChartStatus"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header py-2"><span class="fw-semibold">By bill type</span></div>
+                        <div class="card-body">
+                            <div class="rpa-chart-wrap">
+                                <canvas id="rpaChartBillType"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-3 mb-4">
+                <div class="col-md-6">
+                    <div class="card h-100">
+                        <div class="card-header py-2"><span class="fw-semibold">Payment summary</span></div>
+                        <div class="card-body">
+                            <p class="mb-2"><strong>Total paid (paid bills):</strong> GHS {{ payments.total_paid|default:0|floatformat:2|intcomma }}</p>
+                            <p class="mb-2"><strong>Paid bill count:</strong> {{ payments.count|default:0|intcomma }}</p>
+                            <p class="mb-0 text-muted small">Outstanding share of billed: <strong>{{ outstanding_pct }}%</strong></p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card h-100">
+                        <div class="card-header py-2"><span class="fw-semibold">Outstanding summary</span></div>
+                        <div class="card-body">
+                            <p class="mb-2"><strong>Patient portion outstanding:</strong> GHS {{ outstanding.total_outstanding|default:0|floatformat:2|intcomma }}</p>
+                            <p class="mb-0"><strong>Open bills (issued / partial):</strong> {{ outstanding.count|default:0|intcomma }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header py-2"><span class="fw-semibold">Breakdown by bill type</span></div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Type</th>
+                                    <th class="text-end">Count</th>
+                                    <th class="text-end">Revenue</th>
+                                    <th class="text-end">Paid</th>
+                                    <th class="text-end">Outstanding</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in by_type %}
+                                <tr>
+                                    <td><strong>{{ item.type_label }}</strong></td>
+                                    <td class="text-end">{{ item.count|intcomma }}</td>
+                                    <td class="text-end">GHS {{ item.revenue|default:0|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ item.paid_amount|default:0|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ item.outstanding|default:0|floatformat:2|intcomma }}</td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="5" class="text-center text-muted py-4">No bills in this period.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{{ analytics_data|json_script:"revenue-analytics-data" }}
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    const el = document.getElementById('revenue-analytics-data');
+    if (!el || typeof Chart === 'undefined') return;
+    let A;
+    try {
+        A = JSON.parse(el.textContent);
+    } catch (e) { return; }
+
+    const meta = A.meta || {};
+    const gLabel = document.getElementById('rpa-granularity-label');
+    if (gLabel) gLabel.textContent = meta.granularity === 'week' ? 'weekly' : 'daily';
+
+    const colors = ['#6366f1', '#8b5cf6', '#10b981', '#f59e0b', '#3b82f6', '#ec4899', '#64748b', '#14b8a6'];
+
+    function doughnutOpts(amounts) {
+        return {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
+                tooltip: {
+                    callbacks: {
+                        afterLabel: function (ctx) {
+                            const i = ctx.dataIndex;
+                            const amt = amounts && amounts[i] != null ? amounts[i] : 0;
+                            return 'GHS ' + Number(amt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    const st = A.charts && A.charts.status;
+    if (st && st.labels && st.labels.length) {
+        const c = document.getElementById('rpaChartStatus');
+        if (c) {
+            new Chart(c, {
+                type: 'doughnut',
+                data: {
+                    labels: st.labels,
+                    datasets: [{ data: st.counts, backgroundColor: colors, borderWidth: 0 }]
+                },
+                options: doughnutOpts(st.amounts)
+            });
+        }
+    }
+
+    const bt = A.charts && A.charts.bill_type;
+    if (bt && bt.labels && bt.labels.length) {
+        const c = document.getElementById('rpaChartBillType');
+        if (c) {
+            new Chart(c, {
+                type: 'doughnut',
+                data: {
+                    labels: bt.labels,
+                    datasets: [{ data: bt.counts, backgroundColor: colors.slice().reverse(), borderWidth: 0 }]
+                },
+                options: doughnutOpts(bt.amounts)
+            });
+        }
+    }
+
+    const tr = A.charts && A.charts.trend;
+    if (tr && tr.labels && tr.labels.length) {
+        const c = document.getElementById('rpaChartTrend');
+        if (c) {
+            new Chart(c, {
+                type: 'bar',
+                data: {
+                    labels: tr.labels,
+                    datasets: [
+                        {
+                            label: 'Billed (GHS)',
+                            data: tr.revenue || [],
+                            backgroundColor: 'rgba(99, 102, 241, 0.65)',
+                            borderRadius: 6,
+                            order: 2
+                        },
+                        {
+                            label: 'Collected (GHS)',
+                            data: tr.collected || [],
+                            type: 'line',
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            tension: 0.25,
+                            fill: false,
+                            yAxisID: 'y',
+                            order: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function (v) {
+                                    return 'GHS ' + Number(v).toLocaleString();
+                                }
+                            }
+                        },
+                        x: { ticks: { maxRotation: 45, font: { size: 10 } } }
+                    },
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: {
+                            callbacks: {
+                                label: function (ctx) {
+                                    let s = ctx.dataset.label || '';
+                                    if (s) s += ': ';
+                                    s += 'GHS ' + Number(ctx.raw || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                    return s;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+})();
+</script>
+{% endblock %}

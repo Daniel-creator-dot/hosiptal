@@ -1,6 +1,8 @@
-from django.contrib.auth.views import LoginView
-from django.urls import reverse
-from django.shortcuts import redirect
+from django.contrib.auth.views import LoginView, PasswordChangeView
+from django.contrib.auth.forms import PasswordChangeForm
+from django.contrib.auth.decorators import login_required
+from django.urls import reverse, reverse_lazy
+from django.shortcuts import redirect, render
 from django.contrib import messages
 from django.utils import timezone
 from django.http import HttpResponse
@@ -14,17 +16,37 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+@login_required
+def change_password(request):
+    """Change password view for authenticated users"""
+    if request.method == 'POST':
+        form = PasswordChangeForm(user=request.user, data=request.POST)
+        if form.is_valid():
+            form.save()
+            # Update the session to prevent logout after password change
+            from django.contrib.auth import update_session_auth_hash
+            update_session_auth_hash(request, form.user)
+            messages.success(request, 'Your password has been changed successfully.')
+            return redirect('hospital:dashboard')
+    else:
+        form = PasswordChangeForm(user=request.user)
+    
+    return render(request, 'hospital/account/change_password.html', {
+        'form': form,
+    })
+
+
 @method_decorator(ensure_csrf_cookie, name='dispatch')
 class HMSLoginView(LoginView):
     """
     HMS login view that redirects users to their role-specific dashboard after login.
     Uses Django's built-in authentication with CSRF protection.
     Handles 'next' parameter for redirecting to originally requested page.
-    Implements 3-attempt login limit to prevent brute force attacks.
+    Implements 5-attempt login limit to prevent brute force attacks.
     """
     template_name = "hospital/login.html"
     redirect_authenticated_user = True
-    MAX_LOGIN_ATTEMPTS = 3
+    MAX_LOGIN_ATTEMPTS = 5
     LOCKOUT_DURATION_MINUTES = 15
     
     def get_client_ip(self):
@@ -121,9 +143,11 @@ class HMSLoginView(LoginView):
                                 logout_time__isnull=True
                             ).exclude(session_key=request.session.session_key if request.session.session_key else '')
                             
-                            # Check for active Django sessions
+                            # Check for active Django sessions - OPTIMIZED: Limit query and decode efficiently
                             active_django_sessions = []
-                            for session in Session.objects.filter(expire_date__gte=timezone.now()):
+                            # Only check sessions that might belong to this user (optimize by limiting)
+                            potential_sessions = Session.objects.filter(expire_date__gte=timezone.now())[:1000]  # Limit to prevent full table scan
+                            for session in potential_sessions:
                                 try:
                                     user_id = session.get_decoded().get('_auth_user_id')
                                     if user_id and str(user_id) == str(user.id):
@@ -193,7 +217,9 @@ class HMSLoginView(LoginView):
                         ).exclude(session_key=self.request.session.session_key)
                         
                         active_django_sessions = []
-                        for session in Session.objects.filter(expire_date__gte=timezone.now()):
+                        # OPTIMIZED: Limit query to prevent full table scan
+                        potential_sessions = Session.objects.filter(expire_date__gte=timezone.now())[:1000]
+                        for session in potential_sessions:
                             try:
                                 user_id = session.get_decoded().get('_auth_user_id')
                                 if user_id and str(user_id) == str(user.id):
@@ -245,10 +271,19 @@ class HMSLoginView(LoginView):
                         # Store values for use after transaction
                         is_locked_value = is_locked
                         remaining_value = remaining
+                        failed_attempts = attempt.failed_attempts
                 except Exception as e:
                     logger.error(f"Error tracking login attempt in transaction: {e}")
                     is_locked_value = False
                     remaining_value = self.MAX_LOGIN_ATTEMPTS
+                    failed_attempts = 0
+                
+                # Check if this is Dr. Kwadwo Ayisi's account and send SMS after 2 failed attempts
+                try:
+                    self._check_and_notify_dr_kwadwo(username, failed_attempts)
+                except Exception as e:
+                    logger.error(f"Error sending SMS notification to Dr. Kwadwo Ayisi: {e}")
+                    # Don't fail login if SMS fails
                 
                 # Show messages after transaction completes
                 try:
@@ -288,6 +323,113 @@ class HMSLoginView(LoginView):
         
         return super().form_invalid(form)
     
+    def _check_and_notify_dr_kwadwo(self, username, failed_attempts):
+        """
+        Check if login attempt is for Dr. Kwadwo Ayisi and send SMS notification
+        after exactly 2 failed attempts (only once)
+        """
+        # Only send SMS when exactly 2 failed attempts (not on 3rd, 4th, etc.)
+        if failed_attempts != 2:
+            return
+        
+        # Dr. Kwadwo Ayisi's known usernames and employee ID
+        DR_KWADWO_USERNAMES = ['drayisi', 'kwadwo.ayisi', 'kwadwoayisi', 'dr.kwadwo', 'drkwadwo']
+        DR_KWADWO_EMPLOYEE_ID = 'SPE-DOC-0001'
+        
+        # Check if username matches Dr. Kwadwo Ayisi
+        is_dr_kwadwo = False
+        user = None
+        staff = None
+        
+        try:
+            from django.contrib.auth.models import User
+            from .models import Staff
+            
+            # Try to find user by username
+            try:
+                user = User.objects.get(username__iexact=username)
+                # Check if user has staff record with employee ID SPE-DOC-0001
+                try:
+                    staff = Staff.objects.get(user=user, employee_id=DR_KWADWO_EMPLOYEE_ID, is_deleted=False)
+                    is_dr_kwadwo = True
+                except Staff.DoesNotExist:
+                    # Check by username match
+                    if username.lower() in [u.lower() for u in DR_KWADWO_USERNAMES]:
+                        is_dr_kwadwo = True
+                        # Try to get staff by employee ID
+                        try:
+                            staff = Staff.objects.get(employee_id=DR_KWADWO_EMPLOYEE_ID, is_deleted=False)
+                            user = staff.user
+                        except Staff.DoesNotExist:
+                            pass
+            except User.DoesNotExist:
+                # Check if username matches known usernames
+                if username.lower() in [u.lower() for u in DR_KWADWO_USERNAMES]:
+                    is_dr_kwadwo = True
+                    # Try to get staff by employee ID
+                    try:
+                        staff = Staff.objects.get(employee_id=DR_KWADWO_EMPLOYEE_ID, is_deleted=False)
+                        user = staff.user
+                    except Staff.DoesNotExist:
+                        pass
+            
+            # If we found Dr. Kwadwo Ayisi, send SMS notification
+            if is_dr_kwadwo:
+                # Get staff record to get phone number
+                try:
+                    if not staff:
+                        if user:
+                            staff = Staff.objects.get(user=user, is_deleted=False)
+                        else:
+                            staff = Staff.objects.get(employee_id=DR_KWADWO_EMPLOYEE_ID, is_deleted=False)
+                    
+                    phone_number = staff.phone_number
+                    if phone_number and phone_number.strip():
+                        # Send SMS notification
+                        self._send_security_alert_sms(phone_number, username, failed_attempts, staff)
+                    else:
+                        logger.warning(f"Dr. Kwadwo Ayisi's phone number not found. Cannot send security alert.")
+                except Staff.DoesNotExist:
+                    logger.warning(f"Dr. Kwadwo Ayisi's staff record not found. Cannot send security alert.")
+        except Exception as e:
+            logger.error(f"Error checking Dr. Kwadwo Ayisi account: {e}")
+    
+    def _send_security_alert_sms(self, phone_number, username, failed_attempts, staff):
+        """
+        Send SMS security alert to Dr. Kwadwo Ayisi
+        """
+        try:
+            from .services.sms_service import sms_service
+            
+            # Get IP address and user agent for context
+            ip_address = self.get_client_ip()
+            user_agent = self.get_user_agent()[:100]  # Limit length
+            
+            # Create message
+            message = (
+                f"SECURITY ALERT: Someone attempted to access your HMS account ({username}) "
+                f"with incorrect password {failed_attempts} time(s). "
+                f"IP: {ip_address}. "
+                f"If this was not you, please change your password immediately or contact IT support."
+            )
+            
+            # Send SMS
+            sms_log = sms_service.send_sms(
+                phone_number=phone_number,
+                message=message,
+                message_type='security_alert',
+                recipient_name=f"Dr. {staff.user.get_full_name()}" if staff.user else "Dr. Kwadwo Ayisi",
+                related_object_id=str(staff.user.id) if staff.user else None,
+                related_object_type='User'
+            )
+            
+            if sms_log.status == 'sent':
+                logger.info(f"Security alert SMS sent to Dr. Kwadwo Ayisi at {phone_number}")
+            else:
+                logger.warning(f"Failed to send security alert SMS to Dr. Kwadwo Ayisi. Status: {sms_log.status}, Error: {getattr(sms_log, 'error_message', 'Unknown error')}")
+        except Exception as e:
+            logger.error(f"Error sending security alert SMS to Dr. Kwadwo Ayisi: {e}", exc_info=True)
+    
     def get_success_url(self):
         """
         Redirect to role-specific dashboard after successful login.
@@ -309,14 +451,28 @@ class HMSLoginView(LoginView):
             role = get_user_role(user)
             dashboard_url = get_user_dashboard_url(user, role)
             if dashboard_url:
-                return dashboard_url
+                # Try to reverse the URL to ensure it exists
+                try:
+                    # If it's already a full URL path, use it directly
+                    if dashboard_url.startswith('/'):
+                        return dashboard_url
+                    # Otherwise try to reverse it
+                    return reverse(dashboard_url)
+                except Exception as reverse_error:
+                    logger.warning(f"Failed to reverse dashboard URL {dashboard_url} for user {user.username}: {reverse_error}")
+                    # Fall through to default dashboard
         except Exception as e:
             # If role detection fails, fall back to main dashboard
             # Log error but don't break login flow
             logger.warning(f"Role detection failed for user {user.username}: {e}")
         
-        # Default redirect to main dashboard
-        return reverse('hospital:dashboard')
+        # Default redirect to main dashboard (with error handling)
+        try:
+            return reverse('hospital:dashboard')
+        except Exception as e:
+            logger.error(f"Failed to reverse 'hospital:dashboard' URL: {e}")
+            # Ultimate fallback - use direct path
+            return '/hms/'
     
     def get_context_data(self, **kwargs):
         """Add remaining attempts info to context"""

@@ -4,6 +4,29 @@
 
 {% block title %}HOD Scheduling Dashboard - {{ department.name }}{% endblock %}
 
+{% block extra_head %}
+<link href="https://cdn.jsdelivr.net/npm/fullcalendar@5.11.5/main.min.css" rel="stylesheet">
+<style>
+    #hodScheduleCalendar .fc-toolbar-title {
+        font-size: 1.15rem;
+        font-weight: 600;
+    }
+    .schedule-legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-right: 15px;
+        font-size: 0.85rem;
+    }
+    .schedule-legend i {
+        width: 14px;
+        height: 14px;
+        border-radius: 4px;
+        display: inline-block;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid py-4">
     
@@ -94,6 +117,34 @@
         </div>
     </div>
     
+    <!-- This Week's Shifts -->
+    <div class="card mb-4">
+        <div class="card-header bg-secondary text-white d-flex flex-wrap gap-2 align-items-center justify-content-between">
+            <h5 class="mb-0"><i class="bi bi-calendar-event"></i> Department Calendar</h5>
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                <div class="d-flex align-items-center">
+                    <label for="staffFilter" class="me-2 mb-0 fw-semibold">Filter Staff:</label>
+                    <select id="staffFilter" class="form-select form-select-sm">
+                        <option value="">All Staff</option>
+                        {% for staff_member in dept_staff %}
+                            <option value="{{ staff_member.id }}">{{ staff_member.user.get_full_name|default:staff_member.user.username }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="schedule-legend text-white-50">
+                    <span><i style="background:#3b82f6"></i> Morning</span>
+                    <span><i style="background:#f59e0b"></i> Afternoon</span>
+                    <span><i style="background:#6366f1"></i> Night</span>
+                    <span><i style="background:#10b981"></i> Day</span>
+                    <span><i style="background:#0ea5e9"></i> Custom</span>
+                </div>
+            </div>
+        </div>
+        <div class="card-body">
+            <div id="hodScheduleCalendar" data-events-url="{% url 'hospital:hod_schedule_events' %}"></div>
+        </div>
+    </div>
+
     <!-- This Week's Shifts -->
     <div class="card mb-4">
         <div class="card-header bg-info text-white">
@@ -193,6 +244,70 @@
     </div>
     
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@5.11.5/main.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const calendarEl = document.getElementById('hodScheduleCalendar');
+    if (!calendarEl) {
+        return;
+    }
+    const staffFilter = document.getElementById('staffFilter');
+    const eventsUrl = calendarEl.dataset.eventsUrl;
+
+    const calendar = new FullCalendar.Calendar(calendarEl, {
+        initialView: 'dayGridMonth',
+        height: 'auto',
+        headerToolbar: {
+            left: 'prev,next today',
+            center: 'title',
+            right: 'dayGridMonth,timeGridWeek,listWeek'
+        },
+        dayMaxEventRows: true,
+        navLinks: true,
+        nowIndicator: true,
+        eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
+        events: function(info, successCallback, failureCallback) {
+            const params = new URLSearchParams({
+                start: info.startStr,
+                end: info.endStr
+            });
+            if (staffFilter && staffFilter.value) {
+                params.append('staff', staffFilter.value);
+            }
+            fetch(`${eventsUrl}?${params.toString()}`, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            })
+            .then(response => {
+                if (!response.ok) throw new Error('Network response was not ok');
+                return response.json();
+            })
+            .then(data => successCallback(data))
+            .catch(error => {
+                console.error('Calendar events load error:', error);
+                failureCallback(error);
+            });
+        },
+        eventDidMount: function(info) {
+            const details = info.event.extendedProps;
+            const tooltipContent = `
+                <div class="fw-semibold mb-1">${details.staff}</div>
+                <div>${details.shiftType || ''}</div>
+                ${details.location ? `<div><i class="bi bi-geo-alt me-1"></i>${details.location}</div>` : ''}
+                ${details.duties ? `<div class="small text-muted mt-1">${details.duties}</div>` : ''}
+            `;
+            info.el.setAttribute('title', tooltipContent.replace(/<[^>]*>?/gm, ''));
+        }
+    });
+
+    calendar.render();
+    if (staffFilter) {
+        staffFilter.addEventListener('change', () => calendar.refetchEvents());
+    }
+});
+</script>
 {% endblock %}
 
 

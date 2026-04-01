@@ -1,0 +1,448 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Marketing Strategy Dashboard - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    :root {
+        --marketing-primary: #ec4899;
+        --marketing-secondary: #f472b6;
+        --marketing-accent: #fce7f3;
+        --success: #10b981;
+        --warning: #f59e0b;
+        --danger: #ef4444;
+        --info: #3b82f6;
+    }
+    
+    .marketing-dashboard {
+        padding: 2rem;
+        background: #f8fafc;
+    }
+    
+    .dashboard-header {
+        background: linear-gradient(135deg, var(--marketing-primary) 0%, var(--marketing-secondary) 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 12px;
+        margin-bottom: 2rem;
+    }
+    
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+    }
+    
+    .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 1.5rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        border-left: 4px solid var(--marketing-primary);
+    }
+    
+    .stat-card.success {
+        border-left-color: var(--success);
+    }
+    
+    .stat-card.warning {
+        border-left-color: var(--warning);
+    }
+    
+    .stat-card.danger {
+        border-left-color: var(--danger);
+    }
+    
+    .stat-card.info {
+        border-left-color: var(--info);
+    }
+    
+    .stat-value {
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin: 0.5rem 0;
+        color: #1e293b;
+    }
+    
+    .stat-label {
+        color: #64748b;
+        font-size: 0.875rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .section-card {
+        background: white;
+        border-radius: 12px;
+        padding: 1.5rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 2rem;
+    }
+    
+    .section-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        color: #1e293b;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .table-responsive {
+        overflow-x: auto;
+    }
+    
+    .badge-status {
+        padding: 0.25rem 0.75rem;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    
+    .badge-active {
+        background: #d1fae5;
+        color: #065f46;
+    }
+    
+    .badge-pending {
+        background: #fef3c7;
+        color: #92400e;
+    }
+    
+    .badge-completed {
+        background: #dbeafe;
+        color: #1e40af;
+    }
+    
+    .badge-overdue {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+    
+    .progress-bar {
+        height: 8px;
+        background: #e2e8f0;
+        border-radius: 4px;
+        overflow: hidden;
+        margin-top: 0.5rem;
+    }
+    
+    .progress-fill {
+        height: 100%;
+        background: var(--marketing-primary);
+        transition: width 0.3s ease;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="marketing-dashboard">
+    <div class="dashboard-header">
+        <h1 class="mb-2">
+            <i class="bi bi-megaphone me-2"></i>
+            Marketing Strategy Dashboard
+        </h1>
+        <p class="mb-0 opacity-90">Comprehensive overview of marketing objectives, campaigns, tasks, and partnerships</p>
+    </div>
+    
+    <!-- Key Statistics -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Total Objectives</div>
+            <div class="stat-value">{{ total_objectives }}</div>
+            <div class="small text-muted">
+                <span class="badge badge-status badge-active">{{ active_objectives }} Active</span>
+                <span class="badge badge-status badge-completed ms-2">{{ completed_objectives }} Completed</span>
+            </div>
+        </div>
+        
+        <div class="stat-card {% if overdue_objectives > 0 %}danger{% else %}success{% endif %}">
+            <div class="stat-label">Overdue Objectives</div>
+            <div class="stat-value">{{ overdue_objectives }}</div>
+            <div class="small text-muted">Requires attention</div>
+        </div>
+        
+        <div class="stat-card">
+            <div class="stat-label">Total Tasks</div>
+            <div class="stat-value">{{ total_tasks }}</div>
+            <div class="small text-muted">
+                <span class="badge badge-status badge-pending">{{ pending_tasks }} Pending</span>
+                <span class="badge badge-status badge-active ms-2">{{ in_progress_tasks }} In Progress</span>
+                <span class="badge badge-status badge-completed ms-2">{{ completed_tasks }} Completed</span>
+            </div>
+        </div>
+        
+        <div class="stat-card {% if overdue_tasks > 0 %}danger{% else %}success{% endif %}">
+            <div class="stat-label">Overdue Tasks</div>
+            <div class="stat-value">{{ overdue_tasks }}</div>
+            <div class="small text-muted">Requires attention</div>
+        </div>
+        
+        <div class="stat-card info">
+            <div class="stat-label">Active Campaigns</div>
+            <div class="stat-value">{{ active_campaigns }}</div>
+            <div class="small text-muted">of {{ total_campaigns }} total</div>
+        </div>
+        
+        <div class="stat-card success">
+            <div class="stat-label">Marketing ROI</div>
+            <div class="stat-value">{{ marketing_roi }}%</div>
+            <div class="small text-muted">Return on investment</div>
+        </div>
+        
+        <div class="stat-card">
+            <div class="stat-label">Campaign Budget</div>
+            <div class="stat-value">GHS {{ campaign_budget_total|floatformat:2|intcomma }}</div>
+            <div class="small text-muted">Spent: GHS {{ campaign_spent_total|floatformat:2|intcomma }}</div>
+        </div>
+        
+        <div class="stat-card">
+            <div class="stat-label">Active Partnerships</div>
+            <div class="stat-value">{{ active_partnerships }}</div>
+            <div class="small text-muted">Value: GHS {{ partnership_value|floatformat:2|intcomma }}</div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- Recent Objectives -->
+        <div class="col-lg-6">
+            <div class="section-card">
+                <div class="section-title">
+                    <i class="bi bi-bullseye"></i>
+                    Recent Objectives
+                </div>
+                {% if recent_objectives %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Title</th>
+                                <th>Status</th>
+                                <th>Progress</th>
+                                <th>Due Date</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for objective in recent_objectives %}
+                            <tr>
+                                <td>
+                                    <a href="{% url 'hospital:marketing_objective_detail' objective.id %}" class="text-decoration-none">
+                                        <strong>{{ objective.title|truncatewords:5 }}</strong>
+                                    </a>
+                                </td>
+                                <td>
+                                    <span class="badge badge-status badge-{{ objective.status }}">
+                                        {{ objective.get_status_display }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="progress-bar">
+                                        <div class="progress-fill" style="width: {{ objective.progress_percentage }}%"></div>
+                                    </div>
+                                    <small class="text-muted">{{ objective.progress_percentage }}%</small>
+                                </td>
+                                <td>
+                                    <small>{{ objective.target_completion_date|date:"M d, Y" }}</small>
+                                    {% if objective.is_overdue %}
+                                    <span class="badge badge-status badge-overdue ms-1">Overdue</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted">No objectives yet. <a href="{% url 'hospital:marketing_objectives_list' %}">Create one</a></p>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Upcoming Tasks -->
+        <div class="col-lg-6">
+            <div class="section-card">
+                <div class="section-title">
+                    <i class="bi bi-list-check"></i>
+                    Upcoming Tasks
+                </div>
+                {% if upcoming_tasks %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Task</th>
+                                <th>Objective</th>
+                                <th>Assigned To</th>
+                                <th>Due Date</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for task in upcoming_tasks %}
+                            <tr>
+                                <td>
+                                    <strong>{{ task.title|truncatewords:4 }}</strong>
+                                </td>
+                                <td>
+                                    <small>{{ task.objective.title|truncatewords:3 }}</small>
+                                </td>
+                                <td>
+                                    <small>{{ task.assigned_to.get_full_name|default:task.assigned_to.username|default:"Unassigned" }}</small>
+                                </td>
+                                <td>
+                                    <small>{{ task.due_date|date:"M d, Y" }}</small>
+                                    {% if task.is_overdue %}
+                                    <span class="badge badge-status badge-overdue ms-1">Overdue</span>
+                                    {% else %}
+                                    <small class="text-muted">({{ task.days_remaining }} days left)</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <span class="badge badge-status badge-{{ task.status }}">
+                                        {{ task.get_status_display }}
+                                    </span>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted">No upcoming tasks.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- Active Campaigns -->
+        <div class="col-lg-6">
+            <div class="section-card">
+                <div class="section-title">
+                    <i class="bi bi-megaphone-fill"></i>
+                    Active Campaigns
+                </div>
+                {% if active_campaigns_list %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Campaign</th>
+                                <th>Type</th>
+                                <th>Budget</th>
+                                <th>ROI</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for campaign in active_campaigns_list %}
+                            <tr>
+                                <td>
+                                    <strong>{{ campaign.title|truncatewords:4 }}</strong>
+                                </td>
+                                <td>
+                                    <small>{{ campaign.get_campaign_type_display }}</small>
+                                </td>
+                                <td>
+                                    <small>GHS {{ campaign.budget|floatformat:2|intcomma }}</small>
+                                </td>
+                                <td>
+                                    <span class="badge {% if campaign.roi_percentage > 0 %}badge-success{% else %}badge-warning{% endif %}">
+                                        {{ campaign.roi_percentage|floatformat:1 }}%
+                                    </span>
+                                </td>
+                                <td>
+                                    <span class="badge badge-status badge-{{ campaign.status }}">
+                                        {{ campaign.get_status_display }}
+                                    </span>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted">No active campaigns. <a href="{% url 'hospital:marketing_campaigns_list' %}">View all campaigns</a></p>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Marketing Metrics Summary -->
+        <div class="col-lg-6">
+            <div class="section-card">
+                <div class="section-title">
+                    <i class="bi bi-graph-up"></i>
+                    Recent Metrics (Last 30 Days)
+                </div>
+                {% if recent_metrics %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th class="text-end">Value</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for metric in recent_metrics %}
+                            <tr>
+                                <td>
+                                    <strong>{{ metric.metric_type|title }}</strong>
+                                </td>
+                                <td class="text-end">
+                                    <span class="badge bg-primary">{{ metric.total_value|floatformat:0|intcomma }}</span>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted">No metrics recorded yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quick Actions -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="bi bi-lightning-fill"></i>
+            Quick Actions
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="{% url 'hospital:create_marketing_objective' %}" class="btn btn-primary">
+                <i class="bi bi-bullseye me-1"></i>Create Objective
+            </a>
+            <a href="{% url 'hospital:create_task_standalone' %}" class="btn btn-success">
+                <i class="bi bi-plus-circle me-1"></i>Create New Task
+            </a>
+            <a href="{% url 'hospital:marketing_objectives_list' %}" class="btn btn-primary">
+                <i class="bi bi-bullseye me-1"></i>View All Objectives
+            </a>
+            <a href="{% url 'hospital:marketing_tasks_list' %}" class="btn btn-primary">
+                <i class="bi bi-list-check me-1"></i>View All Tasks
+            </a>
+            <a href="{% url 'hospital:marketing_campaigns_list' %}" class="btn btn-info">
+                <i class="bi bi-megaphone me-1"></i>View All Campaigns
+            </a>
+            <a href="{% url 'hospital:corporate_partnerships_list' %}" class="btn btn-success">
+                <i class="bi bi-handshake me-1"></i>View Partnerships
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+

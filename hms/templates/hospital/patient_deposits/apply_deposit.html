@@ -1,0 +1,154 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Apply Deposit - {{ deposit.deposit_number }}{% endblock %}
+{% block page_title %}Apply Deposit to Invoice{% endblock %}
+{% block page_subtitle %}{{ deposit.deposit_number }} · {{ deposit.patient.full_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .apply-deposit-container { max-width: 900px; margin: 0 auto; }
+    .info-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        margin-bottom: 24px;
+        border-left: 5px solid #10b981;
+    }
+    .amount-available {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+    }
+    .amount-available .label { font-size: 14px; opacity: 0.9; }
+    .amount-available .amount { font-size: 2rem; font-weight: 700; }
+    .invoice-row {
+        background: #f8fafc;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        border-left: 4px solid #3b82f6;
+    }
+    .invoice-row:hover { background: #f1f5f9; }
+    .invoice-row.selected { border-left-color: #10b981; background: #ecfdf5; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid apply-deposit-container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <a href="{% url 'hospital:patient_deposit_detail' deposit.pk %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Deposit
+            </a>
+            <a href="{% url 'hospital:patient_deposit_history' deposit.patient.pk %}" class="btn btn-outline-primary ms-2">
+                <i class="bi bi-person"></i> Patient's Deposit History
+            </a>
+        </div>
+    </div>
+
+    <div class="info-card">
+        <h5 class="mb-3"><i class="bi bi-wallet2 me-2"></i>Deposit {{ deposit.deposit_number }}</h5>
+        <div class="row">
+            <div class="col-md-6">
+                <p class="mb-1 text-muted small">Patient</p>
+                <p class="mb-0">
+                    <a href="{% url 'hospital:patient_detail' deposit.patient.pk %}">{{ deposit.patient.full_name }}</a>
+                    <br><small class="text-muted">MRN: {{ deposit.patient.mrn }}</small>
+                </p>
+            </div>
+            <div class="col-md-6">
+                <div class="amount-available mt-3 mt-md-0">
+                    <div class="label">Available to apply</div>
+                    <div class="amount">GHS {{ deposit.available_balance|floatformat:2 }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if not invoices %}
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle me-2"></i>
+            This patient has no unpaid invoices with a balance. Deposit cannot be applied.
+        </div>
+        <a href="{% url 'hospital:patient_deposit_detail' deposit.pk %}" class="btn btn-primary">Back to Deposit</a>
+    {% else %}
+        <div class="info-card">
+            <h5 class="mb-3"><i class="bi bi-receipt me-2"></i>Select invoice and amount</h5>
+            <p class="text-muted small mb-4">Choose an invoice and enter the amount from this deposit to apply (max: available deposit or invoice balance).</p>
+
+            <form method="post">
+                {% csrf_token %}
+                <div class="mb-3">
+                    <label for="invoice_id" class="form-label fw-semibold">Invoice <span class="text-danger">*</span></label>
+                    <select name="invoice_id" id="invoice_id" class="form-select form-select-lg" required>
+                        <option value="">-- Select invoice --</option>
+                        {% for inv in invoices %}
+                            <option value="{{ inv.pk }}"
+                                    data-balance="{{ inv.balance|default:0 }}"
+                                    data-number="{{ inv.invoice_number|default:inv.pk }}">
+                                {{ inv.invoice_number|default:inv.pk }} — Balance: GHS {{ inv.balance|floatformat:2 }} (issued {{ inv.issued_at|date:"M d, Y" }})
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="mb-4">
+                    <label for="amount" class="form-label fw-semibold">Amount to apply (GHS) <span class="text-danger">*</span></label>
+                    <input type="number" name="amount" id="amount" class="form-control form-control-lg" step="0.01" min="0.01" required placeholder="0.00">
+                    <small class="form-text text-muted" id="amount_hint">Max: GHS {{ deposit.available_balance|floatformat:2 }} (deposit available)</small>
+                </div>
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-success btn-lg">
+                        <i class="bi bi-check-circle me-1"></i> Apply to invoice
+                    </button>
+                    <a href="{% url 'hospital:patient_deposit_detail' deposit.pk %}" class="btn btn-outline-secondary btn-lg">Cancel</a>
+                </div>
+            </form>
+        </div>
+
+        <h6 class="mb-2">Unpaid invoices</h6>
+        {% for inv in invoices %}
+            <div class="invoice-row">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div>
+                        <strong>{{ inv.invoice_number|default:inv.pk }}</strong>
+                        <span class="text-muted ms-2">issued {{ inv.issued_at|date:"M d, Y" }}</span>
+                    </div>
+                    <div>
+                        <span class="badge bg-warning text-dark">Balance: GHS {{ inv.balance|floatformat:2 }}</span>
+                    </div>
+                </div>
+            </div>
+        {% endfor %}
+    {% endif %}
+</div>
+
+<script>
+(function() {
+    var depositAvailable = {{ deposit.available_balance|default:0 }};
+    var select = document.getElementById('invoice_id');
+    var amountInput = document.getElementById('amount');
+    var hint = document.getElementById('amount_hint');
+    if (!select || !amountInput) return;
+
+    function updateMax() {
+        var opt = select.options[select.selectedIndex];
+        if (!opt || !opt.value) {
+            amountInput.max = depositAvailable;
+            if (hint) hint.textContent = 'Max: GHS ' + Number(depositAvailable).toFixed(2) + ' (deposit available)';
+            return;
+        }
+        var balance = parseFloat(opt.getAttribute('data-balance')) || 0;
+        var max = Math.min(depositAvailable, balance);
+        amountInput.max = max;
+        amountInput.placeholder = '0.00 (max ' + max.toFixed(2) + ')';
+        if (hint) hint.textContent = 'Max: GHS ' + max.toFixed(2) + ' (invoice balance: GHS ' + balance.toFixed(2) + ')';
+    }
+    select.addEventListener('change', updateMax);
+    updateMax();
+})();
+</script>
+{% endblock %}

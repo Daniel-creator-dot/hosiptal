@@ -297,13 +297,13 @@
                         <label class="form-label-modern">
                             <i class="bi bi-building me-2"></i>Requesting Store
                         </label>
-                        <input type="text" value="{{ pharmacy_store.name }}" class="form-input-modern" disabled>
+                        <input type="text" value="{{ pharmacy_store.name }}" class="form-input-modern" disabled title="Enter text" placeholder="Enter text">
                     </div>
                     <div class="col-md-6">
                         <label class="form-label-modern">
                             <i class="bi bi-person-badge me-2"></i>Requested By
                         </label>
-                        <input type="text" value="{{ request.user.get_full_name }}" class="form-input-modern" disabled>
+                        <input type="text" value="{{ request.user.get_full_name }}" class="form-input-modern" disabled title="Enter text" placeholder="Enter text">
                     </div>
                 </div>
             </div>
@@ -345,9 +345,14 @@
 
             <!-- Items Section -->
             <div class="form-section">
-                <div class="form-section-title">
-                    <i class="bi bi-box-seam"></i>
-                    Request Items
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div class="form-section-title" style="margin: 0;">
+                        <i class="bi bi-box-seam"></i>
+                        Request Items
+                    </div>
+                    <a href="{% url 'hospital:drug_classification_guide' %}" target="_blank" class="btn btn-sm btn-outline-info">
+                        <i class="bi bi-book"></i> Browse Drug Categories
+                    </a>
                 </div>
 
                 <div class="items-table-container">
@@ -355,28 +360,39 @@
                         <thead>
                             <tr>
                                 <th style="width: 5%;">#</th>
-                                <th style="width: 40%;">Item Name</th>
-                                <th style="width: 20%;">Quantity</th>
-                                <th style="width: 20%;">Est. Unit Price</th>
-                                <th style="width: 15%;">Action</th>
+                                <th style="width: 15%;">Drug Category</th>
+                                <th style="width: 30%;">Drug / Item Name</th>
+                                <th style="width: 15%;">Quantity</th>
+                                <th style="width: 15%;">Est. Unit Price</th>
+                                <th style="width: 20%;">Action</th>
                             </tr>
                         </thead>
                         <tbody id="itemsTableBody">
                             <tr>
                                 <td class="text-center">1</td>
                                 <td>
-                                    <input type="text" name="item_name[]" class="item-row-input" placeholder="e.g., Paracetamol 500mg" required>
+                                    <select name="item_category[]" class="item-row-input item-category-select" onchange="filterDrugsByCategory(this)" title="Select option" aria-label="Select option">
+                                        <option value="">Select Category</option>
+                                        {% for code, desc in drug_categories %}
+                                        <option value="{{ code }}">{{ desc|truncatewords:5 }}</option>
+                                        {% endfor %}
+                                    </select>
                                 </td>
                                 <td>
-                                    <input type="number" name="item_quantity[]" class="item-row-input" min="1" value="1" required>
+                                    <div style="position: relative;">
+                                        <input type="text" name="item_name[]" class="item-row-input item-name-input" placeholder="Type or select drug..." required autocomplete="off" title="Enter text" placeholder="Enter text">
+                                        <input type="hidden" name="item_drug_id[]" class="item-drug-id">
+                                        <div class="drug-suggestions" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ddd; border-radius: 4px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"></div>
+                                    </div>
                                 </td>
                                 <td>
-                                    <input type="number" name="item_price[]" class="item-row-input" min="0" step="0.01" placeholder="0.00" required>
+                                    <input type="number" name="item_quantity[]" class="item-row-input" min="1" value="1" required title="Enter number" placeholder="Enter number">
+                                </td>
+                                <td>
+                                    <input type="number" name="item_price[]" class="item-row-input item-price-input" min="0" step="0.01" placeholder="0.00" required title="Enter number" placeholder="Enter number">
                                 </td>
                                 <td class="text-center">
-                                    <button type="button" class="btn-remove-item" onclick="removeItem(this)" disabled>
-                                        <i class="bi bi-trash"></i>
-                                    </button>
+                                    <button type="button" class="btn-remove-item" onclick="removeItem(this)" disabled><i class="bi bi-trash" aria-hidden="true"></i><span class="visually-hidden">Delete</span></button>
                                 </td>
                             </tr>
                         </tbody>
@@ -421,25 +437,34 @@ function addItem() {
     itemCount++;
     const tbody = document.getElementById('itemsTableBody');
     const newRow = document.createElement('tr');
+    const categoryOptions = document.querySelector('.item-category-select').innerHTML;
     newRow.innerHTML = `
-        <td class="text-center">GHS {itemCount}</td>
+        <td class="text-center">${itemCount}</td>
         <td>
-            <input type="text" name="item_name[]" class="item-row-input" placeholder="e.g., Paracetamol 500mg" required>
+            <select name="item_category[]" class="item-row-input item-category-select" onchange="filterDrugsByCategory(this)" title="Select option" aria-label="Select option">
+                ${categoryOptions}
+            </select>
         </td>
         <td>
-            <input type="number" name="item_quantity[]" class="item-row-input" min="1" value="1" required>
+            <div style="position: relative;">
+                <input type="text" name="item_name[]" class="item-row-input item-name-input" placeholder="Type or select drug..." required autocomplete="off" oninput="searchDrugs(this)" title="Enter text" placeholder="Enter text">
+                <input type="hidden" name="item_drug_id[]" class="item-drug-id">
+                <div class="drug-suggestions" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ddd; border-radius: 4px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"></div>
+            </div>
         </td>
         <td>
-            <input type="number" name="item_price[]" class="item-row-input" min="0" step="0.01" placeholder="0.00" required>
+            <input type="number" name="item_quantity[]" class="item-row-input" min="1" value="1" required title="Enter number" placeholder="Enter number">
+        </td>
+        <td>
+            <input type="number" name="item_price[]" class="item-row-input item-price-input" min="0" step="0.01" placeholder="0.00" required title="Enter number" placeholder="Enter number">
         </td>
         <td class="text-center">
-            <button type="button" class="btn-remove-item" onclick="removeItem(this)">
-                <i class="bi bi-trash"></i>
-            </button>
+            <button type="button" class="btn-remove-item" onclick="removeItem(this)"><i class="bi bi-trash" aria-hidden="true"></i><span class="visually-hidden">Delete</span></button>
         </td>
     `;
     tbody.appendChild(newRow);
     updateRowNumbers();
+    initializeDrugSearch(newRow);
 }
 
 function removeItem(button) {
@@ -463,6 +488,122 @@ function updateRowNumbers() {
     });
     itemCount = rows.length;
 }
+
+// Drug search and category filtering
+let drugSearchTimeout = null;
+
+function initializeDrugSearch(row) {
+    const nameInput = row.querySelector('.item-name-input');
+    if (nameInput) {
+        nameInput.addEventListener('input', function() {
+            searchDrugs(this);
+        });
+        nameInput.addEventListener('focus', function() {
+            if (this.value.length > 0) {
+                searchDrugs(this);
+            }
+        });
+    }
+}
+
+// Initialize drug search for existing rows
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.item-name-input').forEach(input => {
+        input.addEventListener('input', function() {
+            searchDrugs(this);
+        });
+        input.addEventListener('focus', function() {
+            if (this.value.length > 0) {
+                searchDrugs(this);
+            }
+        });
+    });
+});
+
+function searchDrugs(input) {
+    clearTimeout(drugSearchTimeout);
+    const query = input.value.trim();
+    const row = input.closest('tr');
+    const categorySelect = row.querySelector('.item-category-select');
+    const category = categorySelect ? categorySelect.value : '';
+    const suggestionsDiv = row.querySelector('.drug-suggestions');
+    const drugIdInput = row.querySelector('.item-drug-id');
+    const priceInput = row.querySelector('.item-price-input');
+    
+    if (query.length < 2) {
+        suggestionsDiv.style.display = 'none';
+        return;
+    }
+    
+    drugSearchTimeout = setTimeout(() => {
+        // Build API URL
+        let url = `/hms/api/prescription/drugs/search/?q=${encodeURIComponent(query)}`;
+        if (category) {
+            url += `&category=${encodeURIComponent(category)}`;
+        }
+        
+        fetch(url)
+            .then(response => response.json())
+            .then(data => {
+                if (data.drugs && data.drugs.length > 0) {
+                    suggestionsDiv.innerHTML = '';
+                    data.drugs.slice(0, 10).forEach(drug => {
+                        const div = document.createElement('div');
+                        div.className = 'drug-suggestion-item';
+                        div.style.cssText = 'padding: 12px; cursor: pointer; border-bottom: 1px solid #eee; transition: background 0.2s;';
+                        div.innerHTML = `
+                            <div style="font-weight: 600;">${drug.name}</div>
+                            <div style="font-size: 12px; color: #666;">
+                                ${drug.strength || ''} · ${drug.form || ''} · ${drug.category_display || ''}
+                                ${drug.has_stock ? '<span style="color: #10b981;">✓ In Stock</span>' : '<span style="color: #ef4444;">✗ Out of Stock</span>'}
+                            </div>
+                        `;
+                        div.addEventListener('click', function() {
+                            input.value = `${drug.name} ${drug.strength || ''} ${drug.form || ''}`.trim();
+                            if (drugIdInput) drugIdInput.value = drug.id;
+                            if (priceInput && drug.unit_price) priceInput.value = parseFloat(drug.unit_price).toFixed(2);
+                            if (categorySelect && drug.category) {
+                                categorySelect.value = drug.category;
+                            }
+                            suggestionsDiv.style.display = 'none';
+                        });
+                        div.addEventListener('mouseenter', function() {
+                            this.style.background = '#f3f4f6';
+                        });
+                        div.addEventListener('mouseleave', function() {
+                            this.style.background = 'white';
+                        });
+                        suggestionsDiv.appendChild(div);
+                    });
+                    suggestionsDiv.style.display = 'block';
+                } else {
+                    suggestionsDiv.innerHTML = '<div style="padding: 12px; color: #666;">No drugs found</div>';
+                    suggestionsDiv.style.display = 'block';
+                }
+            })
+            .catch(error => {
+                console.error('Error searching drugs:', error);
+                suggestionsDiv.style.display = 'none';
+            });
+    }, 300);
+}
+
+function filterDrugsByCategory(select) {
+    const row = select.closest('tr');
+    const nameInput = row.querySelector('.item-name-input');
+    if (nameInput && nameInput.value.length > 0) {
+        searchDrugs(nameInput);
+    }
+}
+
+// Hide suggestions when clicking outside
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('.item-name-input') && !e.target.closest('.drug-suggestions')) {
+        document.querySelectorAll('.drug-suggestions').forEach(div => {
+            div.style.display = 'none';
+        });
+    }
+});
 
 // Form validation
 document.getElementById('requestForm').addEventListener('submit', function(e) {

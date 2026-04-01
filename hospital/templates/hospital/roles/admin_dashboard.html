@@ -1,474 +1,1260 @@
 {% extends 'hospital/base.html' %}
-{% load static humanize %}
+{% load static humanize hospital_extras %}
 
 {% block title %}Administrator Dashboard - HMS{% endblock %}
 
+{% block extra_css %}
+<style>
+    /* ============================================
+       MODERN UI KIT DESIGN - PROFESSIONAL DASHBOARD
+       ============================================ */
+    
+    :root {
+        --primary-blue: #3b82f6;
+        --primary-purple: #8b5cf6;
+        --success-green: #10b981;
+        --warning-orange: #f59e0b;
+        --danger-red: #ef4444;
+        --dark: #1e293b;
+        --gray: #64748b;
+        --light-gray: #f1f5f9;
+        --white: #ffffff;
+        --border-radius: 12px;
+        --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+        --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Base Layout */
+    .admin-dashboard {
+        width: 100%;
+        max-width: 100%;
+        padding: 2rem;
+        background: #f8fafc;
+        box-sizing: border-box;
+        overflow-x: hidden;
+    }
+    
+    .dashboard-container {
+        max-width: 1400px;
+        margin: 0 auto;
+        width: 100%;
+    }
+    
+    /* Modern Grid System */
+    .dashboard-grid {
+        display: grid;
+        grid-template-columns: repeat(12, 1fr);
+        gap: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    
+    .grid-col-12 { grid-column: span 12; }
+    .grid-col-6 { grid-column: span 6; }
+    .grid-col-4 { grid-column: span 4; }
+    .grid-col-3 { grid-column: span 3; }
+    .grid-col-8 { grid-column: span 8; }
+    
+    @media (max-width: 1024px) {
+        .grid-col-6, .grid-col-4, .grid-col-3, .grid-col-8 {
+            grid-column: span 12;
+        }
+    }
+    
+    /* Modern Card Design */
+    .modern-card {
+        background: var(--white);
+        border-radius: var(--border-radius);
+        padding: 1.5rem;
+        box-shadow: var(--shadow-sm);
+        border: 1px solid #e2e8f0;
+        transition: all 0.2s ease;
+        height: 100%;
+        box-sizing: border-box;
+    }
+    
+    .modern-card:hover {
+        box-shadow: var(--shadow-md);
+        transform: translateY(-2px);
+    }
+    
+    /* Data Overview Cards - Large Metrics */
+    .metric-overview-card {
+        background: var(--white);
+        border-radius: var(--border-radius);
+        padding: 2rem;
+        box-shadow: var(--shadow-sm);
+        border: 1px solid #e2e8f0;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .metric-overview-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: linear-gradient(90deg, var(--primary-blue), var(--primary-purple));
+    }
+    
+    .metric-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 1.5rem;
+    }
+    
+    .metric-title {
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: var(--gray);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin: 0;
+    }
+    
+    .metric-value {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: var(--dark);
+        margin: 0.5rem 0;
+        line-height: 1;
+    }
+    
+    .metric-change {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: var(--success-green);
+        margin-top: 0.5rem;
+    }
+    
+    .metric-change.negative {
+        color: var(--danger-red);
+    }
+    
+    .metric-change-icon {
+        width: 16px;
+        height: 16px;
+    }
+    
+    .view-more-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        font-size: 0.875rem;
+        color: var(--primary-blue);
+        text-decoration: none;
+        font-weight: 500;
+        margin-top: 1rem;
+        transition: color 0.2s;
+    }
+    
+    .view-more-link:hover {
+        color: var(--primary-purple);
+    }
+    
+    /* Chart Cards */
+    .chart-card {
+        background: var(--white);
+        border-radius: var(--border-radius);
+        padding: 1.5rem;
+        box-shadow: var(--shadow-sm);
+        border: 1px solid #e2e8f0;
+        height: 100%;
+    }
+    
+    .chart-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.5rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    
+    .chart-title {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--dark);
+        margin: 0;
+    }
+    
+    .chart-actions {
+        display: flex;
+        gap: 0.5rem;
+    }
+    
+    .chart-icon-btn {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        border: 1px solid #e2e8f0;
+        background: var(--white);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .chart-icon-btn:hover {
+        background: var(--light-gray);
+        border-color: var(--primary-blue);
+    }
+    
+    /* Donut Chart Container */
+    .donut-chart-container {
+        position: relative;
+        width: 100%;
+        height: 250px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .donut-center-text {
+        position: absolute;
+        text-align: center;
+        z-index: 1;
+    }
+    
+    .donut-center-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--dark);
+        margin: 0;
+    }
+    
+    .donut-center-label {
+        font-size: 0.875rem;
+        color: var(--gray);
+        margin: 0.25rem 0 0 0;
+    }
+    
+    /* Chart Legend */
+    .chart-legend {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        margin-top: 1.5rem;
+    }
+    
+    .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        font-size: 0.875rem;
+    }
+    
+    .legend-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+    
+    .legend-label {
+        flex: 1;
+        color: var(--gray);
+    }
+    
+    .legend-value {
+        font-weight: 600;
+        color: var(--dark);
+    }
+    
+    /* Progress Bars */
+    .progress-section {
+        margin-top: 1.5rem;
+    }
+    
+    .progress-item {
+        margin-bottom: 1rem;
+    }
+    
+    .progress-label-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.5rem;
+        font-size: 0.875rem;
+    }
+    
+    .progress-label {
+        font-weight: 500;
+        color: var(--dark);
+    }
+    
+    .progress-percentage {
+        font-weight: 600;
+        color: var(--primary-blue);
+    }
+    
+    .progress-bar-container {
+        width: 100%;
+        height: 8px;
+        background: var(--light-gray);
+        border-radius: 4px;
+        overflow: hidden;
+    }
+    
+    .progress-bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--primary-blue), var(--primary-purple));
+        border-radius: 4px;
+        transition: width 0.3s ease;
+    }
+    
+    /* Strategic Objectives Banner */
+    .objectives-banner {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: var(--border-radius);
+        padding: 2rem;
+        color: white;
+        margin-bottom: 1.5rem;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .objectives-banner::before {
+        content: '';
+        position: absolute;
+        top: -50%;
+        right: -10%;
+        width: 300px;
+        height: 300px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 50%;
+    }
+    
+    .objectives-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+        position: relative;
+        z-index: 1;
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+    
+    .objectives-title {
+        font-size: 1.5rem;
+        font-weight: 700;
+        margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+    
+    .objectives-progress {
+        text-align: right;
+    }
+    
+    .objectives-progress-value {
+        font-size: 2.5rem;
+        font-weight: 800;
+        margin: 0;
+        line-height: 1;
+    }
+    
+    .objectives-progress-label {
+        font-size: 0.875rem;
+        opacity: 0.9;
+        margin: 0.25rem 0 0 0;
+    }
+    
+    .objectives-description {
+        font-size: 1rem;
+        opacity: 0.95;
+        margin: 0;
+        position: relative;
+        z-index: 1;
+        line-height: 1.6;
+    }
+    
+    /* Objective Cards */
+    .objective-card {
+        background: var(--white);
+        border-radius: var(--border-radius);
+        padding: 1.5rem;
+        box-shadow: var(--shadow-sm);
+        border: 1px solid #e2e8f0;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        transition: all 0.2s ease;
+    }
+    
+    .objective-card:hover {
+        box-shadow: var(--shadow-md);
+        transform: translateY(-2px);
+    }
+    
+    .objective-header {
+        margin-bottom: 1rem;
+    }
+    
+    .objective-title {
+        font-size: 1.125rem;
+        font-weight: 700;
+        margin: 0 0 0.5rem 0;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .objective-title i {
+        font-size: 1.25rem;
+    }
+    
+    .objective-description {
+        font-size: 0.875rem;
+        color: var(--gray);
+        margin: 0;
+        line-height: 1.5;
+    }
+    
+    .objective-progress {
+        margin: 1rem 0;
+    }
+    
+    .objective-kpis {
+        margin-top: auto;
+        padding-top: 1rem;
+        border-top: 1px solid #e2e8f0;
+    }
+    
+    .kpi-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.5rem 0;
+        font-size: 0.875rem;
+    }
+    
+    .kpi-name {
+        color: var(--gray);
+    }
+    
+    .kpi-value {
+        font-weight: 600;
+        color: var(--dark);
+    }
+    
+    /* Activity Feed */
+    .activity-feed {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    
+    .activity-item {
+        padding: 1rem 0;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    
+    .activity-item:last-child {
+        border-bottom: none;
+    }
+    
+    .activity-item strong {
+        display: block;
+        color: var(--dark);
+        margin-bottom: 0.25rem;
+        font-weight: 600;
+    }
+    
+    .activity-item .text-muted {
+        font-size: 0.875rem;
+        color: var(--gray);
+    }
+    
+    /* Quick Access Buttons */
+    .quick-access-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+    
+    .quick-access-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+        border-radius: var(--border-radius);
+        border: 1px solid #e2e8f0;
+        background: var(--white);
+        text-decoration: none;
+        color: var(--dark);
+        transition: all 0.2s ease;
+        text-align: center;
+    }
+    
+    .quick-access-btn:hover {
+        background: var(--light-gray);
+        border-color: var(--primary-blue);
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-sm);
+    }
+    
+    .quick-access-btn i {
+        font-size: 1.5rem;
+        margin-bottom: 0.5rem;
+        color: var(--primary-blue);
+    }
+    
+    .quick-access-btn span {
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+        .admin-dashboard {
+            padding: 1rem;
+        }
+        .metric-value {
+            font-size: 2rem;
+        }
+        .objectives-title {
+            font-size: 1.25rem;
+        }
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="container-fluid">
-    <!-- Header -->
-    <div style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border-radius: 20px; padding: 40px; margin-bottom: 32px; box-shadow: 0 10px 40px rgba(239, 68, 68, 0.3);">
-        <div class="d-flex justify-content-between align-items-center">
-            <div>
-                <h1 class="mb-2"><i class="bi bi-shield-fill-check me-3"></i>Administrator Dashboard</h1>
-                <p class="mb-0" style="opacity: 0.95; font-size: 16px;">Complete Hospital Management & Oversight</p>
+<div class="admin-dashboard">
+    <div class="dashboard-container">
+        <!-- Header Banner -->
+        <div class="objectives-banner" style="margin-bottom: 2rem;">
+            <div class="objectives-header">
+                <div class="objectives-title">
+                    <i class="bi bi-shield-fill-check"></i>
+                    <span>Administrator Command Center</span>
+                </div>
+                <div class="objectives-progress">
+                    <div class="objectives-progress-value">{{ today|date:"d" }}</div>
+                    <div class="objectives-progress-label">{{ today|date:"F Y" }}</div>
+                </div>
             </div>
-            <div class="text-end">
-                <div style="font-size: 18px; font-weight: 600;">{{ today|date:"l" }}</div>
-                <div style="font-size: 14px; opacity: 0.9;">{{ today|date:"F d, Y" }}</div>
+            <p class="objectives-description">
+                Welcome, {{ request.user.get_full_name|default:request.user.username }} • Complete Hospital Management & Oversight Dashboard
+            </p>
+        </div>
+
+        {% if payroll_pending_admin_approval %}
+        <div class="alert alert-warning d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4 border-0 shadow-sm" role="alert" style="border-radius: var(--border-radius, 12px);">
+            <span class="mb-0"><i class="bi bi-cash-stack me-2"></i><strong>{{ payroll_pending_admin_approval }}</strong> accounting payroll run(s) are waiting for your approval.</span>
+            <a href="{% url 'accountant_payroll_list' %}" class="btn btn-sm btn-dark shrink-0">Open staff payroll</a>
+        </div>
+        {% endif %}
+        
+        <!-- Key Metrics Row -->
+        <div class="dashboard-grid">
+            <div class="grid-col-3">
+                <div class="metric-overview-card">
+                    <div class="metric-header">
+                        <div>
+                            <p class="metric-title">Total Patients</p>
+                            <div class="metric-value">{{ total_patients|intcomma }}</div>
+                            <div class="metric-change">
+                                <svg class="metric-change-icon" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                                </svg>
+                                Active patients
+                            </div>
+                        </div>
+                    </div>
+                    <a href="{% url 'hospital:patient_list' %}" class="view-more-link">
+                        View more <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+            </div>
+            <div class="grid-col-3">
+                <div class="metric-overview-card">
+                    <div class="metric-header">
+                        <div>
+                            <p class="metric-title">Active Encounters</p>
+                            <div class="metric-value">{{ active_encounters }}</div>
+                            <div class="metric-change">
+                                <svg class="metric-change-icon" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                                </svg>
+                                Currently active
+                            </div>
+                        </div>
+                    </div>
+                    <a href="{% url 'hospital:encounter_list' %}" class="view-more-link">
+                        View more <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+            </div>
+            <div class="grid-col-3">
+                <div class="metric-overview-card">
+                    <div class="metric-header">
+                        <div>
+                            <p class="metric-title">Total Staff</p>
+                            <div class="metric-value">{{ total_staff }}</div>
+                            <div class="metric-change">
+                                <svg class="metric-change-icon" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                                </svg>
+                                Active staff
+                            </div>
+                        </div>
+                    </div>
+                    <a href="{% url 'hospital:staff_list' %}" class="view-more-link">
+                        View more <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+            </div>
+            <div class="grid-col-3">
+                <div class="metric-overview-card">
+                    <div class="metric-header">
+                        <div>
+                            <p class="metric-title">Appointments Today</p>
+                            <div class="metric-value">{{ appointments_today }}</div>
+                            <div class="metric-change">
+                                <svg class="metric-change-icon" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                                </svg>
+                                Scheduled
+                            </div>
+                        </div>
+                    </div>
+                    <a href="{% url 'hospital:frontdesk_appointment_dashboard' %}" class="view-more-link">
+                        View more <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
             </div>
         </div>
-    </div>
-    
-    <!-- Overall Statistics -->
-    <div class="row g-4 mb-4">
-        <div class="col-md-3">
-            <div style="background: white; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-                <div style="font-size: 42px; font-weight: 800; color: #3b82f6;">{{ total_patients }}</div>
-                <div style="color: #6b7280; font-size: 14px;">Total Patients</div>
+        
+        <!-- Financial Metrics Row -->
+        <div class="dashboard-grid">
+            <div class="grid-col-4">
+                <div class="metric-overview-card">
+                    <div class="metric-header">
+                        <div>
+                            <p class="metric-title">Revenue Today</p>
+                            <div class="metric-value" style="font-size: 2rem;">GHS {{ total_revenue_today|floatformat:2|intcomma }}</div>
+                            <div class="metric-change">
+                                <svg class="metric-change-icon" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                                </svg>
+                                Today's earnings
+                            </div>
+                        </div>
+                    </div>
+                    <a href="{% url 'hospital:accountant_comprehensive_dashboard' %}" class="view-more-link">
+                        View more <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+            </div>
+            <div class="grid-col-4">
+                <div class="metric-overview-card">
+                    <div class="metric-header">
+                        <div>
+                            <p class="metric-title">Revenue This Month</p>
+                            <div class="metric-value" style="font-size: 2rem;">GHS {{ total_revenue_month|floatformat:2|intcomma }}</div>
+                            <div class="metric-change">
+                                <svg class="metric-change-icon" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                                </svg>
+                                Monthly total
+                            </div>
+                        </div>
+                    </div>
+                    <a href="{% url 'hospital:accountant_comprehensive_dashboard' %}" class="view-more-link">
+                        View more <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+            </div>
+            <div class="grid-col-4">
+                <div class="metric-overview-card">
+                    <div class="metric-header">
+                        <div>
+                            <p class="metric-title">Outstanding Invoices</p>
+                            <div class="metric-value" style="font-size: 2rem;">GHS {{ outstanding_invoices|floatformat:2|intcomma }}</div>
+                            <div class="metric-change negative">
+                                <svg class="metric-change-icon" fill="currentColor" viewBox="0 0 20 20" style="transform: rotate(180deg);">
+                                    <path fill-rule="evenodd" d="M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                                </svg>
+                                Pending payments
+                            </div>
+                        </div>
+                    </div>
+                    <a href="{% url 'hospital:invoice_list' %}" class="view-more-link">
+                        View more <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div style="background: white; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-                <div style="font-size: 42px; font-weight: 800; color: #10b981;">{{ active_encounters }}</div>
-                <div style="color: #6b7280; font-size: 14px;">Active Encounters</div>
+        
+        <!-- Charts Row -->
+        <div class="dashboard-grid">
+            <div class="grid-col-8">
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3 class="chart-title">Revenue Trends (Last 30 Days)</h3>
+                        <div class="chart-actions">
+                            <button class="chart-icon-btn" title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button class="chart-icon-btn" title="More options">
+                                <i class="bi bi-three-dots"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div style="height: 300px;">
+                        <canvas id="revenueChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="grid-col-4">
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3 class="chart-title">Patient Demographics</h3>
+                        <div class="chart-actions">
+                            <button class="chart-icon-btn" title="More options">
+                                <i class="bi bi-three-dots"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="donut-chart-container">
+                        <div class="donut-center-text">
+                            <div class="donut-center-value">{{ total_patients|intcomma }}</div>
+                            <div class="donut-center-label">Total Patients</div>
+                        </div>
+                        <canvas id="patientGenderChart" style="max-width: 100%;"></canvas>
+                    </div>
+                    <div class="chart-legend" id="patientGenderLegend">
+                        <!-- Legend will be populated by JavaScript -->
+                    </div>
+                </div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div style="background: white; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-                <div style="font-size: 42px; font-weight: 800; color: #8b5cf6;">{{ total_staff }}</div>
-                <div style="color: #6b7280; font-size: 14px;">Total Staff</div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div style="background: white; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-                <div style="font-size: 42px; font-weight: 800; color: #f59e0b;">{{ appointments_today }}</div>
-                <div style="color: #6b7280; font-size: 14px;">Appointments Today</div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Procurement Approval Alerts (for Medical Directors/Admins) -->
-    {% if pending_admin_approvals or pending_accounts_approvals %}
-    <div class="row g-4 mb-4">
-        {% if pending_admin_approvals %}
-        <div class="col-md-6">
-            <div class="alert alert-warning alert-dismissible fade show" role="alert" style="border-left: 5px solid #ff9800; box-shadow: 0 2px 8px rgba(255,152,0,0.2); border-radius: 12px;">
-                <h5 class="alert-heading">
-                    <i class="bi bi-exclamation-triangle-fill"></i> Procurement Approval Needed
-                </h5>
-                <p class="mb-2">
-                    You have <strong style="font-size: 24px; color: #ff6b00;">{{ pending_admin_approvals }}</strong> procurement request(s) pending your approval.
-                </p>
-                {% if recent_procurement_requests %}
-                <div class="mt-3">
-                    <small><strong>Recent Requests:</strong></small>
-                    <ul class="mb-2" style="font-size: 13px;">
-                        {% for req in recent_procurement_requests|slice:":3" %}
-                        <li>{{ req.request_number }} - {{ req.requested_by_store.name|default:"N/A" }} - GHS {{ req.estimated_total|floatformat:2|intcomma }}</li>
+        
+        <!-- Department Overview & Recent Encounters -->
+        <div class="dashboard-grid">
+            <div class="grid-col-6">
+                <div class="modern-card">
+                    <div class="chart-header">
+                        <h3 class="chart-title">Department Overview</h3>
+                        <div class="chart-actions">
+                            <button class="chart-icon-btn" title="More options">
+                                <i class="bi bi-three-dots"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="activity-feed">
+                        {% for dept in department_stats|slice:":10" %}
+                        <div class="activity-item">
+                            <strong>{{ dept.name }}</strong>
+                            <div class="text-muted">
+                                <i class="bi bi-people"></i> {{ dept.staff_count }} staff
+                                <span style="margin-left: 1rem;"><i class="bi bi-person"></i> {{ dept.patient_count }} patients</span>
+                            </div>
+                        </div>
+                        {% empty %}
+                        <div class="text-muted text-center py-4">No department data available</div>
                         {% endfor %}
-                    </ul>
+                    </div>
                 </div>
-                {% endif %}
-                <hr>
-                <div class="d-flex gap-2">
-                    <a href="{% url 'hospital:admin_approval_list' %}" class="btn btn-warning">
-                        <i class="bi bi-clipboard-check"></i> Review & Approve Now
-                    </a>
-                    <a href="{% url 'hospital:procurement_workflow_dashboard' %}" class="btn btn-outline-warning">
-                        <i class="bi bi-diagram-3"></i> View Workflow
-                    </a>
-                </div>
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
             </div>
+            <div class="grid-col-6">
+                <div class="modern-card">
+                    <div class="chart-header">
+                        <h3 class="chart-title">Recent Encounters</h3>
+                        <div class="chart-actions">
+                            <button class="chart-icon-btn" title="More options">
+                                <i class="bi bi-three-dots"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="activity-feed">
+                        {% for encounter in recent_encounters %}
+                        <div class="activity-item">
+                            {% if encounter.patient %}
+                                {% if encounter.patient.get_full_name %}
+                                    <strong>{{ encounter.patient.get_full_name }}</strong>
+                                {% elif encounter.patient.mrn %}
+                                    <strong>MRN: {{ encounter.patient.mrn }}</strong>
+                                {% elif encounter.patient.full_name %}
+                                    <strong>{{ encounter.patient.full_name }}</strong>
+                                {% else %}
+                                    <strong>Patient #{{ encounter.patient.id|default:"Unknown" }}</strong>
+                                {% endif %}
+                            {% else %}
+                                <strong>No Patient Assigned</strong>
+                            {% endif %}
+                            <div class="text-muted">
+                                {% if encounter.started_at %}
+                                    <i class="bi bi-calendar"></i> {{ encounter.started_at|date:"M d, Y" }}
+                                    <span style="margin-left: 0.5rem;"><i class="bi bi-clock"></i> {{ encounter.started_at|time }}</span>
+                                {% else %}
+                                    <i class="bi bi-calendar"></i> Date not available
+                                {% endif %}
+                            </div>
+                            {% if encounter.provider %}
+                                {% if encounter.provider.user %}
+                                    <div class="text-muted" style="margin-top: 0.25rem;">
+                                        <i class="bi bi-person-badge"></i> 
+                                        {% if encounter.provider.user.get_full_name %}
+                                            {{ encounter.provider.user.get_full_name }}
+                                        {% elif encounter.provider.user.username %}
+                                            {{ encounter.provider.user.username }}
+                                        {% else %}
+                                            Not assigned
+                                        {% endif %}
+                                    </div>
+                                {% else %}
+                                    <div class="text-muted" style="margin-top: 0.25rem;">
+                                        <i class="bi bi-person-badge"></i> Provider (No user account)
+                                    </div>
+                                {% endif %}
+                            {% endif %}
+                            {% if encounter.encounter_type %}
+                                <span class="badge bg-primary" style="margin-top: 0.5rem; display: inline-block; font-size: 0.75rem;">{{ encounter.encounter_type|default:"Visit" }}</span>
+                            {% endif %}
+                        </div>
+                        {% empty %}
+                        <div class="text-muted text-center py-4">No recent encounters</div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Strategic Objectives Section -->
+        {% if strategic_objectives %}
+        <div class="objectives-banner">
+            <div class="objectives-header">
+                <div class="objectives-title">
+                    <i class="bi bi-bullseye"></i>
+                    <span>Strategic Objectives Dashboard</span>
+                </div>
+                <div class="objectives-progress">
+                    <div class="objectives-progress-value">{{ strategic_objectives.overall_progress|floatformat:1 }}%</div>
+                    <div class="objectives-progress-label">Overall Progress</div>
+                </div>
+            </div>
+            <p class="objectives-description">
+                Track progress across 7 strategic objectives to drive organizational excellence and sustainable growth.
+            </p>
+        </div>
+        
+        <!-- Objectives Progress Chart -->
+        <div class="dashboard-grid">
+            <div class="grid-col-12">
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3 class="chart-title">Objectives Progress Overview</h3>
+                        <div class="chart-actions">
+                            <button class="chart-icon-btn" title="More options">
+                                <i class="bi bi-three-dots"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div style="height: 300px;">
+                        <canvas id="objectivesProgressChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Individual Objectives Cards -->
+        <div class="dashboard-grid">
+            {% for key, objective in strategic_objectives.objectives.items %}
+            <div class="grid-col-4">
+                <div class="objective-card" data-objective-key="{{ key }}">
+                    <div class="objective-header">
+                        <h5 class="objective-title" style="color: {{ objective.color }};">
+                            <i class="bi {{ objective.icon }}"></i>
+                            <span>{{ objective.title }}</span>
+                        </h5>
+                        <p class="objective-description">{{ objective.description }}</p>
+                    </div>
+                    
+                    <div class="objective-progress">
+                        <div class="progress-item">
+                            <div class="progress-label-row">
+                                <span class="progress-label">Progress</span>
+                                <span class="progress-percentage" style="color: {{ objective.color }};">{{ objective.progress|floatformat:1 }}%</span>
+                            </div>
+                            <div class="progress-bar-container">
+                                <div class="progress-bar-fill" style="width: {{ objective.progress }}%; background: {{ objective.color }};"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="objective-kpis">
+                        <div style="font-size: 0.875rem; color: var(--gray); margin-bottom: 0.75rem; font-weight: 600;">Key Performance Indicators:</div>
+                        {% for kpi in objective.kpis|slice:":3" %}
+                        <div class="kpi-item">
+                            <span class="kpi-name">{{ kpi.name }}</span>
+                            <div>
+                                <span class="badge" style="background: {{ objective.color }}; opacity: 0.8; color: white; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem;">{{ kpi.value }}</span>
+                                <small class="text-muted" style="margin-left: 0.5rem; font-size: 0.75rem;">Target: {{ kpi.target }}</small>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
         </div>
         {% endif %}
         
-        {% if pending_accounts_approvals %}
-        <div class="col-md-6">
-            <div class="alert alert-success alert-dismissible fade show" role="alert" style="border-left: 5px solid #4caf50; box-shadow: 0 2px 8px rgba(76,175,80,0.2); border-radius: 12px;">
-                <h5 class="alert-heading">
-                    <i class="bi bi-check-circle-fill"></i> Accounts Approval Needed
-                </h5>
-                <p class="mb-2">
-                    You have <strong style="font-size: 24px; color: #2e7d32;">{{ pending_accounts_approvals }}</strong> procurement request(s) pending accounts approval.
-                </p>
-                <p class="mb-2"><small><i class="bi bi-magic"></i> <strong>Approving will auto-create:</strong> Accounts Payable, Expense Record, Payment Voucher</small></p>
-                <hr>
-                <a href="{% url 'hospital:accounts_approval_list' %}" class="btn btn-success">
-                    <i class="bi bi-check2-circle"></i> Review & Approve (Auto-Accounting!)
-                </a>
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            </div>
-        </div>
-        {% endif %}
-    </div>
-    {% endif %}
-    
-    <!-- Procurement Quick Access Card -->
-    {% if pending_admin_approvals or pending_accounts_approvals or request.user.has_perm('hospital.can_approve_procurement_admin') %}
-    <div class="row g-4 mb-4">
-        <div class="col-md-12">
-            <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); border-radius: 16px; padding: 28px; box-shadow: 0 4px 16px rgba(245, 158, 11, 0.3); color: white;">
-                <h5 class="mb-4"><i class="bi bi-clipboard-check-fill me-2"></i>Procurement Approval Center</h5>
-                
-                <div class="row g-3">
-                    <div class="col-md-3">
-                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
-                            <div style="font-size: 36px; font-weight: 700;">
-                                <i class="bi bi-clipboard-check"></i>
-                            </div>
-                            <div style="margin-top: 12px;">
-                                <strong style="font-size: 18px;">Admin Approvals</strong>
-                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">Review pharmacy requests</p>
-                            </div>
-                            <a href="{% url 'hospital:admin_approval_list' %}" class="btn btn-light w-100 mt-3">
-                                <i class="bi bi-arrow-right-circle"></i> Review Requests
-                            </a>
-                        </div>
+        <!-- Quick Access Section -->
+        <div class="dashboard-grid">
+            <div class="grid-col-12">
+                <div class="modern-card">
+                    <div class="chart-header">
+                        <h3 class="chart-title">Quick Access</h3>
                     </div>
-                    
-                    <div class="col-md-3">
-                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
-                            <div style="font-size: 36px; font-weight: 700;">
-                                <i class="bi bi-diagram-3"></i>
-                            </div>
-                            <div style="margin-top: 12px;">
-                                <strong style="font-size: 18px;">Workflow</strong>
-                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">Track all requests</p>
-                            </div>
-                            <a href="{% url 'hospital:procurement_workflow_dashboard' %}" class="btn btn-light w-100 mt-3">
-                                <i class="bi bi-arrow-right-circle"></i> View Workflow
-                            </a>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-3">
-                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
-                            <div style="font-size: 36px; font-weight: 700;">
-                                <i class="bi bi-capsule-pill"></i>
-                            </div>
-                            <div style="margin-top: 12px;">
-                                <strong style="font-size: 18px;">Pharmacy Requests</strong>
-                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">All procurement requests</p>
-                            </div>
-                            <a href="{% url 'hospital:procurement_approval_dashboard' %}" class="btn btn-light w-100 mt-3">
-                                <i class="bi bi-arrow-right-circle"></i> View All
-                            </a>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-3">
-                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
-                            <div style="font-size: 36px; font-weight: 700;">
-                                <i class="bi bi-list-check"></i>
-                            </div>
-                            <div style="margin-top: 12px;">
-                                <strong style="font-size: 18px;">All Requests</strong>
-                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">Complete list</p>
-                            </div>
-                            <a href="{% url 'hospital:procurement_requests_list' %}" class="btn btn-light w-100 mt-3">
-                                <i class="bi bi-arrow-right-circle"></i> View List
-                            </a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    {% endif %}
-    
-    <!-- Departmental Quick Access -->
-    <div style="background: white; border-radius: 16px; padding: 28px; margin-bottom: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-        <h5 class="mb-4"><i class="bi bi-grid-3x3-gap me-2"></i>Department Management</h5>
-        
-        <div class="row g-3 mb-3">
-            <div class="col-md-2"><a href="{% url 'hospital:patient_list' %}" class="btn btn-outline-primary w-100"><i class="bi bi-person me-2"></i>Patients</a></div>
-            <div class="col-md-2"><a href="{% url 'hospital:encounter_list' %}" class="btn btn-outline-info w-100"><i class="bi bi-hospital me-2"></i>Encounters</a></div>
-            <div class="col-md-2"><a href="{% url 'hospital:frontdesk_appointment_list' %}" class="btn btn-outline-success w-100"><i class="bi bi-calendar-event me-2"></i>Appointments</a></div>
-            <div class="col-md-2"><a href="{% url 'hospital:triage_queue' %}" class="btn btn-outline-danger w-100"><i class="bi bi-heart-pulse me-2"></i>Triage</a></div>
-            <div class="col-md-2"><a href="{% url 'hospital:admission_list' %}" class="btn btn-outline-warning w-100"><i class="bi bi-bed me-2"></i>Admissions</a></div>
-            <div class="col-md-2"><a href="{% url 'hospital:queue_display' %}" class="btn btn-outline-secondary w-100"><i class="bi bi-list-ol me-2"></i>Queues</a></div>
-        </div>
-        
-        <div class="row g-3 mb-3">
-            <div class="col-md-2"><a href="{% url 'hospital:accountant_dashboard' %}" class="btn btn-success w-100"><i class="bi bi-calculator me-2"></i>Accounting</a></div>
-            <div class="col-md-2"><a href="{% url 'hospital:hr_worldclass_dashboard' %}" class="btn btn-primary w-100"><i class="bi bi-people me-2"></i>HR</a></div>
-            <div class="col-md-2"><a href="{% url 'hospital:pharmacy_dashboard' %}" class="btn btn-warning w-100"><i class="bi bi-capsule me-2"></i>Pharmacy</a></div>
-            <div class="col-md-2"><a href="{% url 'hospital:laboratory_dashboard' %}" class="btn btn-danger w-100"><i class="bi bi-clipboard2-pulse me-2"></i>Laboratory</a></div>
-            <div class="col-md-2"><a href="{% url 'hospital:imaging_dashboard' %}" class="btn btn-info w-100"><i class="bi bi-x-ray me-2"></i>Imaging</a></div>
-            <div class="col-md-2"><a href="{% url 'hospital:blood_bank_dashboard' %}" class="btn btn-secondary w-100"><i class="bi bi-droplet-fill me-2"></i>Blood Bank</a></div>
-        </div>
-        
-        <div class="row g-3 mb-3">
-            <div class="col-md-3"><a href="{% url 'hospital:contracts_dashboard' %}" class="btn btn-outline-primary w-100"><i class="bi bi-file-text me-2"></i>Contracts</a></div>
-            <div class="col-md-3"><a href="{% url 'hospital:insurance_management_dashboard' %}" class="btn btn-outline-info w-100"><i class="bi bi-shield-check me-2"></i>Insurance</a></div>
-            <div class="col-md-3"><a href="{% url 'hospital:active_sessions' %}" class="btn btn-outline-warning w-100"><i class="bi bi-person-x me-2"></i>Active Sessions</a></div>
-            <div class="col-md-3"><a href="{% url 'hospital:user_management' %}" class="btn btn-outline-danger w-100"><i class="bi bi-people me-2"></i>User Management</a></div>
-            <div class="col-md-3"><a href="{% url 'hospital:it_operations_dashboard' %}" class="btn btn-outline-primary w-100"><i class="bi bi-motherboard me-2"></i>IT Ops Center</a></div>
-            <div class="col-md-3"><a href="{% url 'hospital:system_health' %}" class="btn btn-outline-info w-100"><i class="bi bi-heart-pulse me-2"></i>System Health</a></div>
-            <div class="col-md-3"><a href="{% url 'hospital:audit_logs' %}" class="btn btn-outline-secondary w-100"><i class="bi bi-shield-check me-2"></i>Audit Logs</a></div>
-            <div class="col-md-3"><a href="{% url 'hospital:backup_list' %}" class="btn btn-outline-success w-100"><i class="bi bi-database me-2"></i>Backups</a></div>
-            <div class="col-md-3"><a href="{% url 'hospital:data_validation' %}" class="btn btn-outline-warning w-100"><i class="bi bi-shield-exclamation me-2"></i>Data Validation</a></div>
-            <div class="col-md-3"><a href="{% url 'hospital:performance_dashboard' %}" class="btn btn-outline-info w-100"><i class="bi bi-speedometer2 me-2"></i>Performance</a></div>
-            <div class="col-md-3"><a href="{% url 'hospital:notifications_list' %}" class="btn btn-outline-primary w-100"><i class="bi bi-bell me-2"></i>Notifications</a></div>
-            <div class="col-md-3"><a href="/admin/" class="btn btn-outline-danger w-100"><i class="bi bi-gear me-2"></i>Admin Panel</a></div>
-        </div>
-        
-        <div class="row g-3">
-            <div class="col-md-6"><a href="/hms/biometric/enrollment/" class="btn btn-outline-primary w-100"><i class="bi bi-fingerprint me-2"></i>Biometric Enrollment</a></div>
-            <div class="col-md-6"><a href="/hms/biometric/login/" class="btn btn-outline-success w-100"><i class="bi bi-shield-lock me-2"></i>Biometric Login</a></div>
-        </div>
-    </div>
-    
-    <!-- Bulk SMS Communication Section -->
-    <div class="row g-4 mb-4">
-        <div class="col-md-12">
-            <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 16px; padding: 28px; box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3); color: white;">
-                <h5 class="mb-4"><i class="bi bi-chat-dots-fill me-2"></i>Bulk SMS Communication</h5>
-                
-                <div class="row g-3">
-                    <div class="col-md-4">
-                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
-                            <div style="font-size: 36px; font-weight: 700;">
-                                <i class="bi bi-send-fill"></i>
-                            </div>
-                            <div style="margin-top: 12px;">
-                                <strong style="font-size: 18px;">Bulk SMS Dashboard</strong>
-                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">Send messages to multiple recipients</p>
-                            </div>
-                            <a href="{% url 'hospital:bulk_sms_dashboard' %}" class="btn btn-light w-100 mt-3">
-                                <i class="bi bi-arrow-right-circle"></i> Open Dashboard
-                            </a>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-4">
-                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
-                            <div style="font-size: 36px; font-weight: 700;">
-                                <i class="bi bi-people-fill"></i>
-                            </div>
-                            <div style="margin-top: 12px;">
-                                <strong style="font-size: 18px;">Select Recipients</strong>
-                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">Choose from patients, staff, or custom numbers</p>
-                            </div>
-                            <a href="{% url 'hospital:bulk_sms_dashboard' %}" class="btn btn-light w-100 mt-3">
-                                <i class="bi bi-person-check"></i> Select Recipients
-                            </a>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-4">
-                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
-                            <div style="font-size: 36px; font-weight: 700;">
-                                <i class="bi bi-bell-fill"></i>
-                            </div>
-                            <div style="margin-top: 12px;">
-                                <strong style="font-size: 18px;">SMS Notifications</strong>
-                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">View SMS history and logs</p>
-                            </div>
-                            <a href="{% url 'hospital:sms_notifications' %}" class="btn btn-light w-100 mt-3">
-                                <i class="bi bi-list-ul"></i> View Logs
-                            </a>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="row g-3 mt-3">
-                    <div class="col-md-6">
-                        <div style="background: rgba(255,255,255,0.1); border-radius: 10px; padding: 16px; backdrop-filter: blur(10px);">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div>
-                                    <div style="font-size: 13px; opacity: 0.9;">Quick Access</div>
-                                    <div style="font-size: 16px; font-weight: 700;">
-                                        <i class="bi bi-lightning-charge-fill me-2"></i>Send to All Patients
-                                    </div>
-                                </div>
-                                <a href="{% url 'hospital:bulk_sms_dashboard' %}?type=patient&has_phone=1" class="btn btn-sm btn-light">
-                                    <i class="bi bi-arrow-right"></i>
-                                </a>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-6">
-                        <div style="background: rgba(255,255,255,0.1); border-radius: 10px; padding: 16px; backdrop-filter: blur(10px);">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div>
-                                    <div style="font-size: 13px; opacity: 0.9;">Quick Access</div>
-                                    <div style="font-size: 16px; font-weight: 700;">
-                                        <i class="bi bi-people-fill me-2"></i>Send to All Staff
-                                    </div>
-                                </div>
-                                <a href="{% url 'hospital:bulk_sms_dashboard' %}?type=staff&has_phone=1" class="btn btn-sm btn-light">
-                                    <i class="bi bi-arrow-right"></i>
-                                </a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <div class="row g-4">
-        <!-- Financial Overview -->
-        <div class="col-md-6">
-            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-                <h5 class="mb-3"><i class="bi bi-cash-coin me-2"></i>Financial Overview</h5>
-                <div style="padding: 20px; background: linear-gradient(135deg, #f0fdf4, white); border-radius: 12px; margin-bottom: 16px;">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <span style="color: #6b7280;">Revenue Today</span>
-                        <strong style="font-size: 20px; color: #10b981;">GHS {{ total_revenue_today|floatformat:2|intcomma }}</strong>
-                    </div>
-                </div>
-                <div style="padding: 20px; background: linear-gradient(135deg, #eff6ff, white); border-radius: 12px; margin-bottom: 16px;">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <span style="color: #6b7280;">Revenue This Month</span>
-                        <strong style="font-size: 20px; color: #3b82f6;">GHS {{ total_revenue_month|floatformat:2|intcomma }}</strong>
-                    </div>
-                </div>
-                <div style="padding: 20px; background: linear-gradient(135deg, #fef3c7, white); border-radius: 12px;">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <span style="color: #6b7280;">Outstanding</span>
-                        <strong style="font-size: 20px; color: #f59e0b;">GHS {{ outstanding_invoices|floatformat:2|intcomma }}</strong>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- HR Overview -->
-        <div class="col-md-6">
-            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-                <h5 class="mb-3"><i class="bi bi-people me-2"></i>HR Overview</h5>
-                <div style="padding: 20px; background: linear-gradient(135deg, #f5f3ff, white); border-radius: 12px; margin-bottom: 16px;">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <span style="color: #6b7280;">Total Staff</span>
-                        <strong style="font-size: 20px; color: #8b5cf6;">{{ total_staff }}</strong>
-                    </div>
-                </div>
-                <div style="padding: 20px; background: linear-gradient(135deg, #fffbeb, white); border-radius: 12px; margin-bottom: 16px;">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <span style="color: #6b7280;">Staff on Leave</span>
-                        <strong style="font-size: 20px; color: #f59e0b;">{{ staff_on_leave }}</strong>
-                    </div>
-                </div>
-                <div style="padding: 20px; background: linear-gradient(135deg, #fef2f2, white); border-radius: 12px;">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <span style="color: #6b7280;">Pending Leave Requests</span>
-                        <strong style="font-size: 20px; color: #ef4444;">{{ pending_leaves }}</strong>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Biometric Security Section -->
-    <div class="row g-4 mt-4">
-        <div class="col-md-12">
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 16px; padding: 28px; box-shadow: 0 4px 16px rgba(102, 126, 234, 0.3); color: white;">
-                <h5 class="mb-4"><i class="bi bi-fingerprint me-2"></i>Biometric Security System</h5>
-                
-                <div class="row g-3">
-                    <div class="col-md-3">
-                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
-                            <div style="font-size: 36px; font-weight: 700;">
-                                <i class="bi bi-people-fill"></i>
-                            </div>
-                            <div style="margin-top: 12px;">
-                                <strong style="font-size: 18px;">Enrollment Status</strong>
-                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">Manage staff biometric enrollment</p>
-                            </div>
-                            <a href="/hms/biometric/enrollment/" class="btn btn-light w-100 mt-3">
-                                <i class="bi bi-arrow-right-circle"></i> Enroll Staff
-                            </a>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-3">
-                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
-                            <div style="font-size: 36px; font-weight: 700;">
-                                <i class="bi bi-shield-lock-fill"></i>
-                            </div>
-                            <div style="margin-top: 12px;">
-                                <strong style="font-size: 18px;">Authentication</strong>
-                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">Biometric login system</p>
-                            </div>
-                            <a href="/hms/biometric/login/" class="btn btn-light w-100 mt-3">
-                                <i class="bi bi-box-arrow-in-right"></i> Login Portal
-                            </a>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-3">
-                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
-                            <div style="font-size: 36px; font-weight: 700;">
-                                <i class="bi bi-clipboard-data"></i>
-                            </div>
-                            <div style="margin-top: 12px;">
-                                <strong style="font-size: 18px;">Audit Logs</strong>
-                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">Authentication history</p>
-                            </div>
-                            <a href="/admin/hospital/biometricauthenticationlog/" class="btn btn-light w-100 mt-3">
-                                <i class="bi bi-list-ul"></i> View Logs
-                            </a>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-3">
-                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
-                            <div style="font-size: 36px; font-weight: 700;">
-                                <i class="bi bi-gear-fill"></i>
-                            </div>
-                            <div style="margin-top: 12px;">
-                                <strong style="font-size: 18px;">System Settings</strong>
-                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">Configure biometric system</p>
-                            </div>
-                            <a href="/admin/hospital/biometricsystemsettings/" class="btn btn-light w-100 mt-3">
-                                <i class="bi bi-sliders"></i> Settings
-                            </a>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="row g-3 mt-3">
-                    <div class="col-md-4">
-                        <div style="background: rgba(255,255,255,0.1); border-radius: 10px; padding: 16px; backdrop-filter: blur(10px);">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div>
-                                    <div style="font-size: 13px; opacity: 0.9;">Face Recognition</div>
-                                    <div style="font-size: 20px; font-weight: 700;"><i class="bi bi-camera-fill me-2"></i>Active</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-4">
-                        <div style="background: rgba(255,255,255,0.1); border-radius: 10px; padding: 16px; backdrop-filter: blur(10px);">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div>
-                                    <div style="font-size: 13px; opacity: 0.9;">Fingerprint</div>
-                                    <div style="font-size: 20px; font-weight: 700;"><i class="bi bi-fingerprint me-2"></i>Active</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-4">
-                        <div style="background: rgba(255,255,255,0.1); border-radius: 10px; padding: 16px; backdrop-filter: blur(10px);">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div>
-                                    <div style="font-size: 13px; opacity: 0.9;">Security Alerts</div>
-                                    <div style="font-size: 20px; font-weight: 700;"><i class="bi bi-shield-exclamation me-2"></i>0</div>
-                                </div>
-                            </div>
-                        </div>
+                    <div class="quick-access-grid">
+                        {% if user|is_it_or_admin %}
+                        <a href="{% url 'hospital:it_operations_dashboard' %}" class="quick-access-btn">
+                            <i class="bi bi-motherboard"></i>
+                            <span>IT Ops Center</span>
+                        </a>
+                        {% endif %}
+                        <a href="{% url 'hospital:patient_list' %}" class="quick-access-btn">
+                            <i class="bi bi-people"></i>
+                            <span>Patients</span>
+                        </a>
+                        <a href="{% url 'hospital:staff_list' %}" class="quick-access-btn">
+                            <i class="bi bi-person-badge"></i>
+                            <span>Staff</span>
+                        </a>
+                        <a href="{% url 'hospital:accountant_comprehensive_dashboard' %}" class="quick-access-btn">
+                            <i class="bi bi-calculator"></i>
+                            <span>Accounting</span>
+                        </a>
+                        <a href="{% url 'hospital:hr_worldclass_dashboard' %}" class="quick-access-btn">
+                            <i class="bi bi-people-fill"></i>
+                            <span>HR Portal</span>
+                        </a>
+                        <a href="{% url 'hospital:hr_medical_chit_list' %}" class="quick-access-btn">
+                            <i class="bi bi-heart-pulse"></i>
+                            <span>Medical Chits</span>
+                        </a>
+                        <a href="{% url 'hospital:audit_logs' %}" class="quick-access-btn">
+                            <i class="bi bi-shield-check"></i>
+                            <span>Audit Logs</span>
+                        </a>
+                        <a href="{% url 'hospital:backup_list' %}" class="quick-access-btn">
+                            <i class="bi bi-database"></i>
+                            <span>Backups</span>
+                        </a>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 </div>
+
+<!-- Chart Data -->
+{{ revenue_labels|default:"[]"|json_script:"revenue-labels" }}
+{{ revenue_data|default:"[]"|json_script:"revenue-data" }}
+{{ patient_gender_labels|default:"[]"|json_script:"patient-gender-labels" }}
+{{ patient_gender_data|default:"[]"|json_script:"patient-gender-data" }}
+{{ monthly_revenue_labels|default:"[]"|json_script:"monthly-revenue-labels" }}
+{{ monthly_revenue_data|default:"[]"|json_script:"monthly-revenue-data" }}
+{{ staff_profession_labels|default:"[]"|json_script:"staff-profession-labels" }}
+{{ staff_profession_data|default:"[]"|json_script:"staff-profession-data" }}
+{% if strategic_objectives %}
+{{ strategic_objectives|json_script:"strategic-objectives-data" }}
+{% endif %}
 {% endblock %}
 
-
-
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    function safeParseJson(elementId, defaultValue) {
+        const element = document.getElementById(elementId);
+        if (!element) return defaultValue || null;
+        try {
+            const parsed = JSON.parse(element.textContent);
+            return parsed; // Return the parsed value as-is (can be object, array, or primitive)
+        } catch (e) {
+            console.error('Error parsing JSON for', elementId, ':', e);
+            return defaultValue || null;
+        }
+    }
+    
+    const revenueLabels = safeParseJson('revenue-labels', []);
+    const revenueData = safeParseJson('revenue-data', []);
+    const patientGenderLabels = safeParseJson('patient-gender-labels', []);
+    const patientGenderData = safeParseJson('patient-gender-data', []);
+    
+    // Revenue Trend Chart
+    const revenueCtx = document.getElementById('revenueChart');
+    if (revenueCtx && revenueLabels.length > 0) {
+        new Chart(revenueCtx, {
+            type: 'line',
+            data: {
+                labels: revenueLabels,
+                datasets: [{
+                    label: 'Daily Revenue (GHS)',
+                    data: revenueData,
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    borderWidth: 3,
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        padding: 12,
+                        callbacks: {
+                            label: function(context) {
+                                return 'GHS ' + context.parsed.y.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return 'GHS ' + value.toLocaleString();
+                            }
+                        },
+                        grid: { color: 'rgba(0, 0, 0, 0.05)' }
+                    },
+                    x: { grid: { display: false } }
+                }
+            }
+        });
+    }
+    
+    // Patient Gender Chart (Donut)
+    const patientGenderCtx = document.getElementById('patientGenderChart');
+    const legendContainer = document.getElementById('patientGenderLegend');
+    if (patientGenderCtx && patientGenderLabels.length > 0) {
+        const colors = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b'];
+        
+        new Chart(patientGenderCtx, {
+            type: 'doughnut',
+            data: {
+                labels: patientGenderLabels,
+                datasets: [{
+                    data: patientGenderData,
+                    backgroundColor: colors,
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                cutout: '70%',
+                plugins: {
+                    legend: { display: false }
+                }
+            }
+        });
+        
+        // Populate legend
+        if (legendContainer) {
+            patientGenderLabels.forEach((label, index) => {
+                const legendItem = document.createElement('div');
+                legendItem.className = 'legend-item';
+                legendItem.innerHTML = `
+                    <div class="legend-dot" style="background: ${colors[index % colors.length]};"></div>
+                    <span class="legend-label">${label}</span>
+                    <span class="legend-value">${patientGenderData[index] || 0}</span>
+                `;
+                legendContainer.appendChild(legendItem);
+            });
+        }
+    }
+    
+    // Strategic Objectives Progress Chart
+    const objectivesCtx = document.getElementById('objectivesProgressChart');
+    if (objectivesCtx) {
+        const objectivesData = safeParseJson('strategic-objectives-data', null);
+        console.log('Objectives Data:', objectivesData); // Debug log
+        
+        if (objectivesData && objectivesData.objectives) {
+            const labels = [];
+            const progressData = [];
+            const colors = [];
+            
+            Object.values(objectivesData.objectives).forEach(obj => {
+                if (obj && obj.title && typeof obj.progress === 'number') {
+                    labels.push(obj.title);
+                    progressData.push(Math.max(0, Math.min(100, obj.progress))); // Ensure 0-100 range
+                    colors.push(obj.color || '#3b82f6');
+                }
+            });
+            
+            console.log('Chart Data:', { labels, progressData, colors }); // Debug log
+            
+            if (labels.length > 0 && progressData.length > 0) {
+                // Destroy existing chart if it exists
+                if (window.objectivesChart) {
+                    window.objectivesChart.destroy();
+                }
+                
+                window.objectivesChart = new Chart(objectivesCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Progress %',
+                            data: progressData,
+                            backgroundColor: colors,
+                            borderRadius: 8,
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        return context.parsed.y.toFixed(1) + '%';
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                max: 100,
+                                ticks: {
+                                    callback: function(value) {
+                                        return value + '%';
+                                    }
+                                }
+                            },
+                            x: {
+                                ticks: {
+                                    maxRotation: 45,
+                                    minRotation: 45
+                                }
+                            }
+                        }
+                    }
+                });
+            } else {
+                console.error('No valid objectives data to display');
+                objectivesCtx.parentElement.innerHTML = '<div style="padding: 2rem; text-align: center; color: #64748b;"><p>No objectives data available</p></div>';
+            }
+        } else {
+            console.error('Invalid objectives data structure:', objectivesData);
+            objectivesCtx.parentElement.innerHTML = '<div style="padding: 2rem; text-align: center; color: #64748b;"><p>Unable to load objectives data</p></div>';
+        }
+    } else {
+        console.error('Objectives chart canvas element not found');
+    }
+    
+    // Real-time Strategic Objectives Updates
+    function updateStrategicObjectives() {
+        fetch('{% url "hospital:strategic_objectives_api" %}')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.objectives) {
+                    // Update overall progress
+                    const overallProgressEl = document.querySelector('.objectives-progress-value');
+                    if (overallProgressEl) {
+                        overallProgressEl.textContent = data.overall_progress.toFixed(1) + '%';
+                    }
+                    
+                    // Update each objective card
+                    Object.keys(data.objectives).forEach(key => {
+                        const objective = data.objectives[key];
+                        const card = document.querySelector(`[data-objective-key="${key}"]`);
+                        
+                        if (card) {
+                            // Update progress percentage
+                            const progressPct = card.querySelector('.progress-percentage');
+                            if (progressPct) {
+                                progressPct.textContent = objective.progress.toFixed(1) + '%';
+                                progressPct.style.color = objective.color;
+                            }
+                            
+                            // Update progress bar
+                            const progressBar = card.querySelector('.progress-bar-fill');
+                            if (progressBar) {
+                                progressBar.style.width = objective.progress + '%';
+                                progressBar.style.background = objective.color;
+                            }
+                            
+                            // Update KPIs
+                            const kpiContainer = card.querySelector('.objective-kpis');
+                            if (kpiContainer && objective.kpis && objective.kpis.length > 0) {
+                                const kpiItems = kpiContainer.querySelectorAll('.kpi-item');
+                                objective.kpis.slice(0, 3).forEach((kpi, index) => {
+                                    if (kpiItems[index]) {
+                                        const badge = kpiItems[index].querySelector('.badge');
+                                        if (badge) {
+                                            badge.textContent = kpi.value;
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    });
+                    
+                    // Update chart if it exists
+                    if (window.objectivesChart && data.objectives) {
+                        const labels = [];
+                        const progressData = [];
+                        const colors = [];
+                        
+                        Object.values(data.objectives).forEach(obj => {
+                            if (obj && obj.title && typeof obj.progress === 'number') {
+                                labels.push(obj.title);
+                                progressData.push(Math.max(0, Math.min(100, obj.progress)));
+                                colors.push(obj.color || '#3b82f6');
+                            }
+                        });
+                        
+                        if (labels.length > 0) {
+                            window.objectivesChart.data.labels = labels;
+                            window.objectivesChart.data.datasets[0].data = progressData;
+                            window.objectivesChart.data.datasets[0].backgroundColor = colors;
+                            window.objectivesChart.update('none'); // 'none' mode for smooth update
+                        }
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error updating strategic objectives:', error);
+            });
+    }
+    
+    // Auto-refresh every 30 seconds
+    if (document.getElementById('objectivesProgressChart') || document.querySelector('.objective-card')) {
+        // Initial update after 5 seconds
+        setTimeout(updateStrategicObjectives, 5000);
+        
+        // Then update every 30 seconds
+        setInterval(updateStrategicObjectives, 30000);
+    }
+});
+</script>
+{% endblock %}

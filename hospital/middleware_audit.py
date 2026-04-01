@@ -2,10 +2,8 @@
 Audit Middleware
 Automatically logs user actions and system events
 """
-import json
 import logging
-from django.utils import timezone
-from django.db import transaction
+from django.conf import settings
 from .middleware_thread_local import set_current_request, clear_current_request
 
 logger = logging.getLogger(__name__)
@@ -82,60 +80,85 @@ class AuditMiddleware:
     def __call__(self, request):
         # Store request in thread-local storage for signals to access
         set_current_request(request)
-        
         try:
             # Skip logging for excluded paths
-            if any(request.path.startswith(excluded) for excluded in self.EXCLUDED_PATHS):
-                return self.get_response(request)
-            
-            # Only log authenticated users and critical operations
-            should_log = (
-                request.user.is_authenticated and
-                request.method in self.LOGGED_METHODS and
-                any(request.path.startswith(path) for path in self.LOGGED_PATHS)
-            )
-            
-            if should_log:
-                try:
-                    from .models_audit import ActivityLog
-                    
-                    # Get client info
-                    ip_address = self.get_client_ip(request)
-                    user_agent = request.META.get('HTTP_USER_AGENT', '')
-                    session_key = request.session.session_key if hasattr(request, 'session') else ''
-                    
-                    # Determine activity type
-                    activity_type = f"{request.method.lower()}_{request.path.split('/')[2] if len(request.path.split('/')) > 2 else 'unknown'}"
-                    
-                    # Create activity log asynchronously (don't block request)
+            if not any(request.path.startswith(excluded) for excluded in self.EXCLUDED_PATHS):
+                # Only log authenticated users and critical operations
+                should_log = (
+                    request.user.is_authenticated and
+                    request.method in self.LOGGED_METHODS and
+                    any(request.path.startswith(path) for path in self.LOGGED_PATHS)
+                )
+                if should_log:
                     try:
-                        ActivityLog.log_activity(
-                            user=request.user,
-                            activity_type=activity_type,
-                            description=f"{request.method} {request.path}",
-                            ip_address=ip_address,
-                            user_agent=user_agent[:500],
-                            session_key=session_key,
-                            metadata={
-                                'path': request.path,
-                                'method': request.method,
-                                'query_params': dict(request.GET),
+                        from .models_audit import ActivityLog
+                        from .activity_log_context import resolve_activity_context
+
+                        ip_address = self.get_client_ip(request)
+                        user_agent = request.META.get('HTTP_USER_AGENT', '')
+                        session_key = request.session.session_key if hasattr(request, 'session') else ''
+
+                        activity_type = f"{request.method.lower()}_{request.path.split('/')[2] if len(request.path.split('/')) > 2 else 'unknown'}"
+
+                        try:
+                            description, meta = resolve_activity_context(request)
+                        except Exception as ctx_exc:
+                            logger.debug("Activity context resolution failed: %s", ctx_exc)
+                            description = f"{request.method} {request.path}"
+                            meta = {
+                                "path": request.path,
+                                "method": request.method,
+                                "query_params": dict(request.GET),
                             }
-                        )
+
+                        try:
+                            if getattr(settings, 'AUDIT_LOG_ASYNC', True):
+                                from hms.tasks import persist_audit_activity_log
+
+                                try:
+                                    persist_audit_activity_log.delay(
+                                        user_id=request.user.id,
+                                        activity_type=activity_type,
+                                        description=description[:255],
+                                        ip_address=ip_address,
+                                        user_agent=user_agent[:500],
+                                        session_key=session_key or '',
+                                        metadata=meta or {},
+                                    )
+                                except Exception as enqueue_exc:
+                                    logger.warning(
+                                        'Async audit enqueue failed, falling back to sync: %s',
+                                        enqueue_exc,
+                                    )
+                                    ActivityLog.log_activity(
+                                        user=request.user,
+                                        activity_type=activity_type,
+                                        description=description[:255],
+                                        ip_address=ip_address,
+                                        user_agent=user_agent[:500],
+                                        session_key=session_key,
+                                        metadata=meta,
+                                    )
+                            else:
+                                ActivityLog.log_activity(
+                                    user=request.user,
+                                    activity_type=activity_type,
+                                    description=description[:255],
+                                    ip_address=ip_address,
+                                    user_agent=user_agent[:500],
+                                    session_key=session_key,
+                                    metadata=meta,
+                                )
+                        except Exception as e:
+                            logger.warning(f"Failed to log activity: {e}")
                     except Exception as e:
-                        # Don't break the request if logging fails
-                        logger.warning(f"Failed to log activity: {e}")
-                except Exception as e:
-                    # Don't break the request if import fails
-                    logger.warning(f"Failed to import ActivityLog: {e}")
+                        logger.warning(f"Failed to import ActivityLog: {e}")
         except Exception as e:
-            # Don't break the request if middleware fails
             logger.error(f"Audit middleware error: {e}")
+        try:
+            return self.get_response(request)
         finally:
-            response = self.get_response(request)
-            # Clear thread-local storage after request
             clear_current_request()
-            return response
     
     def get_client_ip(self, request):
         """Get client IP address"""

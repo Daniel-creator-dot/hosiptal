@@ -161,9 +161,20 @@ class PatientDocument(BaseModel):
     """
     Documents attached to patient records
     (Lab reports, imaging, consent forms, referral letters, etc.)
+    Supports PDF, images (JPG/PNG), and document files for lab/imaging results.
     """
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='documents')
     encounter = models.ForeignKey(Encounter, on_delete=models.CASCADE, null=True, blank=True, related_name='documents')
+    
+    # Link to specific lab result or imaging study (for result file attachments)
+    lab_result = models.ForeignKey(
+        'LabResult', on_delete=models.CASCADE, null=True, blank=True,
+        related_name='attached_documents', help_text='Lab result this document belongs to'
+    )
+    imaging_study = models.ForeignKey(
+        'ImagingStudy', on_delete=models.CASCADE, null=True, blank=True,
+        related_name='attached_documents', help_text='Imaging study this document belongs to'
+    )
     
     # Document details
     document_type = models.CharField(
@@ -171,6 +182,7 @@ class PatientDocument(BaseModel):
         choices=[
             ('lab_report', 'Laboratory Report'),
             ('imaging_report', 'Imaging Report'),
+            ('external_report', 'External Report / Scan (from other facility)'),
             ('prescription', 'Prescription'),
             ('consent_form', 'Consent Form'),
             ('referral_letter', 'Referral Letter'),

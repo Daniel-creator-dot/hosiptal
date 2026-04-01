@@ -6,7 +6,7 @@ from django.utils.html import format_html
 from django.urls import reverse
 from .models_advanced import (
     ClinicalNote, CarePlan, ProblemList, ProviderSchedule, Queue, Triage,
-    ImagingStudy, ImagingImage, TheatreSchedule, SurgicalChecklist, AnaesthesiaRecord,
+    ImagingStudy, ImagingImage, ImagingCatalog, ProcedureCatalog, TheatreSchedule, SurgicalChecklist, AnaesthesiaRecord,
     MedicationAdministrationRecord, HandoverSheet, FallRiskAssessment,
     PressureUlcerRiskAssessment, CrashCartCheck, IncidentLog,
     MedicalEquipment, MaintenanceLog, ConsumablesInventory,
@@ -110,6 +110,52 @@ class ImagingImageAdmin(admin.ModelAdmin):
             return format_html('<img src="{}" style="max-width: 100px; max-height: 100px;" />', obj.image.url)
         return '-'
     image_preview.short_description = 'Preview'
+
+
+@admin.register(ImagingCatalog)
+class ImagingCatalogAdmin(admin.ModelAdmin):
+    """Admin for Imaging Catalog - only actual imaging services"""
+    list_display = ['code', 'name', 'modality', 'body_part', 'price', 'is_active']
+    list_filter = ['modality', 'is_active', 'created']
+    search_fields = ['code', 'name', 'body_part', 'study_type']
+    list_editable = ['is_active', 'price']
+    readonly_fields = ['created', 'modified']
+    ordering = ['modality', 'name']
+    
+    fieldsets = (
+        ('Imaging Study Information', {
+            'fields': ('code', 'name', 'modality', 'body_part', 'study_type', 'description')
+        }),
+        ('Pricing', {
+            'fields': ('price',)
+        }),
+        ('Status', {
+            'fields': ('is_active',)
+        }),
+    )
+
+
+@admin.register(ProcedureCatalog)
+class ProcedureCatalogAdmin(admin.ModelAdmin):
+    """Admin for Procedure Catalog - medical procedures (separate from imaging)"""
+    list_display = ['code', 'name', 'category', 'price', 'estimated_duration_minutes', 'requires_theatre', 'is_active']
+    list_filter = ['category', 'requires_anesthesia', 'requires_theatre', 'is_active', 'created']
+    search_fields = ['code', 'name', 'description']
+    list_editable = ['is_active', 'price']
+    readonly_fields = ['created', 'modified']
+    ordering = ['category', 'name']
+    
+    fieldsets = (
+        ('Procedure Information', {
+            'fields': ('code', 'name', 'category', 'description')
+        }),
+        ('Pricing & Details', {
+            'fields': ('price', 'estimated_duration_minutes', 'requires_anesthesia', 'requires_theatre')
+        }),
+        ('Status', {
+            'fields': ('is_active',)
+        }),
+    )
 
 
 # ==================== THEATRE ====================

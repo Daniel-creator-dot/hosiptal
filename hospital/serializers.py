@@ -123,6 +123,20 @@ class PatientSerializer(serializers.ModelSerializer):
                     f"Duplicate patient detected! A patient with the same name ({first_name} {last_name}) "
                     f"and phone number ({phone_number}) already exists. MRN: {existing.mrn}"
                 )
+
+        # Fallback: guard by name + date_of_birth even if phone is missing
+        if first_name and last_name and date_of_birth and date_of_birth != '2000-01-01':
+            existing = Patient.objects.filter(
+                first_name__iexact=first_name,
+                last_name__iexact=last_name,
+                date_of_birth=date_of_birth,
+                is_deleted=False
+            ).exclude(pk=patient_id).first()
+            if existing:
+                raise serializers.ValidationError(
+                    f"Duplicate patient detected! A patient named {first_name} {last_name} "
+                    f"with the same date of birth already exists. MRN: {existing.mrn}"
+                )
         
         if email:
             existing = Patient.objects.filter(
@@ -314,7 +328,16 @@ class PriceBookSerializer(serializers.ModelSerializer):
 class InvoiceLineSerializer(serializers.ModelSerializer):
     """Invoice line serializer"""
     service_code_code = serializers.CharField(source='service_code.code', read_only=True)
-    
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Match UI/print: show resolved catalog pricing when DB fields are stale zeros
+        du = instance.display_unit_price
+        dl = instance.display_line_total
+        data['unit_price'] = str(du)
+        data['line_total'] = str(dl)
+        return data
+
     class Meta:
         model = InvoiceLine
         fields = '__all__'
@@ -326,8 +349,12 @@ class InvoiceSerializer(serializers.ModelSerializer):
     patient_name = serializers.CharField(source='patient.full_name', read_only=True)
     patient_mrn = serializers.CharField(source='patient.mrn', read_only=True)
     payer_name = serializers.CharField(source='payer.name', read_only=True)
-    lines = InvoiceLineSerializer(many=True, read_only=True)
-    
+    lines = serializers.SerializerMethodField()
+
+    def get_lines(self, obj):
+        """Exclude waived lines from API response"""
+        return InvoiceLineSerializer(obj.billable_lines, many=True).data
+
     class Meta:
         model = Invoice
         fields = '__all__'

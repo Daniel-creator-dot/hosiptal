@@ -35,8 +35,18 @@
                 <div class="col-md-6">
                     <p><strong>Request Number:</strong> {{ procurement_request.request_number }}</p>
                     <p><strong>Requested By:</strong> 
-                        {% if procurement_request.requested_by %}
-                            {{ procurement_request.requested_by.full_name }}
+                        {% if procurement_request.requested_by and procurement_request.requested_by.user %}
+                            {% with u=procurement_request.requested_by.user %}
+                                {% if u.get_full_name %}
+                                    {{ u.get_full_name }}
+                                {% elif u.username and u.username != 'INVALID' %}
+                                    {{ u.username }}
+                                {% elif u.email %}
+                                    {{ u.email }}
+                                {% else %}
+                                    N/A
+                                {% endif %}
+                            {% endwith %}
                         {% else %}
                             N/A
                         {% endif %}
@@ -123,6 +133,47 @@
         </div>
     </div>
     
+    <!-- Accounting: Debit/Credit selection (Accounts approval only) -->
+    {% if approval_type == 'Accounts' and expense_accounts %}
+    <div class="card mb-4 border-primary">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0"><i class="bi bi-journal-bookmark"></i> Post to Finance – Select Accounts</h5>
+        </div>
+        <div class="card-body">
+            <p class="text-muted small mb-3">Choose where to <strong>debit</strong> (expense) and <strong>credit</strong> (payable/bank). These will be used for the expense entry, AP, and payment voucher, and will appear in reports and the general ledger.</p>
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Expense account (Debit)</label>
+                    <select name="expense_account" class="form-select">
+                        <option value="">Use default (5100 Operating Expenses)</option>
+                        {% for acc in expense_accounts %}
+                        <option value="{{ acc.id }}">{{ acc.account_code }} – {{ acc.account_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Liability account (Credit – AP)</label>
+                    <select name="liability_account" class="form-select">
+                        <option value="">Use default (2100 Accounts Payable)</option>
+                        {% for acc in liability_accounts %}
+                        <option value="{{ acc.id }}">{{ acc.account_code }} – {{ acc.account_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Payment account (Credit – Bank/Cash)</label>
+                    <select name="payment_account" class="form-select">
+                        <option value="">Use default (1010 Bank)</option>
+                        {% for acc in payment_accounts %}
+                        <option value="{{ acc.id }}">{{ acc.account_code }} – {{ acc.account_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Approval Form -->
     <div class="card">
         <div class="card-header bg-success text-white">

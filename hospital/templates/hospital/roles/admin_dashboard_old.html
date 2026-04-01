@@ -1,0 +1,479 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize hospital_extras %}
+
+{% block title %}Administrator Dashboard - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    .admin-dashboard {padding: 24px 12px 48px;}
+    .stat-card {background: white; border-radius: 18px; border: 1px solid rgba(15,23,42,0.08); box-shadow: 0 4px 16px rgba(0,0,0,0.08); padding: 24px; transition: transform 0.2s, box-shadow 0.2s;}
+    .stat-card:hover {transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,0.12);}
+    .stat-value {font-size: 42px; font-weight: 800; line-height: 1;}
+    .stat-label {color: #6b7280; font-size: 14px; margin-top: 8px;}
+    .quick-access-grid {display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;}
+    .quick-access-btn {background: white; border: 1px solid rgba(15,23,42,0.08); border-radius: 12px; padding: 16px; text-decoration: none; color: #0f172a; transition: all 0.2s; display: flex; flex-direction: column; align-items: center; gap: 8px;}
+    .quick-access-btn:hover {border-color: #3b82f6; background: #eff6ff; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(59,130,246,0.15);}
+    .quick-access-btn i {font-size: 24px; color: #3b82f6;}
+    .section-card {background: white; border-radius: 18px; border: 1px solid rgba(15,23,42,0.08); box-shadow: 0 4px 16px rgba(0,0,0,0.08); padding: 28px; margin-bottom: 24px;}
+    .gradient-header {background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border-radius: 20px; padding: 40px; margin-bottom: 32px; box-shadow: 0 10px 40px rgba(239, 68, 68, 0.3);}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-dashboard">
+    <!-- Header -->
+    <div class="gradient-header">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+            <div>
+                <h1 class="mb-2 text-large-bold"><i class="bi bi-shield-fill-check me-3"></i>Administrator Command Center</h1>
+                <p class="mb-0 text-medium-opacity">Complete Hospital Management & Oversight Dashboard</p>
+                <p class="mb-0 mt-2 text-small-opacity">
+                    <i class="bi bi-person-badge me-2"></i>Welcome, {{ request.user.get_full_name|default:request.user.username }}
+                </p>
+            </div>
+            <div class="text-end">
+                <div class="text-date-large">{{ today|date:"l" }}</div>
+                <div class="text-date-medium">{{ today|date:"F d, Y" }}</div>
+                <div class="text-date-small">
+                    <i class="bi bi-clock"></i> 
+                    {% now "g:i A" %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Overall Statistics - Enhanced -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-3">
+            <div class="stat-card text-center">
+                <div class="stat-value" style="color: #3b82f6;">{{ total_patients|intcomma }}</div>
+                <div class="stat-label">Total Patients</div>
+                <a href="{% url 'hospital:patient_list' %}" class="btn btn-sm btn-outline-primary mt-2 w-100">
+                    <i class="bi bi-arrow-right"></i> Manage
+                </a>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card text-center">
+                <div class="stat-value" style="color: #10b981;">{{ active_encounters }}</div>
+                <div class="stat-label">Active Encounters</div>
+                <a href="{% url 'hospital:encounter_list' %}" class="btn btn-sm btn-outline-success mt-2 w-100">
+                    <i class="bi bi-arrow-right"></i> View
+                </a>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card text-center">
+                <div class="stat-value" style="color: #8b5cf6;">{{ total_staff }}</div>
+                <div class="stat-label">Total Staff</div>
+                <a href="{% url 'hospital:hr_worldclass_dashboard' %}" class="btn btn-sm btn-outline-purple mt-2 w-100">
+                    <i class="bi bi-arrow-right"></i> HR Portal
+                </a>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card text-center">
+                <div class="stat-value" style="color: #f59e0b;">{{ appointments_today }}</div>
+                <div class="stat-label">Appointments Today</div>
+                <a href="{% url 'hospital:frontdesk_appointment_list' %}" class="btn btn-sm btn-outline-warning mt-2 w-100">
+                    <i class="bi bi-arrow-right"></i> Schedule
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Procurement Approval Alerts (for Medical Directors/Admins) -->
+    {% if pending_admin_approvals or pending_accounts_approvals %}
+    <div class="row g-4 mb-4">
+        {% if pending_admin_approvals %}
+        <div class="col-md-6">
+            <div class="alert alert-warning alert-dismissible fade show" role="alert" style="border-left: 5px solid #ff9800; box-shadow: 0 2px 8px rgba(255,152,0,0.2); border-radius: 12px;">
+                <h5 class="alert-heading">
+                    <i class="bi bi-exclamation-triangle-fill"></i> Procurement Approval Needed
+                </h5>
+                <p class="mb-2">
+                    You have <strong style="font-size: 24px; color: #ff6b00;">{{ pending_admin_approvals }}</strong> procurement request(s) pending your approval.
+                </p>
+                {% if recent_procurement_requests %}
+                <div class="mt-3">
+                    <small><strong>Recent Requests:</strong></small>
+                    <ul class="mb-2" style="font-size: 13px;">
+                        {% for req in recent_procurement_requests|slice:":3" %}
+                        <li>{{ req.request_number }} - {{ req.requested_by_store.name|default:"N/A" }} - GHS {{ req.estimated_total|floatformat:2|intcomma }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+                <hr>
+                <div class="d-flex gap-2">
+                    <a href="{% url 'hospital:admin_approval_list' %}" class="btn btn-warning">
+                        <i class="bi bi-clipboard-check"></i> Review & Approve Now
+                    </a>
+                    <a href="{% url 'hospital:procurement_workflow_dashboard' %}" class="btn btn-outline-warning">
+                        <i class="bi bi-diagram-3"></i> View Workflow
+                    </a>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        </div>
+        {% endif %}
+        
+        {% if pending_accounts_approvals %}
+        <div class="col-md-6">
+            <div class="alert alert-success alert-dismissible fade show" role="alert" style="border-left: 5px solid #4caf50; box-shadow: 0 2px 8px rgba(76,175,80,0.2); border-radius: 12px;">
+                <h5 class="alert-heading">
+                    <i class="bi bi-check-circle-fill"></i> Accounts Approval Needed
+                </h5>
+                <p class="mb-2">
+                    You have <strong style="font-size: 24px; color: #2e7d32;">{{ pending_accounts_approvals }}</strong> procurement request(s) pending accounts approval.
+                </p>
+                <p class="mb-2"><small><i class="bi bi-magic"></i> <strong>Approving will auto-create:</strong> Accounts Payable, Expense Record, Payment Voucher</small></p>
+                <hr>
+                <a href="{% url 'hospital:accounts_approval_list' %}" class="btn btn-success">
+                    <i class="bi bi-check2-circle"></i> Review & Approve (Auto-Accounting!)
+                </a>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+    
+    <!-- Procurement Quick Access Card -->
+    {% if pending_admin_approvals or pending_accounts_approvals or perms.hospital.can_approve_procurement_admin or perms.hospital.can_approve_procurement_accounts %}
+    <div class="row g-4 mb-4">
+        <div class="col-md-12">
+            <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); border-radius: 16px; padding: 28px; box-shadow: 0 4px 16px rgba(245, 158, 11, 0.3); color: white;">
+                <h5 class="mb-4"><i class="bi bi-clipboard-check-fill me-2"></i>Procurement Approval Center</h5>
+                
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
+                            <div style="font-size: 36px; font-weight: 700;">
+                                <i class="bi bi-clipboard-check"></i>
+                            </div>
+                            <div style="margin-top: 12px;">
+                                <strong style="font-size: 18px;">Admin Approvals</strong>
+                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">Review pharmacy requests</p>
+                            </div>
+                            <a href="{% url 'hospital:admin_approval_list' %}" class="btn btn-light w-100 mt-3">
+                                <i class="bi bi-arrow-right-circle"></i> Review Requests
+                            </a>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-3">
+                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
+                            <div style="font-size: 36px; font-weight: 700;">
+                                <i class="bi bi-diagram-3"></i>
+                            </div>
+                            <div style="margin-top: 12px;">
+                                <strong style="font-size: 18px;">Workflow</strong>
+                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">Track all requests</p>
+                            </div>
+                            <a href="{% url 'hospital:procurement_workflow_dashboard' %}" class="btn btn-light w-100 mt-3">
+                                <i class="bi bi-arrow-right-circle"></i> View Workflow
+                            </a>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-3">
+                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
+                            <div style="font-size: 36px; font-weight: 700;">
+                                <i class="bi bi-capsule-pill"></i>
+                            </div>
+                            <div style="margin-top: 12px;">
+                                <strong style="font-size: 18px;">Pharmacy Requests</strong>
+                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">All procurement requests</p>
+                            </div>
+                            <a href="{% url 'hospital:procurement_approval_dashboard' %}" class="btn btn-light w-100 mt-3">
+                                <i class="bi bi-arrow-right-circle"></i> View All
+                            </a>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-3">
+                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
+                            <div style="font-size: 36px; font-weight: 700;">
+                                <i class="bi bi-list-check"></i>
+                            </div>
+                            <div style="margin-top: 12px;">
+                                <strong style="font-size: 18px;">All Requests</strong>
+                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">Complete list</p>
+                            </div>
+                            <a href="{% url 'hospital:procurement_requests_list' %}" class="btn btn-light w-100 mt-3">
+                                <i class="bi bi-arrow-right-circle"></i> View List
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Departmental Quick Access -->
+    <div style="background: white; border-radius: 16px; padding: 28px; margin-bottom: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+        <h5 class="mb-4"><i class="bi bi-grid-3x3-gap me-2"></i>Department Management</h5>
+        
+        <div class="row g-3 mb-3">
+            <div class="col-md-2"><a href="{% url 'hospital:patient_list' %}" class="btn btn-outline-primary w-100"><i class="bi bi-person me-2"></i>Patients</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:encounter_list' %}" class="btn btn-outline-info w-100"><i class="bi bi-hospital me-2"></i>Encounters</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:frontdesk_appointment_list' %}" class="btn btn-outline-success w-100"><i class="bi bi-calendar-event me-2"></i>Appointments</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:triage_queue' %}" class="btn btn-outline-danger w-100"><i class="bi bi-heart-pulse me-2"></i>Triage</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:admission_list' %}" class="btn btn-outline-warning w-100"><i class="bi bi-bed me-2"></i>Admissions</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:queue_display' %}" class="btn btn-outline-secondary w-100"><i class="bi bi-list-ol me-2"></i>Queues</a></div>
+        </div>
+        
+        <div class="row g-3 mb-3">
+            <div class="col-md-2"><a href="{% url 'hospital:accountant_dashboard' %}" class="btn btn-success w-100"><i class="bi bi-calculator me-2"></i>Accounting</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:hr_worldclass_dashboard' %}" class="btn btn-primary w-100"><i class="bi bi-people me-2"></i>HR</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:pharmacy_dashboard' %}" class="btn btn-warning w-100"><i class="bi bi-capsule me-2"></i>Pharmacy</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:laboratory_dashboard' %}" class="btn btn-danger w-100"><i class="bi bi-clipboard2-pulse me-2"></i>Laboratory</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:imaging_dashboard' %}" class="btn btn-info w-100"><i class="bi bi-x-ray me-2"></i>Imaging</a></div>
+            <div class="col-md-2"><a href="{% url 'hospital:blood_bank_dashboard' %}" class="btn btn-secondary w-100"><i class="bi bi-droplet-fill me-2"></i>Blood Bank</a></div>
+        </div>
+        
+        <div class="row g-3 mb-3">
+            <div class="col-md-3"><a href="{% url 'hospital:contracts_dashboard' %}" class="btn btn-outline-primary w-100"><i class="bi bi-file-text me-2"></i>Contracts</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:insurance_management_dashboard' %}" class="btn btn-outline-info w-100"><i class="bi bi-shield-check me-2"></i>Insurance</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:active_sessions' %}" class="btn btn-outline-warning w-100"><i class="bi bi-person-x me-2"></i>Active Sessions</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:user_management' %}" class="btn btn-outline-danger w-100"><i class="bi bi-people me-2"></i>User Management</a></div>
+            {% if user|is_it_or_admin %}
+            <div class="col-md-3"><a href="{% url 'hospital:it_operations_dashboard' %}" class="btn btn-outline-primary w-100"><i class="bi bi-motherboard me-2"></i>IT Ops Center</a></div>
+            {% endif %}
+            <div class="col-md-3"><a href="{% url 'hospital:system_health' %}" class="btn btn-outline-info w-100"><i class="bi bi-heart-pulse me-2"></i>System Health</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:audit_logs' %}" class="btn btn-outline-secondary w-100"><i class="bi bi-shield-check me-2"></i>Audit Logs</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:backup_list' %}" class="btn btn-outline-success w-100"><i class="bi bi-database me-2"></i>Backups</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:data_validation' %}" class="btn btn-outline-warning w-100"><i class="bi bi-shield-exclamation me-2"></i>Data Validation</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:performance_dashboard' %}" class="btn btn-outline-info w-100"><i class="bi bi-speedometer2 me-2"></i>Performance</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:notifications_list' %}" class="btn btn-outline-primary w-100"><i class="bi bi-bell me-2"></i>Notifications</a></div>
+            <div class="col-md-3"><a href="/admin/" class="btn btn-outline-danger w-100"><i class="bi bi-gear me-2"></i>Admin Panel</a></div>
+        </div>
+        
+    </div>
+    
+    <!-- Bulk SMS Communication Section -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-12">
+            <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 16px; padding: 28px; box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3); color: white;">
+                <h5 class="mb-4"><i class="bi bi-chat-dots-fill me-2"></i>Bulk SMS Communication</h5>
+                
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
+                            <div style="font-size: 36px; font-weight: 700;">
+                                <i class="bi bi-send-fill"></i>
+                            </div>
+                            <div style="margin-top: 12px;">
+                                <strong style="font-size: 18px;">Bulk SMS Dashboard</strong>
+                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">Send messages to multiple recipients</p>
+                            </div>
+                            <a href="{% url 'hospital:bulk_sms_dashboard' %}" class="btn btn-light w-100 mt-3">
+                                <i class="bi bi-arrow-right-circle"></i> Open Dashboard
+                            </a>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
+                            <div style="font-size: 36px; font-weight: 700;">
+                                <i class="bi bi-bell-fill"></i>
+                            </div>
+                            <div style="margin-top: 12px;">
+                                <strong style="font-size: 18px;">SMS Notifications</strong>
+                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">View SMS history and logs</p>
+                            </div>
+                            <a href="{% url 'hospital:sms_notifications' %}" class="btn btn-light w-100 mt-3">
+                                <i class="bi bi-list-ul"></i> View Logs
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row g-3 mt-3">
+                    <div class="col-md-6">
+                        <div style="background: rgba(255,255,255,0.1); border-radius: 10px; padding: 16px; backdrop-filter: blur(10px);">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <div style="font-size: 13px; opacity: 0.9;">Quick Access</div>
+                                    <div style="font-size: 16px; font-weight: 700;">
+                                        <i class="bi bi-lightning-charge-fill me-2"></i>Send to All Patients
+                                    </div>
+                                </div>
+                                <a href="{% url 'hospital:bulk_sms_dashboard' %}?type=patient&has_phone=1" class="btn btn-sm btn-light" title="Go to patient SMS dashboard" aria-label="Go to patient SMS dashboard">
+                                    <i class="bi bi-arrow-right" aria-hidden="true"></i>
+                                    <span class="visually-hidden">Go to patient SMS dashboard</span>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div style="background: rgba(255,255,255,0.1); border-radius: 10px; padding: 16px; backdrop-filter: blur(10px);">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <div style="font-size: 13px; opacity: 0.9;">Quick Access</div>
+                                    <div style="font-size: 16px; font-weight: 700;">
+                                        <i class="bi bi-people-fill me-2"></i>Send to All Staff
+                                    </div>
+                                </div>
+                                <a href="{% url 'hospital:bulk_sms_dashboard' %}?type=staff&has_phone=1" class="btn btn-sm btn-light" title="Go to staff SMS dashboard" aria-label="Go to staff SMS dashboard">
+                                    <i class="bi bi-arrow-right" aria-hidden="true"></i>
+                                    <span class="visually-hidden">Go to staff SMS dashboard</span>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row g-4">
+        <!-- Financial Overview -->
+        <div class="col-md-6">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-3"><i class="bi bi-cash-coin me-2"></i>Financial Overview</h5>
+                <div style="padding: 20px; background: linear-gradient(135deg, #f0fdf4, white); border-radius: 12px; margin-bottom: 16px;">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span style="color: #6b7280;">Revenue Today</span>
+                        <strong style="font-size: 20px; color: #10b981;">GHS {{ total_revenue_today|floatformat:2|intcomma }}</strong>
+                    </div>
+                </div>
+                <div style="padding: 20px; background: linear-gradient(135deg, #eff6ff, white); border-radius: 12px; margin-bottom: 16px;">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span style="color: #6b7280;">Revenue This Month</span>
+                        <strong style="font-size: 20px; color: #3b82f6;">GHS {{ total_revenue_month|floatformat:2|intcomma }}</strong>
+                    </div>
+                </div>
+                <div style="padding: 20px; background: linear-gradient(135deg, #fef3c7, white); border-radius: 12px;">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span style="color: #6b7280;">Outstanding</span>
+                        <strong style="font-size: 20px; color: #f59e0b;">GHS {{ outstanding_invoices|floatformat:2|intcomma }}</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- HR Overview -->
+        <div class="col-md-6">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+                <h5 class="mb-3"><i class="bi bi-people me-2"></i>HR Overview</h5>
+                <div style="padding: 20px; background: linear-gradient(135deg, #f5f3ff, white); border-radius: 12px; margin-bottom: 16px;">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span style="color: #6b7280;">Total Staff</span>
+                        <strong style="font-size: 20px; color: #8b5cf6;">{{ total_staff }}</strong>
+                    </div>
+                </div>
+                <div style="padding: 20px; background: linear-gradient(135deg, #fffbeb, white); border-radius: 12px; margin-bottom: 16px;">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span style="color: #6b7280;">Staff on Leave</span>
+                        <strong style="font-size: 20px; color: #f59e0b;">{{ staff_on_leave }}</strong>
+                    </div>
+                </div>
+                <div style="padding: 20px; background: linear-gradient(135deg, #fef2f2, white); border-radius: 12px;">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span style="color: #6b7280;">Pending Leave Requests</span>
+                        <strong style="font-size: 20px; color: #ef4444;">{{ pending_leaves }}</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Biometric Security Section -->
+    <div class="row g-4 mt-4">
+        <div class="col-md-12">
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 16px; padding: 28px; box-shadow: 0 4px 16px rgba(102, 126, 234, 0.3); color: white;">
+                <h5 class="mb-4"><i class="bi bi-fingerprint me-2"></i>Biometric Security System</h5>
+                
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
+                            <div style="font-size: 36px; font-weight: 700;">
+                                <i class="bi bi-people-fill"></i>
+                            </div>
+                            <div style="margin-top: 12px;">
+                                <strong style="font-size: 18px;">Enrollment Status</strong>
+                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">Manage staff biometric enrollment</p>
+                            </div>
+                            <a href="/hms/biometric/enrollment/" class="btn btn-light w-100 mt-3">
+                                <i class="bi bi-arrow-right-circle"></i> Enroll Staff
+                            </a>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-3">
+                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
+                            <div style="font-size: 36px; font-weight: 700;">
+                                <i class="bi bi-clipboard-data"></i>
+                            </div>
+                            <div style="margin-top: 12px;">
+                                <strong style="font-size: 18px;">Audit Logs</strong>
+                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">Authentication history</p>
+                            </div>
+                            <a href="/admin/hospital/biometricauthenticationlog/" class="btn btn-light w-100 mt-3">
+                                <i class="bi bi-list-ul"></i> View Logs
+                            </a>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-3">
+                        <div style="background: rgba(255,255,255,0.15); border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);">
+                            <div style="font-size: 36px; font-weight: 700;">
+                                <i class="bi bi-gear-fill"></i>
+                            </div>
+                            <div style="margin-top: 12px;">
+                                <strong style="font-size: 18px;">System Settings</strong>
+                                <p class="mb-0" style="opacity: 0.9; font-size: 13px;">Configure biometric system</p>
+                            </div>
+                            <a href="/admin/hospital/biometricsystemsettings/" class="btn btn-light w-100 mt-3">
+                                <i class="bi bi-sliders"></i> Settings
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row g-3 mt-3">
+                    <div class="col-md-4">
+                        <div style="background: rgba(255,255,255,0.1); border-radius: 10px; padding: 16px; backdrop-filter: blur(10px);">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <div style="font-size: 13px; opacity: 0.9;">Face Recognition</div>
+                                    <div style="font-size: 20px; font-weight: 700;"><i class="bi bi-camera-fill me-2"></i>Active</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-4">
+                        <div style="background: rgba(255,255,255,0.1); border-radius: 10px; padding: 16px; backdrop-filter: blur(10px);">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <div style="font-size: 13px; opacity: 0.9;">Fingerprint</div>
+                                    <div style="font-size: 20px; font-weight: 700;"><i class="bi bi-fingerprint me-2"></i>Active</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-4">
+                        <div style="background: rgba(255,255,255,0.1); border-radius: 10px; padding: 16px; backdrop-filter: blur(10px);">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <div style="font-size: 13px; opacity: 0.9;">Security Alerts</div>
+                                    <div style="font-size: 20px; font-weight: 700;"><i class="bi bi-shield-exclamation me-2"></i>0</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+

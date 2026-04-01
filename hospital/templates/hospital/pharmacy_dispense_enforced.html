@@ -2,9 +2,39 @@
 {% load static %}
 {% load math_filters %}
 
-{% block title %}{{ title }}{% endblock %}
+{% block title %}{{ title }} · Pharmacy{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'hospital/css/pharmacy_ui.css' %}">
+<style>
+    .rx-pharmacy-page, .pharmacy-header {
+        --pharmacy-primary: #10b981;
+        --pharmacy-success: #059669;
+        --pharmacy-warning: #f59e0b;
+        --pharmacy-danger: #ef4444;
+        --pharmacy-info: #3b82f6;
+        --dark: #0f172a;
+        --gray: #64748b;
+        --light: #f1f5f9;
+    }
+</style>
+{% endblock %}
 
 {% block content %}
+<div class="rx-pharmacy-page pharmacy-ui">
+    <div class="pharmacy-header mb-3">
+        <div class="row align-items-center">
+            <div class="col-lg-8">
+                <h1 class="mb-1" style="font-size: clamp(1.1rem, 2.2vw, 1.5rem); font-weight: 800;">
+                    <i class="bi bi-capsule me-2"></i>Dispense · {{ drug.name|truncatewords:8 }}
+                </h1>
+                <p class="mb-0" style="font-size: 0.9rem; opacity: 0.92;">
+                    <a href="{% url 'hospital:pharmacy_dashboard' %}" class="text-white text-decoration-underline fw-semibold">Pharmacy home</a>
+                    · <a href="{% url 'hospital:pharmacy_pending_dispensing' %}" class="text-white text-decoration-underline">Queue</a>
+                </p>
+            </div>
+        </div>
+    </div>
 <div class="container-fluid">
     <div class="row mb-4">
         <div class="col-md-12">
@@ -32,6 +62,9 @@
                             <p class="mb-1"><strong>Name:</strong> {{ patient.full_name }}</p>
                             <p class="mb-1"><strong>MRN:</strong> {{ patient.mrn }}</p>
                             <p class="mb-1"><strong>Phone:</strong> {{ patient.phone_number|default:"—" }}</p>
+                            {% if payer_info.is_insurance_or_corporate and payer_info.name %}
+                            <p class="mb-1"><strong>Billing / Company:</strong> <span class="text-primary">{{ payer_info.name }}</span> <small class="text-muted">(bill goes to this payer)</small></p>
+                            {% endif %}
                         </div>
                         <div class="col-md-6">
                             <h6>Medication Details</h6>
@@ -70,13 +103,13 @@
 
             <!-- Payment Status -->
             <div class="card shadow-sm mb-4">
-                <div class="card-header {% if payment_status.paid %}bg-success{% else %}bg-warning{% endif %} text-white">
+                <div class="card-header {% if can_dispense %}bg-success{% else %}bg-warning{% endif %} text-white">
                     <h5 class="mb-0">
                         <i class="bi bi-credit-card"></i> Payment Status
                     </h5>
                 </div>
                 <div class="card-body">
-                    {% if payment_status.paid %}
+                    {% if can_dispense %}
                         {% if is_already_dispensed %}
                         <div class="alert alert-info">
                             <h5><i class="bi bi-check2-all"></i> Medication Already Dispensed</h5>
@@ -86,16 +119,25 @@
                             <p class="mb-1"><strong>Dispensed By:</strong> {{ dispensing_record.dispensed_by.user.get_full_name|default:"—" }}</p>
                             <p class="mb-0 text-muted"><small>The record has been saved and moved to the Dispensed Records table. No further action is required.</small></p>
                         </div>
-                        <a href="{% url 'hospital:pharmacy_pending_dispensing' %}" class="btn btn-outline-secondary">
-                            <i class="bi bi-arrow-left"></i> Back to Dispensing Queue
-                        </a>
+                        <div class="d-grid gap-2 d-md-flex">
+                            <a href="{% url 'hospital:pharmacy_label_print' prescription.id %}?auto_print=1" class="btn btn-primary" target="_blank">
+                                <i class="bi bi-printer"></i> Print Label (Brother QL-820NWB)
+                            </a>
+                            <a href="{% url 'hospital:pharmacy_pending_dispensing' %}" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-left"></i> Back to Dispensing Queue
+                            </a>
+                        </div>
                         {% else %}
                         <div class="alert alert-success">
-                            <h5><i class="bi bi-check-circle"></i> Payment Verified</h5>
+                            <h5><i class="bi bi-check-circle"></i> {% if payment_status.paid %}Payment Verified{% else %}Approved for Dispensing (Billed to Company){% endif %}</h5>
+                            {% if payment_status.paid and payment_status.receipt %}
                             <p class="mb-1"><strong>Receipt:</strong> {{ payment_status.receipt.receipt_number }}</p>
                             <p class="mb-1"><strong>Amount:</strong> GHS {{ payment_status.receipt.amount }}</p>
                             <p class="mb-1"><strong>Method:</strong> {{ payment_status.receipt.get_payment_method_display }}</p>
                             <p class="mb-0"><strong>Date:</strong> {{ payment_status.receipt.created|date:"M d, Y H:i" }}</p>
+                            {% else %}
+                            <p class="mb-0">Corporate/Insurance – bill sent to payer. You may dispense.</p>
+                            {% endif %}
                         </div>
 
                         <!-- Dispensing Form -->
@@ -112,7 +154,7 @@
                                            value="{{ prescription.quantity }}" min="1" max="{{ prescription.quantity }}" required
                                            placeholder="Enter quantity to dispense"
                                            title="Quantity to dispense"
-                                           aria-label="Quantity to dispense">
+                                           aria-label="Quantity to dispense" title="Enter number" placeholder="Enter number">
                                 </label>
                             </div>
                             
@@ -138,10 +180,130 @@
                                 <textarea class="form-control" name="notes" rows="2" placeholder="Any special notes or observations"></textarea>
                             </div>
                             
-                            <button type="submit" class="btn btn-success btn-lg">
-                                <i class="bi bi-capsule"></i> Dispense Medication
-                            </button>
+                            <!-- Consumables Section -->
+                            <div class="mb-3">
+                                <label class="form-label">
+                                    <i class="bi bi-box-seam"></i> Add Clinical Consumables (Optional)
+                                </label>
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        <div id="consumablesContainer">
+                                            <div class="mb-2">
+                                                <div style="position: relative;">
+                                                    <input type="text" class="form-control consumable-search-input" name="consumable_search_0" placeholder="Search consumables..." autocomplete="off" data-index="0">
+                                                    <input type="hidden" class="consumable-code-input" name="consumable_code_0" value="">
+                                                    <input type="hidden" class="consumable-price-input" name="consumable_price_0" value="">
+                                                </div>
+                                            </div>
+                                            <div class="input-group mb-2">
+                                                <input type="number" class="form-control consumable-qty" name="consumable_qty_0" placeholder="Quantity" min="1" value="1">
+                                                <button type="button" class="btn btn-outline-danger remove-consumable" style="display: none;">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <button type="button" class="btn btn-sm btn-outline-primary" id="addConsumable">
+                                            <i class="bi bi-plus-circle"></i> Add Another Consumable
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="d-grid gap-2 d-md-flex">
+                                <button type="submit" class="btn btn-success btn-lg">
+                                    <i class="bi bi-capsule"></i> Dispense Medication
+                                </button>
+                                <a href="{% url 'hospital:pharmacy_label_print' prescription.id %}" class="btn btn-outline-primary btn-lg" target="_blank">
+                                    <i class="bi bi-printer"></i> Preview Label
+                                </a>
+                            </div>
                         </form>
+                        
+                        <script>
+                        document.addEventListener('DOMContentLoaded', function() {
+                            let consumableIndex = 1;
+                            const container = document.getElementById('consumablesContainer');
+                            const addBtn = document.getElementById('addConsumable');
+                            
+                            addBtn.addEventListener('click', function() {
+                                const newItem = document.createElement('div');
+                                newItem.className = 'consumable-item mb-2';
+                                newItem.innerHTML = `
+                                    <div class="mb-2" style="position: relative;">
+                                        <input type="text" class="form-control consumable-search-input" name="consumable_search_${consumableIndex}" placeholder="Search consumables..." autocomplete="off" data-index="${consumableIndex}">
+                                        <input type="hidden" class="consumable-code-input" name="consumable_code_${consumableIndex}" value="">
+                                        <input type="hidden" class="consumable-price-input" name="consumable_price_${consumableIndex}" value="">
+                                    </div>
+                                    <div class="input-group mb-2">
+                                        <input type="number" class="form-control consumable-qty" name="consumable_qty_${consumableIndex}" placeholder="Quantity" min="1" value="1">
+                                        <button type="button" class="btn btn-outline-danger remove-consumable">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
+                                `;
+                                container.appendChild(newItem);
+                                
+                                // Initialize autocomplete for the new consumable search field
+                                const newSearchInput = newItem.querySelector('.consumable-search-input');
+                                if (newSearchInput && typeof AutocompleteSearch !== 'undefined') {
+                                    new AutocompleteSearch(newSearchInput, {
+                                        apiUrl: '{% url "hospital:api_autocomplete_consumables" %}',
+                                        minChars: 2,
+                                        delay: 300,
+                                        maxResults: 20,
+                                        displayField: 'display',
+                                        valueField: 'code',
+                                        resultsKey: 'results',
+                                        subtextField: 'subtext',
+                                        onSelect: function(item, input) {
+                                            input.value = item.display;
+                                            const index = input.dataset.index;
+                                            const codeInput = input.parentElement.querySelector('.consumable-code-input');
+                                            const priceInput = input.parentElement.querySelector('.consumable-price-input');
+                                            if (codeInput) codeInput.value = item.code;
+                                            if (priceInput) priceInput.value = item.unit_cost || '0';
+                                        }
+                                    });
+                                }
+                                consumableIndex++;
+                                
+                                // Show remove buttons
+                                document.querySelectorAll('.remove-consumable').forEach(btn => {
+                                    btn.style.display = 'block';
+                                });
+                            });
+                            
+                            container.addEventListener('click', function(e) {
+                                if (e.target.closest('.remove-consumable')) {
+                                    e.target.closest('.consumable-item').remove();
+                                }
+                            });
+                            
+                            // Initialize autocomplete for existing consumable search fields
+                            document.querySelectorAll('.consumable-search-input').forEach(input => {
+                                if (typeof AutocompleteSearch !== 'undefined') {
+                                    new AutocompleteSearch(input, {
+                                        apiUrl: '{% url "hospital:api_autocomplete_consumables" %}',
+                                        minChars: 2,
+                                        delay: 300,
+                                        maxResults: 20,
+                                        displayField: 'display',
+                                        valueField: 'code',
+                                        resultsKey: 'results',
+                                        subtextField: 'subtext',
+                                        onSelect: function(item, input) {
+                                            input.value = item.display;
+                                            const index = input.dataset.index;
+                                            const codeInput = input.parentElement.querySelector('.consumable-code-input');
+                                            const priceInput = input.parentElement.querySelector('.consumable-price-input');
+                                            if (codeInput) codeInput.value = item.code;
+                                            if (priceInput) priceInput.value = item.unit_cost || '0';
+                                        }
+                                    });
+                                }
+                            });
+                        });
+                        </script>
                         {% endif %}
                     {% else %}
                         <div class="alert alert-danger">
@@ -158,6 +320,18 @@
                                 <li>Pharmacist verifies payment and dispenses</li>
                             </ol>
                         </div>
+
+                        {% if not is_already_dispensed %}
+                        <form method="post" action="{% url 'hospital:send_prescription_to_payer' prescription.id %}" class="mt-3 mb-3">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="bi bi-send-fill"></i> Send to payer
+                            </button>
+                            <p class="text-muted small mt-2 mb-0">
+                                Creates or updates the bill for <strong>this medication only</strong> (cashier for cash patients, or company/insurer when applicable). Other prescriptions on the same order are unchanged.
+                            </p>
+                        </form>
+                        {% endif %}
 
                         <!-- Cashier Payment Info Card -->
                         <div class="card border-danger mt-4">
@@ -240,7 +414,7 @@
                         </div>
                         
                         <div class="d-flex align-items-center mb-2">
-                            {% if payment_status.paid %}
+                            {% if can_dispense %}
                                 <i class="bi bi-check-circle-fill text-success me-2"></i>
                             {% else %}
                                 <i class="bi bi-arrow-right-circle text-warning me-2"></i>
@@ -292,6 +466,7 @@
             </div>
         </div>
     </div>
+</div>
 </div>
 {% endblock %}
 

@@ -1,0 +1,182 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Create New Task - HMS{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-plus-circle me-2"></i>Create New Marketing Task
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% if objectives %}
+                    <form method="post" id="taskForm" data-no-autosave>
+                        {% csrf_token %}
+                        <input type="hidden" name="submission_token" value="{{ request.session.session_key }}{% now 'U' %}">
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Objective *</label>
+                            <select name="objective" class="form-select" required>
+                                <option value="">Select an objective...</option>
+                                {% for objective in objectives %}
+                                <option value="{{ objective.id }}">
+                                    {{ objective.title }} 
+                                    {% if objective.status %}({{ objective.get_status_display }}){% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <small class="form-text text-muted">Select the marketing objective this task belongs to</small>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Task Title *</label>
+                            <input type="text" class="form-control" name="title" required placeholder="Enter task title">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Description</label>
+                            <textarea class="form-control" name="description" rows="4" placeholder="Describe the task details..."></textarea>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Task Type</label>
+                                <select class="form-select" name="task_type">
+                                    <option value="content_creation">Content Creation</option>
+                                    <option value="campaign_setup">Campaign Setup</option>
+                                    <option value="event_planning">Event Planning</option>
+                                    <option value="partnership_outreach">Partnership Outreach</option>
+                                    <option value="social_media">Social Media Management</option>
+                                    <option value="seo_optimization">SEO Optimization</option>
+                                    <option value="advertising">Advertising & Promotion</option>
+                                    <option value="analytics_review">Analytics & Reporting</option>
+                                    <option value="other">Other</option>
+                                </select>
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Priority</label>
+                                <select class="form-select" name="priority">
+                                    <option value="low">Low</option>
+                                    <option value="medium" selected>Medium</option>
+                                    <option value="high">High</option>
+                                    <option value="critical">Critical</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Due Date *</label>
+                                <input type="date" class="form-control" name="due_date" required>
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Assigned To</label>
+                                <select class="form-select" name="assigned_to">
+                                    <option value="">Unassigned</option>
+                                    {% for user in staff_users %}
+                                    <option value="{{ user.id }}">
+                                        {{ user.get_full_name|default:user.username }}
+                                        {% if user.email %} ({{ user.email }}){% endif %}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Estimated Hours</label>
+                                <input type="number" class="form-control" name="estimated_hours" step="0.5" min="0" placeholder="e.g., 8">
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Budget Allocated (GHS)</label>
+                                <input type="number" class="form-control" name="budget_allocated" step="0.01" min="0" value="0" placeholder="0.00">
+                            </div>
+                        </div>
+                        
+                        <div class="d-flex justify-content-between mt-4">
+                            <a href="{% url 'hospital:marketing_tasks_list' %}" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-left me-1"></i>Cancel
+                            </a>
+                            <button type="submit" class="btn btn-success" id="submitBtn">
+                                <i class="bi bi-check-circle me-1"></i>Create Task
+                            </button>
+                        </div>
+                    </form>
+                    
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('taskForm');
+    const submitBtn = document.getElementById('submitBtn');
+    let isSubmitting = false;
+    
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            if (isSubmitting) {
+                e.preventDefault();
+                return false;
+            }
+            isSubmitting = true;
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Creating...';
+        });
+    }
+});
+</script>
+                    {% else %}
+                    <div class="alert alert-warning">
+                        <h5 class="alert-heading">
+                            <i class="bi bi-exclamation-triangle me-2"></i>No Objectives Found
+                        </h5>
+                        <p>You need to create at least one marketing objective before you can create tasks.</p>
+                        <hr>
+                        <div class="d-flex gap-2">
+                            <a href="{% url 'hospital:marketing_objectives_list' %}" class="btn btn-primary">
+                                <i class="bi bi-bullseye me-1"></i>Go to Objectives
+                            </a>
+                            <a href="{% url 'hospital:marketing_dashboard' %}" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-left me-1"></i>Back to Dashboard
+                            </a>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <!-- Help Card -->
+            <div class="card mt-3">
+                <div class="card-body">
+                    <h6 class="card-title">
+                        <i class="bi bi-info-circle me-2"></i>Tips for Creating Tasks
+                    </h6>
+                    <ul class="mb-0 small">
+                        <li>Select the appropriate objective to track progress effectively</li>
+                        <li>Set realistic due dates to avoid overdue tasks</li>
+                        <li>Assign tasks to team members for better accountability</li>
+                        <li>Use priority levels to help prioritize work</li>
+                        <li>Allocate budget if the task requires spending</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+

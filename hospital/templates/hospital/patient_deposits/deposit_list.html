@@ -1,0 +1,160 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Patient Deposits - HMS{% endblock %}
+{% block page_title %}Patient Deposits{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header Actions -->
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <a href="{% url 'hospital:record_patient_deposit' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle me-1"></i>Record New Deposit
+            </a>
+        </div>
+        <div class="col-md-6">
+            <form method="get" class="d-flex">
+                <input type="text" class="form-control me-2" name="search" 
+                       value="{{ search_query }}" placeholder="Search by deposit number, patient name, or MRN...">
+                <select class="form-select me-2" name="status" style="max-width: 200px;">
+                    <option value="">All Status</option>
+                    <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Active</option>
+                    <option value="fully_used" {% if status_filter == 'fully_used' %}selected{% endif %}>Fully Used</option>
+                    <option value="refunded" {% if status_filter == 'refunded' %}selected{% endif %}>Refunded</option>
+                    <option value="cancelled" {% if status_filter == 'cancelled' %}selected{% endif %}>Cancelled</option>
+                </select>
+                <button type="submit" class="btn btn-outline-secondary">
+                    <i class="bi bi-search"></i>
+                </button>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Statistics -->
+    {% if total_deposits %}
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card bg-primary text-white">
+                <div class="card-body">
+                    <h6>Total Deposited</h6>
+                    <h3>GHS {{ total_deposits.total_amount|default:0|floatformat:2|intcomma }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card bg-success text-white">
+                <div class="card-body">
+                    <h6>Available Balance</h6>
+                    <h3>GHS {{ total_deposits.total_available|default:0|floatformat:2|intcomma }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card bg-info text-white">
+                <div class="card-body">
+                    <h6>Total Used</h6>
+                    <h3>GHS {{ total_deposits.total_used|default:0|floatformat:2|intcomma }}</h3>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Deposits Table -->
+    <div class="card shadow-sm">
+        <div class="card-body">
+            {% if deposits %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Deposit Number</th>
+                            <th>Patient</th>
+                            <th>Date</th>
+                            <th>Amount</th>
+                            <th>Available</th>
+                            <th>Used</th>
+                            <th>Status</th>
+                            <th>Payment Method</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for deposit in deposits %}
+                        <tr>
+                            <td><strong>{{ deposit.deposit_number }}</strong></td>
+                            <td>
+                                <a href="{% url 'hospital:patient_deposit_history' deposit.patient.pk %}">
+                                    {{ deposit.patient.full_name }}
+                                </a>
+                                <br><small class="text-muted">{{ deposit.patient.mrn }}</small>
+                            </td>
+                            <td>{{ deposit.deposit_date|date:"M d, Y" }}</td>
+                            <td><strong>GHS {{ deposit.deposit_amount|floatformat:2|intcomma }}</strong></td>
+                            <td>
+                                <span class="badge bg-success">GHS {{ deposit.display_available_balance|floatformat:2|intcomma }}</span>
+                            </td>
+                            <td>GHS {{ deposit.used_amount|floatformat:2|intcomma }}</td>
+                            <td>
+                                {% if deposit.status == 'active' %}
+                                    <span class="badge bg-success">Active</span>
+                                {% elif deposit.status == 'fully_used' %}
+                                    <span class="badge bg-info">Fully Used</span>
+                                {% elif deposit.status == 'refunded' %}
+                                    <span class="badge bg-warning">Refunded</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">Cancelled</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ deposit.get_payment_method_display }}</td>
+                            <td>
+                                <a href="{% url 'hospital:patient_deposit_detail' deposit.pk %}" 
+                                   class="btn btn-sm btn-outline-primary" title="View Details">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination -->
+            {% if deposits.has_other_pages %}
+            <nav aria-label="Deposit pagination">
+                <ul class="pagination justify-content-center">
+                    {% if deposits.has_previous %}
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ deposits.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}">Previous</a>
+                        </li>
+                    {% endif %}
+                    
+                    <li class="page-item active">
+                        <span class="page-link">Page {{ deposits.number }} of {{ deposits.paginator.num_pages }}</span>
+                    </li>
+                    
+                    {% if deposits.has_next %}
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ deposits.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}">Next</a>
+                        </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>No deposits found.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+

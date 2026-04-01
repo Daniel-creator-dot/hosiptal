@@ -75,7 +75,7 @@ class Command(BaseCommand):
             if invoice.payer:
                 if invoice.payer.payer_type == 'corporate':
                     corporate_outstanding += balance
-                elif invoice.payer.payer_type == 'insurance':
+                elif invoice.payer.payer_type in ('insurance', 'private', 'nhis'):
                     insurance_outstanding += balance
                 else:
                     cash_outstanding += balance

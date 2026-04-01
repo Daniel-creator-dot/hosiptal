@@ -1,0 +1,486 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}{% if title and title|lower != 'invalid' %}{{ title }}{% else %}Bills{% endif %} - HMS{% endblock %}
+{% block page_title %}{% if title and title|lower != 'invalid' %}{{ title }}{% else %}Bills{% endif %}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">{% if title and title|lower != 'invalid' %}{{ title }}{% else %}All Bills{% endif %}</h5>
+            {% if showing_invoices_fallback %}
+            <div class="d-flex align-items-center gap-2 me-2">
+                <div class="btn-group btn-group-sm" role="group">
+                    <a href="?view=patient{% if search %}&search={{ search }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" class="btn btn-{% if view_mode == 'patient' %}primary{% else %}outline-secondary{% endif %}">By Patient (Combined)</a>
+                    <a href="?view=invoice{% if search %}&search={{ search }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" class="btn btn-{% if view_mode == 'invoice' %}primary{% else %}outline-secondary{% endif %}">By Invoice</a>
+                </div>
+                <div class="alert alert-info py-2 px-3 mb-0">
+                    <small><i class="bi bi-info-circle"></i> Showing Invoices (no Bill records). Bills are created from Patient Flow workflow.</small>
+                </div>
+            </div>
+            {% endif %}
+            <div class="d-flex flex-wrap gap-2">
+                <a href="{% url 'hospital:bill_summary' %}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-bar-chart"></i> Bill summary
+                </a>
+                <a href="{% url 'hospital:claims_bills_hub' %}" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Claims Bills Hub
+                </a>
+            </div>
+        </div>
+        <div class="card-body">
+            <!-- Filters -->
+            <form method="get" class="mb-3">
+                {% if view_mode %}<input type="hidden" name="view" value="{{ view_mode }}">{% endif %}
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <input type="text" name="search" class="form-control" placeholder="Search bill/patient..." value="{% if search and search|lower != 'invalid' %}{{ search }}{% endif %}">
+                    </div>
+                    <div class="col-md-2">
+                        <select name="status" class="form-select">
+                            <option value="">All Status</option>
+                            <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Draft</option>
+                            <option value="issued" {% if status_filter == 'issued' %}selected{% endif %}>Issued</option>
+                            <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid</option>
+                            <option value="partially_paid" {% if status_filter == 'partially_paid' %}selected{% endif %}>Partially Paid</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <select name="bill_type" class="form-select">
+                            <option value="">All Types</option>
+                            <option value="corporate" {% if bill_type_filter == 'corporate' %}selected{% endif %}>Corporate</option>
+                            <option value="cash" {% if bill_type_filter == 'cash' %}selected{% endif %}>Cash</option>
+                            <option value="insurance" {% if bill_type_filter == 'insurance' %}selected{% endif %}>Insurance</option>
+                            <option value="mixed" {% if bill_type_filter == 'mixed' %}selected{% endif %}>Mixed</option>
+                        </select>
+                    </div>
+                    {% if bill_type_filter == 'corporate' %}
+                    <div class="col-md-2">
+                        <select name="payer" class="form-select">
+                            <option value="">All corporate payers</option>
+                            {% for p in corporate_payers %}
+                            <option value="{{ p.id }}" {% if payer_filter and payer_filter == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% elif insurance_payers %}
+                    <div class="col-md-2">
+                        <select name="payer" class="form-select">
+                            <option value="">All insurance payers</option>
+                            {% for p in insurance_payers %}
+                            <option value="{{ p.id }}" {% if payer_filter and payer_filter == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endif %}
+                    <div class="col-md-2">
+                        <input type="date" name="date_from" class="form-control" value="{% if date_from and date_from|lower != 'invalid' %}{{ date_from }}{% endif %}" placeholder="From">
+                    </div>
+                    <div class="col-md-2">
+                        <input type="date" name="date_to" class="form-control" value="{% if date_to and date_to|lower != 'invalid' %}{{ date_to }}{% endif %}" placeholder="To">
+                    </div>
+                    <div class="col-md-1">
+                        <button type="submit" class="btn btn-primary w-100">Filter</button>
+                    </div>
+                </div>
+            </form>
+
+            {% if bills_analytics %}
+            {{ bills_analytics|json_script:"bills-analytics-data" }}
+            <div class="mb-4">
+                <h6 class="text-muted text-uppercase small fw-semibold mb-3">
+                    <i class="bi bi-graph-up-arrow me-1"></i> Analytics <span class="fw-normal">(current filters)</span>
+                </h6>
+                <div class="row g-3 mb-3">
+                    <div class="col-6 col-md-4 col-xl-2">
+                        <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
+                            <div class="small text-muted">{% if bills_analytics.mode == 'invoice' %}Invoices{% else %}Bills{% endif %}</div>
+                            <div class="fs-5 fw-bold text-primary">{{ bills_analytics.summary.invoice_or_bill_count|intcomma }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-4 col-xl-2">
+                        <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
+                            <div class="small text-muted">Patients</div>
+                            <div class="fs-5 fw-bold text-dark">{{ bills_analytics.summary.patient_count|intcomma }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-4 col-xl-2">
+                        <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
+                            <div class="small text-muted">Total billed</div>
+                            <div class="fs-6 fw-bold text-success">GHS {{ bills_analytics.summary.total_billed|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                    {% if bills_analytics.mode == 'invoice' %}
+                    <div class="col-6 col-md-4 col-xl-2">
+                        <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
+                            <div class="small text-muted">Collected (paid)</div>
+                            <div class="fs-6 fw-bold text-info">GHS {{ bills_analytics.summary.total_paid|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-4 col-xl-2">
+                        <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
+                            <div class="small text-muted">Balance due</div>
+                            <div class="fs-6 fw-bold {% if bills_analytics.summary.total_balance < 0 %}text-info{% else %}text-warning{% endif %}">GHS {{ bills_analytics.summary.total_balance|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-4 col-xl-2">
+                        <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
+                            <div class="small text-muted">Deposits available</div>
+                            <div class="fs-6 fw-bold text-success">GHS {{ bills_analytics.summary.deposits_available|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                    {% if bills_analytics.summary.negative_balance_invoices %}
+                    <div class="col-12">
+                        <div class="alert alert-light border py-2 mb-0 small">
+                            <i class="bi bi-info-circle text-info me-1"></i>
+                            {{ bills_analytics.summary.negative_balance_invoices }} invoice(s) with negative balance (credit / overpayment) in this result set.
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% else %}
+                    <div class="col-6 col-md-4 col-xl-2">
+                        <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
+                            <div class="small text-muted">Insurance (on bills)</div>
+                            <div class="fs-6 fw-bold text-info">GHS {{ bills_analytics.summary.insurance_covered|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-4 col-xl-2">
+                        <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
+                            <div class="small text-muted">Patient portion</div>
+                            <div class="fs-6 fw-bold text-warning">GHS {{ bills_analytics.summary.patient_portion_sum|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="row g-3">
+                    <div class="col-lg-4">
+                        <div class="card border-0 shadow-sm h-100">
+                            <div class="card-header bg-white py-2 small fw-semibold">By status</div>
+                            <div class="card-body" style="max-height: 280px;">
+                                <canvas id="billsChartStatus" aria-label="Status chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <div class="card border-0 shadow-sm h-100">
+                            <div class="card-header bg-white py-2 small fw-semibold">
+                                {% if bills_analytics.mode == 'invoice' %}By payer type{% else %}By bill type{% endif %}
+                            </div>
+                            <div class="card-body" style="max-height: 280px;">
+                                <canvas id="billsChartSecondary" aria-label="Secondary breakdown"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <div class="card border-0 shadow-sm h-100">
+                            <div class="card-header bg-white py-2 small fw-semibold">Issued — last 14 days (GHS)</div>
+                            <div class="card-body" style="max-height: 280px;">
+                                <canvas id="billsChartDaily" aria-label="Daily trend"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Bills Table -->
+            {% if grouped_invoice_bills|default:False %}
+            <p class="text-muted small mb-2">Grouped by {% if bill_type_filter == 'cash' %}patient{% else %}payer / company{% endif %}. Click a summary row to show each invoice.</p>
+            {% endif %}
+            {% if bills.object_list %}
+            <div class="table-responsive">
+                <table class="table table-hover {% if grouped_invoice_bills|default:False %}align-middle{% endif %}">
+                    <thead>
+                        <tr>
+                            {% if grouped_invoice_bills|default:False %}<th style="width:2rem;"></th>{% endif %}
+                            <th>{% if grouped_by_patient %}Patient{% elif grouped_invoice_bills|default:False %}{% if bill_type_filter == 'cash' %}Patient{% else %}Payer / company{% endif %}{% else %}Bill #{% endif %}</th>
+                            {% if grouped_by_patient %}<th>Invoices</th>{% else %}<th>{% if grouped_invoice_bills|default:False %}Invoices{% else %}Patient{% endif %}</th>{% endif %}
+                            <th>Type</th>
+                            <th>Payer / method</th>
+                            <th>Total Amount</th>
+                            <th>Insurance</th>
+                            <th>Paid</th>
+                            <th>Deposits / credit</th>
+                            <th>Balance due</th>
+                            <th>Status</th>
+                            <th>{% if grouped_by_patient or grouped_invoice_bills|default:False %}Latest {% endif %}Issued</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if grouped_invoice_bills|default:False %}
+                        {% for group in bills %}
+                        <tr class="table-secondary bill-group-header" style="cursor: pointer;" data-bill-group="{{ forloop.counter0 }}" aria-expanded="false" role="button" tabindex="0">
+                            <td class="text-center"><i class="bi bi-chevron-right expand-icon" aria-hidden="true"></i></td>
+                            <td><strong>{{ group.label }}</strong></td>
+                            <td><span class="badge bg-dark">{{ group.invoice_count }} invoice{{ group.invoice_count|pluralize }}</span></td>
+                            <td><span class="badge bg-info">{% if bill_type_filter == 'insurance' %}Insurance Bill{% elif bill_type_filter == 'corporate' %}Corporate{% else %}Cash Bill{% endif %}</span></td>
+                            <td class="text-muted small">—</td>
+                            <td><strong>GHS {{ group.total_amount|floatformat:2|intcomma }}</strong></td>
+                            <td><span class="text-muted">—</span></td>
+                            <td><strong>GHS {{ group.total_paid|floatformat:2|intcomma }}</strong></td>
+                            <td><span class="text-muted small">—</span></td>
+                            <td><strong>GHS {{ group.total_balance|floatformat:2|intcomma }}</strong></td>
+                            <td><span class="text-muted small">Expand rows</span></td>
+                            <td>{% if group.latest %}{{ group.latest|date:"Y-m-d" }}{% else %}—{% endif %}</td>
+                            <td></td>
+                        </tr>
+                        {% for bill in group.adapted_invoices %}
+                        <tr class="bill-group-child bill-gc-{{ forloop.parentloop.counter0 }} d-none">
+                            <td></td>
+                            <td><strong>{% if bill.bill_number and bill.bill_number|lower != 'invalid' %}{{ bill.bill_number }}{% else %}—{% endif %}</strong></td>
+                            <td>{% if bill.patient %}{{ bill.patient.full_name|default:"—" }}{% else %}—{% endif %}</td>
+                            <td><span class="badge bg-info">{% if bill.bill_type|lower == "invalid" or bill.get_bill_type_display|lower == "invalid" %}Cash Bill{% else %}{{ bill.get_bill_type_display|default:"Cash Bill" }}{% endif %}</span></td>
+                            <td>{% if bill.payer_display %}{{ bill.payer_display }}{% elif bill.invoice and bill.invoice.payer %}{{ bill.invoice.payer.name }}{% else %}—{% endif %}</td>
+                            <td><strong>GHS {{ bill.total_amount|floatformat:2|intcomma }}</strong></td>
+                            <td>GHS {{ bill.insurance_covered|floatformat:2|intcomma }}</td>
+                            <td>{% if bill.amount_paid is None %}<span class="text-muted">—</span>{% else %}<strong>GHS {{ bill.amount_paid|floatformat:2|intcomma }}</strong>{% endif %}</td>
+                            <td class="small">
+                                {% if bill.deposit_available is None %}
+                                    <span class="text-muted">—</span>
+                                {% else %}
+                                    {% if bill.deposit_available > 0 %}
+                                    <div><span class="text-success fw-semibold">GHS {{ bill.deposit_available|floatformat:2|intcomma }}</span> <span class="text-muted">on deposit</span></div>
+                                    {% endif %}
+                                    {% if bill.credit_overpay > 0 %}
+                                    <div><span class="text-info fw-semibold">GHS {{ bill.credit_overpay|floatformat:2|intcomma }}</span> <span class="text-muted">invoice credit</span></div>
+                                    {% endif %}
+                                    {% if bill.deposit_available <= 0 and bill.credit_overpay <= 0 %}
+                                    <span class="text-muted">—</span>
+                                    {% endif %}
+                                {% endif %}
+                            </td>
+                            <td class="{% if bill.patient_portion < 0 %}text-info{% endif %}">
+                                <strong>GHS {{ bill.patient_portion|floatformat:2|intcomma }}</strong>
+                                {% if bill.patient_portion < 0 %}
+                                <div class="small text-muted">credit balance</div>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge bg-{% if bill.status == 'paid' %}success{% elif bill.status == 'issued' or bill.status == 'overdue' %}warning{% elif bill.status == 'partially_paid' %}info{% else %}secondary{% endif %}">
+                                    {% if bill.status|lower == "invalid" or bill.get_status_display|lower == "invalid" %}Issued{% elif bill.status == 'overdue' %}Overdue{% else %}{{ bill.get_status_display|default:"Issued" }}{% endif %}
+                                </span>
+                            </td>
+                            <td>{{ bill.issued_at|date:"Y-m-d" }}</td>
+                            <td>
+                                {% if bill.invoice %}
+                                <a href="{% url 'hospital:invoice_detail' bill.invoice.id %}" class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation();">View</a>
+                                {% else %}
+                                <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% endfor %}
+                        {% else %}
+                        {% for bill in bills %}
+                        <tr>
+                            {% if grouped_by_patient %}
+                            <td><strong>{% if bill.patient %}{{ bill.patient.full_name|default:"—" }}{% else %}—{% endif %}</strong></td>
+                            <td><span class="badge bg-secondary">{{ bill.invoice_count }} invoice(s)</span></td>
+                            {% else %}
+                            <td><strong>{% if bill.bill_number and bill.bill_number|lower != 'invalid' %}{{ bill.bill_number }}{% else %}—{% endif %}</strong></td>
+                            <td>{% if bill.patient %}{{ bill.patient.full_name|default:"—" }}{% else %}—{% endif %}</td>
+                            {% endif %}
+                            <td><span class="badge bg-info">{% if bill.bill_type|lower == "invalid" or bill.get_bill_type_display|lower == "invalid" %}Cash Bill{% else %}{{ bill.get_bill_type_display|default:"Cash Bill" }}{% endif %}</span></td>
+                            <td>{% if bill.payer_display %}{{ bill.payer_display }}{% elif bill.invoice and bill.invoice.payer %}{{ bill.invoice.payer.name }}{% else %}—{% endif %}</td>
+                            <td><strong>GHS {{ bill.total_amount|floatformat:2|intcomma }}</strong></td>
+                            <td>GHS {{ bill.insurance_covered|floatformat:2|intcomma }}</td>
+                            <td>{% if bill.amount_paid is None %}<span class="text-muted">—</span>{% else %}<strong>GHS {{ bill.amount_paid|floatformat:2|intcomma }}</strong>{% endif %}</td>
+                            <td class="small">
+                                {% if bill.deposit_available is None %}
+                                    <span class="text-muted">—</span>
+                                {% else %}
+                                    {% if bill.deposit_available > 0 %}
+                                    <div><span class="text-success fw-semibold">GHS {{ bill.deposit_available|floatformat:2|intcomma }}</span> <span class="text-muted">on deposit</span></div>
+                                    {% endif %}
+                                    {% if bill.credit_overpay > 0 %}
+                                    <div><span class="text-info fw-semibold">GHS {{ bill.credit_overpay|floatformat:2|intcomma }}</span> <span class="text-muted">invoice credit</span></div>
+                                    {% endif %}
+                                    {% if bill.deposit_available <= 0 and bill.credit_overpay <= 0 %}
+                                    <span class="text-muted">—</span>
+                                    {% endif %}
+                                {% endif %}
+                            </td>
+                            <td class="{% if bill.patient_portion < 0 %}text-info{% endif %}">
+                                <strong>GHS {{ bill.patient_portion|floatformat:2|intcomma }}</strong>
+                                {% if bill.patient_portion < 0 %}
+                                <div class="small text-muted">credit balance</div>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge bg-{% if bill.status == 'paid' %}success{% elif bill.status == 'issued' or bill.status == 'overdue' %}warning{% elif bill.status == 'partially_paid' %}info{% else %}secondary{% endif %}">
+                                    {% if bill.status|lower == "invalid" or bill.get_status_display|lower == "invalid" %}Issued{% elif bill.status == 'overdue' %}Overdue{% else %}{{ bill.get_status_display|default:"Issued" }}{% endif %}
+                                </span>
+                            </td>
+                            <td>{{ bill.issued_at|date:"Y-m-d" }}</td>
+                            <td>
+                                {% if grouped_by_patient and bill.patient_id %}
+                                <a href="{% url 'hospital:invoice_combined_patient' bill.patient_id %}" class="btn btn-sm btn-outline-primary">View & Waive</a>
+                                {% elif bill.invoice %}
+                                <a href="{% url 'hospital:invoice_detail' bill.invoice.id %}" class="btn btn-sm btn-outline-primary">View</a>
+                                {% else %}
+                                <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination (use context vars so INVALID is never re-appended to URL) -->
+            {% if bills.has_other_pages %}
+            <nav aria-label="Page navigation">
+                <ul class="pagination justify-content-center">
+                    {% if bills.has_previous %}
+                    <li class="page-item"><a class="page-link" href="?page={{ bills.previous_page_number }}{% if view_mode %}&view={{ view_mode }}{% endif %}{% if search %}&search={{ search }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if bill_type_filter %}&bill_type={{ bill_type_filter }}{% endif %}{% if payer_filter %}&payer={{ payer_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Previous</a></li>
+                    {% endif %}
+                    <li class="page-item active"><span class="page-link">Page {{ bills.number }} of {{ bills.paginator.num_pages }}</span></li>
+                    {% if bills.has_next %}
+                    <li class="page-item"><a class="page-link" href="?page={{ bills.next_page_number }}{% if view_mode %}&view={{ view_mode }}{% endif %}{% if search %}&search={{ search }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if bill_type_filter %}&bill_type={{ bill_type_filter }}{% endif %}{% if payer_filter %}&payer={{ payer_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Next</a></li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox" style="font-size: 48px; color: #ccc;"></i>
+                <p class="text-muted mt-3">No bills found</p>
+                <p class="text-muted small">Clear filters above or try <a href="{% url 'hospital:bills_list' %}">All Bills</a>.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    const dataEl = document.getElementById('bills-analytics-data');
+    if (!dataEl || typeof Chart === 'undefined') return;
+    let A;
+    try {
+        A = JSON.parse(dataEl.textContent);
+    } catch (e) {
+        return;
+    }
+    const colors = ['#6366f1', '#8b5cf6', '#10b981', '#f59e0b', '#3b82f6', '#ec4899', '#64748b', '#14b8a6'];
+
+    function doughnutOpts(amounts) {
+        return {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
+                tooltip: {
+                    callbacks: {
+                        afterLabel: function (ctx) {
+                            const i = ctx.dataIndex;
+                            const amt = amounts && amounts[i] != null ? amounts[i] : 0;
+                            return 'GHS ' + Number(amt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    const st = A.charts && A.charts.status;
+    if (st && st.labels && st.labels.length && document.getElementById('billsChartStatus')) {
+        new Chart(document.getElementById('billsChartStatus'), {
+            type: 'doughnut',
+            data: {
+                labels: st.labels,
+                datasets: [{
+                    data: st.counts,
+                    backgroundColor: colors,
+                    borderWidth: 0
+                }]
+            },
+            options: doughnutOpts(st.amounts)
+        });
+    }
+
+    const secondary = A.mode === 'invoice' ? (A.charts && A.charts.payer_type) : (A.charts && A.charts.bill_type);
+    if (secondary && secondary.labels && secondary.labels.length && document.getElementById('billsChartSecondary')) {
+        new Chart(document.getElementById('billsChartSecondary'), {
+            type: 'doughnut',
+            data: {
+                labels: secondary.labels,
+                datasets: [{
+                    data: secondary.counts,
+                    backgroundColor: colors.slice().reverse(),
+                    borderWidth: 0
+                }]
+            },
+            options: doughnutOpts(secondary.amounts)
+        });
+    }
+
+    const daily = A.charts && A.charts.daily;
+    if (daily && daily.labels && daily.labels.length && document.getElementById('billsChartDaily')) {
+        new Chart(document.getElementById('billsChartDaily'), {
+            type: 'bar',
+            data: {
+                labels: daily.labels,
+                datasets: [{
+                    label: 'Billed (GHS)',
+                    data: daily.amounts,
+                    backgroundColor: 'rgba(99, 102, 241, 0.75)',
+                    borderRadius: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: { beginAtZero: true, ticks: { font: { size: 10 } } },
+                    x: { ticks: { font: { size: 10 }, maxRotation: 45 } }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+    }
+})();
+</script>
+{% if grouped_invoice_bills|default:False %}
+<script>
+(function () {
+  function toggleGroup(row) {
+    var id = row.getAttribute('data-bill-group');
+    if (id === null) return;
+    var expanded = row.getAttribute('aria-expanded') === 'true';
+    row.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+    document.querySelectorAll('.bill-gc-' + id).forEach(function (r) {
+      r.classList.toggle('d-none', expanded);
+    });
+    var ic = row.querySelector('.expand-icon');
+    if (ic) {
+      if (expanded) {
+        ic.classList.remove('bi-chevron-down');
+        ic.classList.add('bi-chevron-right');
+      } else {
+        ic.classList.remove('bi-chevron-right');
+        ic.classList.add('bi-chevron-down');
+      }
+    }
+  }
+  document.querySelectorAll('.bill-group-header').forEach(function (row) {
+    row.addEventListener('click', function () { toggleGroup(row); });
+    row.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggleGroup(row);
+      }
+    });
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -892,3 +892,184 @@ class StaffQualification(BaseModel):
     def __str__(self):
         return f"{self.title} - {self.staff.user.get_full_name()}"
 
+
+class StaffMedicalChit(BaseModel):
+    """
+    Staff Medical Chit System
+    Allows staff to apply for medical attention through their portal.
+    HR approves, and medical staff can access approved chits.
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pending HR Approval'),
+        ('approved', 'Approved - Ready for Medical Attention'),
+        ('rejected', 'Rejected'),
+        ('used', 'Used - Visit Created'),
+        ('expired', 'Expired'),
+    ]
+    
+    # Chit Information
+    chit_number = models.CharField(
+        max_length=50,
+        unique=True,
+        help_text="Unique chit identifier (e.g., CHIT-2024-001)"
+    )
+    staff = models.ForeignKey(
+        Staff,
+        on_delete=models.CASCADE,
+        related_name='medical_chits'
+    )
+    
+    # Application Details
+    application_date = models.DateField(
+        default=timezone.now,
+        help_text="Date staff applied for medical chit"
+    )
+    reason = models.TextField(
+        help_text="Reason for requiring medical attention"
+    )
+    symptoms = models.TextField(
+        blank=True,
+        help_text="Symptoms or medical condition description"
+    )
+    
+    # Status and Approval
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending'
+    )
+    
+    # HR Approval
+    hr_approved_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='approved_medical_chits',
+        help_text="HR staff who approved this chit"
+    )
+    hr_approval_date = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Date and time HR approved this chit"
+    )
+    hr_approval_notes = models.TextField(
+        blank=True,
+        help_text="HR approval notes or comments"
+    )
+    hr_rejection_reason = models.TextField(
+        blank=True,
+        help_text="Reason for rejection if rejected"
+    )
+    
+    # Medical Visit
+    encounter = models.ForeignKey(
+        'Encounter',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='medical_chit',
+        help_text="Visit/encounter created from this chit"
+    )
+    visit_created_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the visit was created at front desk"
+    )
+    visit_created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_visits_from_chits',
+        help_text="Front desk staff who created the visit"
+    )
+    
+    # Validity
+    valid_until = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Chit validity expiration date (default: 7 days from approval)"
+    )
+    
+    # SMS Tracking
+    sms_sent_approval = models.BooleanField(
+        default=False,
+        help_text="SMS sent to staff when approved"
+    )
+    sms_sent_visit_ready = models.BooleanField(
+        default=False,
+        help_text="SMS sent when chit is ready for visit"
+    )
+    
+    # Additional Information
+    authorized_by_name = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Name of HR/Admin who authorized (for printing)"
+    )
+    authorized_by_signature = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Signature of authorizing person (for printing)"
+    )
+    
+    class Meta:
+        ordering = ['-application_date', '-created']
+        verbose_name = 'Staff Medical Chit'
+        verbose_name_plural = 'Staff Medical Chits'
+        indexes = [
+            models.Index(fields=['chit_number']),
+            models.Index(fields=['status']),
+            models.Index(fields=['staff', 'status']),
+            models.Index(fields=['application_date']),
+        ]
+    
+    def __str__(self):
+        return f"{self.chit_number} - {self.staff.user.get_full_name()} ({self.get_status_display()})"
+    
+    def save(self, *args, **kwargs):
+        if not self.chit_number:
+            self.chit_number = self.generate_chit_number()
+        if not self.valid_until and self.status == 'approved':
+            from datetime import timedelta
+            self.valid_until = (timezone.now().date() + timedelta(days=7))
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_chit_number():
+        """Generate unique chit number: CHIT-YYYY-NNNN"""
+        from datetime import datetime
+        year = datetime.now().year
+        prefix = f"CHIT-{year}-"
+        
+        # Get last chit for this year
+        last_chit = StaffMedicalChit.objects.filter(
+            chit_number__startswith=prefix
+        ).order_by('-chit_number').first()
+        
+        if last_chit:
+            try:
+                seq = int(last_chit.chit_number.split('-')[-1])
+                seq += 1
+            except:
+                seq = 1
+        else:
+            seq = 1
+        
+        return f"{prefix}{seq:04d}"
+    
+    def is_valid(self):
+        """Check if chit is still valid"""
+        if self.status != 'approved':
+            return False
+        if self.valid_until and timezone.now().date() > self.valid_until:
+            return False
+        if self.status == 'used':
+            return False
+        return True
+    
+    def can_create_visit(self):
+        """Check if visit can be created from this chit"""
+        return self.status == 'approved' and self.is_valid() and not self.encounter
+

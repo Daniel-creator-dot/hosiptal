@@ -7,16 +7,23 @@
 <div class="container-fluid">
     <div class="row mb-4">
         <div class="col-12">
-            <div class="d-flex justify-content-between align-items-center">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                 <div>
                     <h4 class="mb-1">Notifications</h4>
                     <p class="text-muted mb-0">Stay updated with system alerts and messages</p>
                 </div>
-                {% if unread_count > 0 %}
-                <button id="markAllReadBtn" class="btn btn-outline-primary">
-                    <i class="bi bi-check-all"></i> Mark All Read
-                </button>
-                {% endif %}
+                <div class="d-flex gap-2">
+                    {% if unread_count > 0 %}
+                    <button id="markAllReadBtn" class="btn btn-outline-primary">
+                        <i class="bi bi-check-all"></i> Mark All Read
+                    </button>
+                    {% endif %}
+                    {% if notifications %}
+                    <button id="clearAllNotificationsBtn" class="btn btn-outline-danger">
+                        <i class="bi bi-trash"></i> Clear All Notifications
+                    </button>
+                    {% endif %}
+                </div>
             </div>
         </div>
     </div>
@@ -46,9 +53,7 @@
                         {% endif %}
                     </div>
                     {% if not notification.is_read %}
-                    <button class="btn btn-sm btn-outline-secondary mark-read-btn" data-notification-id="{{ notification.id }}">
-                        <i class="bi bi-check"></i>
-                    </button>
+                    <button class="btn btn-sm btn-outline-secondary mark-read-btn" data-notification-id="{{ notification.id }}"><i class="bi bi-check" aria-hidden="true"></i><span class="visually-hidden">Approve</span></button>
                     {% endif %}
                 </div>
             </div>
@@ -92,6 +97,29 @@ const markAllReadBtn = document.getElementById('markAllReadBtn');
 if (markAllReadBtn) {
     markAllReadBtn.addEventListener('click', function() {
         fetch('/hms/notifications/mark-all-read/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': window.getCsrfToken(),
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            }
+        });
+    });
+}
+
+// Clear all notifications
+const clearAllNotificationsBtn = document.getElementById('clearAllNotificationsBtn');
+if (clearAllNotificationsBtn) {
+    clearAllNotificationsBtn.addEventListener('click', function() {
+        if (!confirm('Clear all notifications? This will remove them permanently and cannot be undone.')) {
+            return;
+        }
+        fetch('/hms/notifications/clear-all/', {
             method: 'POST',
             headers: {
                 'X-CSRFToken': window.getCsrfToken(),

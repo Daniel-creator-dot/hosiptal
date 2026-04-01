@@ -80,7 +80,7 @@ def _safe_db_call(default, label, fn):
 
 
 @login_required
-@role_required('accountant')
+@role_required('accountant', 'senior_account_officer')
 def accountant_dashboard(request):
     """Accounting-focused dashboard for accountants - Redirects to comprehensive dashboard"""
     from django.shortcuts import redirect
@@ -171,7 +171,17 @@ def accountant_dashboard(request):
 @role_required('admin')
 def admin_dashboard(request):
     """Comprehensive dashboard for administrators - sees everything"""
+    # Explicitly block marketing users from accessing admin dashboard
+    from .utils_roles import get_user_role
+    user_role = get_user_role(request.user)
+    if user_role == 'marketing':
+        from django.contrib import messages
+        from django.shortcuts import redirect
+        messages.error(request, "Access denied. Marketing staff cannot access the admin dashboard.")
+        return redirect('hospital:marketing_dashboard')
+    
     today = timezone.now().date()
+    now = timezone.now()  # For time display
     
     # Overall hospital statistics - Include both Django and Legacy patients
     django_patients = Patient.objects.filter(is_deleted=False).count()
@@ -280,9 +290,172 @@ def admin_dashboard(request):
     except Exception:
         pass
     
+    # Chart Data - Revenue Trends (Last 30 days)
+    revenue_data = []
+    revenue_labels = []
+    if PaymentReceipt:
+        from datetime import datetime
+        for i in range(29, -1, -1):
+            date_check = today - timedelta(days=i)
+            daily_revenue = _safe_db_call(
+                0,
+                f'admin_dashboard.revenue_day_{i}',
+                lambda d=date_check: PaymentReceipt.objects.filter(
+                    receipt_date__date=d,
+                    is_deleted=False
+                ).aggregate(total=Sum('amount_paid'))['total'] or 0
+            )
+            revenue_data.append(float(daily_revenue))
+            revenue_labels.append(date_check.strftime('%m/%d'))
+    else:
+        # Provide empty arrays if PaymentReceipt is not available
+        revenue_data = [0] * 30
+        revenue_labels = [(today - timedelta(days=i)).strftime('%m/%d') for i in range(29, -1, -1)]
+    
+    # Patient Demographics by Gender
+    patient_gender_data = []
+    patient_gender_labels = []
+    try:
+        gender_stats = Patient.objects.filter(is_deleted=False).values('gender').annotate(
+            count=Count('id')
+        )
+        for stat in gender_stats:
+            patient_gender_labels.append(stat['gender'] or 'Unknown')
+            patient_gender_data.append(stat['count'])
+    except Exception:
+        patient_gender_data = []
+        patient_gender_labels = []
+    
+    # Department Statistics
+    department_stats = []
+    try:
+        from .models import Department
+        dept_stats = Department.objects.annotate(
+            staff_count=Count('staff', filter=Q(staff__is_active=True, staff__is_deleted=False)),
+            patient_count=Count('encounters__patient', filter=Q(encounters__is_deleted=False), distinct=True)
+        ).filter(staff_count__gt=0)[:10]
+        for dept in dept_stats:
+            department_stats.append({
+                'name': dept.name,
+                'staff_count': dept.staff_count,
+                'patient_count': dept.patient_count or 0,
+            })
+    except Exception:
+        pass
+    
+    # Monthly Revenue Comparison (Last 6 months)
+    monthly_revenue_data = []
+    monthly_revenue_labels = []
+    if PaymentReceipt:
+        from calendar import month_abbr
+        for i in range(5, -1, -1):
+            month_date = today - timedelta(days=30*i)
+            month_start = date(month_date.year, month_date.month, 1)
+            if month_date.month == 12:
+                month_end = date(month_date.year + 1, 1, 1) - timedelta(days=1)
+            else:
+                month_end = date(month_date.year, month_date.month + 1, 1) - timedelta(days=1)
+            
+            monthly_revenue = _safe_db_call(
+                0,
+                f'admin_dashboard.monthly_revenue_{i}',
+                lambda ms=month_start, me=month_end: PaymentReceipt.objects.filter(
+                    receipt_date__gte=ms,
+                    receipt_date__lte=me,
+                    is_deleted=False
+                ).aggregate(total=Sum('amount_paid'))['total'] or 0
+            )
+            monthly_revenue_data.append(float(monthly_revenue))
+            monthly_revenue_labels.append(f"{month_abbr[month_date.month]} {month_date.year}")
+    else:
+        # Provide empty arrays if PaymentReceipt is not available
+        from calendar import month_abbr
+        for i in range(5, -1, -1):
+            month_date = today - timedelta(days=30*i)
+            monthly_revenue_data.append(0.0)
+            monthly_revenue_labels.append(f"{month_abbr[month_date.month]} {month_date.year}")
+    
+    # Staff by Profession
+    staff_profession_data = []
+    staff_profession_labels = []
+    try:
+        profession_stats = Staff.objects.filter(
+            is_active=True, is_deleted=False
+        ).values('profession').annotate(count=Count('id'))[:10]
+        for stat in profession_stats:
+            staff_profession_labels.append(stat['profession'] or 'Unknown')
+            staff_profession_data.append(stat['count'])
+    except Exception:
+        staff_profession_data = []
+        staff_profession_labels = []
+    
+    # Bed Occupancy Stats
+    bed_stats = {'total': 0, 'occupied': 0, 'available': 0, 'reserved': 0}
+    try:
+        from .models import Bed
+        bed_stats = {
+            'total': Bed.objects.filter(is_active=True, is_deleted=False).count(),
+            'occupied': Bed.objects.filter(is_active=True, is_deleted=False, status='occupied').count(),
+            'available': Bed.objects.filter(is_active=True, is_deleted=False, status='available').count(),
+            'reserved': Bed.objects.filter(is_active=True, is_deleted=False, status='reserved').count(),
+        }
+    except Exception:
+        pass
+    
+    # Recent Activity (Last 10 encounters) - Only include encounters with valid patients
+    recent_encounters = Encounter.objects.filter(
+        is_deleted=False,
+        patient__isnull=False
+    ).select_related('patient', 'provider__user').order_by('-started_at')[:10]
+    
+    # Top Departments by Revenue (if available)
+    top_departments = []
+    try:
+        if PaymentReceipt and hasattr(PaymentReceipt, 'department'):
+            dept_revenue = PaymentReceipt.objects.filter(
+                receipt_date__gte=this_month_start,
+                is_deleted=False
+            ).values('department__name').annotate(
+                total=Sum('amount_paid')
+            ).order_by('-total')[:5]
+            for dept in dept_revenue:
+                top_departments.append({
+                    'name': dept['department__name'] or 'Unknown',
+                    'revenue': float(dept['total'] or 0)
+                })
+    except Exception:
+        pass
+    
+    # Strategic Objectives Metrics
+    try:
+        from .views_strategic_objectives import calculate_strategic_objectives_metrics
+        strategic_objectives = calculate_strategic_objectives_metrics()
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Error calculating strategic objectives: {e}")
+        strategic_objectives = {
+            'objectives': {},
+            'overall_progress': 0,
+            'last_updated': timezone.now(),
+        }
+    
+    payroll_pending_admin_approval = _safe_db_call(
+        0,
+        'admin_dashboard.payroll_pending_admin_approval',
+        lambda: __import__(
+            'hospital.models_accounting_advanced',
+            fromlist=['AccountingPayroll'],
+        ).AccountingPayroll.objects.filter(
+            status='pending_approval',
+            is_deleted=False,
+        ).count(),
+    )
+
     context = {
         'title': 'Administrator Dashboard',
         'role_info': get_role_display_info(request.user),
+        'payroll_pending_admin_approval': payroll_pending_admin_approval,
         'total_patients': total_patients,
         'active_encounters': active_encounters,
         'total_staff': total_staff,
@@ -295,7 +468,21 @@ def admin_dashboard(request):
         'pending_admin_approvals': pending_admin_approvals,
         'pending_accounts_approvals': pending_accounts_approvals,
         'recent_procurement_requests': recent_procurement_requests,
+        'revenue_data': revenue_data,
+        'revenue_labels': revenue_labels,
+        'patient_gender_data': patient_gender_data,
+        'patient_gender_labels': patient_gender_labels,
+        'department_stats': department_stats,
+        'monthly_revenue_data': monthly_revenue_data,
+        'monthly_revenue_labels': monthly_revenue_labels,
+        'staff_profession_data': staff_profession_data,
+        'staff_profession_labels': staff_profession_labels,
+        'bed_stats': bed_stats,
+        'recent_encounters': recent_encounters,
+        'top_departments': top_departments,
+        'strategic_objectives': strategic_objectives,
         'today': today,
+        'now': timezone.now(),  # Ensure it's always a datetime object
     }
     
     return render(request, 'hospital/roles/admin_dashboard.html', context)
@@ -318,14 +505,14 @@ def medical_dashboard(request):
         provider=staff,
         is_deleted=False,
         status='active'
-    ).select_related('patient')[:10] if staff else []
+    ).select_related('patient__primary_insurance')[:10] if staff else []
     
     # Today's appointments
     today_appointments = Appointment.objects.filter(
         provider=staff,
         appointment_date__date=today,
         is_deleted=False
-    ).select_related('patient').order_by('appointment_date') if staff else []
+    ).select_related('patient__primary_insurance').order_by('appointment_date') if staff else []
     
     # Pending lab results - only show orders that still have uncompleted lab results
     pending_labs = []
@@ -337,7 +524,7 @@ def medical_dashboard(request):
         ).filter(
             lab_results__status__in=['pending', 'in_progress']
         ).select_related(
-            'encounter__patient'
+            'encounter__patient__primary_insurance'
         ).distinct().order_by('-priority', 'requested_at')[:10]
     
     specialist_links = []
@@ -357,12 +544,18 @@ def medical_dashboard(request):
             add_specialist_link('Dental Chart', 'bi-tooth', 'dental', 'Tooth chart & procedures')
         if any(keyword in specialty_name for keyword in ['ophthalm', 'eye', 'vision']):
             add_specialist_link('Eye Chart', 'bi-eye', 'ophthalmology', 'Retina, lens & acuity records')
+        if any(keyword in specialty_name for keyword in ['psychiatric', 'psychiatry', 'mental']):
+            add_specialist_link('Psychiatric Chart', 'bi-heart-pulse', 'psychiatric', 'Mental health assessments')
+        if any(keyword in specialty_name for keyword in ['gynecology', 'gynec', 'obstetric', 'obgyn']):
+            add_specialist_link('Gynecology Chart', 'bi-gender-female', 'gynecology', 'OB/GYN examinations')
     
     # Provide quick access to specialist tools for all doctors even if not tagged
     user_role = get_user_role(request.user)
     if user_role == 'doctor' and not specialist_links:
         add_specialist_link('Dental Chart', 'bi-tooth', 'dental', 'Tooth chart & procedures')
         add_specialist_link('Eye Chart', 'bi-eye', 'ophthalmology', 'Eye examinations & charts')
+        add_specialist_link('Psychiatric Chart', 'bi-heart-pulse', 'psychiatric', 'Mental health assessments')
+        add_specialist_link('Gynecology Chart', 'bi-gender-female', 'gynecology', 'OB/GYN examinations')
     
     # Bed & admission intelligence
     bed_queryset = Bed.objects.filter(is_active=True, is_deleted=False)
@@ -407,21 +600,21 @@ def medical_dashboard(request):
     recent_admissions = Admission.objects.filter(
         status='admitted',
         is_deleted=False
-    ).select_related('encounter__patient', 'ward', 'bed').order_by('-admit_date')[:6]
+    ).select_related('encounter__patient__primary_insurance', 'ward', 'bed').order_by('-admit_date')[:6]
     
     rounds_patients = Encounter.objects.filter(
         provider=staff,
         is_deleted=False,
         status='active',
         encounter_type='inpatient'
-    ).select_related('patient', 'location').order_by('started_at')[:6] if staff else []
+    ).select_related('patient__primary_insurance', 'location').order_by('started_at')[:6] if staff else []
     
     high_priority_orders = Order.objects.filter(
         encounter__provider=staff,
         status__in=['pending', 'in_progress'],
         priority__in=['urgent', 'stat'],
         is_deleted=False
-    ).select_related('encounter__patient').order_by('-priority', 'requested_at')[:6] if staff else []
+    ).select_related('encounter__patient__primary_insurance').order_by('-priority', 'requested_at')[:6] if staff else []
     
     queue_entries = []
     queue_stats = {'waiting': 0, 'in_progress': 0, 'completed': 0}
@@ -429,7 +622,7 @@ def medical_dashboard(request):
         base_queue = Queue.objects.filter(
             encounter__provider=staff,
             is_deleted=False
-        ).select_related('encounter__patient', 'department').order_by('priority', 'queue_number')
+        ).select_related('encounter__patient__primary_insurance', 'department').order_by('priority', 'queue_number')
         queue_entries = base_queue.filter(status__in=['waiting', 'in_progress'])[:8]
         queue_stats = {
             'waiting': base_queue.filter(status='waiting').count(),
@@ -437,10 +630,47 @@ def medical_dashboard(request):
             'completed': base_queue.filter(status='completed').count(),
         }
     
+    # Enhanced Patient Access for Doctors
+    # Recent patients seen by this doctor
+    recent_patients = []
+    if staff:
+        recent_patients = Patient.objects.filter(
+            encounters__provider=staff,
+            encounters__is_deleted=False
+        ).distinct().select_related('primary_insurance').order_by('-encounters__started_at')[:12]
+    
+    # Patient search quick access
+    total_patients_accessible = Patient.objects.filter(is_deleted=False).exclude(id__isnull=True).count()
+    
+    # Recent prescriptions
+    recent_prescriptions = []
+    if staff:
+        try:
+            from .models import Prescription
+            recent_prescriptions = Prescription.objects.filter(
+                order__encounter__provider=staff,
+                is_deleted=False
+            ).select_related('drug', 'order__encounter__patient').order_by('-created')[:8]
+        except:
+            pass
+    
     # Statistics
     active_patients = my_encounters.count() if staff else 0
     appointments_count = today_appointments.count() if staff else 0
     pending_labs_count = pending_labs.count() if staff else 0
+    total_patients_seen = Patient.objects.filter(
+        encounters__provider=staff,
+        encounters__is_deleted=False
+    ).distinct().count() if staff else 0
+    
+    # Check if user is HOD
+    user_is_hod = False
+    if request.user.is_authenticated:
+        try:
+            from .views_hod_scheduling import is_hod
+            user_is_hod = is_hod(request.user)
+        except:
+            pass
     
     context = {
         'title': 'Medical Dashboard',
@@ -462,7 +692,12 @@ def medical_dashboard(request):
         'queue_entries': queue_entries,
         'queue_stats': queue_stats,
         'specialist_links': specialist_links,
+        'recent_patients': recent_patients,
+        'total_patients_accessible': total_patients_accessible,
+        'total_patients_seen': total_patients_seen,
+        'recent_prescriptions': recent_prescriptions,
         'today': today,
+        'is_hod': user_is_hod,
     }
     
     return render(request, 'hospital/roles/medical_dashboard.html', context)
@@ -479,19 +714,19 @@ def reception_dashboard(request):
     today_appointments = Appointment.objects.filter(
         appointment_date__date=today,
         is_deleted=False
-    ).select_related('patient', 'provider__user', 'department').order_by('appointment_date')
+    ).select_related('patient__primary_insurance', 'provider__user', 'department').order_by('appointment_date')
     
     # Recent patient registrations
     recent_patients = Patient.objects.filter(
         is_deleted=False
-    ).order_by('-created')[:10]
+    ).select_related('primary_insurance').order_by('-created')[:10]
     
     # Upcoming appointments (next 7 days)
     upcoming_appointments = Appointment.objects.filter(
         appointment_date__date__gt=today,
         appointment_date__date__lte=today + timedelta(days=7),
         is_deleted=False
-    ).select_related('patient', 'provider__user').order_by('appointment_date')[:15]
+    ).select_related('patient__primary_insurance', 'provider__user').order_by('appointment_date')[:15]
     
     # Statistics
     total_patients = Patient.objects.filter(is_deleted=False).count()
@@ -503,7 +738,7 @@ def reception_dashboard(request):
             queue_date=today,
             status__in=['checked_in', 'called'],
             is_deleted=False
-        ).select_related('patient').order_by('priority', 'sequence_number')[:5]
+        ).select_related('patient__primary_insurance', 'encounter').order_by('priority', 'sequence_number')[:5]
     
     performance_snapshot = None
     if staff and staff.profession == 'receptionist':

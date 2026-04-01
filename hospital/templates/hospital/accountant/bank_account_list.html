@@ -1,0 +1,122 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Bank Accounts - HMS{% endblock %}
+{% block page_title %}Bank Accounts{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Status</label>
+                    <select name="active" class="form-select">
+                        <option value="">All</option>
+                        <option value="yes" {% if active_filter == 'yes' %}selected{% endif %}>Active</option>
+                        <option value="no" {% if active_filter == 'no' %}selected{% endif %}>Inactive</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">&nbsp;</label>
+                    <div>
+                        <button type="submit" class="btn btn-primary w-100"><i class="bi bi-funnel"></i> Filter</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6 class="text-muted mb-0">Total Balance</h6>
+                    <h4 class="mb-0"><strong>GHS {{ total_balance|floatformat:2|intcomma }}</strong></h4>
+                </div>
+                <div class="col-md-6 text-end">
+                    <h6 class="text-muted mb-0">Total Accounts</h6>
+                    <h4 class="mb-0"><strong>{{ bank_accounts.count|intcomma }}</strong></h4>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header d-flex justify-content-between">
+            <h5><i class="bi bi-bank"></i> Bank Accounts</h5>
+            <a href="{% url 'hospital:bank_account_create' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> Add Bank Account
+            </a>
+        </div>
+        <div class="card-body">
+            {% if bank_accounts %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Bank Name</th>
+                            <th>Account Name</th>
+                            <th>Account Number</th>
+                            <th>Account Type</th>
+                            <th>Branch</th>
+                            <th>Currency</th>
+                            <th>Current Balance</th>
+                            <th>GL Account</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for bank_account in bank_accounts %}
+                        <tr>
+                            <td><strong>{{ bank_account.bank_name }}</strong></td>
+                            <td>{{ bank_account.account_name }}</td>
+                            <td><code>{{ bank_account.account_number }}</code></td>
+                            <td>
+                                <span class="badge bg-info">
+                                    {% if bank_account.account_type|lower == "invalid" or bank_account.get_account_type_display|lower == "invalid" or not bank_account.account_type %}Checking / Current{% else %}{{ bank_account.get_account_type_display|default:"Checking / Current" }}{% endif %}
+                                </span>
+                            </td>
+                            <td>{{ bank_account.branch|default:"-" }}</td>
+                            <td>{{ bank_account.currency }}</td>
+                            <td>
+                                <strong class="{% if bank_account.current_balance < 0 %}text-danger{% else %}text-success{% endif %}">
+                                    {{ bank_account.currency }} {{ bank_account.current_balance|floatformat:2|intcomma }}
+                                </strong>
+                            </td>
+                            <td>
+                                {% if bank_account.gl_account %}
+                                    <small>{{ bank_account.gl_account.account_code }} - {{ bank_account.gl_account.account_name|truncatewords:2 }}</small>
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge bg-{% if bank_account.is_active %}success{% else %}secondary{% endif %}">
+                                    {% if bank_account.is_active %}Active{% else %}Inactive{% endif %}
+                                </span>
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:bank_account_detail' bank_account.id %}" class="btn btn-sm btn-outline-primary" title="View">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                <a href="{% url 'hospital:bank_account_edit' bank_account.id %}" class="btn btn-sm btn-outline-warning" title="Edit">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i> No bank accounts found.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

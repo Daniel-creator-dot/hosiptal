@@ -1,0 +1,284 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Imaging Catalog & Prices{% endblock %}
+{% block page_title %}🩻 Imaging Catalog & Prices{% endblock %}
+{% block page_subtitle %}
+    {% if can_edit_prices %}View and update imaging study prices{% else %}View imaging studies{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card shadow-sm border-0">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h5 class="mb-0"><i class="bi bi-collection me-2"></i>Imaging Catalog & Prices</h5>
+                <div class="d-flex gap-2">
+                    {% if is_admin %}
+                        <button type="button" class="btn btn-light btn-sm" data-bs-toggle="modal" data-bs-target="#addImagingItemModal">
+                            <i class="bi bi-plus-circle me-1"></i>Add Imaging Item
+                        </button>
+                    {% endif %}
+                    <a href="{% url 'hospital:imaging_add_order' %}" class="btn btn-outline-light btn-sm">
+                        <i class="bi bi-plus-circle me-1"></i>Add Imaging Order
+                    </a>
+                    <a href="{% url 'hospital:imaging_dashboard' %}" class="btn btn-outline-light btn-sm">Dashboard</a>
+                </div>
+            </div>
+            <div class="card-body">
+                <form method="get" class="mb-4">
+                    <div class="input-group">
+                        <input type="text" name="q" class="form-control" placeholder="Search by name, code, modality, body part..." value="{{ search_query }}">
+                        <button type="submit" class="btn btn-primary">Search</button>
+                    </div>
+                </form>
+
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Code</th>
+                                <th>Name</th>
+                                <th>Modality</th>
+                                <th>Body Part</th>
+                                <th class="text-end">Cash (GHS)</th>
+                                <th class="text-end">Corporate (GHS)</th>
+                                <th class="text-end">Insurance (GHS)</th>
+                                <th class="text-center">Edit</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in items_page %}
+                            <tr>
+                                <td><code>{{ item.code|default:"—" }}</code></td>
+                                <td><strong>{{ item.name }}</strong></td>
+                                <td>{{ item.get_modality_display|default:item.modality }}</td>
+                                <td>{{ item.body_part|default:"—" }}</td>
+                                <td class="text-end fw-bold">GHS {{ item.price|default:0|floatformat:2|intcomma }}</td>
+                                <td class="text-end">{% if item.corporate_price is not None %}GHS {{ item.corporate_price|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+                                <td class="text-end">{% if item.insurance_price is not None %}GHS {{ item.insurance_price|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+                                <td class="text-center">
+                                    {% if can_rename or can_edit_prices or is_admin %}
+                                        <div class="btn-group" role="group">
+                                            <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editPriceModal" 
+                                                    data-id="{{ item.id }}" data-name="{{ item.name }}" 
+                                                    data-price="{{ item.price|default:0|floatformat:2 }}"
+                                                    data-corporate="{% if item.corporate_price is not None %}{{ item.corporate_price|floatformat:2 }}{% endif %}"
+                                                    data-insurance="{% if item.insurance_price is not None %}{{ item.insurance_price|floatformat:2 }}{% endif %}">
+                                                <i class="bi bi-pencil"></i>
+                                            </button>
+                                            {% if is_admin %}
+                                                <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteImagingItemModal" 
+                                                        data-id="{{ item.id }}" data-name="{{ item.name }}">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            {% endif %}
+                                        </div>
+                                    {% else %}
+                                        <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="8" class="text-center text-muted py-4">No imaging studies in catalog.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                {% if items_page.has_other_pages %}
+                <nav class="mt-3">
+                    <ul class="pagination justify-content-center mb-0">
+                        {% if items_page.has_previous %}
+                        <li class="page-item"><a class="page-link" href="?page={{ items_page.previous_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}">Previous</a></li>
+                        {% endif %}
+                        <li class="page-item disabled"><span class="page-link">Page {{ items_page.number }} of {{ items_page.paginator.num_pages }}</span></li>
+                        {% if items_page.has_next %}
+                        <li class="page-item"><a class="page-link" href="?page={{ items_page.next_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}">Next</a></li>
+                        {% endif %}
+                    </ul>
+                </nav>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit prices modal -->
+<div class="modal fade" id="editPriceModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'hospital:imaging_catalog_list' %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_prices">
+                <input type="hidden" name="catalog_id" id="modalCatalogId">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        {% if can_edit_prices %}Update Study{% else %}Update Study Name{% endif %}
+                        – <span id="modalItemName"></span>
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Study Name</label>
+                        <input type="text" name="name" id="modalName" class="form-control"
+                               {% if not can_rename %}readonly{% endif %}
+                               placeholder="Study name">
+                        {% if not can_rename %}
+                            <div class="form-text text-muted">You can view only.</div>
+                        {% endif %}
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Cash (GHS) <span class="text-danger">*</span></label>
+                        <input type="number" name="price" id="modalPrice" class="form-control" step="0.01" min="0" required placeholder="0.00"
+                               {% if not can_edit_prices %}readonly{% endif %}>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Corporate (GHS)</label>
+                        <input type="number" name="corporate_price" id="modalCorporate" class="form-control" step="0.01" min="0" placeholder="Leave blank if N/A"
+                               {% if not can_edit_prices %}readonly{% endif %}>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Insurance (GHS)</label>
+                        <input type="number" name="insurance_price" id="modalInsurance" class="form-control" step="0.01" min="0" placeholder="Leave blank if N/A"
+                               {% if not can_edit_prices %}readonly{% endif %}>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Add Imaging Item Modal -->
+<div class="modal fade" id="addImagingItemModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form method="post" action="{% url 'hospital:imaging_catalog_list' %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="add_imaging_item">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>Add New Imaging Item</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label fw-bold">Code <span class="text-danger">*</span></label>
+                            <input type="text" name="code" class="form-control" required placeholder="e.g., CT001, MR001">
+                            <div class="form-text">Unique code for this imaging study</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label fw-bold">Name <span class="text-danger">*</span></label>
+                            <input type="text" name="name" class="form-control" required placeholder="e.g., CT Scan - Head">
+                            <div class="form-text">Full name of the imaging study</div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label fw-bold">Modality <span class="text-danger">*</span></label>
+                            <select name="modality" class="form-control" required>
+                                <option value="xray">X-Ray</option>
+                                <option value="ct">CT Scan</option>
+                                <option value="mri">MRI</option>
+                                <option value="ultrasound">Ultrasound</option>
+                                <option value="mammography">Mammography</option>
+                                <option value="fluoroscopy">Fluoroscopy</option>
+                                <option value="nuclear">Nuclear Medicine</option>
+                                <option value="pet">PET Scan</option>
+                                <option value="dexa">DEXA Scan</option>
+                                <option value="ecg">ECG</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label fw-bold">Body Part</label>
+                            <input type="text" name="body_part" class="form-control" placeholder="e.g., Head, Chest, Abdomen">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label fw-bold">Cash Price (GHS) <span class="text-danger">*</span></label>
+                            <input type="number" name="price" class="form-control" step="0.01" min="0" value="0" required placeholder="0.00">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label fw-bold">Corporate Price (GHS)</label>
+                            <input type="number" name="corporate_price" class="form-control" step="0.01" min="0" placeholder="Optional">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label fw-bold">Insurance Price (GHS)</label>
+                            <input type="number" name="insurance_price" class="form-control" step="0.01" min="0" placeholder="Optional">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Imaging Item</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Imaging Item Modal -->
+<div class="modal fade" id="deleteImagingItemModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'hospital:imaging_catalog_list' %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="delete_imaging_item">
+                <input type="hidden" name="catalog_id" id="deleteCatalogId">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Delete Imaging Item</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Are you sure you want to delete <strong id="deleteItemName"></strong>?</p>
+                    <p class="text-danger"><small>This action cannot be undone. The imaging item will be removed from the catalog.</small></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Delete</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Edit Price Modal
+    var editModal = document.getElementById('editPriceModal');
+    if (editModal && typeof bootstrap !== 'undefined') {
+        editModal.addEventListener('show.bs.modal', function(e) {
+            var btn = e.relatedTarget;
+            if (!btn) return;
+            document.getElementById('modalCatalogId').value = btn.dataset.id || '';
+            document.getElementById('modalItemName').textContent = btn.dataset.name || '';
+            var nameInput = document.getElementById('modalName');
+            if (nameInput) nameInput.value = btn.dataset.name || '';
+            document.getElementById('modalPrice').value = btn.dataset.price || '';
+            document.getElementById('modalCorporate').value = btn.dataset.corporate || '';
+            document.getElementById('modalInsurance').value = btn.dataset.insurance || '';
+        });
+    }
+    
+    // Delete Imaging Item Modal
+    var deleteModal = document.getElementById('deleteImagingItemModal');
+    if (deleteModal && typeof bootstrap !== 'undefined') {
+        deleteModal.addEventListener('show.bs.modal', function(e) {
+            var btn = e.relatedTarget;
+            if (!btn) return;
+            document.getElementById('deleteCatalogId').value = btn.dataset.id || '';
+            document.getElementById('deleteItemName').textContent = btn.dataset.name || '';
+        });
+    }
+});
+</script>
+{% endblock %}

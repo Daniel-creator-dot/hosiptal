@@ -30,9 +30,12 @@ except ImportError:
 from .reports_advanced import get_comprehensive_report
 
 
-@login_required
 def queue_display(request):
-    """Display queue for a department or location"""
+    """
+    Public waiting-area queue board (TV / kiosk). Must stay accessible without login
+    so the live feed and voice can run on shared displays.
+    Staff-only actions (call next) are gated in the template/JS when not authenticated.
+    """
     department_id = request.GET.get('department', '').strip()
     location = request.GET.get('location', '').strip()
     
@@ -45,7 +48,8 @@ def queue_display(request):
             is_deleted=False,
             queue_date=today
         ).select_related(
-            'patient', 'encounter__patient', 'department', 'assigned_doctor'
+            'patient', 'encounter__patient', 'encounter__provider', 'encounter__provider__user',
+            'department', 'assigned_doctor',
         ).order_by('priority', 'sequence_number')
         use_queue_entry = True
     elif Queue.objects.filter(is_deleted=False, checked_in_at__date=today).exists():
@@ -54,7 +58,7 @@ def queue_display(request):
             is_deleted=False,
             checked_in_at__date=today
         ).select_related(
-            'encounter__patient', 'department'
+            'encounter__patient', 'encounter__provider', 'encounter__provider__user', 'department',
         ).order_by('queue_number')
         use_queue_entry = False
     elif HAS_QUEUE_ENTRY:
@@ -63,7 +67,8 @@ def queue_display(request):
             is_deleted=False,
             queue_date=today
         ).select_related(
-            'patient', 'encounter__patient', 'department', 'assigned_doctor'
+            'patient', 'encounter__patient', 'encounter__provider', 'encounter__provider__user',
+            'department', 'assigned_doctor',
         ).order_by('priority', 'sequence_number')
         use_queue_entry = True
     else:
@@ -72,7 +77,7 @@ def queue_display(request):
             is_deleted=False,
             checked_in_at__date=today
         ).select_related(
-            'encounter__patient', 'department'
+            'encounter__patient', 'encounter__provider', 'encounter__provider__user', 'department',
         ).order_by('queue_number')
         use_queue_entry = False
     
@@ -97,6 +102,7 @@ def queue_display(request):
         selected_location = location
     
     # Group by status and priority for proper ordering
+    stale_cutoff = timezone.now() - timedelta(minutes=20)
     if use_queue_entry:
         # QueueEntry statuses: 'checked_in', 'called', 'in_progress', 'completed', 'no_show', 'cancelled'
         waiting_statuses = ['checked_in', 'called']
@@ -138,7 +144,57 @@ def queue_display(request):
             completed_queues = completed_queues.filter(location=location)
         completed_today = completed_queues.count()
     
-    now_serving = in_progress[0] if in_progress else (waiting[0] if waiting else None)
+    # Pick a true "now serving" candidate:
+    # 1) active consultation (in_progress) by latest call time
+    # 2) latest called ticket
+    # 3) first waiting fallback
+    if use_queue_entry:
+        called_waiting = [q for q in waiting if getattr(q, 'status', '') == 'called']
+        latest_called = None
+        if called_waiting:
+            called_waiting.sort(
+                key=lambda q: (
+                    getattr(q, 'called_time', None) or timezone.now() - timedelta(days=36500),
+                    int(getattr(q, 'priority', 99) or 99),
+                    int(getattr(q, 'sequence_number', 0) or 0),
+                ),
+                reverse=True,
+            )
+            latest_called = called_waiting[0]
+        latest_in_progress = in_progress[0] if in_progress else None
+        if latest_in_progress and latest_called:
+            in_progress_mark = getattr(latest_in_progress, 'called_time', None) or getattr(latest_in_progress, 'started_time', None)
+            called_mark = getattr(latest_called, 'called_time', None) or getattr(latest_called, 'started_time', None)
+            now_serving = latest_called if called_mark and (not in_progress_mark or called_mark >= in_progress_mark) else latest_in_progress
+        else:
+            now_serving = latest_in_progress or latest_called or (waiting[0] if waiting else None)
+        if now_serving and getattr(now_serving, 'status', '') == 'in_progress':
+            active_mark = getattr(now_serving, 'started_time', None) or getattr(now_serving, 'called_time', None)
+            if active_mark and active_mark < stale_cutoff and waiting:
+                now_serving = latest_called or waiting[0]
+    else:
+        called_waiting = [q for q in waiting if getattr(q, 'status', '') == 'called']
+        latest_called = None
+        if called_waiting:
+            called_waiting.sort(
+                key=lambda q: (
+                    getattr(q, 'called_at', None) or timezone.now() - timedelta(days=36500),
+                    int(getattr(q, 'queue_number', 0) or 0),
+                ),
+                reverse=True,
+            )
+            latest_called = called_waiting[0]
+        latest_in_progress = in_progress[0] if in_progress else None
+        if latest_in_progress and latest_called:
+            in_progress_mark = getattr(latest_in_progress, 'called_at', None)
+            called_mark = getattr(latest_called, 'called_at', None)
+            now_serving = latest_called if called_mark and (not in_progress_mark or called_mark >= in_progress_mark) else latest_in_progress
+        else:
+            now_serving = latest_in_progress or latest_called or (waiting[0] if waiting else None)
+        if now_serving and getattr(now_serving, 'status', '') == 'in_progress':
+            active_mark = getattr(now_serving, 'called_at', None)
+            if active_mark and active_mark < stale_cutoff and waiting:
+                now_serving = latest_called or waiting[0]
     
     health_tips = []
     try:
@@ -192,31 +248,52 @@ def queue_display(request):
     if avg_wait_minutes is None:
         avg_wait_minutes = 0
     
-    # Collect slideshow images - SIMPLIFIED DIRECT APPROACH
+    # Collect slideshow images — only from explicit waiting-room folders.
+    # Never pull from imaging/radiology paths (patient scans may live there).
     slideshow_images = []
     allowed_ext = ('.jpg', '.jpeg', '.png', '.webp', '.gif')
     media_root = Path(settings.MEDIA_ROOT)
     media_url = settings.MEDIA_URL.rstrip('/') + '/'
-    
-    # Priority folders to check
+
+    def _slide_path_allowed(rel_posix: str) -> bool:
+        p = rel_posix.replace('\\', '/').lower()
+        for frag in (
+            'imaging_studies',
+            '/dicom',
+            'dicom/',
+            '/radiology',
+            'radiology/',
+            'xray_',
+            '_xray',
+            '/mri',
+            'mri/',
+            '/ct_',
+            '/ultrasound',
+            'patient_documents',
+            'lab_results',
+        ):
+            if frag in p:
+                return False
+        return True
+
+    # Priority folders (clinical media such as imaging_studies is intentionally excluded)
     priority_folders = [
         'queue_display',
-        'waiting_room_slides', 
+        'waiting_room_slides',
         'reception_slides',
         'slideshow',
-        'imaging_studies',
     ]
-    
-    # Method 1: Check priority folders first
+
     for folder_name in priority_folders:
         folder_path = media_root / folder_name
         if folder_path.exists() and folder_path.is_dir():
             try:
-                # Get all image files recursively
                 for img_file in folder_path.rglob('*'):
                     if img_file.is_file() and img_file.suffix.lower() in allowed_ext:
                         try:
                             rel_path = img_file.relative_to(media_root).as_posix()
+                            if not _slide_path_allowed(rel_path):
+                                continue
                             image_url = f"{media_url}{rel_path}"
                             slideshow_images.append({
                                 'url': image_url,
@@ -227,26 +304,8 @@ def queue_display(request):
                             continue
             except Exception:
                 continue
-    
-    # Method 2: If still no images, check media root directly (first 10 image files only)
-    if not slideshow_images:
-        try:
-            root_images = []
-            for img_file in media_root.glob('*'):
-                if img_file.is_file() and img_file.suffix.lower() in allowed_ext:
-                    try:
-                        image_url = f"{media_url}{img_file.name}"
-                        root_images.append({
-                            'url': image_url,
-                            'caption': img_file.stem.replace('_', ' ').replace('-', ' ').title(),
-                            'mtime': img_file.stat().st_mtime,
-                        })
-                    except Exception:
-                        continue
-            # Take first 10 from root
-            slideshow_images.extend(root_images[:10])
-        except Exception:
-            pass
+
+    # Do not scan arbitrary media root — avoids accidentally showing uploads or scans
     
     # Sort by modification time and limit to 20
     slideshow_images.sort(key=lambda x: x.get('mtime', 0), reverse=True)
@@ -266,11 +325,12 @@ def queue_display(request):
             print(f"  {i}. {img['url']}")
     else:
         print("⚠️ NO IMAGES FOUND!")
-        print(f"Searched in:")
-        for name, search_dir, recursive in search_dirs:
+        print("Searched in:")
+        for folder_name in priority_folders:
+            search_dir = media_root / folder_name
             exists = search_dir.exists()
             is_dir = search_dir.is_dir() if exists else False
-            print(f"  - {name}: exists={exists}, is_dir={is_dir}")
+            print(f"  - {folder_name}: exists={exists}, is_dir={is_dir}")
     print(f"{'='*60}\n")
     
     # Also log to logger
@@ -855,25 +915,50 @@ def queue_call_next(request):
             logger = logging.getLogger(__name__)
             logger.warning(f"Failed to send SMS for queue {next_queue.id}: {str(e)}")
         
-        # For POST requests (form submission), redirect
-        if request.method == 'POST':
-            messages.success(request, f'✅ Called patient #{next_queue.queue_number} - {next_queue.encounter.patient.full_name}')
+        # Check if this is an AJAX request (based on Accept header or content type)
+        is_ajax = (
+            request.headers.get('Accept', '').find('application/json') != -1 or
+            request.content_type == 'application/json' or
+            request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        )
+        
+        # For POST requests that are NOT AJAX (form submission), redirect
+        if request.method == 'POST' and not is_ajax:
+            messages.success(request, f'✅ Called patient #{next_queue.queue_number} - {next_queue.encounter.patient.full_name if next_queue.encounter else "Unknown"}')
             return redirect('hospital:queue_display')
         
-        # For GET/AJAX requests, return JSON
+        # For AJAX/JSON requests, always return JSON
+        try:
+            patient_name = 'Unknown'
+            mrn = ''
+            if hasattr(next_queue, 'patient') and next_queue.patient:
+                patient_name = next_queue.patient.full_name
+                mrn = next_queue.patient.mrn or ''
+            elif next_queue.encounter and next_queue.encounter.patient:
+                patient_name = next_queue.encounter.patient.full_name
+                mrn = next_queue.encounter.patient.mrn or ''
+        except Exception:
+            pass  # Use defaults if error accessing patient
+        
         response_data = {
             'success': True,
-            'queue_number': next_queue.queue_number,
-            'patient_name': next_queue.encounter.patient.full_name if next_queue.encounter and next_queue.encounter.patient else 'Unknown',
-            'mrn': next_queue.encounter.patient.mrn if next_queue.encounter and next_queue.encounter.patient else '',
-            'message': f'Called #{next_queue.queue_number}',
+            'queue_number': str(next_queue.queue_number) if next_queue.queue_number else '',
+            'patient_name': patient_name,
+            'mrn': mrn,
+            'message': f'Called #{next_queue.queue_number}' if next_queue.queue_number else 'Called patient',
             'sms_sent': sms_sent
         }
         
         return JsonResponse(response_data)
     else:
         # No patients in queue
-        if request.method == 'POST':
+        is_ajax = (
+            request.headers.get('Accept', '').find('application/json') != -1 or
+            request.content_type == 'application/json' or
+            request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        )
+        
+        if request.method == 'POST' and not is_ajax:
             messages.warning(request, 'No patients in waiting queue')
             return redirect('hospital:queue_display')
         
@@ -970,9 +1055,13 @@ def queue_data_api(request):
             wait_time = getattr(q, 'estimated_wait_time', 0)
             patient = q.encounter.patient if q.encounter else None
         
+        if HAS_QUEUE_ENTRY and isinstance(q, QueueEntry):
+            ticket = str(getattr(q, 'display_ticket_number', '') or getattr(q, 'queue_number', '') or '')
+        else:
+            ticket = q.queue_number
         return {
             'id': str(q.id),
-            'queue_number': q.queue_number,
+            'queue_number': ticket,
             'patient_name': patient.full_name if patient else 'Unknown',
             'mrn': patient.mrn if patient else '',
             'priority': getattr(q, 'priority', 'normal'),
@@ -995,7 +1084,10 @@ def queue_data_api(request):
     })
 
 
+from .decorators import role_required
+
 @login_required
+@role_required('nurse', 'midwife', 'admin', message='Access denied. Only nurses and midwives can create triage records.')
 def triage_create(request):
     """Create a new triage record"""
     from .forms_advanced import TriageForm
@@ -1040,6 +1132,27 @@ def appointment_create(request):
         form = AppointmentForm(request.POST)
         if form.is_valid():
             appointment = form.save()
+            
+            # Send SMS notification to patient
+            try:
+                from .views_appointment_confirmation import send_appointment_notification_with_confirmation
+                patient = appointment.patient
+                if patient.phone_number and patient.phone_number.strip():
+                    send_appointment_notification_with_confirmation(appointment, request=request)
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error sending patient appointment SMS: {str(e)}")
+            
+            # Send SMS notification to doctor
+            try:
+                from .views_appointment_confirmation import send_appointment_notification_to_doctor
+                send_appointment_notification_to_doctor(appointment)
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error sending doctor appointment SMS: {str(e)}")
+            
             messages.success(request, 'Appointment created successfully.')
             return redirect('hospital:frontdesk_appointment_dashboard')
     else:
@@ -1091,29 +1204,77 @@ def incident_list_view(request):
 
 @login_required
 def mar_administer(request, mar_id):
-    """Administer medication via AJAX"""
+    """Administer medication via AJAX - with inventory accountability"""
     from .models_advanced import MedicationAdministrationRecord
+    from .models_drug_accountability import DrugAdministrationInventory
     from django.http import JsonResponse
+    import logging
+    
+    logger = logging.getLogger(__name__)
     
     mar = get_object_or_404(MedicationAdministrationRecord, pk=mar_id, is_deleted=False)
     
     if request.method == 'POST':
         dose_given = request.POST.get('dose_given', mar.prescription.dosage)
         notes = request.POST.get('notes', '')
+        quantity = request.POST.get('quantity', None)
         
         # Get current user's staff profile
         staff = None
         if hasattr(request.user, 'staff_profile'):
             staff = request.user.staff
         
-        mar.status = 'given'
-        mar.dose_given = dose_given
-        mar.notes = notes
-        mar.administered_time = timezone.now()
-        mar.administered_by = staff
-        mar.save()
+        if not staff:
+            return JsonResponse({
+                'status': 'error',
+                'message': 'Staff profile not found. Please ensure you have a staff profile.'
+            }, status=400)
         
-        return JsonResponse({'status': 'success', 'message': 'Medication administered successfully'})
+        try:
+            # Parse quantity if provided
+            qty = None
+            if quantity:
+                try:
+                    qty = int(quantity)
+                except ValueError:
+                    pass
+            
+            # Update MAR record
+            mar.status = 'given'
+            mar.dose_given = dose_given
+            mar.notes = notes
+            mar.administered_time = timezone.now()
+            mar.administered_by = staff
+            mar.save()
+            
+            # Create inventory tracking record (reduces inventory)
+            try:
+                admin_inv = DrugAdministrationInventory.create_from_mar(mar, staff, quantity=qty)
+                logger.info(
+                    f"✅ Drug administered: {mar.prescription.drug.name} to {mar.patient.full_name}. "
+                    f"Inventory reduced by {admin_inv.quantity_administered} units. "
+                    f"Transaction: {admin_inv.inventory_transaction.transaction_number if admin_inv.inventory_transaction else 'N/A'}"
+                )
+            except Exception as e:
+                # Log error but don't fail the MAR record
+                logger.error(f"⚠️ Error creating inventory tracking for MAR {mar_id}: {str(e)}")
+                # Still return success for MAR, but note the inventory issue
+                return JsonResponse({
+                    'status': 'partial_success',
+                    'message': f'Medication administered successfully, but inventory tracking failed: {str(e)}'
+                })
+            
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Medication administered successfully. Inventory updated.'
+            })
+        
+        except Exception as e:
+            logger.error(f"Error administering medication: {str(e)}")
+            return JsonResponse({
+                'status': 'error',
+                'message': f'Error: {str(e)}'
+            }, status=400)
     
     return JsonResponse({'status': 'error', 'message': 'Invalid request method'}, status=400)
 

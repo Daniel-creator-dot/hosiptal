@@ -166,17 +166,18 @@ def revenue_streams_dashboard(request):
             is_deleted=False
         ).aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
         
-        # Lab revenue - includes 'lab', 'lab_test', 'laboratory'
+        # Lab revenue - includes lab, lab_test, lab_result, laboratory
         lab_revenue = PaymentReceipt.objects.filter(
-            Q(service_type='lab') | Q(service_type='lab_test') | Q(service_type='laboratory'),
+            Q(service_type='lab') | Q(service_type='lab_test') | Q(service_type='lab_result') | Q(service_type='laboratory'),
             receipt_date__gte=date_from,
             receipt_date__lte=date_to,
             is_deleted=False
         ).aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
         
-        # Pharmacy revenue - includes 'pharmacy', 'pharmacy_prescription', 'medication'
+        # Pharmacy revenue - includes walk-in sales, prescriptions, medication
         pharmacy_revenue = PaymentReceipt.objects.filter(
-            Q(service_type='pharmacy') | Q(service_type='pharmacy_prescription') | Q(service_type='medication'),
+            Q(service_type='pharmacy') | Q(service_type='pharmacy_prescription') |
+            Q(service_type='pharmacy_walkin') | Q(service_type='medication'),
             receipt_date__gte=date_from,
             receipt_date__lte=date_to,
             is_deleted=False
@@ -230,13 +231,58 @@ def revenue_streams_dashboard(request):
             is_deleted=False
         ).aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
         
-        # Other/Combined services
-        other_revenue = PaymentReceipt.objects.filter(
-            Q(service_type='other') | Q(service_type='combined') | Q(service_type=''),
+        # Parse combined receipts - split by service type so consultation/lab/imaging show correctly
+        combined_receipts = PaymentReceipt.objects.filter(
+            service_type='combined',
+            receipt_date__gte=date_from,
+            receipt_date__lte=date_to,
+            is_deleted=False
+        ).only('service_details', 'amount_paid')
+        for rec in combined_receipts:
+            services = (rec.service_details or {}).get('services') or []
+            total_services = sum(Decimal(str(s.get('price', 0) or 0)) for s in services)
+            if total_services <= 0:
+                continue
+            for svc in services:
+                try:
+                    amt = Decimal(str(svc.get('price', 0) or 0))
+                except (TypeError, ValueError):
+                    continue
+                if amt <= 0:
+                    continue
+                stype = (svc.get('type') or '').lower()
+                if stype in ('consultation', 'outpatient', 'gp'):
+                    consultation_revenue += amt
+                elif stype in ('lab', 'lab_test', 'lab_result', 'laboratory'):
+                    lab_revenue += amt
+                elif stype in ('pharmacy', 'pharmacy_prescription', 'pharmacy_walkin', 'medication'):
+                    pharmacy_revenue += amt
+                elif stype in ('imaging', 'imaging_study', 'radiology'):
+                    imaging_revenue += amt
+                elif stype == 'dental':
+                    dental_revenue += amt
+                elif stype == 'gynecology':
+                    gynecology_revenue += amt
+                elif stype in ('surgery', 'procedure'):
+                    surgery_revenue += amt
+                elif stype == 'emergency':
+                    emergency_revenue += amt
+                elif stype == 'ambulance':
+                    ambulance_revenue += amt
+                # bed, admission, invoice, invoice_line, detainment -> stay in other
+        
+        # Other: remainder (admission, bed, combined total, null, etc.) - ensures total matches sum of cards
+        categorized_sum = (
+            consultation_revenue + lab_revenue + pharmacy_revenue + imaging_revenue +
+            dental_revenue + gynecology_revenue + surgery_revenue + emergency_revenue +
+            ambulance_revenue
+        )
+        total_from_receipts = PaymentReceipt.objects.filter(
             receipt_date__gte=date_from,
             receipt_date__lte=date_to,
             is_deleted=False
         ).aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+        other_revenue = max(Decimal('0.00'), total_from_receipts - categorized_sum)
     except Exception as e:
         import traceback
         print(f"Error calculating service revenue: {e}")
@@ -244,6 +290,13 @@ def revenue_streams_dashboard(request):
         consultation_revenue = lab_revenue = pharmacy_revenue = imaging_revenue = Decimal('0.00')
         dental_revenue = gynecology_revenue = surgery_revenue = emergency_revenue = Decimal('0.00')
         ambulance_revenue = other_revenue = Decimal('0.00')
+    
+    # Total = sum of all category cards (always matches the cards; admission/bed/combined in Other)
+    total_revenue = (
+        consultation_revenue + lab_revenue + pharmacy_revenue + imaging_revenue +
+        dental_revenue + gynecology_revenue + surgery_revenue + emergency_revenue +
+        ambulance_revenue + other_revenue
+    )
     
     context = {
         'date_from': date_from,

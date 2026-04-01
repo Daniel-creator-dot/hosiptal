@@ -1,19 +1,14 @@
 """
 Automatic Attendance Signals
-Auto-track attendance when staff login via password or biometric
+Auto-track attendance when staff login via password
 """
 
-from decimal import Decimal
 from django.contrib.auth.signals import user_logged_in
-from django.dispatch import receiver, Signal
+from django.dispatch import receiver
 from django.utils import timezone
 from datetime import datetime, time
 from .models_auto_attendance import StaffAttendance
 from .models_hr import StaffShift
-
-
-# Custom signal for biometric login
-biometric_login_success = Signal()
 
 
 def get_client_ip(request):
@@ -86,6 +81,7 @@ def sync_attendance_calendar_record(attendance):
     Ensure AttendanceCalendar has an entry that mirrors StaffAttendance
     """
     try:
+        from decimal import Decimal
         from .models_hr_enhanced import AttendanceCalendar
         
         check_in_time = attendance.check_in_time
@@ -217,102 +213,6 @@ def auto_create_attendance_on_login(sender, request, user, **kwargs):
         print(f"[AUTO-ATTENDANCE ERROR] Failed to create attendance: {e}")
 
 
-@receiver(biometric_login_success)
-def auto_create_attendance_on_biometric(sender, user, method='biometric', **kwargs):
-    """
-    Automatically create/update attendance when staff logs in with BIOMETRIC
-    """
-    # Check if user is staff
-    if not hasattr(user, 'staff'):
-        return
-    
-    staff = user.staff
-    today = timezone.now().date()
-    now_time = timezone.now().time()
-    
-    try:
-        # Determine biometric method
-        login_method = 'biometric'
-        if method == 'fingerprint':
-            login_method = 'biometric_fingerprint'
-        
-        # Get or create attendance record for today
-        attendance, created = StaffAttendance.objects.get_or_create(
-            staff=staff,
-            date=today,
-            defaults={
-                'login_method': login_method,
-                'check_in_time': now_time,
-                'status': 'present',
-            }
-        )
-        
-        if not created:
-            # Update existing record (might have logged in with password earlier)
-            attendance.last_login_time = timezone.now()
-            attendance.login_count += 1
-            
-            # If first check-in time not set, set it now
-            if not attendance.check_in_time:
-                attendance.check_in_time = now_time
-            
-            # Update method if biometric (more secure)
-            if attendance.login_method == 'password':
-                attendance.login_method = login_method
-            
-            attendance.save()
-        
-        # Find today's shift and check in
-        try:
-            shift = StaffShift.objects.filter(
-                staff=staff,
-                shift_date=today,
-                is_deleted=False
-            ).first()
-            
-            if shift and not shift.checked_in:
-                # Auto check-in to shift
-                shift.checked_in = True
-                shift.check_in_time = timezone.now()
-                shift.save()
-                
-                # Link shift to attendance
-                attendance.assigned_shift = shift
-                
-                # Check if late
-                is_late, late_mins = determine_if_late(staff, now_time, shift.start_time)
-                attendance.is_late = is_late
-                attendance.late_minutes = late_mins
-                
-                if is_late:
-                    attendance.status = 'late'
-                
-                attendance.save()
-                
-                print(f"[BIOMETRIC-ATTENDANCE] {staff} checked in via {method} - {shift.get_shift_type_display()}")
-        
-        except Exception as e:
-            print(f"[BIOMETRIC-ATTENDANCE] Shift check-in error: {e}")
-        
-        if not attendance.is_late:
-            is_late, late_mins = determine_if_late(staff, now_time, None)
-            if is_late:
-                attendance.is_late = True
-                attendance.late_minutes = late_mins
-                attendance.status = 'late'
-                attendance.save(update_fields=['is_late', 'late_minutes', 'status'])
-        
-        sync_attendance_calendar_record(attendance)
-        
-        if created:
-            print(f"[BIOMETRIC-ATTENDANCE] Created attendance for {staff} - {method} at {now_time.strftime('%H:%M')}")
-        else:
-            print(f"[BIOMETRIC-ATTENDANCE] Updated attendance for {staff} - Login #{attendance.login_count}")
-    
-    except Exception as e:
-        print(f"[BIOMETRIC-ATTENDANCE ERROR] Failed to create attendance: {e}")
-
-
 def mark_attendance_manually(staff, date, status='present', notes=''):
     """
     Manual attendance marking (for admin/HR)
@@ -400,9 +300,6 @@ def get_staff_attendance_stats(staff, month=None, year=None):
         stats['attendance_rate'] = (stats['present_days'] / stats['total_days']) * 100
     
     return stats
-
-
-
 
 
 

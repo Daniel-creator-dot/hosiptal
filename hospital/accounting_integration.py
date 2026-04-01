@@ -54,148 +54,19 @@ def create_accounts_receivable(sender, instance, created, **kwargs):
 def auto_post_payment_to_accounting(sender, instance, created, **kwargs):
     """
     Auto-create revenue entry and receipt voucher when payment is received
-    Also creates journal entry and posts to GL
+    Also creates journal entry and posts to GL.
+    DISABLED for transaction_type='payment_received': only signals_accounting.py
+    posts those (single source) to avoid double Revenue/GL. Deposit applications
+    are handled by signals_patient_deposits only.
     """
     if not created:
         return
     
     if instance.transaction_type != 'payment_received':
         return
-    
-    try:
-        with transaction.atomic():
-            # Get or create default accounts
-            cash_account, _ = Account.objects.get_or_create(
-                account_code='1000',
-                defaults={
-                    'account_name': 'Cash on Hand',
-                    'account_type': 'asset',
-                }
-            )
-            
-            revenue_account, _ = Account.objects.get_or_create(
-                account_code='4000',
-                defaults={
-                    'account_name': 'Patient Services Revenue',
-                    'account_type': 'revenue',
-                }
-            )
-            
-            # Create Revenue entry
-            revenue_category, _ = RevenueCategory.objects.get_or_create(
-                code='REV-PATIENT',
-                defaults={
-                    'name': 'Patient Services',
-                    'account': revenue_account,
-                }
-            )
-            
-            revenue = Revenue.objects.create(
-                revenue_date=instance.transaction_date.date() if hasattr(instance.transaction_date, 'date') else instance.transaction_date,
-                category=revenue_category,
-                description=f"Payment from {instance.patient.full_name if instance.patient else 'Patient'} - {instance.reference_number or instance.transaction_number}",
-                amount=instance.amount,
-                patient=instance.patient,
-                invoice=instance.invoice,
-                payment_method=instance.payment_method,
-                reference=instance.reference_number or instance.transaction_number,
-                recorded_by=instance.processed_by,
-            )
-            
-            # Create Receipt Voucher
-            receipt_voucher = ReceiptVoucher.objects.create(
-                receipt_date=revenue.revenue_date,
-                received_from=instance.patient.full_name if instance.patient else 'Patient',
-                patient=instance.patient,
-                amount=instance.amount,
-                payment_method=instance.payment_method,
-                description=revenue.description,
-                reference=instance.transaction_number,
-                status='issued',
-                revenue_account=revenue_account,
-                cash_account=cash_account,
-                invoice=instance.invoice,
-                received_by=instance.processed_by,
-            )
-            
-            # Create Journal Entry
-            journal = Journal.objects.filter(journal_type='receipt').first()
-            if not journal:
-                journal = Journal.objects.create(
-                    code='RJ',
-                    name='Receipt Journal',
-                    journal_type='receipt',
-                )
-            
-            je = AdvancedJournalEntry.objects.create(
-                journal=journal,
-                entry_date=revenue.revenue_date,
-                description=f"Patient payment: {revenue.description}",
-                reference=instance.transaction_number,
-                status='posted',
-                total_debit=instance.amount,
-                total_credit=instance.amount,
-                created_by=instance.processed_by,
-                posted_by=instance.processed_by,
-                invoice=instance.invoice,
-            )
-            
-            # Debit: Cash (increase asset)
-            AdvancedJournalEntryLine.objects.create(
-                journal_entry=je,
-                line_number=1,
-                account=cash_account,
-                description=f"Cash received from {instance.patient.full_name if instance.patient else 'Patient'}",
-                debit_amount=instance.amount,
-                credit_amount=Decimal('0.00'),
-                patient=instance.patient,
-            )
-            
-            # Credit: Revenue (increase revenue)
-            AdvancedJournalEntryLine.objects.create(
-                journal_entry=je,
-                line_number=2,
-                account=revenue_account,
-                description=f"Patient services revenue",
-                debit_amount=Decimal('0.00'),
-                credit_amount=instance.amount,
-                patient=instance.patient,
-            )
-            
-            # Post to General Ledger
-            je.post(instance.processed_by)
-            
-            # Link back to revenue
-            revenue.journal_entry = je
-            revenue.receipt_voucher = receipt_voucher
-            revenue.save()
-            
-            receipt_voucher.journal_entry = je
-            receipt_voucher.save()
-            
-            # Update AR if linked to invoice
-            if instance.invoice:
-                try:
-                    ar = AdvancedAccountsReceivable.objects.get(invoice=instance.invoice)
-                    ar.amount_paid += instance.amount
-                    ar.save()  # This will auto-calculate balance_due and aging
-                except AdvancedAccountsReceivable.DoesNotExist:
-                    # Create AR if it doesn't exist
-                    AdvancedAccountsReceivable.objects.create(
-                        invoice=instance.invoice,
-                        patient=instance.patient,
-                        invoice_amount=instance.invoice.total_amount,
-                        amount_paid=instance.amount,
-                        balance_due=instance.invoice.total_amount - instance.amount,
-                        due_date=instance.invoice.due_date or (timezone.now().date() + timezone.timedelta(days=30)),
-                    )
-            
-            print(f"[AUTO-SYNC] Payment GHS {instance.amount} → Revenue → Journal Entry → GL ✓")
-    
-    except Exception as e:
-        print(f"[ERROR] Auto-posting payment failed: {e}")
-        import traceback
-        traceback.print_exc()
+
+    # Single source: signals_accounting.py handles payment_received (and skips deposit)
+    return
 
 
 # ==================== PROCUREMENT TO EXPENSE AUTO-SYNC ====================
@@ -551,7 +422,7 @@ def sync_invoice_to_accounting(invoice):
                 'invoice_amount': invoice.total_amount,
                 'amount_paid': invoice.total_amount - invoice.balance,
                 'balance_due': invoice.balance,
-                'due_date': invoice.due_date or (timezone.now().date() + timezone.timedelta(days=30)),
+                'due_date': invoice.due_at.date() if invoice.due_at else (timezone.now().date() + timezone.timedelta(days=30)),
             }
         )
         
@@ -707,6 +578,28 @@ class CashierAccountingIntegration:
         """
         try:
             with transaction.atomic():
+                # Check for duplicate transaction before creating
+                from datetime import timedelta
+                from django.utils import timezone
+                recent_cutoff = timezone.now() - timedelta(minutes=1)
+                
+                existing_transaction = Transaction.objects.filter(
+                    transaction_type='payment_received',
+                    invoice=invoice,
+                    amount=amount,
+                    payment_method=payment_method,
+                    transaction_date__gte=recent_cutoff,
+                    is_deleted=False
+                ).first()
+                
+                if existing_transaction:
+                    # Duplicate found - return existing transaction
+                    return {
+                        'success': True,
+                        'transaction': existing_transaction,
+                        'message': f'Payment already processed (duplicate prevented)'
+                    }
+                
                 # Create transaction (existing model)
                 txn = Transaction.objects.create(
                     transaction_type='payment_received',

@@ -5,7 +5,8 @@ from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib import messages
 from django.utils import timezone
-from django.db.models import Q, Sum, Count
+from django.db.models import Q, Sum, Count, Avg
+from django.db import models
 from django.http import JsonResponse
 from datetime import date, timedelta
 from decimal import Decimal
@@ -13,10 +14,11 @@ from .models import Staff, Department
 from .models_hr import (
     PayGrade, StaffContract, PayrollPeriod, Payroll, LeaveBalance,
     PerformanceReview, DisciplinaryAction, TrainingRecord, StaffDocument, StaffNote,
-    StaffShift, ShiftTemplate, StaffQualification,
+    StaffShift, ShiftTemplate, StaffQualification, StaffMedicalChit,
     AllowanceType, DeductionType, TaxBracket, PayrollConfiguration
 )
 from .models_advanced import LeaveRequest, Attendance, DutyRoster
+from .views_hod_shift_monitoring import is_hod
 from .forms_hr import (
     StaffForm, StaffContractForm, LeaveRequestForm, StaffDocumentForm,
     PerformanceReviewForm, TrainingRecordForm,
@@ -28,6 +30,14 @@ from .services.performance_analytics import performance_analytics_service
 def is_hr_or_admin(user):
     """Check if user is HR or Admin"""
     return user.groups.filter(name__in=['Admin', 'HR']).exists() or user.is_staff
+
+
+def is_hr_admin_or_hod(user):
+    """
+    Check if user is HR/Admin or a Head of Department.
+    HODs (like Evans as Head of Laboratory) can manage timetables/shifts for their department.
+    """
+    return is_hr_or_admin(user) or is_hod(user)
 
 
 def is_manager_or_admin(user):
@@ -160,7 +170,7 @@ def staff_list(request):
 @login_required
 @user_passes_test(is_hr_or_admin, login_url='/admin/login/')
 def staff_detail(request, pk):
-    """Staff detail view"""
+    """Comprehensive Staff Profile View - Complete Staff Folder"""
     staff = get_object_or_404(
         Staff.objects.select_related('user', 'department', 'department__head_of_department'),
         pk=pk, 
@@ -175,41 +185,208 @@ def staff_detail(request, pk):
     
     leave_balance = LeaveBalance.objects.filter(staff=staff, is_deleted=False).first()
     
-    payrolls = Payroll.objects.filter(
+    # ========== LEAVE HISTORY - All leaves spent ==========
+    
+    all_leaves = LeaveRequest.objects.filter(
         staff=staff,
         is_deleted=False
-    ).select_related('period').order_by('-period__start_date')[:12]
+    ).select_related('approved_by').order_by('-start_date')
     
+    # Calculate leave count
+    all_leaves_count = all_leaves.count()
+    
+    # Calculate leave statistics
+    approved_leaves = all_leaves.filter(status='approved')
+    
+    # Total leave days - ensure it's a number
+    total_leave_days_result = approved_leaves.aggregate(
+        total=Sum('days_requested')
+    )['total']
+    if total_leave_days_result is None:
+        total_leave_days = 0
+    else:
+        total_leave_days = float(total_leave_days_result)
+    
+    # Leave by type
+    leave_by_type = {}
+    for leave_type_code, leave_type_name in LeaveRequest.LEAVE_TYPES:
+        days_result = approved_leaves.filter(leave_type=leave_type_code).aggregate(
+            total=Sum('days_requested')
+        )['total']
+        days = float(days_result) if days_result is not None else 0
+        if days > 0:
+            leave_by_type[leave_type_name] = days
+    
+    # Current year leaves
+    current_year = date.today().year
+    current_year_leaves = approved_leaves.filter(
+        start_date__year=current_year
+    )
+    current_year_days_result = current_year_leaves.aggregate(
+        total=Sum('days_requested')
+    )['total']
+    if current_year_days_result is None:
+        current_year_days = 0
+    else:
+        current_year_days = float(current_year_days_result)
+    
+    # Check if staff is currently on leave
+    today = date.today()
+    current_leave = approved_leaves.filter(
+        start_date__lte=today,
+        end_date__gte=today
+    ).first()
+    
+    is_currently_on_leave = current_leave is not None
+    
+    # ========== PERFORMANCE REVIEWS - Complete with KPIs ==========
     performance_reviews = PerformanceReview.objects.filter(
         staff=staff,
         is_deleted=False
-    ).order_by('-review_date')[:5]
+    ).prefetch_related('kpi_ratings__kpi').order_by('-review_date')
     
+    # Performance count
+    performance_reviews_count = performance_reviews.count()
+    
+    # Performance statistics
+    if performance_reviews.exists():
+        latest_review = performance_reviews.first()
+        avg_score = performance_reviews.aggregate(
+            avg=Avg('overall_score')
+        )['avg'] or 0
+    else:
+        latest_review = None
+        avg_score = 0
+    
+    # ========== REAL-TIME PERFORMANCE SNAPSHOT ==========
+    # Get or generate latest performance snapshot (auto-updated as staff work)
+    latest_performance_snapshot = None
+    performance_snapshot_history = []
+    try:
+        latest_performance_snapshot = performance_analytics_service.ensure_recent_snapshot(staff)
+        performance_snapshot_history = performance_analytics_service.get_recent_snapshots(staff, limit=4)
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Could not generate performance snapshot: {e}")
+    
+    # ========== MEDICAL HISTORY - Medical Chits ==========
+    medical_chits = StaffMedicalChit.objects.filter(
+        staff=staff,
+        is_deleted=False
+    ).select_related('hr_approved_by', 'encounter').order_by('-application_date')
+    
+    # Medical chit statistics
+    total_chits = medical_chits.count() or 0
+    approved_chits = medical_chits.filter(status='approved').count() or 0
+    used_chits = medical_chits.filter(status='used').count() or 0
+    
+    # ========== TRAINING RECORDS ==========
     training_records = TrainingRecord.objects.filter(
         staff=staff,
         is_deleted=False
-    ).order_by('-start_date')[:10]
+    ).select_related('program').order_by('-start_date')
     
+    # Training count
+    training_records_count = training_records.count()
+    
+    # ========== DOCUMENTS ==========
     documents = StaffDocument.objects.filter(
         staff=staff,
         is_active=True,
         is_deleted=False
     ).order_by('-created')
     
+    # Documents count
+    documents_count = documents.count()
+    
+    # ========== NOTES ==========
     notes = StaffNote.objects.filter(
         staff=staff,
         is_deleted=False
-    ).order_by('-created')[:10]
+    ).select_related('created_by').order_by('-created')
+    
+    # ========== DISCIPLINARY ACTIONS ==========
+    disciplinary_actions = DisciplinaryAction.objects.filter(
+        staff=staff,
+        is_deleted=False
+    ).select_related('reported_by').order_by('-action_date')
+    
+    # ========== PAYROLL HISTORY ==========
+    payrolls = Payroll.objects.filter(
+        staff=staff,
+        is_deleted=False
+    ).select_related('period').order_by('-period__start_date')[:24]
+    
+    # ========== QUALIFICATIONS ==========
+    qualifications = StaffQualification.objects.filter(
+        staff=staff,
+        is_deleted=False,
+        is_active=True
+    ).order_by('-issue_date')
+    
+    # ========== ATTENDANCE (if available) ==========
+    attendance_records = []
+    try:
+        from .models_auto_attendance import StaffAttendance
+        attendance_records = StaffAttendance.objects.filter(
+            staff=staff,
+            is_deleted=False
+        ).order_by('-date')[:30]
+    except:
+        pass
+    
+    # Calculate attendance statistics
+    attendance_stats = {}
+    if attendance_records:
+        total_days = len(attendance_records)
+        present_days = sum(1 for a in attendance_records if a.status == 'present')
+        attendance_stats = {
+            'total_days': total_days,
+            'present_days': present_days,
+            'attendance_rate': (present_days / total_days * 100) if total_days > 0 else 0
+        }
     
     context = {
         'staff': staff,
         'contract': contract,
         'leave_balance': leave_balance,
-        'payrolls': payrolls,
+        
+        # Leave data
+        'all_leaves': all_leaves,
+        'all_leaves_count': all_leaves_count,
+        'total_leave_days': total_leave_days,
+        'leave_by_type': leave_by_type,
+        'current_year_leaves': current_year_leaves,
+        'current_year_days': current_year_days,
+        'is_currently_on_leave': is_currently_on_leave,
+        'current_leave': current_leave,
+        
+        # Performance data
         'performance_reviews': performance_reviews,
+        'performance_reviews_count': performance_reviews_count,
+        'latest_review': latest_review,
+        'avg_performance_score': float(avg_score) if avg_score else 0,
+        'latest_performance_snapshot': latest_performance_snapshot,
+        'performance_snapshot_history': performance_snapshot_history,
+        
+        # Medical history
+        'medical_chits': medical_chits,
+        'total_chits': int(total_chits),
+        'approved_chits': int(approved_chits),
+        'used_chits': int(used_chits),
+        
+        # Other data
         'training_records': training_records,
+        'training_records_count': training_records_count,
         'documents': documents,
+        'documents_count': documents_count,
         'notes': notes,
+        'disciplinary_actions': disciplinary_actions,
+        'payrolls': payrolls,
+        'qualifications': qualifications,
+        'attendance_records': attendance_records,
+        'attendance_stats': attendance_stats,
     }
     return render(request, 'hospital/staff_detail.html', context)
 
@@ -633,16 +810,30 @@ def staff_document_upload(request, staff_id):
 
 
 @login_required
-@user_passes_test(is_hr_or_admin, login_url='/admin/login/')
+@user_passes_test(is_hr_admin_or_hod, login_url='/admin/login/')
 def staff_shift_list(request):
     """List staff shifts"""
     date_filter = request.GET.get('date')
     staff_filter = request.GET.get('staff')
     department_filter = request.GET.get('department')
-    
+
+    # Determine current user's scope: HR/Admin (all departments) vs HOD (own department only)
+    user_is_hod = is_hod(request.user)
+    user_is_hr_admin = is_hr_or_admin(request.user)
+    hod_department = None
+    if user_is_hod:
+        try:
+            hod_department = request.user.staff.hod_designation.department
+        except Exception:
+            hod_department = None
+
     shifts = StaffShift.objects.filter(is_deleted=False).select_related(
         'staff', 'department', 'location'
     )
+
+    # HODs should only ever see shifts for their own department, even if filters request otherwise.
+    if user_is_hod and hod_department and not user_is_hr_admin:
+        shifts = shifts.filter(department=hod_department)
     
     if date_filter:
         try:
@@ -686,12 +877,20 @@ def staff_shift_list(request):
         latest_id=Subquery(latest_staff.values('id'))
     ).values_list('latest_id', flat=True).distinct()
     
-    staff_list = Staff.objects.filter(
+    staff_qs = Staff.objects.filter(
         id__in=latest_staff_ids,
         is_active=True,
         is_deleted=False
-    ).order_by('user__last_name')
-    departments = Department.objects.filter(is_active=True, is_deleted=False)
+    )
+    departments_qs = Department.objects.filter(is_active=True, is_deleted=False)
+
+    # Restrict staff/department filters for HODs to their department only
+    if user_is_hod and hod_department and not user_is_hr_admin:
+        staff_qs = staff_qs.filter(department=hod_department)
+        departments_qs = departments_qs.filter(pk=hod_department.pk)
+
+    staff_list = staff_qs.order_by('user__last_name')
+    departments = departments_qs
     
     if not date_filter:
         today = date.today()
@@ -710,9 +909,19 @@ def staff_shift_list(request):
 
 
 @login_required
-@user_passes_test(is_hr_or_admin, login_url='/admin/login/')
+@user_passes_test(is_hr_admin_or_hod, login_url='/admin/login/')
 def staff_shift_create(request):
     """Create staff shift"""
+    # Determine if current user is acting as HOD (department-scoped) or HR/Admin (global)
+    user_is_hod = is_hod(request.user)
+    user_is_hr_admin = is_hr_or_admin(request.user)
+    hod_department = None
+    if user_is_hod:
+        try:
+            hod_department = request.user.staff.hod_designation.department
+        except Exception:
+            hod_department = None
+
     if request.method == 'POST':
         staff_id = request.POST.get('staff')
         shift_date = request.POST.get('shift_date')
@@ -722,16 +931,40 @@ def staff_shift_create(request):
         department_id = request.POST.get('department')
         location_id = request.POST.get('location', '')
         notes = request.POST.get('notes', '')
-        
+
+        # HODs must only assign shifts within their own department;
+        # ignore/override any posted department that does not match.
+        if user_is_hod and hod_department:
+            department_id = str(hod_department.id)
+
         try:
+            if not all([staff_id, shift_date, shift_type, start_time, end_time, department_id]):
+                raise ValueError('Please fill all required fields.')
+            from django.utils.dateparse import parse_date, parse_time
+            parsed_date = parse_date(shift_date)
+            st = parse_time(start_time)
+            et = parse_time(end_time)
+            if not parsed_date or not st or not et:
+                raise ValueError('Invalid date or time.')
+
+            # If HOD, enforce that selected staff belongs to their department
+            if user_is_hod and hod_department:
+                staff_obj = Staff.objects.filter(
+                    pk=int(staff_id),
+                    department=hod_department,
+                    is_deleted=False
+                ).first()
+                if not staff_obj:
+                    raise ValueError('You can only assign shifts to staff in your department.')
+
             shift = StaffShift.objects.create(
-                staff_id=staff_id,
-                shift_date=shift_date,
+                staff_id=int(staff_id),
+                shift_date=parsed_date,
                 shift_type=shift_type,
-                start_time=start_time,
-                end_time=end_time,
-                department_id=department_id,
-                location_id=location_id if location_id else None,
+                start_time=st,
+                end_time=et,
+                department_id=int(department_id),
+                location_id=int(location_id) if str(location_id).strip().isdigit() else None,
                 notes=notes,
                 assigned_by=request.user,
             )
@@ -756,12 +989,21 @@ def staff_shift_create(request):
         latest_id=Subquery(latest_staff.values('id'))
     ).values_list('latest_id', flat=True).distinct()
     
-    staff_list = Staff.objects.filter(
+    staff_qs = Staff.objects.filter(
         id__in=latest_staff_ids,
         is_active=True,
         is_deleted=False
-    ).order_by('user__last_name')
-    departments = Department.objects.filter(is_active=True, is_deleted=False)
+    )
+
+    departments_qs = Department.objects.filter(is_active=True, is_deleted=False)
+
+    # HOD view: restrict staff and departments to their department only
+    if user_is_hod and hod_department and not user_is_hr_admin:
+        staff_qs = staff_qs.filter(department=hod_department)
+        departments_qs = departments_qs.filter(pk=hod_department.pk)
+
+    staff_list = staff_qs.order_by('user__last_name')
+    departments = departments_qs
     wards = Ward.objects.filter(is_active=True, is_deleted=False)
     
     context = {
@@ -1206,6 +1448,37 @@ def leave_reject(request, pk):
             messages.error(request, 'Could not reject leave request')
     
     return redirect('hospital:leave_approval_list')
+
+
+@login_required
+@user_passes_test(is_hr_or_admin, login_url='/admin/login/')
+def leave_print(request, pk):
+    """Print approved leave document - HR/Admin only"""
+    leave_request = get_object_or_404(LeaveRequest, pk=pk, is_deleted=False)
+    
+    # Only allow printing approved leaves
+    if leave_request.status != 'approved':
+        messages.error(request, 'Only approved leave requests can be printed.')
+        return redirect('hospital:leave_approval_list')
+    
+    # Get hospital settings
+    try:
+        from .models_settings import HospitalSettings
+        settings = HospitalSettings.objects.first()
+        if not settings:
+            # Create default settings if none exist
+            settings = HospitalSettings.objects.create(
+                hospital_name="Hospital Management System",
+                report_header_color="#2196F3"
+            )
+    except Exception:
+        settings = None
+    
+    context = {
+        'leave_request': leave_request,
+        'settings': settings,
+    }
+    return render(request, 'hospital/leave_print.html', context)
 
 
 @login_required

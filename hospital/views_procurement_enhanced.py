@@ -121,6 +121,9 @@ def procurement_admin_review(request, pk):
                 proc_request.admin_approved_at = timezone.now()
                 proc_request.save()
                 
+                # Send SMS notification to accountants (triggered automatically by model save)
+                # The SMS is sent in the model's approve_by_admin method
+                
                 messages.success(request, f'Request {proc_request.request_number} approved by Procurement. Forwarded to Finance for budget approval.')
                 
             elif action == 'reject':
@@ -244,26 +247,40 @@ def mark_request_received_worldclass(request, pk):
         proc_request.status = 'received'
         proc_request.save()
         
-        # Add items to procurement store inventory
-        procurement_store = Store.objects.filter(
-            store_type='main',  # Main store receives items first
-            is_deleted=False
-        ).first()
+        # Determine target store based on item type
+        # Pharmacy items go to Drug Store (DRUGS), Lab items to Lab Store (LAB), others to Main Store (MAIN)
+        from hospital.services.inventory_accountability_service import InventoryAccountabilityService
         
-        if not procurement_store:
-            # Create main store if doesn't exist
-            procurement_store = Store.objects.create(
-                name='Main Store',
-                code='MAIN',
-                store_type='main',
-                manager=staff
-            )
-        
-        # Add each item to inventory
         for item in proc_request.items.filter(is_deleted=False):
+            # Determine target store
+            if item.drug or (proc_request.requested_by_store and proc_request.requested_by_store.store_type == 'pharmacy'):
+                # Pharmacy items go to Drug Store (DRUGS)
+                target_store = Store.objects.filter(code='DRUGS', is_deleted=False).first()
+                if not target_store:
+                    target_store = Store.objects.filter(store_type='pharmacy', is_deleted=False).first()
+            elif proc_request.requested_by_store and proc_request.requested_by_store.store_type == 'lab':
+                # Lab items go to Lab Store (LAB)
+                target_store = Store.objects.filter(code='LAB', is_deleted=False).first()
+                if not target_store:
+                    target_store = Store.objects.filter(store_type='lab', is_deleted=False).first()
+            else:
+                # Other items go to Main Store (MAIN)
+                target_store = Store.objects.filter(code='MAIN', is_deleted=False).first()
+                if not target_store:
+                    target_store = Store.objects.filter(store_type='main', is_deleted=False).first()
+            
+            if not target_store:
+                # Fallback: create main store if doesn't exist
+                target_store = Store.objects.create(
+                    name='Main Store',
+                    code='MAIN',
+                    store_type='main',
+                    manager=staff
+                )
+            
             # Check if item exists in inventory
             inv_item, created = InventoryItem.objects.get_or_create(
-                store=procurement_store,
+                store=target_store,
                 item_name=item.item_name,
                 is_deleted=False,
                 defaults={
@@ -279,10 +296,16 @@ def mark_request_received_worldclass(request, pk):
                 }
             )
             
-            # Increase quantity
-            inv_item.quantity_on_hand += item.quantity
-            inv_item.unit_cost = item.estimated_unit_price  # Update cost
-            inv_item.save()
+            # Use accountability service to receive from supplier
+            InventoryAccountabilityService.receive_from_supplier(
+                inventory_item=inv_item,
+                quantity=item.quantity,
+                unit_cost=item.estimated_unit_price,
+                staff=staff,
+                reference_number=proc_request.request_number,
+                supplier_name=item.preferred_supplier.name if item.preferred_supplier else '',
+                notes=f"Received via procurement request {proc_request.request_number}"
+            )
             
             # Update received quantity on request item
             item.received_quantity = item.quantity
@@ -291,7 +314,7 @@ def mark_request_received_worldclass(request, pk):
         # Post the accounting entry (make it official)
         post_procurement_accounting_entry(proc_request)
         
-        messages.success(request, f'Request {proc_request.request_number} marked as received. {proc_request.items.count()} items added to {procurement_store.name} inventory. Accounting entry posted.')
+        messages.success(request, f'Request {proc_request.request_number} marked as received. {proc_request.items.count()} items added to inventory. Accounting entry posted.')
         
         return redirect('hospital:procurement_requests_list')
         

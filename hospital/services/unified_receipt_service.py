@@ -60,29 +60,57 @@ class UnifiedReceiptService:
         
         try:
             with transaction.atomic():
-                # 1. Create Transaction
-                trans = Transaction.objects.create(
+                # Check for duplicate transaction before creating
+                from datetime import timedelta
+                recent_cutoff = timezone.now() - timedelta(minutes=1)
+                
+                existing_transaction = Transaction.objects.filter(
                     transaction_type='payment_received',
                     invoice=invoice,
                     patient=patient,
                     amount=amount,
                     payment_method=payment_method,
-                    processed_by=received_by_user,
-                    transaction_date=timezone.now(),
-                    notes=notes or f"Payment for {service_type or 'services'}"
-                )
+                    transaction_date__gte=recent_cutoff,
+                    is_deleted=False
+                ).first()
+                
+                if existing_transaction:
+                    # Duplicate found - return existing transaction
+                    logger.warning(
+                        f"Duplicate payment transaction detected. "
+                        f"Using existing transaction {existing_transaction.id}"
+                    )
+                    trans = existing_transaction
+                else:
+                    # 1. Create Transaction
+                    trans = Transaction.objects.create(
+                        transaction_type='payment_received',
+                        invoice=invoice,
+                        patient=patient,
+                        amount=amount,
+                        payment_method=payment_method,
+                        processed_by=received_by_user,
+                        transaction_date=timezone.now(),
+                        notes=notes or f"Payment for {service_type or 'services'}"
+                    )
                 
                 # 2. Get or create invoice if not provided
                 if not invoice:
                     if bill:
-                        # Find or create invoice from bill
-                        invoice = Invoice.objects.filter(
-                            patient=patient,
-                            is_deleted=False
-                        ).order_by('-created').first()
-                        
+                        # One invoice per encounter: reuse encounter invoice when bill has encounter (plan §4/§5)
+                        encounter = getattr(bill, 'encounter', None)
+                        if encounter:
+                            try:
+                                from hospital.utils_billing import get_or_create_encounter_invoice
+                                invoice = get_or_create_encounter_invoice(encounter)
+                            except Exception:
+                                invoice = None
                         if not invoice:
-                            # Get payer
+                            invoice = Invoice.objects.filter(
+                                patient=patient,
+                                is_deleted=False
+                            ).order_by('-created').first()
+                        if not invoice:
                             from hospital.models import Payer
                             payer = patient.primary_insurance
                             if not payer:
@@ -90,18 +118,16 @@ class UnifiedReceiptService:
                                     name='Cash',
                                     defaults={'payer_type': 'cash', 'is_active': True}
                                 )
-                            
                             from datetime import timedelta
-                            # Create a simple invoice
                             invoice = Invoice.objects.create(
                                 patient=patient,
-                                encounter=bill.encounter if hasattr(bill, 'encounter') else None,
+                                encounter=encounter if encounter else None,
                                 payer=payer,
                                 issued_at=timezone.now(),
                                 due_at=timezone.now() + timedelta(days=7),
                                 status='paid',
                                 total_amount=amount,
-                                balance=Decimal('0.00')  # Paid in full
+                                balance=Decimal('0.00')
                             )
                     else:
                         # Get payer
@@ -126,18 +152,28 @@ class UnifiedReceiptService:
                         )
                 
                 # 3. Create PaymentReceipt
-                receipt = PaymentReceipt.objects.create(
+                # Check for duplicate receipt before creating
+                existing_receipt = PaymentReceipt.objects.filter(
                     transaction=trans,
                     invoice=invoice,
-                    patient=patient,
-                    amount_paid=amount,
-                    payment_method=payment_method,
-                    received_by=received_by_user,
-                    receipt_date=timezone.now(),
-                    notes=notes,
-                    service_type=service_type or 'other',
-                    service_details=service_details or {}
-                )
+                    is_deleted=False
+                ).first()
+                
+                if not existing_receipt:
+                    receipt = PaymentReceipt.objects.create(
+                        transaction=trans,
+                        invoice=invoice,
+                        patient=patient,
+                        amount_paid=amount,
+                        payment_method=payment_method,
+                        received_by=received_by_user,
+                        receipt_date=timezone.now(),
+                        notes=notes,
+                        service_type=service_type or 'other',
+                        service_details=service_details or {}
+                    )
+                else:
+                    receipt = existing_receipt
                 
                 # 4. Generate QR Code Data
                 qr_data = UnifiedReceiptService._generate_qr_data(
@@ -146,25 +182,47 @@ class UnifiedReceiptService:
                     service_details=service_details
                 )
                 
-                # 5. Create QR Code
-                qr_code_obj = ReceiptQRCode.objects.create(
+                # 5. Create QR Code (prevent duplicates)
+                existing_qr_code = ReceiptQRCode.objects.filter(
                     receipt=receipt,
-                    qr_code_data=qr_data
-                )
+                    is_deleted=False
+                ).first()
+                
+                if not existing_qr_code:
+                    qr_code_obj = ReceiptQRCode.objects.create(
+                        receipt=receipt,
+                        qr_code_data=qr_data
+                    )
+                else:
+                    # Update existing QR code
+                    qr_code_obj = existing_qr_code
+                    qr_code_obj.qr_code_data = qr_data
+                    qr_code_obj.save()
                 
                 # 6. Generate QR Code Image
                 qr_code_obj.generate_qr_code()
                 qr_code_obj.save()
                 
-                # 7. Update invoice status
-                if invoice.balance > amount:
-                    invoice.balance -= amount
-                    invoice.status = 'partially_paid'
-                else:
-                    invoice.balance = Decimal('0.00')
-                    invoice.status = 'paid'
-                invoice.save()
-                
+                # 7. Update invoice totals from lines and receipts (single source of truth)
+                # Also syncs pharmacy dispensing + prescribe sales when invoice is settled (Invoice._sync_pharmacy_after_totals_saved)
+                invoice.update_totals()
+
+                try:
+                    from hospital.services.pharmacy_invoice_payment_link import (
+                        link_pharmacy_dispensing_when_invoice_paid,
+                    )
+                    if invoice and (invoice.balance or Decimal('0')) <= Decimal('0'):
+                        link_pharmacy_dispensing_when_invoice_paid(
+                            invoice,
+                            receipt=receipt,
+                            verified_by_user=received_by_user,
+                            refresh_invoice=False,
+                        )
+                except Exception as link_exc:
+                    logger.warning(
+                        "Pharmacy receipt attach after unified receipt: %s", link_exc, exc_info=True
+                    )
+
                 logger.info(
                     f"✅ Receipt {receipt.receipt_number} created with QR code "
                     f"for {patient.full_name} - {service_type} - GHS {amount}"
@@ -208,6 +266,81 @@ class UnifiedReceiptService:
                 'error': str(e),
                 'message': f'Failed to generate receipt: {str(e)}'
             }
+
+    @staticmethod
+    def create_deposit_application_receipt(patient, amount_applied, received_by_user, invoice=None):
+        """
+        Create a receipt for deposit applied to bill. Does NOT update invoice balance
+        (deposit was already applied by deposit_payment_service). Use when cashier
+        clicks "Apply deposit to bill" so the patient gets a receipt for the deposit payment.
+        """
+        from hospital.models_accounting import Transaction, PaymentReceipt
+        from hospital.models_payment_verification import ReceiptQRCode
+        from hospital.models import Invoice
+
+        if not invoice:
+            invoice = Invoice.objects.filter(
+                patient=patient,
+                is_deleted=False
+            ).order_by('-modified').first()
+        if not invoice:
+            logger.error("create_deposit_application_receipt: no invoice for patient %s", patient.id)
+            return {'success': False, 'error': 'No invoice to attach receipt to'}
+
+        try:
+            with transaction.atomic():
+                trans = Transaction.objects.create(
+                    transaction_type='payment_received',
+                    invoice=invoice,
+                    patient=patient,
+                    amount=amount_applied,
+                    payment_method='deposit',
+                    processed_by=received_by_user,
+                    transaction_date=timezone.now(),
+                    notes='Deposit applied to bill'
+                )
+                receipt = PaymentReceipt.objects.create(
+                    transaction=trans,
+                    invoice=invoice,
+                    patient=patient,
+                    amount_paid=amount_applied,
+                    payment_method='deposit',
+                    received_by=received_by_user,
+                    receipt_date=timezone.now(),
+                    notes='Deposit applied to bill',
+                    service_type='other',
+                    service_details={'deposit_applied': True, 'description': 'Deposit applied to bill'}
+                )
+                qr_data = UnifiedReceiptService._generate_qr_data(
+                    receipt=receipt,
+                    service_type='other',
+                    service_details=receipt.service_details
+                )
+                qr_code_obj = ReceiptQRCode.objects.create(
+                    receipt=receipt,
+                    qr_code_data=qr_data
+                )
+                qr_code_obj.generate_qr_code()
+                qr_code_obj.save()
+                logger.info(
+                    f"✅ Deposit application receipt {receipt.receipt_number} for {patient.full_name} GHS {amount_applied}"
+                )
+                try:
+                    from hospital.services.paperless_receipt_service import DigitalReceiptPreferences
+                    digital_results = DigitalReceiptPreferences.send_by_preferences(receipt)
+                except Exception as e:
+                    logger.warning("Digital receipt send failed: %s", e)
+                    digital_results = {}
+                return {
+                    'success': True,
+                    'receipt': receipt,
+                    'qr_code': qr_code_obj,
+                    'transaction': trans,
+                    'digital_receipt': digital_results,
+                }
+        except Exception as e:
+            logger.error("❌ create_deposit_application_receipt: %s", e, exc_info=True)
+            return {'success': False, 'error': str(e)}
     
     @staticmethod
     def _generate_qr_data(receipt, service_type=None, service_details=None):
@@ -343,9 +476,10 @@ class LabPaymentService:
     """Service for lab payment and receipt generation"""
     
     @staticmethod
-    def create_lab_payment_receipt(lab_result, amount, payment_method, received_by_user, notes=''):
-        """Create receipt for lab test payment"""
+    def create_lab_payment_receipt(lab_result, amount, payment_method, received_by_user, notes='', invoice=None):
+        """Create receipt for lab test payment. Pass invoice when deposit was applied (use existing invoice)."""
         service_details = {
+            'lab_result_id': str(lab_result.id),
             'test_name': lab_result.test.name,
             'test_code': lab_result.test.code if hasattr(lab_result.test, 'code') else '',
             'order_id': str(lab_result.order.id)
@@ -358,7 +492,8 @@ class LabPaymentService:
             received_by_user=received_by_user,
             service_type='lab_test',
             service_details=service_details,
-            notes=notes or f"Payment for {lab_result.test.name}"
+            notes=notes or f"Payment for {lab_result.test.name}",
+            invoice=invoice
         )
         
         if result['success']:
@@ -394,9 +529,10 @@ class PharmacyPaymentService:
     """Service for pharmacy payment and receipt generation"""
     
     @staticmethod
-    def create_pharmacy_payment_receipt(prescription, amount, payment_method, received_by_user, notes=''):
-        """Create receipt for pharmacy prescription payment"""
+    def create_pharmacy_payment_receipt(prescription, amount, payment_method, received_by_user, notes='', invoice=None):
+        """Create receipt for pharmacy prescription payment. Pass invoice when deposit was applied."""
         service_details = {
+            'prescription_id': str(prescription.id),
             'drug_name': prescription.drug.name,
             'quantity': prescription.quantity,
             'dose': prescription.dose,
@@ -411,7 +547,8 @@ class PharmacyPaymentService:
             received_by_user=received_by_user,
             service_type='pharmacy_prescription',
             service_details=service_details,
-            notes=notes or f"Payment for {prescription.drug.name}"
+            notes=notes or f"Payment for {prescription.drug.name}",
+            invoice=invoice
         )
         
         if result['success']:
@@ -448,9 +585,10 @@ class ImagingPaymentService:
     """Service for imaging/radiology payment and receipt generation"""
     
     @staticmethod
-    def create_imaging_payment_receipt(imaging_study, amount, payment_method, received_by_user, notes=''):
-        """Create receipt for imaging study payment"""
+    def create_imaging_payment_receipt(imaging_study, amount, payment_method, received_by_user, notes='', invoice=None):
+        """Create receipt for imaging study payment. Pass invoice when deposit was applied."""
         service_details = {
+            'study_id': str(imaging_study.id),
             'study_type': imaging_study.study_type,
             'modality': imaging_study.modality if hasattr(imaging_study, 'modality') else '',
             'body_part': imaging_study.body_part if hasattr(imaging_study, 'body_part') else ''
@@ -463,8 +601,43 @@ class ImagingPaymentService:
             received_by_user=received_by_user,
             service_type='imaging_study',
             service_details=service_details,
-            notes=notes or f"Payment for {imaging_study.study_type}"
+            notes=notes or f"Payment for {imaging_study.study_type}",
+            invoice=invoice
         )
+        
+        if result.get('success'):
+            from hospital.models_payment_verification import ImagingRelease
+            patient = imaging_study.order.encounter.patient if hasattr(imaging_study, 'order') and imaging_study.order else getattr(imaging_study, 'patient', None)
+            if patient:
+                try:
+                    release_record, created = ImagingRelease.objects.get_or_create(
+                        imaging_study=imaging_study,
+                        patient=patient,
+                        defaults={
+                            'release_status': 'ready_for_release',
+                            'payment_receipt': result['receipt'],
+                            'payment_verified_at': timezone.now(),
+                            'payment_verified_by': received_by_user
+                        }
+                    )
+                    if not created:
+                        release_record.payment_receipt = result['receipt']
+                        release_record.payment_verified_at = timezone.now()
+                        release_record.payment_verified_by = received_by_user
+                        release_record.release_status = 'ready_for_release'
+                        release_record.save()
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error(f"Error creating imaging release record: {str(e)}")
+            # Mark imaging study as paid so it appears in imaging dashboard "Paid" tab
+            try:
+                imaging_study.mark_as_paid(
+                    amount,
+                    receipt_number=result.get('receipt').receipt_number if result.get('receipt') else ''
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Could not mark ImagingStudy as paid: {e}")
         
         return result
 
@@ -474,9 +647,12 @@ class ConsultationPaymentService:
     
     @staticmethod
     def create_consultation_payment_receipt(encounter, amount, payment_method, received_by_user, notes=''):
-        """Create receipt for consultation fee"""
+        """Create receipt for consultation fee. Links to encounter's invoice so payment clears the right bill and item disappears from pending list."""
+        from hospital.utils_billing import get_or_create_encounter_invoice
+        invoice = get_or_create_encounter_invoice(encounter)
         service_details = {
             'encounter_type': encounter.encounter_type,
+            'encounter_id': str(encounter.id),
             'provider': encounter.provider.user.get_full_name() if encounter.provider else '',
             'department': encounter.location.name if encounter.location else ''
         }
@@ -486,10 +662,17 @@ class ConsultationPaymentService:
             amount=amount,
             payment_method=payment_method,
             received_by_user=received_by_user,
+            invoice=invoice,
             service_type='consultation',
             service_details=service_details,
             notes=notes or f"Consultation fee - {encounter.encounter_type}"
         )
+        if result and result.get('receipt') and invoice:
+            try:
+                invoice.update_totals()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Could not update invoice totals after consultation payment: {e}")
         
         return result
 

@@ -1,19 +1,17 @@
 {% extends 'hospital/base.html' %}
-{% load static humanize %}
+{% load static humanize hospital_extras %}
 
-{% block title %}Queue Display - HMS{% endblock %}
+{% block title %}Smart Queue · HMS{% endblock %}
+
+{% block html_extra_class %}queue-display-fullscreen{% endblock %}
 
 {% block extra_head %}
 <script>
-document.documentElement.classList.add('queue-display-fullscreen');
-// Hide sidebar and topbar for full-screen queue display
 document.addEventListener('DOMContentLoaded', function() {
     const sidebar = document.querySelector('.sidebar, #sidebar, .main-sidebar');
     const topbar = document.querySelector('.topbar, #topbar, .navbar, .main-header');
     if (sidebar) sidebar.style.display = 'none';
     if (topbar) topbar.style.display = 'none';
-    
-    // Ensure main content takes full width
     const mainContent = document.querySelector('.main-content, .content-wrapper, #content');
     if (mainContent) {
         mainContent.style.marginLeft = '0';
@@ -24,1184 +22,1387 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Syne:wght@600;700;800&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
 {% endblock %}
 
-{% block extra_css %}
+{% block late_styles %}
 <style>
     html.queue-display-fullscreen body {
-        background: linear-gradient(135deg, #e0f2fe 0%, #eef2ff 100%) !important;
+        background: #020617 !important;
         min-height: 100vh;
-        overflow: hidden;
+        min-height: 100dvh;
+        margin: 0;
+        overflow-x: hidden;
+        font-family: 'Outfit', system-ui, sans-serif;
+        color: #e8ecf4;
+    }
+    html.queue-display-fullscreen,
+    html.queue-display-fullscreen body {
+        height: 100%;
     }
     html.queue-display-fullscreen .sidebar,
     html.queue-display-fullscreen .topbar,
-    html.queue-display-fullscreen .sidebar-overlay {
-        display: none !important;
-    }
-    html.queue-display-fullscreen .main-content {
-        margin-left: 0 !important;
-        background: transparent !important;
-    }
-    html.queue-display-fullscreen .content-container {
-        padding: 24px 48px !important;
-        max-width: 100% !important;
-        height: 100%;
-    }
+    html.queue-display-fullscreen .sidebar-overlay,
     html.queue-display-fullscreen .mobile-menu-toggle {
         display: none !important;
     }
-
-    :root {
-        --queue-primary: #6366F1;
-        --queue-success: #10B981;
-        --queue-warning: #F59E0B;
-        --queue-danger: #EF4444;
-        --queue-info: #3B82F6;
+    html.queue-display-fullscreen .main-content,
+    html.queue-display-fullscreen .content-wrapper,
+    html.queue-display-fullscreen #content {
+        margin-left: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        background: transparent !important;
+        padding: 0 !important;
     }
-
-    body {
-        background: #F3F4F6;
-    }
-
-    /* Hero Header - More Welcoming */
-    .queue-hero {
-        background: linear-gradient(135deg, #10B981 0%, #059669 30%, #047857 100%);
-        color: white;
-        border-radius: 24px;
-        padding: 48px;
-        margin-bottom: 32px;
-        box-shadow: 0 20px 60px rgba(16, 185, 129, 0.3);
-        position: relative;
-        overflow: hidden;
-    }
-
-    .queue-hero::before {
-        content: '';
-        position: absolute;
-        top: -50%;
-        right: -10%;
-        width: 500px;
-        height: 500px;
-        background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, transparent 70%);
-        border-radius: 50%;
-        animation: pulse 4s ease-in-out infinite;
-    }
-
-    @keyframes pulse {
-        0%, 100% { opacity: 0.3; transform: scale(1); }
-        50% { opacity: 0.5; transform: scale(1.05); }
-    }
-
-    .queue-hero h1 {
-        font-size: 42px;
-        font-weight: 800;
-        margin-bottom: 8px;
-        text-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    }
-
-    .queue-hero-subtitle {
-        font-size: 18px;
-        opacity: 0.95;
-        font-weight: 400;
-    }
-
-    /* Statistics Cards */
-    .stats-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 20px;
-        margin-bottom: 32px;
-    }
-
-    .stat-card {
-        background: linear-gradient(145deg, #FFFFFF 0%, #F9FAFB 100%);
-        border-radius: 20px;
-        padding: 28px 24px;
-        text-align: center;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.06);
-        transition: transform 0.3s ease, box-shadow 0.3s ease;
-        border: 2px solid transparent;
-        position: relative;
-        overflow: hidden;
-        /* Prevent content shift during updates */
-        min-height: 120px;
+    html.queue-display-fullscreen .content-container {
+        padding: clamp(12px, 1.6vmin, 22px) clamp(14px, 2vmin, 32px) clamp(14px, 1.8vmin, 26px) !important;
+        max-width: 100% !important;
+        min-height: 100vh;
+        min-height: 100dvh;
+        box-sizing: border-box;
         display: flex;
         flex-direction: column;
-        justify-content: center;
+    }
+    html.queue-display-fullscreen .queue-display-wrapper.qms-board {
+        flex: 1 1 auto;
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        max-width: 1920px;
+        margin: 0 auto;
+        min-height: 0;
     }
 
-    .stat-card::before {
+    .qms-board {
+        position: relative;
+        --qms-hl: #d8b4fe;
+        --qms-hl-muted: rgba(216, 180, 254, 0.22);
+        --qms-hl-glow: rgba(192, 132, 252, 0.6);
+        --qms-gold: #fde047;
+        --qms-mint: #5eead4;
+        --qms-green: #34d399;
+        --qms-amber: #fbbf24;
+        --qms-violet: #a78bfa;
+        --qms-fuchsia: #e879f9;
+        --qms-cyan: #22d3ee;
+        --qms-card: rgba(15, 23, 42, 0.72);
+        --qms-border: rgba(148, 163, 184, 0.12);
+        --qms-glass: rgba(255, 255, 255, 0.04);
+    }
+
+    .qms-ambient {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        background:
+            radial-gradient(ellipse 120% 70% at 10% 0%, rgba(139, 92, 246, 0.28), transparent 55%),
+            radial-gradient(ellipse 90% 60% at 95% 15%, rgba(217, 70, 239, 0.18), transparent 50%),
+            radial-gradient(ellipse 80% 55% at 50% 100%, rgba(34, 211, 238, 0.14), transparent 48%),
+            radial-gradient(circle at 70% 60%, rgba(251, 191, 36, 0.06), transparent 42%),
+            linear-gradient(165deg, #020617 0%, #0f172a 38%, #020617 100%);
+        animation: qmsAmbientShift 22s ease-in-out infinite alternate;
+    }
+    .qms-ambient::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        opacity: 0.025;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+        pointer-events: none;
+    }
+    @keyframes qmsAmbientShift {
+        0% { opacity: 1; filter: hue-rotate(0deg); }
+        100% { opacity: 0.96; filter: hue-rotate(12deg); }
+    }
+
+    .qms-content {
+        position: relative;
+        z-index: 1;
+        flex: 1 1 auto;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        width: 100%;
+    }
+
+    .qms-top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: clamp(12px, 1.5vmin, 20px);
+        margin-bottom: clamp(12px, 1.6vmin, 22px);
+        flex-shrink: 0;
+    }
+    .qms-top-right {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 10px;
+    }
+    .qms-brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-family: 'Syne', 'Outfit', system-ui, sans-serif;
+        font-weight: 800;
+        font-size: 1.08rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #f1f5f9;
+    }
+    .qms-brand > span:not(.qms-pulse) {
+        color: #ffffff;
+        text-shadow: 0 0 40px rgba(196, 181, 253, 0.65), 0 1px 2px rgba(0, 0, 0, 0.8);
+    }
+    .qms-brand-tagline {
+        margin: 8px 0 0 28px;
+        font-size: 0.84rem;
+        font-weight: 500;
+        color: #c7d2fe;
+        letter-spacing: 0.03em;
+        max-width: 28rem;
+        line-height: 1.45;
+    }
+    .qms-sync-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 16px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+        border: 1px solid rgba(167, 139, 250, 0.22);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: #e2e8f0;
+        max-width: 100%;
+        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+    .qms-sync-pill.is-live {
+        border-color: rgba(45, 212, 191, 0.35);
+        color: #99f6e4;
+    }
+    .qms-sync-pill.is-error {
+        border-color: rgba(251, 113, 133, 0.4);
+        color: #fda4af;
+    }
+    .qms-sync-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #64748b;
+        flex-shrink: 0;
+    }
+    .qms-sync-pill.is-live .qms-sync-dot {
+        background: var(--qms-green);
+        box-shadow: 0 0 10px rgba(45, 212, 191, 0.7);
+        animation: qmsSyncDot 1.8s ease-out infinite;
+    }
+    @keyframes qmsSyncDot {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.75; transform: scale(0.92); }
+    }
+    .qms-pulse {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--qms-green);
+        box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.6);
+        animation: qmsPulse 2s ease-out infinite;
+    }
+    .qms-pulse.is-offline {
+        background: #64748b;
+        animation: none;
+        box-shadow: none;
+    }
+    @keyframes qmsPulse {
+        0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.5); }
+        70% { box-shadow: 0 0 0 12px rgba(52, 211, 153, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+    }
+
+    .qms-clock {
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: clamp(1.1rem, 2.5vw, 1.5rem);
+        font-weight: 700;
+        color: #e9d5ff;
+        letter-spacing: 0.06em;
+        text-shadow: 0 0 20px rgba(167, 139, 250, 0.5), 0 1px 2px rgba(0, 0, 0, 0.6);
+    }
+
+    .qms-spotlight {
+        position: relative;
+        border-radius: clamp(22px, 2.2vmin, 36px);
+        padding: clamp(20px, 3.5vmin, 48px) clamp(22px, 3.8vmin, 56px);
+        margin-bottom: clamp(12px, 1.5vmin, 20px);
+        flex-shrink: 0;
+        background:
+            radial-gradient(ellipse 90% 70% at 50% -30%, rgba(167, 139, 250, 0.35), transparent 58%),
+            radial-gradient(ellipse 60% 50% at 100% 100%, rgba(34, 211, 238, 0.12), transparent 45%),
+            linear-gradient(168deg, rgba(30, 27, 75, 0.55) 0%, rgba(15, 23, 42, 0.94) 42%, rgba(2, 6, 23, 0.98) 100%);
+        border: 1px solid rgba(167, 139, 250, 0.28);
+        box-shadow:
+            0 0 0 1px rgba(255, 255, 255, 0.06) inset,
+            0 32px 100px rgba(0, 0, 0, 0.55),
+            0 0 100px rgba(139, 92, 246, 0.15),
+            0 0 60px rgba(34, 211, 238, 0.08);
+        overflow: hidden;
+    }
+    .qms-spotlight-deco {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+    }
+    .qms-deco-blob {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(60px);
+        opacity: 0.5;
+        animation: qmsBlobFloat 14s ease-in-out infinite;
+    }
+    .qms-deco-blob--a {
+        width: min(55vmin, 420px);
+        height: min(55vmin, 420px);
+        top: -18%;
+        left: 50%;
+        transform: translateX(-50%);
+        background: radial-gradient(circle, rgba(167, 139, 250, 0.5), transparent 70%);
+    }
+    .qms-deco-blob--b {
+        width: min(40vmin, 300px);
+        height: min(40vmin, 300px);
+        bottom: -10%;
+        right: -5%;
+        background: radial-gradient(circle, rgba(34, 211, 238, 0.35), transparent 70%);
+        animation: qmsBlobFloatB 18s ease-in-out infinite;
+        animation-delay: -6s;
+    }
+    .qms-deco-grid {
+        position: absolute;
+        inset: 0;
+        opacity: 0.035;
+        background-image:
+            linear-gradient(rgba(255,255,255,0.5) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255,255,255,0.5) 1px, transparent 1px);
+        background-size: 48px 48px;
+        mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, black, transparent);
+    }
+    @keyframes qmsBlobFloat {
+        0%, 100% { transform: translateX(-50%) scale(1); opacity: 0.45; }
+        50% { transform: translateX(-48%) scale(1.05); opacity: 0.55; }
+    }
+    @keyframes qmsBlobFloatB {
+        0%, 100% { transform: scale(1); opacity: 0.38; }
+        50% { transform: scale(1.1); opacity: 0.52; }
+    }
+    .qms-spotlight::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.06) 50%, transparent 62%);
+        pointer-events: none;
+        animation: qmsShine 7s ease-in-out infinite;
+    }
+    @keyframes qmsShine {
+        0%, 100% { transform: translateX(-100%) skewX(-8deg); opacity: 0; }
+        35% { opacity: 1; }
+        50% { transform: translateX(100%) skewX(-8deg); opacity: 0; }
+    }
+
+    .qms-spotlight-inner {
+        position: relative;
+        z-index: 2;
+        text-align: center;
+    }
+    .qms-eyebrow {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        font-family: 'Syne', 'Outfit', sans-serif;
+        font-size: 0.82rem;
+        font-weight: 800;
+        letter-spacing: 0.32em;
+        text-transform: uppercase;
+        color: #a5b4fc;
+        margin-bottom: 10px;
+        padding: 8px 20px;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.45);
+        border: 1px solid rgba(129, 140, 248, 0.35);
+        box-shadow: 0 0 28px rgba(99, 102, 241, 0.2);
+    }
+    .qms-eyebrow-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--qms-green);
+        box-shadow: 0 0 12px var(--qms-green);
+        animation: qmsEyebrowPulse 2s ease-out infinite;
+    }
+    @keyframes qmsEyebrowPulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.85; transform: scale(1.15); }
+    }
+    .qms-ticket-hero {
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: clamp(3rem, 12vmin, 9.5rem);
+        font-weight: 900;
+        line-height: 1.02;
+        color: #ffffff;
+        margin: 0 0 14px;
+        transition: transform 0.35s ease, filter 0.35s ease;
+        filter: drop-shadow(0 0 50px rgba(167, 139, 250, 0.45)) drop-shadow(0 0 80px rgba(34, 211, 238, 0.2));
+        text-shadow: 0 4px 40px rgba(0, 0, 0, 0.45);
+    }
+    .qms-ticket-hero.is-flash {
+        animation: qmsTicketFlash 1.1s ease;
+    }
+    .qms-ticket-hero.is-match {
+        color: #6ee7b7;
+        filter: drop-shadow(0 0 40px rgba(52, 211, 153, 0.65)) drop-shadow(0 0 60px rgba(16, 185, 129, 0.35));
+    }
+    .qms-patient-hero {
+        font-family: 'Syne', 'Outfit', sans-serif;
+        font-size: clamp(1.35rem, 4.2vmin, 3.25rem);
+        font-weight: 800;
+        line-height: 1.2;
+        color: #5eead4;
+        margin: 0 0 16px;
+        max-width: min(96vw, 52rem);
+        margin-left: auto;
+        margin-right: auto;
+        letter-spacing: 0.02em;
+        text-shadow: 0 2px 24px rgba(45, 212, 191, 0.35), 0 0 40px rgba(15, 23, 42, 0.8);
+    }
+    @keyframes qmsTicketFlash {
+        0% { transform: scale(1); color: #ffffff; }
+        40% { transform: scale(1.06); color: #fde047; }
+        100% { transform: scale(1); color: #ffffff; }
+    }
+    .qms-room-line {
+        font-family: 'Syne', 'Outfit', sans-serif;
+        font-size: clamp(1.15rem, 2.4vmin, 1.85rem);
+        font-weight: 700;
+        color: #e2e8f0;
+        margin: 0 0 8px;
+        letter-spacing: 0.02em;
+    }
+    .qms-clinician-label {
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: #a5b4fc;
+        margin: 12px 0 8px;
+    }
+    .qms-doctor-line {
+        font-family: 'Syne', 'Outfit', sans-serif;
+        font-size: clamp(1.15rem, 2.2vmin, 1.85rem);
+        font-weight: 800;
+        color: #5eead4;
+        margin: 0 0 clamp(12px, 1.4vmin, 18px);
+        min-height: 1.4em;
+        text-shadow: 0 0 24px rgba(45, 212, 191, 0.45), 0 1px 2px rgba(0, 0, 0, 0.7);
+    }
+    .qms-hint {
+        max-width: min(52rem, 92vw);
+        margin: 0 auto;
+        font-size: clamp(0.9rem, 1.35vmin, 1.12rem);
+        line-height: 1.6;
+        color: #d1d5db;
+        padding: 14px 22px;
+        border-radius: 16px;
+        background: rgba(15, 23, 42, 0.4);
+        border: 1px solid rgba(148, 163, 184, 0.12);
+    }
+
+    .qms-finder {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: clamp(10px, 1.2vmin, 14px) clamp(12px, 1.5vmin, 18px);
+        padding: clamp(16px, 2vmin, 24px) clamp(18px, 2.2vmin, 30px);
+        margin-bottom: clamp(12px, 1.5vmin, 20px);
+        flex-shrink: 0;
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(34, 211, 238, 0.06));
+        border: 1px solid rgba(167, 139, 250, 0.22);
+        border-radius: 20px;
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        box-shadow: 0 12px 48px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+    .qms-finder label {
+        font-family: 'Syne', 'Outfit', sans-serif;
+        font-weight: 800;
+        font-size: 0.95rem;
+        color: #e2e8f0;
+        margin: 0;
+        letter-spacing: 0.04em;
+    }
+    .qms-finder input {
+        flex: 1;
+        min-width: min(100%, 220px);
+        background: rgba(2, 6, 23, 0.65);
+        border: 2px solid rgba(129, 140, 248, 0.25);
+        border-radius: 14px;
+        padding: clamp(12px, 1.5vmin, 17px) clamp(16px, 1.8vmin, 22px);
+        color: #f8fafc;
+        font-size: clamp(1.02rem, 1.5vmin, 1.35rem);
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .qms-finder input:focus {
+        outline: none;
+        border-color: rgba(167, 139, 250, 0.7);
+        box-shadow: 0 0 0 4px rgba(167, 139, 250, 0.2), 0 0 32px rgba(34, 211, 238, 0.12);
+    }
+    .qms-finder-hint {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: var(--qms-amber);
+    }
+    .qms-finder-hint.is-ok {
+        color: var(--qms-green);
+    }
+
+    .qms-rail-section {
+        margin-bottom: clamp(14px, 1.8vmin, 24px);
+        flex-shrink: 0;
+    }
+    .qms-rail-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+    }
+    .qms-rail-head h2 {
+        font-family: 'Syne', 'Outfit', sans-serif;
+        font-size: clamp(1.35rem, 2.4vw, 2rem);
+        font-weight: 800;
+        margin: 0;
+        color: #f8fafc;
+        letter-spacing: -0.02em;
+        text-shadow: 0 0 28px rgba(167, 139, 250, 0.3), 0 1px 2px rgba(0, 0, 0, 0.5);
+    }
+    .qms-rail-sub {
+        font-size: clamp(0.88rem, 1.35vw, 1.05rem);
+        color: #cbd5e1;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        font-weight: 700;
+    }
+    .qms-rail-scroll {
+        overflow-x: auto;
+        padding-bottom: 8px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+        scrollbar-color: #475569 #0f172a;
+    }
+    .qms-rail-track {
+        display: flex;
+        gap: clamp(12px, 1.4vmin, 18px);
+        min-height: clamp(104px, 12vmin, 140px);
+        align-items: stretch;
+    }
+    .qms-chip {
+        flex: 0 0 auto;
+        min-width: clamp(148px, 14vmin, 200px);
+        padding: clamp(16px, 2vmin, 24px) clamp(18px, 2.2vmin, 28px);
+        border-radius: 20px;
+        background: linear-gradient(165deg, rgba(51, 65, 85, 0.45) 0%, rgba(15, 23, 42, 0.92) 100%);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        transition: border-color 0.25s, box-shadow 0.25s, transform 0.22s ease;
+        position: relative;
+        overflow: hidden;
+    }
+    .qms-chip::before {
         content: '';
         position: absolute;
         top: 0;
         left: 0;
         right: 0;
-        height: 4px;
-        background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.3), transparent);
-        transform: translateX(-100%);
-        transition: transform 0.6s ease;
+        height: 3px;
+        background: linear-gradient(90deg, var(--qms-violet), var(--qms-cyan));
+        opacity: 0.65;
     }
-
-    .stat-card:hover::before {
-        transform: translateX(100%);
+    .qms-chip:hover {
+        transform: translateY(-4px);
+        border-color: rgba(167, 139, 250, 0.45);
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35), 0 0 40px rgba(139, 92, 246, 0.12);
     }
-
-    .stat-card:hover {
-        transform: translateY(-8px) scale(1.02);
-        box-shadow: 0 12px 30px rgba(0,0,0,0.15);
+    .qms-chip.is-highlight {
+        border-color: var(--qms-hl);
+        box-shadow: 0 0 28px rgba(167, 139, 250, 0.35);
+        animation: qmsChipGlow 1.5s ease-in-out infinite;
     }
-
-    .stat-card.waiting {
-        border-color: var(--queue-warning);
+    .qms-chip.is-your-turn {
+        border-color: var(--qms-green);
+        box-shadow: 0 0 28px rgba(52, 211, 153, 0.3);
     }
-
-    .stat-card.progress {
-        border-color: var(--queue-success);
+    @keyframes qmsChipGlow {
+        0%, 100% { box-shadow: 0 0 18px rgba(167, 139, 250, 0.22); }
+        50% { box-shadow: 0 0 32px rgba(196, 181, 253, 0.45); }
     }
-
-    .stat-card.completed {
-        border-color: var(--queue-info);
-    }
-
-    .stat-number {
-        font-size: 48px;
-        font-weight: 900;
-        font-family: 'Orbitron', sans-serif;
-        line-height: 1;
-        margin-bottom: 8px;
-        /* Prevent layout shift */
-        min-height: 56px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .stat-number.waiting { color: var(--queue-warning); }
-    .stat-number.progress { color: var(--queue-success); }
-    .stat-number.completed { color: var(--queue-info); }
-
-    .stat-label {
-        font-size: 14px;
-        color: #6B7280;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-
-    /* Queue Sections */
-    .queue-section {
-        background: white;
-        border-radius: 24px;
-        padding: 32px;
-        margin-bottom: 24px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.06);
-    }
-
-    .health-tip-panel {
-        background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 50%, #ecfccb 100%);
-        border-radius: 24px;
-        padding: 28px;
-        min-height: 260px;
-        color: #1e3a8a;
-        box-shadow: 0 8px 30px rgba(59, 130, 246, 0.2);
-        position: relative;
-        overflow: hidden;
-        border: 2px solid rgba(59, 130, 246, 0.1);
-    }
-
-    .health-tip-panel::before {
-        content: '✨';
-        position: absolute;
-        top: 15px;
-        right: 20px;
-        font-size: 32px;
-        opacity: 0.3;
-        animation: float 3s ease-in-out infinite;
-    }
-
-    @keyframes float {
-        0%, 100% { transform: translateY(0px); }
-        50% { transform: translateY(-10px); }
-    }
-
-    .health-tip-card {
-        display: none;
-        flex-direction: column;
-        gap: 12px;
-        opacity: 0;
-        transform: translateX(30px);
-        transition: opacity 0.5s ease, transform 0.5s ease;
-        position: absolute;
-        width: 100%;
-        top: 0;
-        left: 0;
-        pointer-events: none;
-    }
-
-    .health-tip-card.active {
-        display: flex;
-        opacity: 1;
-        transform: translateX(0);
-        position: relative;
-        pointer-events: auto;
-    }
-
-    #health-tip-container {
-        position: relative;
-        min-height: 200px;
-        overflow: hidden;
-    }
-
-    .health-tip-title {
-        font-size: 20px;
+    .qms-chip-num {
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: clamp(1.75rem, 2.8vw, 2.35rem);
         font-weight: 800;
+        color: #ffffff;
+        line-height: 1.15;
+        text-shadow: 0 0 24px rgba(167, 139, 250, 0.35);
     }
-
-    .health-tip-message {
-        font-size: 15px;
-        line-height: 1.5;
-    }
-
-    .audio-toggle {
-        background: rgba(255,255,255,0.2);
-        border: 1px solid rgba(255,255,255,0.6);
-        color: white;
-        padding: 8px 18px;
-        border-radius: 999px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: all 0.3s;
-    }
-
-    .audio-toggle.active {
-        background: rgba(16,185,129,0.2);
-        border-color: rgba(16,185,129,0.8);
-    }
-
-    .queue-section-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 24px;
-        padding-bottom: 16px;
-        border-bottom: 2px solid #F3F4F6;
-    }
-
-    .queue-section-title {
-        font-size: 24px;
+    .qms-chip-doc {
+        font-size: clamp(0.92rem, 1.25vw, 1.1rem);
         font-weight: 700;
-        display: flex;
-        align-items: center;
-        gap: 12px;
+        color: var(--qms-mint);
+        margin-top: 8px;
+        line-height: 1.25;
+        max-width: 220px;
+        white-space: normal;
+    }
+    .qms-chip-name {
+        font-size: clamp(0.82rem, 1.1vw, 0.98rem);
+        color: #94a3b8;
+        margin-top: 5px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 220px;
     }
 
-    .queue-badge {
-        background: linear-gradient(135deg, var(--queue-warning) 0%, #FB923C 100%);
-        color: white;
-        padding: 8px 20px;
-        border-radius: 50px;
-        font-size: 18px;
-        font-weight: 700;
-        font-family: 'Orbitron', sans-serif;
+    .qms-stats {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: clamp(10px, 1.2vmin, 16px);
+        margin-bottom: clamp(14px, 1.8vmin, 22px);
+        flex-shrink: 0;
     }
-
-    .queue-badge.progress {
-        background: linear-gradient(135deg, var(--queue-success) 0%, #34D399 100%);
+    @media (max-width: 720px) {
+        .qms-stats {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
     }
-
-    /* Patient Cards */
-    .patient-card {
-        background: linear-gradient(145deg, #FFFFFF 0%, #F9FAFB 100%);
-        border-radius: 16px;
-        padding: 24px;
-        margin-bottom: 16px;
-        border: 2px solid #E5E7EB;
-        transition: all 0.3s;
+    .qms-stat {
         position: relative;
         overflow: hidden;
+        background: linear-gradient(160deg, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0.9) 100%);
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        border-radius: 18px;
+        padding: 18px 14px;
+        text-align: center;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
-
-    .patient-card::before {
+    .qms-stat:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 14px 48px rgba(0, 0, 0, 0.3);
+    }
+    .qms-stat::before {
         content: '';
         position: absolute;
-        left: 0;
         top: 0;
-        bottom: 0;
-        width: 6px;
-        background: var(--queue-warning);
+        left: 0;
+        right: 0;
+        height: 3px;
+        border-radius: 18px 18px 0 0;
     }
-
-    .patient-card.priority-stat::before {
-        background: var(--queue-danger);
-        animation: pulse-danger 2s infinite;
+    .qms-stat:nth-child(1)::before { background: linear-gradient(90deg, #fbbf24, #f59e0b); }
+    .qms-stat:nth-child(2)::before { background: linear-gradient(90deg, #34d399, #22d3ee); }
+    .qms-stat:nth-child(3)::before { background: linear-gradient(90deg, #a78bfa, #e879f9); }
+    .qms-stat:nth-child(4)::before { background: linear-gradient(90deg, #94a3b8, #cbd5e1); }
+    .qms-stat-val {
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: clamp(1.65rem, 3vmin, 2.65rem);
+        font-weight: 800;
+        color: var(--qms-hl);
+        line-height: 1.2;
     }
-
-    .patient-card.priority-urgent::before {
-        background: var(--queue-warning);
-    }
-
-    .patient-card.in-progress::before {
-        background: var(--queue-success);
-        animation: pulse-success 2s infinite;
-    }
-
-    .patient-card:hover {
-        transform: translateX(8px);
-        box-shadow: 0 8px 30px rgba(0,0,0,0.1);
-        border-color: var(--queue-primary);
-    }
-
-    @keyframes pulse-danger {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.5; }
-    }
-
-    @keyframes pulse-success {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.6; }
-    }
-
-    .queue-number {
-        font-size: 56px;
-        font-weight: 900;
-        font-family: 'Orbitron', sans-serif;
-        background: linear-gradient(135deg, var(--queue-primary) 0%, #8B5CF6 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        line-height: 1;
-    }
-
-    .patient-info h5 {
-        font-size: 20px;
-        font-weight: 700;
-        color: #1F2937;
-        margin: 0 0 8px 0;
-    }
-
-    .patient-meta {
-        display: flex;
-        gap: 16px;
-        flex-wrap: wrap;
-        font-size: 14px;
-        color: #6B7280;
-    }
-
-    .patient-meta i {
-        color: var(--queue-primary);
-    }
-
-    .priority-badge {
-        padding: 6px 16px;
-        border-radius: 50px;
-        font-weight: 700;
-        font-size: 12px;
+    .qms-stat-val.amber { color: var(--qms-amber); }
+    .qms-stat-val.green { color: var(--qms-green); }
+    .qms-stat-label {
+        font-size: 0.72rem;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.1em;
+        color: #64748b;
+        margin-top: 6px;
+        font-weight: 700;
     }
 
-    .priority-badge.stat {
-        background: linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%);
-        color: #991B1B;
+    .qms-main-grid {
+        display: grid;
+        grid-template-columns: 1fr minmax(280px, min(28vw, 420px));
+        gap: clamp(16px, 2vmin, 26px);
+        align-items: start;
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+    @media (max-width: 1100px) {
+        .qms-main-grid { grid-template-columns: 1fr; }
     }
 
-    .priority-badge.urgent {
-        background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%);
-        color: #92400E;
+    .qms-staff-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
     }
-
-    .priority-badge.normal {
-        background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%);
-        color: #1E40AF;
-    }
-
-    .wait-timer {
-        font-size: 16px;
-        font-weight: 600;
-        color: #EF4444;
-        font-family: 'Orbitron', sans-serif;
-    }
-
-    .wait-timer.long {
-        color: #DC2626;
-        animation: blink 1s infinite;
-    }
-
-    @keyframes blink {
-        0%, 50%, 100% { opacity: 1; }
-        25%, 75% { opacity: 0.6; }
-    }
-
-    /* Action Buttons */
-    .action-btn {
-        padding: 12px 24px;
-        border-radius: 12px;
+    .qms-call-next {
+        font-family: 'Syne', 'Outfit', sans-serif;
+        background: linear-gradient(135deg, #059669 0%, #10b981 45%, #34d399 100%);
+        color: #fff;
         border: none;
-        font-weight: 600;
-        transition: all 0.3s;
+        border-radius: 16px;
+        padding: 15px 28px;
+        font-weight: 800;
+        font-size: 1.02rem;
+        letter-spacing: 0.02em;
         cursor: pointer;
+        box-shadow: 0 8px 32px rgba(16, 185, 129, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+        transition: transform 0.2s, box-shadow 0.2s, filter 0.2s;
+    }
+    .qms-call-next:hover:not(:disabled) {
+        transform: translateY(-3px);
+        filter: brightness(1.06);
+        box-shadow: 0 14px 44px rgba(16, 185, 129, 0.5), 0 0 48px rgba(52, 211, 153, 0.2);
+    }
+    .qms-call-next:disabled {
+        opacity: 0.65;
+        cursor: not-allowed;
+    }
+    .qms-audio-toggle {
+        font-family: 'Syne', 'Outfit', sans-serif;
+        background: rgba(139, 92, 246, 0.12);
+        border: 1px solid rgba(167, 139, 250, 0.35);
+        color: #e9d5ff;
+        border-radius: 999px;
+        padding: 11px 20px;
+        font-weight: 800;
+        font-size: 0.88rem;
+        letter-spacing: 0.03em;
+        cursor: pointer;
+        transition: background 0.2s, border-color 0.2s, box-shadow 0.2s, color 0.2s;
+    }
+    .qms-audio-toggle:hover {
+        border-color: rgba(34, 211, 238, 0.45);
+        box-shadow: 0 0 24px rgba(167, 139, 250, 0.2);
+    }
+    .qms-audio-toggle.active {
+        background: linear-gradient(135deg, rgba(52, 211, 153, 0.2), rgba(34, 211, 238, 0.15));
+        border-color: rgba(52, 211, 153, 0.55);
+        color: #6ee7b7;
+        box-shadow: 0 0 28px rgba(52, 211, 153, 0.25);
+    }
+
+    /* Voice-first: reassurance is spoken; this node is only for assistive tech (screen readers). */
+    .qms-sr-only {
+        position: absolute !important;
+        width: 1px !important;
+        height: 1px !important;
+        padding: 0 !important;
+        margin: -1px !important;
+        overflow: hidden !important;
+        clip: rect(0, 0, 0, 0) !important;
+        white-space: nowrap !important;
+        border: 0 !important;
+    }
+
+    .qms-reassurance-now-btn {
+        font-family: 'Syne', 'Outfit', sans-serif;
+        background: rgba(14, 165, 233, 0.14);
+        border: 1px solid rgba(56, 189, 248, 0.45);
+        color: #7dd3fc;
+        border-radius: 999px;
+        padding: 11px 20px;
+        font-weight: 800;
+        font-size: 0.88rem;
+        letter-spacing: 0.03em;
+        cursor: pointer;
+        transition: background 0.2s, border-color 0.2s, box-shadow 0.2s, color 0.2s;
+    }
+    .qms-reassurance-now-btn:hover {
+        border-color: rgba(125, 211, 252, 0.65);
+        box-shadow: 0 0 24px rgba(14, 165, 233, 0.2);
+        color: #bae6fd;
+    }
+
+    .qms-auto-pill {
+        font-family: 'Syne', 'Outfit', sans-serif;
         display: inline-flex;
         align-items: center;
         gap: 8px;
+        padding: 9px 16px;
+        border-radius: 999px;
+        font-weight: 800;
+        font-size: 0.78rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        background: rgba(16, 185, 129, 0.15);
+        border: 1px solid rgba(52, 211, 153, 0.45);
+        color: #6ee7b7;
+        user-select: none;
     }
 
-    .action-btn:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    .qms-panels {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
     }
-
-    .btn-call {
-        background: linear-gradient(135deg, #10B981 0%, #059669 100%);
-        color: white;
-    }
-
-    .btn-call:hover {
-        background: linear-gradient(135deg, #059669 0%, #047857 100%);
-    }
-
-    .btn-complete {
-        background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
-        color: white;
-    }
-
-    .btn-skip {
-        background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
-        color: white;
-    }
-
-    /* Call Next Button */
-    .call-next-btn {
-        background: linear-gradient(135deg, #10B981 0%, #059669 100%);
-        color: white;
-        border: none;
-        border-radius: 16px;
-        padding: 16px 32px;
-        font-size: 18px;
-        font-weight: 700;
-        box-shadow: 0 8px 30px rgba(16, 185, 129, 0.4);
-        transition: all 0.3s;
-        cursor: pointer;
-    }
-
-    .call-next-btn:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 12px 40px rgba(16, 185, 129, 0.5);
-    }
-
-    .call-next-btn:active {
-        transform: translateY(0);
-    }
-
-    /* Empty State */
-    .empty-state {
-        text-align: center;
-        padding: 60px 20px;
-    }
-
-    .empty-state-icon {
-        font-size: 80px;
-        color: #D1D5DB;
-        margin-bottom: 16px;
-    }
-
-    .empty-state-text {
-        font-size: 18px;
-        color: #9CA3AF;
-        font-weight: 600;
-    }
-
-    /* Filter Section */
-    .filter-section {
-        background: white;
-        border-radius: 20px;
-        padding: 24px;
-        margin-bottom: 32px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.06);
-    }
-
-    .filter-label {
-        font-weight: 600;
-        color: #374151;
-        margin-bottom: 8px;
-        display: block;
-    }
-
-    .filter-select {
-        width: 100%;
-        padding: 12px 16px;
-        border: 2px solid #E5E7EB;
-        border-radius: 12px;
-        font-size: 15px;
-        transition: all 0.3s;
-    }
-
-    .filter-select:focus {
-        outline: none;
-        border-color: var(--queue-primary);
-        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
-    }
-
-    /* Responsive */
     @media (max-width: 768px) {
-        .queue-hero h1 {
-            font-size: 32px;
-        }
-
-        .queue-number {
-            font-size: 40px;
-        }
-
-        .patient-card {
-            padding: 16px;
-        }
+        .qms-panels { grid-template-columns: 1fr; }
     }
 
-    /* Audio Indicator */
-    .audio-indicator {
-        position: fixed;
-        bottom: 24px;
-        right: 24px;
-        background: white;
-        border-radius: 50%;
-        width: 60px;
-        height: 60px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        box-shadow: 0 8px 30px rgba(0,0,0,0.15);
-        cursor: pointer;
-        transition: all 0.3s;
-    }
-
-    .audio-indicator:hover {
-        transform: scale(1.1);
-    }
-
-    .audio-indicator i {
-        font-size: 24px;
-        color: var(--queue-primary);
-    }
-
-    /* Hide base template sidebar and topbar */
-    .queue-display-fullscreen .sidebar,
-    .queue-display-fullscreen #sidebar,
-    .queue-display-fullscreen .main-sidebar,
-    .queue-display-fullscreen .topbar,
-    .queue-display-fullscreen #topbar,
-    .queue-display-fullscreen .navbar,
-    .queue-display-fullscreen .main-header {
-        display: none !important;
-    }
-    
-    .queue-display-fullscreen .main-content,
-    .queue-display-fullscreen .content-wrapper,
-    .queue-display-fullscreen #content {
-        margin-left: 0 !important;
-        width: 100% !important;
-        max-width: 100% !important;
-        padding: 0 !important;
-    }
-
-    .queue-display-wrapper {
-        min-height: 100vh;
-        display: flex;
-        flex-direction: column;
-        gap: 24px;
-        width: 100%;
-        max-width: 100%;
-        padding: 24px;
-        box-sizing: border-box;
-    }
-
-    .queue-header-block {
-        display: flex;
-        flex-direction: column;
-        gap: 24px;
-    }
-
-    .queue-main {
-        flex: 1;
-        display: flex !important;
-        flex-direction: row !important;
-        gap: 24px;
-        min-height: 500px !important;
-        width: 100% !important;
-        max-width: 100% !important;
-        overflow: visible !important;
-        margin-top: 24px;
-    }
-    
-    .queue-left {
-        flex: 2;
-        display: flex !important;
-        flex-direction: column;
-        gap: 24px;
-        min-height: 0;
-        min-width: 0;
-    }
-    
-    @media (max-width: 1200px) {
-        .queue-main {
-            flex-direction: column;
-        }
-    }
-
-    .queue-left {
-        flex: 2;
-        display: flex;
-        flex-direction: column;
-        gap: 24px;
-        min-height: 0;
-    }
-
-    .queue-right {
-        flex: 1;
-        display: flex !important;
-        flex-direction: column;
-        gap: 24px;
-        min-height: 0;
-        min-width: 350px !important;
-        visibility: visible !important;
-        opacity: 1 !important;
-        background: #f8fafc;
-        border-radius: 16px;
+    .qms-panel {
+        background: linear-gradient(165deg, rgba(30, 41, 59, 0.4) 0%, rgba(15, 23, 42, 0.88) 100%);
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        border-radius: 22px;
         padding: 20px;
+        min-height: 200px;
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        box-shadow: 0 12px 48px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.04);
     }
-
-    .now-serving-panel {
-        flex: 0 0 auto;
-    }
-
-    .queue-panels {
-        display: flex;
-        gap: 24px;
-        flex: 1;
-        min-height: 0;
-    }
-
-    .queue-panels .queue-section {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        min-height: 0;
-    }
-
-    .queue-scroll {
-        flex: 1;
-        overflow-y: auto;
-        overflow-x: hidden;
-        -webkit-overflow-scrolling: touch;
-    }
-
-    .queue-scroll .patient-card:last-child {
-        margin-bottom: 0;
-    }
-
-    /* Gallery */
-    .queue-gallery-card {
-        background: linear-gradient(145deg, #FFFFFF 0%, #F9FAFB 100%);
-        border-radius: 24px;
-        padding: 24px;
-        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
-        border: 1px solid rgba(99, 102, 241, 0.15);
-        min-height: 320px;
-    }
-
-    .gallery-header {
+    .qms-panel-head {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        margin-bottom: 16px;
-        text-transform: uppercase;
+        margin-bottom: 14px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--qms-border);
+    }
+    .qms-panel-title {
+        font-weight: 800;
+        font-size: 0.95rem;
+        color: #e2e8f0;
+        margin: 0;
+    }
+    .qms-panel-badge {
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: 0.85rem;
         font-weight: 700;
-        font-size: 14px;
-        color: #475569;
+        padding: 4px 12px;
+        border-radius: 999px;
+        background: rgba(251, 191, 36, 0.15);
+        color: var(--qms-amber);
+    }
+    .qms-panel-badge.live {
+        background: rgba(52, 211, 153, 0.15);
+        color: var(--qms-green);
     }
 
+    .qms-scroll {
+        max-height: min(320px, 34vh);
+        overflow-y: auto;
+    }
+
+    .qms-patient-row {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 12px;
+        align-items: center;
+        padding: 14px;
+        margin-bottom: 10px;
+        border-radius: 16px;
+        background: rgba(15, 23, 42, 0.55);
+        border: 1px solid rgba(148, 163, 184, 0.1);
+        transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+    }
+    .qms-patient-row:hover {
+        border-color: rgba(167, 139, 250, 0.2);
+    }
+    .qms-patient-row:last-child { margin-bottom: 0; }
+    .qms-patient-row.is-highlight {
+        border-color: var(--qms-hl);
+        box-shadow: 0 0 22px rgba(167, 139, 250, 0.2);
+    }
+    .qms-row-num {
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: 1.35rem;
+        font-weight: 800;
+        color: var(--qms-hl);
+    }
+    .qms-row-name {
+        font-weight: 700;
+        color: #f1f5f9;
+        font-size: 0.95rem;
+        margin: 0 0 4px;
+    }
+    .qms-row-meta {
+        font-size: 0.75rem;
+        color: #64748b;
+    }
+    .qms-row-doc {
+        font-size: 0.8rem;
+        font-weight: 700;
+        color: var(--qms-mint);
+        margin-top: 4px;
+    }
+    .qms-row-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .qms-row-actions a,
+    .qms-row-actions button {
+        font-size: 0.75rem;
+        padding: 6px 10px;
+        border-radius: 8px;
+        text-decoration: none;
+        font-weight: 700;
+        text-align: center;
+        white-space: nowrap;
+        border: none;
+        cursor: pointer;
+        font-family: inherit;
+    }
+    .qms-btn-call { background: #059669; color: #fff; }
+    .qms-btn-done { background: #2563eb; color: #fff; }
+    .qms-btn-skip { background: #b45309; color: #fff; }
+
+    .qms-side {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .qms-calendar {
+        background: linear-gradient(155deg, rgba(76, 29, 149, 0.25) 0%, rgba(15, 23, 42, 0.92) 100%);
+        border: 1px solid rgba(167, 139, 250, 0.2);
+        border-radius: 22px;
+        padding: 22px;
+        text-align: center;
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+    }
+    .qms-cal-big {
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: 3rem;
+        font-weight: 900;
+        color: var(--qms-hl);
+        line-height: 1;
+    }
+    .qms-cal-time {
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #f1f5f9;
+        margin-top: 8px;
+    }
+
+    .queue-gallery-card {
+        background: linear-gradient(165deg, rgba(30, 58, 138, 0.2) 0%, rgba(15, 23, 42, 0.9) 100%);
+        border: 1px solid rgba(59, 130, 246, 0.18);
+        border-radius: 22px;
+        padding: 18px;
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+    }
+    .gallery-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.75rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #94a3b8;
+        margin-bottom: 12px;
+    }
     .gallery-viewport {
         position: relative;
-        border-radius: 20px;
+        border-radius: 16px;
         overflow: hidden;
-        min-height: 340px;
-        height: 340px;
-        background: #0f172a;
-        display: block !important;
+        min-height: min(220px, 28vh);
+        height: min(240px, 26vh);
+        background: #020617;
     }
-    
-    @keyframes float {
-        0%, 100% { transform: translateY(0px); }
-        50% { transform: translateY(-10px); }
-    }
-
     .gallery-slide {
         position: absolute;
         inset: 0;
         opacity: 0;
-        transition: opacity 0.8s ease, transform 0.8s ease;
-        transform: scale(1.02);
+        transition: opacity 0.8s ease;
     }
-
     .gallery-slide.active {
         opacity: 1;
-        transform: scale(1);
         z-index: 2;
     }
-
     .gallery-slide img {
         width: 100%;
         height: 100%;
         object-fit: cover;
     }
-
     .gallery-caption {
         position: absolute;
         bottom: 0;
         left: 0;
         right: 0;
-        padding: 12px 20px;
-        background: linear-gradient(180deg, transparent, rgba(15, 23, 42, 0.75));
-        color: white;
+        padding: 10px 14px;
+        background: linear-gradient(transparent, rgba(0,0,0,0.75));
+        color: #fff;
+        font-size: 0.85rem;
         font-weight: 600;
-        text-shadow: 0 2px 6px rgba(0,0,0,0.4);
     }
-
     .gallery-dots {
         display: flex;
         justify-content: center;
         gap: 8px;
-        margin-top: 18px;
+        margin-top: 12px;
     }
-
     .gallery-dot {
-        width: 12px;
-        height: 12px;
+        width: 8px;
+        height: 8px;
         border-radius: 50%;
-        background: rgba(99, 102, 241, 0.3);
+        background: rgba(148, 163, 184, 0.35);
         cursor: pointer;
-        transition: transform 0.2s ease, background 0.2s ease;
     }
-
     .gallery-dot.active {
-        background: rgba(255, 255, 255, 0.9) !important;
-        transform: scale(1.2);
+        background: var(--qms-hl);
     }
-
     .gallery-empty {
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        color: #94a3b8;
         height: 100%;
-        padding: 40px 20px;
-        text-align: center;
-    }
-
-    .gallery-empty i {
-        font-size: 48px;
-        margin-bottom: 12px;
-    }
-
-    /* Calendar Widget */
-    .calendar-widget {
-        background: linear-gradient(145deg, #FFFFFF 0%, #F9FAFB 100%);
-        border-radius: 24px;
         padding: 24px;
-        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
-        border: 2px solid rgba(99, 102, 241, 0.15);
         text-align: center;
-        flex: 0 0 auto;
+        background: linear-gradient(145deg, rgba(88, 28, 135, 0.45) 0%, rgba(15, 23, 42, 0.95) 100%);
+        color: #ede9fe;
     }
 
-    .calendar-header {
-        font-size: 14px;
-        font-weight: 700;
-        text-transform: uppercase;
-        color: #475569;
-        margin-bottom: 16px;
-        letter-spacing: 0.5px;
+    .health-tip-panel {
+        background: linear-gradient(145deg, rgba(59, 130, 246, 0.22) 0%, rgba(88, 28, 135, 0.2) 45%, rgba(15, 23, 42, 0.95) 100%);
+        border: 1px solid rgba(129, 140, 248, 0.25);
+        border-radius: 22px;
+        padding: 22px;
+        min-height: 180px;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05);
     }
-
-    .calendar-date {
-        font-size: 48px;
-        font-weight: 900;
-        color: var(--queue-primary);
-        line-height: 1;
-        margin-bottom: 8px;
-        font-family: 'Orbitron', sans-serif;
-    }
-
-    .calendar-day {
-        font-size: 20px;
-        font-weight: 600;
-        color: #64748b;
-        margin-bottom: 12px;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-
-    .calendar-time {
-        font-size: 32px;
-        font-weight: 700;
-        color: #1e293b;
-        font-family: 'Orbitron', sans-serif;
-        margin-bottom: 4px;
-    }
-
-    .calendar-time-label {
-        font-size: 12px;
+    .health-tip-panel > p:first-child {
+        font-size: 0.75rem;
+        font-weight: 800;
+        letter-spacing: 0.12em;
         color: #94a3b8;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
+        margin-bottom: 12px;
+    }
+    #health-tip-container { position: relative; min-height: 120px; }
+    .health-tip-card {
+        display: none;
+        opacity: 0;
+        transform: translateY(8px);
+        transition: opacity 0.45s ease, transform 0.45s ease;
+    }
+    .health-tip-card.active {
+        display: block;
+        opacity: 1;
+        transform: translateY(0);
+    }
+    .health-tip-title { font-size: 1.05rem; font-weight: 800; color: #f1f5f9; margin-bottom: 8px; }
+    .health-tip-message { font-size: 0.9rem; color: #cbd5e1; line-height: 1.5; }
+
+    .audio-indicator {
+        position: fixed;
+        bottom: 22px;
+        right: 22px;
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        background: linear-gradient(145deg, rgba(51, 65, 85, 0.9), rgba(15, 23, 42, 0.95));
+        border: 1px solid rgba(167, 139, 250, 0.35);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        z-index: 50;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 4px rgba(139, 92, 246, 0.12);
+        transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .audio-indicator:hover {
+        transform: scale(1.06);
+        box-shadow: 0 12px 40px rgba(0,0,0,0.5), 0 0 32px rgba(167, 139, 250, 0.25);
+    }
+    .audio-indicator i { font-size: 1.35rem; color: #c4b5fd; text-shadow: 0 0 18px rgba(167, 139, 250, 0.45); }
+
+    /* Large patient display (Full HD TVs, 1366×768+, browser zoom-safe) */
+    @media (min-width: 1280px) and (min-height: 720px) {
+        .qms-brand { font-size: 1.3rem; }
+        .qms-brand-tagline { font-size: 1rem; margin-left: 28px; }
+        .qms-clock { font-size: clamp(1.4rem, 2.4vmin, 2.1rem); }
+        .qms-sync-pill { font-size: 0.92rem; padding: 10px 18px; }
+        .qms-spotlight { padding: clamp(28px, 3vmin, 48px) clamp(32px, 3.5vmin, 56px); }
+        .qms-eyebrow { font-size: 1.05rem; letter-spacing: 0.32em; margin-bottom: 12px; }
+        .qms-ticket-hero {
+            font-size: clamp(7.5rem, 15.5vmin, 14rem);
+            text-shadow: 0 0 64px rgba(196, 181, 253, 0.5), 0 0 100px rgba(45, 212, 191, 0.2);
+        }
+        .qms-patient-hero {
+            font-size: clamp(2rem, 5.5vmin, 4.5rem);
+            margin-bottom: 20px;
+        }
+        .qms-room-line { font-size: clamp(1.55rem, 2.7vmin, 2.45rem); margin-bottom: 10px; }
+        .qms-clinician-label { font-size: 0.85rem; }
+        .qms-doctor-line { font-size: clamp(1.5rem, 2.5vmin, 2.2rem); margin-bottom: 18px; }
+        .qms-hint { font-size: 1.2rem; max-width: 60rem; line-height: 1.6; }
+        .qms-finder label { font-size: 1.12rem; }
+        .qms-finder-hint { font-size: 1.02rem; }
+        .qms-rail-head h2 { font-size: clamp(1.7rem, 2.4vmin, 2.45rem); }
+        .qms-rail-sub { font-size: 1.02rem; }
+        .qms-chip { min-width: clamp(168px, 15vmin, 220px); }
+        .qms-chip-num { font-size: clamp(2.1rem, 3vmin, 3rem); }
+        .qms-chip-doc { font-size: 1.08rem; max-width: 280px; }
+        .qms-chip-name { font-size: 1rem; max-width: 280px; }
+        .qms-stat { padding: 22px 20px; border-radius: 18px; }
+        .qms-stat-val { font-size: clamp(2.5rem, 4.2vmin, 3.35rem); }
+        .qms-stat-label { font-size: 0.82rem; }
+        .qms-main-grid { grid-template-columns: 1fr minmax(340px, 24vw); gap: 28px; }
+        .qms-scroll { max-height: min(420px, 38vh); }
+        .qms-call-next { font-size: 1.12rem; padding: 17px 30px; border-radius: 16px; }
+        .qms-audio-toggle { font-size: 1.02rem; padding: 12px 24px; }
+        .qms-panel { padding: 22px; border-radius: 22px; }
+        .qms-panel-title { font-size: 1.1rem; }
+        .qms-row-num { font-size: 1.5rem; }
+        .qms-row-name { font-size: 1.05rem; }
+        .qms-cal-big { font-size: 4rem; }
+        .qms-cal-time { font-size: 1.85rem; }
+        .gallery-viewport { min-height: 260px; height: min(320px, 32vh); }
+        .gallery-caption { font-size: 1rem; padding: 12px 16px; }
+        .health-tip-title { font-size: 1.22rem; }
+        .health-tip-message { font-size: 1.08rem; }
+        .audio-indicator { width: 60px; height: 60px; bottom: 28px; right: 28px; }
+        .audio-indicator i { font-size: 1.45rem; }
     }
 
-    .calendar-month-year {
-        font-size: 16px;
-        font-weight: 600;
-        color: #475569;
-        margin-top: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
+    @media (prefers-reduced-motion: reduce) {
+        .qms-pulse, .qms-ticket-hero.is-flash, .qms-chip.is-highlight, .qms-spotlight::after,
+        .qms-ambient, .qms-sync-pill.is-live .qms-sync-dot, .qms-deco-blob, .qms-eyebrow-dot, .qms-ambient::after,
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="queue-display-wrapper">
-    <div class="queue-header-block">
-        <div class="queue-hero">
-            <h1>
-                <i class="bi bi-heart-pulse me-3"></i>Welcome to PrimeCare Hospital
-            </h1>
-            <div class="queue-hero-subtitle">
-                👋 We're here to serve you! Real-time queue monitoring ensures you're cared for promptly and efficiently.
+<!-- qms-board layout v6: high-contrast text (no gradient-clip) -->
+<div class="queue-display-wrapper qms-board">
+    <div class="qms-ambient" aria-hidden="true"></div>
+    <div class="qms-content">
+    <header class="qms-top">
+        <div>
+            <div class="qms-brand">
+                <span class="qms-pulse" id="live-pulse" aria-hidden="true"></span>
+                <span>Smart queue</span>
             </div>
-            <div class="queue-panels">
-                <!-- Waiting Queue -->
-                <div class="queue-section waiting-panel">
-                    <div class="queue-section-header">
-                        <div class="queue-section-title">
-                            <span class="queue-badge">{{ waiting|length }}</span>
-                            Waiting
-                        </div>
-                        <form method="post" action="{% url 'hospital:queue_call_next' %}" id="callNextForm">
-                            {% csrf_token %}
-                            {% if selected_department %}<input type="hidden" name="department" value="{{ selected_department }}">{% endif %}
-                            {% if selected_location %}<input type="hidden" name="location" value="{{ selected_location }}">{% endif %}
-                            <button type="submit" class="call-next-btn" id="callNextBtn">
-                                <i class="bi bi-telephone-forward me-2"></i>Call Next
-                            </button>
-                        </form>
-                    </div>
-
-                    <div id="waitingList" class="queue-scroll">
-                        {% if waiting %}
-                            {% for queue in waiting %}
-                            <div class="patient-card priority-{{ queue.priority }}">
-                                <div class="row align-items-center">
-                                    <div class="col-auto">
-                                        <div class="queue-number">{{ queue.queue_number }}</div>
-                                    </div>
-                                    <div class="col">
-                                        <div class="patient-info">
-                                            <h5>{{ queue.encounter.patient.full_name }}</h5>
-                                            <div class="patient-meta">
-                                                <span><i class="bi bi-person-badge me-1"></i>{{ queue.encounter.patient.mrn }}</span>
-                                                <span class="priority-badge priority-{{ queue.priority }}">
-                                                    {{ queue.get_priority_display }}
-                                                </span>
-                                                <span class="wait-timer" data-checked-in="{{ queue.check_in_time|date:'c' }}">
-                                                    <i class="bi bi-clock me-1"></i>
-                                                    <span class="timer-text">
-                                                        {% if queue.estimated_wait_minutes %}
-                                                            {{ queue.estimated_wait_minutes }} min
-                                                        {% else %}
-                                                            --
-                                                        {% endif %}
-                                                    </span>
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-auto">
-                                        <a href="{% url 'hospital:queue_action' queue_id=queue.pk action='call' %}" class="action-btn btn-call">
-                                            <i class="bi bi-telephone"></i> Call
-                                        </a>
-                                    </div>
-                                </div>
-                            </div>
-                            {% endfor %}
-                        {% else %}
-                            <div class="empty-state">
-                                <div class="empty-state-icon">
-                                    <i class="bi bi-check-circle" style="color: #10B981; font-size: 64px;"></i>
-                                </div>
-                                <div class="empty-state-text">🎉 Great! No patients waiting. We're ready to serve!</div>
-                            </div>
-                        {% endif %}
-                    </div>
-                </div>
-                
-                <!-- In Progress -->
-                <div class="queue-section progress-panel">
-                    <div class="queue-section-header">
-                        <div class="queue-section-title">
-                            <span class="queue-badge progress">{{ in_progress|length }}</span>
-                            In Progress
-                        </div>
-                    </div>
-
-                    <div id="progressList" class="queue-scroll">
-                        {% if in_progress %}
-                            {% for queue in in_progress|slice:":4" %}
-                            <div class="patient-card in-progress">
-                                <div class="row align-items-center">
-                                    <div class="col-auto">
-                                        <div class="queue-number">{{ queue.queue_number }}</div>
-                                    </div>
-                                    <div class="col">
-                                        <div class="patient-info">
-                                            <h5>{{ queue.encounter.patient.full_name }}</h5>
-                                            <div class="patient-meta">
-                                                <span><i class="bi bi-person-badge me-1"></i>{{ queue.encounter.patient.mrn }}</span>
-                                                {% if queue.started_time or queue.called_time %}
-                                                <span><i class="bi bi-clock-history me-1"></i>Called {{ queue.started_time|default:queue.called_time|timesince }} ago</span>
-                                                {% endif %}
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-auto d-flex gap-2">
-                                        <a href="{% url 'hospital:queue_action' queue_id=queue.pk action='complete' %}" class="action-btn btn-complete">
-                                            <i class="bi bi-check-circle"></i> Complete
-                                        </a>
-                                        <a href="{% url 'hospital:queue_action' queue_id=queue.pk action='skip' %}" class="action-btn btn-skip">
-                                            <i class="bi bi-skip-forward"></i>
-                                        </a>
-                                    </div>
-                                </div>
-                            </div>
-                            {% endfor %}
-                        {% else %}
-                            <div class="empty-state">
-                                <div class="empty-state-icon">
-                                    <i class="bi bi-emoji-smile" style="color: #3B82F6; font-size: 64px;"></i>
-                                </div>
-                                <div class="empty-state-text">✨ All clear! Consultation rooms are available.</div>
-                            </div>
-                        {% endif %}
-                    </div>
-                </div>
-            </div>
+            <p class="qms-brand-tagline">Live updates · Automatic call‑when‑ready · Voice announcements · Find your ticket, room &amp; clinician at a glance</p>
         </div>
+        <div class="qms-top-right">
+            <div class="qms-sync-pill" id="qms-sync-pill">
+                <span class="qms-sync-dot" aria-hidden="true"></span>
+                <span id="qms-sync-text">Connecting to live feed…</span>
+            </div>
+            <div class="qms-clock" id="qms-header-clock">—:—</div>
         </div>
-        
-        <div class="stats-grid">
-            <div class="stat-card waiting">
-                <div class="stat-number waiting" id="waitingCount">{{ waiting|length }}</div>
-                <div class="stat-label">
-                    <i class="bi bi-hourglass-split me-1"></i>Waiting
-                </div>
+    </header>
+
+    <section class="qms-spotlight" id="qms-spotlight" aria-live="polite" aria-atomic="true" aria-label="Please head towards your consultation room and clinician">
+        <div class="qms-spotlight-deco" aria-hidden="true">
+            <span class="qms-deco-blob qms-deco-blob--a"></span>
+            <span class="qms-deco-blob qms-deco-blob--b"></span>
+            <span class="qms-deco-grid"></span>
+        </div>
+        <div class="qms-spotlight-inner">
+            <p class="qms-eyebrow"><span class="qms-eyebrow-dot"></span> Please head towards</p>
+            <div class="qms-ticket-hero" id="qms-head-ticket" data-ticket="{% if now_serving %}{% if use_queue_entry %}{{ now_serving.display_ticket_number }}{% else %}{{ now_serving.queue_number }}{% endif %}{% endif %}">
+                {% if now_serving %}{% if use_queue_entry %}{{ now_serving.display_ticket_number }}{% else %}{{ now_serving.queue_number }}{% endif %}{% else %}—{% endif %}
             </div>
-            <div class="stat-card progress">
-                <div class="stat-number progress" id="progressCount">{{ in_progress|length }}</div>
-                <div class="stat-label">
-                    <i class="bi bi-activity me-1"></i>In Progress
-                </div>
-            </div>
-            <div class="stat-card completed">
-                <div class="stat-number completed" id="completedCount">{{ completed_today|default:0 }}</div>
-                <div class="stat-label">
-                    <i class="bi bi-check-circle me-1"></i>Completed Today
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" style="color: #6366F1;" id="avgWaitTime">{% if avg_wait_minutes %}{{ avg_wait_minutes }}{% else %}--{% endif %}</div>
-                <div class="stat-label">
-                    <i class="bi bi-clock me-1"></i>Avg Wait (min)
-                </div>
-            </div>
+            <p class="qms-patient-hero" id="qms-head-patient" aria-label="Patient name">
+                {% if now_serving %}
+                    {% if use_queue_entry %}
+                        {% firstof now_serving.patient.full_name now_serving.encounter.patient.full_name "—" %}
+                    {% elif now_serving.encounter and now_serving.encounter.patient %}
+                        {{ now_serving.encounter.patient.full_name }}
+                    {% else %}
+                        —
+                    {% endif %}
+                {% else %}
+                    —
+                {% endif %}
+            </p>
+            <p class="qms-room-line" id="qms-head-room">
+                {% if now_serving and now_serving.room_number %}
+                    Head towards consultation room {{ now_serving.room_number }}
+                {% else %}
+                    Please wait — you will be called to your consultation room
+                {% endif %}
+            </p>
+            <p class="qms-clinician-label" id="qms-head-clinician-label">Clinician</p>
+            <p class="qms-doctor-line" id="qms-head-clinician">
+                {% if now_serving %}
+                    {% if use_queue_entry %}
+                        {% firstof now_serving.get_display_clinician_name "—" %}
+                    {% elif now_serving.encounter.provider and now_serving.encounter.provider.user %}
+                        {{ now_serving.encounter.provider.user.get_full_name|default:"—" }}
+                    {% else %}
+                        —
+                    {% endif %}
+                {% else %}
+                    —
+                {% endif %}
+            </p>
+            <p class="qms-hint">This screen updates automatically. When you are called, your ticket and room appear here. Staff can call you from the board — <strong>then</strong> the voice announces your <strong>name</strong> and ticket together. Until then, automatic announcements use your ticket number only.</p>
+        </div>
+    </section>
+
+    <p id="qms-reassurance-banner" class="qms-sr-only" aria-live="polite" aria-atomic="true"></p>
+
+    <div class="qms-finder">
+        <label for="ticket-lookup">Match your ticket</label>
+        <input type="text" id="ticket-lookup" placeholder="Enter your ticket number (e.g. 042)" autocomplete="off" inputmode="numeric" aria-describedby="ticket-lookup-status">
+        <span class="qms-finder-hint" id="ticket-lookup-status" role="status"></span>
+    </div>
+
+    <section class="qms-rail-section" aria-label="Upcoming queue numbers">
+        <div class="qms-rail-head">
+            <h2>Up next</h2>
+            <span class="qms-rail-sub">Live order · clinicians appear as assigned</span>
+        </div>
+        <div class="qms-rail-scroll">
+            <div class="qms-rail-track" id="up-next-rail"></div>
+        </div>
+    </section>
+
+    <div class="qms-stats">
+        <div class="qms-stat">
+            <div class="qms-stat-val amber" id="waitingCount">{{ waiting|length }}</div>
+            <div class="qms-stat-label">Waiting</div>
+        </div>
+        <div class="qms-stat">
+            <div class="qms-stat-val green" id="progressCount">{{ in_progress|length }}</div>
+            <div class="qms-stat-label">In progress</div>
+        </div>
+        <div class="qms-stat">
+            <div class="qms-stat-val" id="completedCount">{{ completed_today|default:0 }}</div>
+            <div class="qms-stat-label">Done today</div>
+        </div>
+        <div class="qms-stat">
+            <div class="qms-stat-val" id="avgWaitTime">{% if avg_wait_minutes %}{{ avg_wait_minutes }}{% else %}—{% endif %}</div>
+            <div class="qms-stat-label">Avg wait (min)</div>
         </div>
     </div>
-    
-    <div class="queue-main" style="background: rgba(255, 0, 0, 0.1); border: 3px dashed red; padding: 20px;">
-        <div class="queue-left" style="background: rgba(0, 255, 0, 0.1); border: 2px solid green; padding: 10px;">
-            <div class="queue-section now-serving-panel" id="now-serving-card">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-            <div class="queue-section-title">
-                <i class="bi bi-broadcast-pin text-success"></i> <span>🎯 Now Serving</span>
-            </div>
-                    <button type="button" class="audio-toggle" id="queue-audio-toggle">
-                        🔈 Enable Voice Callouts
+
+    <div class="qms-main-grid">
+        <div class="qms-staff-col">
+            <div class="qms-staff-toolbar">
+                <span class="qms-auto-pill" title="When no patient is in consultation, the next waiting ticket is called automatically after a short pause. Voice runs automatically; use Mute if needed."><span aria-hidden="true">&#9889;</span> Automated</span>
+                <form method="post" action="{% url 'hospital:queue_call_next' %}" id="callNextForm">
+                    {% csrf_token %}
+                    {% if selected_department %}<input type="hidden" name="department" value="{{ selected_department }}">{% endif %}
+                    <button type="submit" class="qms-call-next" id="callNextBtn" title="Manual override — same as automatic call next">
+                        <i class="bi bi-telephone-forward me-2"></i>Call next
                     </button>
-                </div>
-                <div class="row g-4">
-                    <div class="col-md-6 text-center">
-                        <div class="queue-number" id="now-serving-number">
-                            {% if now_serving %}{{ now_serving.queue_number }}{% else %}--{% endif %}
-                        </div>
-                        <p class="text-muted mb-1">🎫 Ticket Number</p>
-                        <p class="mb-0 text-uppercase fw-bold" id="now-serving-room">
-                            {% if now_serving and now_serving.room_number %}
-                                📍 Room {{ now_serving.room_number }}
-                            {% else %}
-                                ⏳ Please wait nearby
-                            {% endif %}
-                        </p>
-                        <small class="text-muted" id="now-serving-doctor">
-                            {% if now_serving and now_serving.assigned_doctor %}
-                                {{ now_serving.assigned_doctor.get_full_name }}
-                            {% else %}
-                                ---
-                            {% endif %}
-                        </small>
+                </form>
+                <button type="button" class="qms-audio-toggle" id="queue-audio-toggle" title="Voice announcements start automatically. Use this to mute or unmute.">Mute voice</button>
+                <button type="button" class="qms-reassurance-now-btn" id="qms-reassurance-now-btn" title="Play the reassurance voice now (also runs on a timer)">Reassure now</button>
+            </div>
+            <div class="qms-panels">
+                <div class="qms-panel">
+                    <div class="qms-panel-head">
+                        <h3 class="qms-panel-title">Waiting</h3>
+                        <span class="qms-panel-badge" id="waitingBadge">{{ waiting|length }}</span>
                     </div>
-                    <div class="col-md-6">
-                        <h6 class="fw-bold text-uppercase">📋 Up Next</h6>
-                        <ul class="list-unstyled mb-0" id="up-next-list">
-                            {% for entry in waiting %}
-                            <li class="d-flex align-items-center justify-content-between py-2 border-bottom">
-                                <span class="fw-bold">{{ entry.queue_number }}</span>
-                                <small class="text-muted">{{ entry.patient.full_name }}</small>
-                            </li>
-                            {% empty %}
-                            <li class="text-muted">✨ Queue is clear! We're ready to serve you.</li>
+                    <div id="waitingList" class="qms-scroll">
+                        {% if waiting %}
+                            {% for queue in waiting %}
+                            <div class="qms-patient-row {% if use_queue_entry %}{% if queue.priority == 1 %}border-start border-danger border-3{% elif queue.priority == 2 %}border-start border-warning border-3{% endif %}{% endif %}" data-ticket="{% if use_queue_entry %}{{ queue.display_ticket_number }}{% else %}{{ queue.queue_number }}{% endif %}" data-queue-id="{{ queue.pk }}" data-room="{% if use_queue_entry %}{{ queue.room_number|default:'' }}{% else %}{% endif %}" data-doctor="{% if use_queue_entry %}{{ queue.get_display_clinician_name|default:'' }}{% elif queue.encounter.provider and queue.encounter.provider.user %}{{ queue.encounter.provider.user.get_full_name }}{% endif %}">
+                                <div class="qms-row-num">{% if use_queue_entry %}{{ queue.display_ticket_number }}{% else %}{{ queue.queue_number }}{% endif %}</div>
+                                <div>
+                                    {% if use_queue_entry %}
+                                    <p class="qms-row-name">{{ queue.patient.full_name }} {% patient_payer_badges queue.patient %}</p>
+                                    {% if queue.get_display_clinician_name %}
+                                    <div class="qms-row-doc">{{ queue.get_display_clinician_name }}</div>
+                                    {% endif %}
+                                    <div class="qms-row-meta">MRN {{ queue.patient.mrn }} · {{ queue.get_priority_display }}</div>
+                                    {% else %}
+                                    <p class="qms-row-name">{{ queue.encounter.patient.full_name }} {% patient_payer_badges queue.encounter.patient queue.encounter %}</p>
+                                    <div class="qms-row-meta">MRN {{ queue.encounter.patient.mrn }} · {{ queue.get_priority_display }}</div>
+                                    {% endif %}
+                                </div>
+                                <div class="qms-row-actions">
+                                    {% if use_queue_entry %}
+                                    <button type="button" class="qms-btn-call"
+                                            data-api-call="1"
+                                            data-call-url="{% url 'hospital:queue_call_specific' queue_id=queue.pk %}"
+                                            title="Call this patient (uses the same API as My Consultations)">Call</button>
+                                    {% else %}
+                                    <a href="{% url 'hospital:queue_action' queue_id=queue.pk action='call' %}" class="qms-btn-call">Call</a>
+                                    {% endif %}
+                                </div>
+                            </div>
                             {% endfor %}
-                        </ul>
+                        {% else %}
+                            <p class="text-muted text-center py-4 mb-0">No one waiting</p>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="qms-panel">
+                    <div class="qms-panel-head">
+                        <h3 class="qms-panel-title">In consultation</h3>
+                        <span class="qms-panel-badge live" id="progressBadge">{{ in_progress|length }}</span>
+                    </div>
+                    <div id="progressList" class="qms-scroll">
+                        {% if in_progress %}
+                            {% for queue in in_progress %}
+                            <div class="qms-patient-row" data-ticket="{% if use_queue_entry %}{{ queue.display_ticket_number }}{% else %}{{ queue.queue_number }}{% endif %}">
+                                <div class="qms-row-num">{% if use_queue_entry %}{{ queue.display_ticket_number }}{% else %}{{ queue.queue_number }}{% endif %}</div>
+                                <div>
+                                    {% if use_queue_entry %}
+                                    <p class="qms-row-name">{{ queue.patient.full_name }} {% patient_payer_badges queue.patient %}</p>
+                                    {% if queue.get_display_clinician_name %}
+                                    <div class="qms-row-doc">{{ queue.get_display_clinician_name }}</div>
+                                    {% endif %}
+                                    <div class="qms-row-meta">MRN {{ queue.patient.mrn }}</div>
+                                    {% else %}
+                                    <p class="qms-row-name">{{ queue.encounter.patient.full_name }} {% patient_payer_badges queue.encounter.patient queue.encounter %}</p>
+                                    {% if queue.encounter.provider and queue.encounter.provider.user %}
+                                    <div class="qms-row-doc">{{ queue.encounter.provider.user.get_full_name }}</div>
+                                    {% endif %}
+                                    <div class="qms-row-meta">MRN {{ queue.encounter.patient.mrn }}</div>
+                                    {% endif %}
+                                </div>
+                                <div class="qms-row-actions">
+                                    <a href="{% url 'hospital:queue_action' queue_id=queue.pk action='complete' %}" class="qms-btn-done">Done</a>
+                                    <a href="{% url 'hospital:queue_action' queue_id=queue.pk action='skip' %}" class="qms-btn-skip">Skip</a>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <p class="text-muted text-center py-4 mb-0">No active consultations</p>
+                        {% endif %}
                     </div>
                 </div>
             </div>
         </div>
-        <div class="queue-right" style="background: rgba(0, 0, 255, 0.1); border: 3px solid blue; padding: 10px;">
-            <div style="background: yellow; color: black; padding: 10px; margin-bottom: 10px; font-weight: bold; text-align: center;">
-                🔵 RIGHT COLUMN - Calendar & Gallery Here
+
+        <aside class="qms-side">
+            <div class="qms-calendar">
+                <div class="text-uppercase small fw-bold text-secondary mb-2">Today</div>
+                <div class="qms-cal-big" id="calendarDate">{{ today|date:"d" }}</div>
+                <div class="fw-semibold text-secondary" id="calendarDay">{{ today|date:"l" }}</div>
+                <div class="qms-cal-time" id="calendarTime">{{ today|date:"g:i A" }}</div>
+                <div class="small text-secondary" id="calendarMonthYear">{{ today|date:"F Y" }}</div>
             </div>
-            <div class="calendar-widget">
-                <div class="calendar-header">
-                    <i class="bi bi-calendar3 me-2"></i>Today
-                </div>
-                <div class="calendar-date" id="calendarDate">{{ today|date:"d" }}</div>
-                <div class="calendar-day" id="calendarDay">{{ today|date:"l" }}</div>
-                <div class="calendar-time" id="calendarTime">{{ today|date:"g:i A" }}</div>
-                <div class="calendar-time-label">Current Time</div>
-                <div class="calendar-month-year" id="calendarMonthYear">{{ today|date:"F Y" }}</div>
-            </div>
-            <div class="queue-gallery-card flex-grow-1">
+
+            <div class="queue-gallery-card">
                 <div class="gallery-header">
-                    <span>Calm Corner</span>
-                    <small>{% if slideshow_images %}Rotating memories ({{ slideshow_images|length }} images){% else %}Wellness & Information{% endif %}</small>
+                    <span>While you wait</span>
+                    <small>{% if slideshow_images %}{{ slideshow_images|length }} slides{% else %}Wellness{% endif %}</small>
                 </div>
-                <div class="gallery-viewport" id="gallery-viewport" style="min-height: 340px; display: block;">
-                    {% if slideshow_images and slideshow_images|length > 0 %}
-                        <!-- Image Slideshow -->
+                <div class="gallery-viewport" id="gallery-viewport">
+                    {% if slideshow_images %}
                         {% for slide in slideshow_images %}
-                        <div class="gallery-slide {% if forloop.first %}active{% endif %}" data-index="{{ forloop.counter0 }}" style="{% if forloop.first %}opacity: 1 !important; z-index: 2; display: block;{% else %}opacity: 0; z-index: 1;{% endif %}">
-                            <img src="{{ slide.url }}" alt="{{ slide.caption }}" 
-                                 style="width: 100%; height: 100%; object-fit: cover; display: block;"
-                                 loading="lazy"
-                                 onload="console.log('✅ Image loaded: {{ slide.url }}'); this.parentElement.style.opacity='1'; this.parentElement.style.display='block';" 
-                                 onerror="console.error('❌ Failed: {{ slide.url }}'); var next = this.parentElement.nextElementSibling; if(next && next.classList.contains('gallery-slide')) { next.classList.add('active'); next.style.opacity='1'; } this.parentElement.remove();">
+                        <div class="gallery-slide {% if forloop.first %}active{% endif %}" data-index="{{ forloop.counter0 }}">
+                            <img src="{{ slide.url }}" alt="{{ slide.caption }}" loading="lazy">
                             <div class="gallery-caption">{{ slide.caption }}</div>
                         </div>
                         {% endfor %}
                         {% if slideshow_images|length > 1 %}
-                        <div class="gallery-dots" style="position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; z-index: 10;">
+                        <div class="gallery-dots">
                             {% for slide in slideshow_images %}
-                            <span class="gallery-dot {% if forloop.first %}active{% endif %}" data-index="{{ forloop.counter0 }}" style="width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.3s;"></span>
+                            <span class="gallery-dot {% if forloop.first %}active{% endif %}" data-index="{{ forloop.counter0 }}"></span>
                             {% endfor %}
                         </div>
                         {% endif %}
                     {% else %}
-                        <!-- Alternative: Wellness Messages Display - ALWAYS VISIBLE -->
-                        <div class="gallery-empty" style="display: flex !important; flex-direction: column; align-items: center; justify-content: center; height: 100%; min-height: 340px; padding: 40px; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
-                            <div style="font-size: 80px; margin-bottom: 20px; animation: float 3s ease-in-out infinite;">🌿</div>
-                            <h3 style="color: white; margin-bottom: 16px; font-weight: 700;">Welcome to PrimeCare Hospital</h3>
-                            <p style="color: rgba(255,255,255,0.9); margin-bottom: 24px; font-size: 16px;">We're here to provide you with the best care possible.</p>
-                            <div style="background: rgba(255, 255, 255, 0.2); backdrop-filter: blur(10px); padding: 24px; border-radius: 16px; width: 100%; max-width: 400px; margin-bottom: 16px;">
-                                <p style="color: white; font-weight: 600; margin-bottom: 8px; font-size: 18px;">💡 Wellness Tip</p>
-                                <p style="color: rgba(255,255,255,0.95); font-size: 15px; line-height: 1.6;">Stay hydrated and take deep breaths while you wait. Our team is working to serve you as quickly as possible.</p>
-                            </div>
-                            <div style="background: rgba(255, 255, 255, 0.15); padding: 12px 20px; border-radius: 8px; width: 100%; max-width: 400px;">
-                                <small style="color: rgba(255,255,255,0.9);">📸 To add photos: Place images in <strong>media/queue_display/</strong> folder</small>
-                            </div>
+                        <div class="gallery-empty">
+                            <div style="font-size:3rem;">🌿</div>
+                            <p class="mb-0 fw-semibold">Relax — we will call your ticket when it is your turn.</p>
                         </div>
                     {% endif %}
                 </div>
             </div>
-            <div class="health-tip-panel flex-grow-1">
-                <p class="text-uppercase fw-bold mb-2">Wellness Spotlight</p>
+
+            <div class="health-tip-panel">
+                <p class="text-uppercase mb-0">Wellness tips</p>
                 <div id="health-tip-container">
                     {% if health_tips %}
                         {% for tip in health_tips %}
                         <div class="health-tip-card {% if forloop.first %}active{% endif %}" data-tip-index="{{ forloop.counter0 }}">
-                            <div class="health-tip-title">
-                                {{ tip.icon }} {{ tip.title }}
-                            </div>
-                            <div class="health-tip-message">
-                                {{ tip.message }}
-                            </div>
-                            <small class="fw-bold">{{ tip.category|default:"General" }}</small>
+                            <div class="health-tip-title">{{ tip.icon }} {{ tip.title }}</div>
+                            <div class="health-tip-message">{{ tip.message }}</div>
+                            <small class="text-secondary fw-bold">{{ tip.category|default:"General" }}</small>
                         </div>
                         {% endfor %}
                     {% else %}
-                        <!-- Default Tips if none in database -->
-                        <div class="health-tip-card active" data-tip-index="0">
-                            <div class="health-tip-title">💧 Stay Hydrated!</div>
-                            <div class="health-tip-message">Welcome! Sip water frequently while you wait to keep energized for your consultation. We care about your well-being! 🌟</div>
+                        <div class="health-tip-card active">
+                            <div class="health-tip-title">💧 Stay hydrated</div>
+                            <div class="health-tip-message">Small sips of water while you wait help you feel better for your visit.</div>
                         </div>
-                        <div class="health-tip-card" data-tip-index="1">
-                            <div class="health-tip-title">🧘 Practice Deep Breathing</div>
-                            <div class="health-tip-message">Take slow, deep breaths to help you relax. Breathe in through your nose for 4 counts, hold for 4, and exhale through your mouth for 4. It works wonders! 😌</div>
-                        </div>
-                        <div class="health-tip-card" data-tip-index="2">
-                            <div class="health-tip-title">📱 Limit Screen Time</div>
-                            <div class="health-tip-message">While waiting, try to rest your eyes. Look away from your phone or book every 20 minutes. Your eyes will thank you! 👀</div>
-                        </div>
-                        <div class="health-tip-card" data-tip-index="3">
-                            <div class="health-tip-title">🚶 Gentle Movement</div>
-                            <div class="health-tip-message">Feel free to stand and stretch gently if you've been sitting. Gentle movement improves circulation and helps reduce tension. 💪</div>
-                        </div>
-                        <div class="health-tip-card" data-tip-index="4">
-                            <div class="health-tip-title">😊 Stay Positive</div>
-                            <div class="health-tip-message">Remember, our healthcare team is here to help! We're working efficiently to ensure everyone receives the best care possible. Stay positive! 🌈</div>
-                        </div>
-                        <div class="health-tip-card" data-tip-index="5">
-                            <div class="health-tip-title">📝 Prepare Your Questions</div>
-                            <div class="health-tip-message">Use this time to note down any questions or concerns you'd like to discuss with your healthcare provider. It helps make the most of your consultation! 📋</div>
-                        </div>
-                        <div class="health-tip-card" data-tip-index="6">
-                            <div class="health-tip-title">🍎 Eat Nutritious Meals</div>
-                            <div class="health-tip-message">If possible, enjoy a light, nutritious snack while waiting. Fresh fruits, nuts, or whole grains give you sustained energy. Your body will appreciate it! 🥗</div>
-                        </div>
-                        <div class="health-tip-card" data-tip-index="7">
-                            <div class="health-tip-title">🤝 We're Here for You</div>
-                            <div class="health-tip-message">Your health is our priority! Our friendly staff is available to assist you with any questions or concerns. Don't hesitate to ask! 💙</div>
+                        <div class="health-tip-card">
+                            <div class="health-tip-title">🧘 Breathe slowly</div>
+                            <div class="health-tip-message">Try four counts in, four counts out — it keeps nerves calmer.</div>
                         </div>
                     {% endif %}
                 </div>
             </div>
-        </div>
+        </aside>
+    </div>
     </div>
 </div>
 
-<!-- Audio Indicator -->
-<div class="audio-indicator" id="audioIndicator" title="Queue audio is muted">
-    <i class="bi bi-volume-mute"></i>
+<div class="audio-indicator" id="audioIndicator" title="Mute or unmute queue voice announcements">
+    <i class="bi bi-volume-up"></i>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
 (function() {
+    /** Call-next API requires a signed-in user; anonymous displays still poll the public feed. */
+    const qmsStaffQueueActions = {% if user.is_authenticated %}true{% else %}false{% endif %};
     const feedUrl = "{% url 'hospital:queue_status_feed' %}{% if selected_department %}?department={{ selected_department }}{% endif %}";
+    const callNextForm = document.getElementById('callNextForm');
+    const callNextBtn = document.getElementById('callNextBtn');
+    const callNextAction = (function() {
+        var act = callNextForm && callNextForm.action ? callNextForm.action : '';
+        return act || "{% url 'hospital:queue_call_next' %}";
+    })();
     const audioToggleBtn = document.getElementById('queue-audio-toggle');
     const audioIndicator = document.getElementById('audioIndicator');
     const waitingCountEl = document.getElementById('waitingCount');
     const progressCountEl = document.getElementById('progressCount');
-    const upNextList = document.getElementById('up-next-list');
+    const waitingBadge = document.getElementById('waitingBadge');
+    const progressBadge = document.getElementById('progressBadge');
     const healthTipContainer = document.getElementById('health-tip-container');
-    const waitingList = document.getElementById('waitingList');
-    // Initialize gallery slideshow
+    const upNextRail = document.getElementById('up-next-rail');
+    const ticketInput = document.getElementById('ticket-lookup');
+    const ticketStatus = document.getElementById('ticket-lookup-status');
+    const livePulse = document.getElementById('live-pulse');
+    const headerClock = document.getElementById('qms-header-clock');
+    const syncTextEl = document.getElementById('qms-sync-text');
+    const syncPillEl = document.getElementById('qms-sync-pill');
+
+    function getCsrfTokenForQueue() {
+        var inp = callNextForm && callNextForm.querySelector('[name=csrfmiddlewaretoken]');
+        if (inp && inp.value) return inp.value;
+        try {
+            var m = document.cookie.match(/csrftoken=([^;]+)/);
+            if (m) return decodeURIComponent(m[1].trim());
+        } catch (e) { /* ignore */ }
+        return '';
+    }
+
     let gallerySlides = document.querySelectorAll('.gallery-slide');
     let galleryDots = document.querySelectorAll('.gallery-dot');
     let galleryIndex = 0;
@@ -1210,722 +1411,1079 @@ document.addEventListener('DOMContentLoaded', function() {
     function initGallery() {
         gallerySlides = document.querySelectorAll('.gallery-slide');
         galleryDots = document.querySelectorAll('.gallery-dot');
-        
-        // If no slides, show alternative content (already in template)
-        if (gallerySlides.length === 0) {
-            console.log('📸 No images found - showing wellness message instead');
-            return;
-        }
-        
-        console.log(`📸 Gallery initialized: ${gallerySlides.length} slides, ${galleryDots.length} dots`);
-        
-        // Ensure first slide is active
-        if (gallerySlides.length > 0) {
-            gallerySlides[0].classList.add('active');
-            gallerySlides[0].style.opacity = '1';
-            gallerySlides[0].style.zIndex = '2';
-        }
-        
-        // Set up dot click handlers
+        if (gallerySlides.length === 0) return;
+        gallerySlides[0].classList.add('active');
         galleryDots.forEach(dot => {
             dot.addEventListener('click', function() {
-                const idx = parseInt(this.dataset.index, 10) || 0;
-                setGallerySlide(idx);
+                setGallerySlide(parseInt(this.dataset.index, 10) || 0);
             });
         });
-
-        // Start auto-rotation if more than one slide
         if (gallerySlides.length > 1) {
             if (galleryInterval) clearInterval(galleryInterval);
-            galleryInterval = setInterval(() => {
-                setGallerySlide(galleryIndex + 1);
-            }, 8000);
-            console.log('📸 Auto-rotation started (8s interval)');
+            galleryInterval = setInterval(() => setGallerySlide(galleryIndex + 1), 8000);
         }
     }
 
     function setGallerySlide(nextIndex) {
-        if (!gallerySlides || gallerySlides.length === 0) return;
-        gallerySlides.forEach(slide => slide.classList.remove('active'));
-        galleryDots.forEach(dot => dot.classList.remove('active'));
+        if (!gallerySlides.length) return;
+        gallerySlides.forEach(s => s.classList.remove('active'));
+        galleryDots.forEach(d => d.classList.remove('active'));
         galleryIndex = nextIndex % gallerySlides.length;
-        if (gallerySlides[galleryIndex]) {
-            gallerySlides[galleryIndex].classList.add('active');
-        }
-        if (galleryDots[galleryIndex]) {
-            galleryDots[galleryIndex].classList.add('active');
-        }
+        if (gallerySlides[galleryIndex]) gallerySlides[galleryIndex].classList.add('active');
+        if (galleryDots[galleryIndex]) galleryDots[galleryIndex].classList.add('active');
     }
 
-    // Initialize gallery on page load and after DOM is ready
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initGallery);
     } else {
         initGallery();
     }
-    
-    // Also try to initialize after a short delay in case images load late
-    setTimeout(initGallery, 1000);
+
     const defaultHealthTips = [
-        {
-            icon: '💧',
-            title: 'Stay Hydrated!',
-            message: 'Welcome! Sip water frequently while you wait to keep energized for your consultation. We care about your well-being! 🌟',
-            category: 'Wellness'
-        },
-        {
-            icon: '🧘',
-            title: 'Practice Deep Breathing',
-            message: 'Take slow, deep breaths to help you relax. Inhale for 4, hold for 4, exhale for 4. It works wonders! 😌',
-            category: 'Calm'
-        },
-        {
-            icon: '📱',
-            title: 'Limit Screen Time',
-            message: 'Rest your eyes every 20 minutes by looking away from your phone or book. Your eyes will thank you! 👀',
-            category: 'Vision'
-        },
-        {
-            icon: '🚶',
-            title: 'Gentle Movement',
-            message: 'Stand and stretch gently if you have been sitting. Light movement improves circulation and eases tension. 💪',
-            category: 'Mobility'
-        },
-        {
-            icon: '😊',
-            title: 'Stay Positive',
-            message: 'Our healthcare team is here for you! We’re working efficiently to ensure everyone receives the best care possible. 🌈',
-            category: 'Mindset'
-        },
-        {
-            icon: '📝',
-            title: 'Prepare Your Questions',
-            message: 'Use this time to note any questions or concerns for your provider. It helps you get the most from your visit. 📋',
-            category: 'Preparation'
-        },
-        {
-            icon: '🍎',
-            title: 'Choose Nutritious Snacks',
-            message: 'If you brought a snack, opt for fruits, nuts, or whole grains to keep your energy steady. 🥗',
-            category: 'Nutrition'
-        },
-        {
-            icon: '🤝',
-            title: 'We’re Here for You',
-            message: 'Need assistance? Our friendly staff is nearby and ready to help with any questions. 💙',
-            category: 'Support'
-        }
+        { icon: '💧', title: 'Stay hydrated', message: 'Small sips of water while you wait help you feel better for your visit.', category: 'Wellness' },
+        { icon: '🧘', title: 'Breathe slowly', message: 'Four counts in, four counts out — it keeps nerves calmer.', category: 'Calm' },
+        { icon: '📋', title: 'Note your questions', message: 'Jot down symptoms or questions so you do not forget during your visit.', category: 'Prep' }
     ];
 
     let audioEnabled = false;
-    let lastAnnouncementId = "{{ now_serving.id|default:'' }}";
+    /** False by default: voice is on unless user chose mute (stored preference). */
+    let voiceMutedByPreference = false;
+    try {
+        if (localStorage.getItem('qms_voice_enabled') === '0' || localStorage.getItem('qms_voice_muted') === '1') {
+            voiceMutedByPreference = true;
+        }
+    } catch (e) { /* ignore */ }
+    /** Only updated after TTS actually runs — avoids “consuming” a callout before voice is on. */
+    let lastAnnounceSig = '';
+    let lastNowServingEntry = null;
+    let lastServingNumber = (document.getElementById('qms-head-ticket') || {}).textContent || '';
     let tipPointer = 0;
     let speechSynthesisSupported = false;
     let userInteracted = false;
+    let tipsInitialized = false;
+    let tipRotationInterval = null;
+    let feedOk = true;
+    /** After a direct “Call” on a row, next feed poll should still speak if needed */
+    let forceAnnounceAfterNextPoll = false;
+    let announceDebounceTimer = null;
+    /** Stable key for “same call-out”; must not use timestamps that change every poll */
+    let lastVoicePlayingKey = '';
+    /** After staff “call” with name, suppress automatic ticket-only TTS for the same serving. */
+    let lastNamedCallIdentity = '';
 
-    // Check if speech synthesis is available
+    let autoCallNextPendingTimer = null;
+    let autoCallNextInFlight = false;
+    let lastAutoCallNextTime = 0;
+    var AUTO_CALL_NEXT_COOLDOWN_MS = 45000;
+    var AUTO_CALL_NEXT_DELAY_MS = 4000;
+
+    function clearAutoCallNextSchedule() {
+        if (autoCallNextPendingTimer) {
+            clearTimeout(autoCallNextPendingTimer);
+            autoCallNextPendingTimer = null;
+        }
+    }
+
+    function maybeScheduleAutoCallNext(data) {
+        if (!qmsStaffQueueActions) return;
+        if (!callNextForm) return;
+        var inProg = data.in_progress_count !== undefined ? parseInt(data.in_progress_count, 10) : 0;
+        var wait = data.waiting_count !== undefined ? parseInt(data.waiting_count, 10) : 0;
+        if (isNaN(inProg)) inProg = 0;
+        if (isNaN(wait)) wait = 0;
+        if (inProg > 0 || wait < 1) {
+            clearAutoCallNextSchedule();
+            return;
+        }
+        if (autoCallNextInFlight) return;
+        if (Date.now() - lastAutoCallNextTime < AUTO_CALL_NEXT_COOLDOWN_MS) return;
+        if (autoCallNextPendingTimer) return;
+        autoCallNextPendingTimer = setTimeout(function() {
+            autoCallNextPendingTimer = null;
+            attemptAutoCallNext();
+        }, AUTO_CALL_NEXT_DELAY_MS);
+    }
+
+    function attemptAutoCallNext() {
+        if (!qmsStaffQueueActions) return;
+        if (!callNextForm || autoCallNextInFlight) return;
+        var inProg = progressCountEl ? parseInt(progressCountEl.textContent, 10) || 0 : 0;
+        var wait = waitingCountEl ? parseInt(waitingCountEl.textContent, 10) || 0 : 0;
+        if (inProg > 0 || wait < 1) return;
+        if (Date.now() - lastAutoCallNextTime < AUTO_CALL_NEXT_COOLDOWN_MS) return;
+        autoCallNextInFlight = true;
+        primeSpeechFromUserGesture();
+        var fd = new FormData(callNextForm);
+        var csrfToken = fd.get('csrfmiddlewaretoken');
+        var headers = { 'X-Requested-With': 'XMLHttpRequest' };
+        if (csrfToken) headers['X-CSRFToken'] = csrfToken;
+        fetch(callNextAction, { method: 'POST', headers: headers, body: fd, credentials: 'same-origin' })
+            .then(function(r) {
+                return r.json().then(function(data) {
+                    return { ok: r.ok, data: data };
+                }).catch(function() {
+                    return { ok: r.ok, data: {} };
+                });
+            })
+            .then(function(result) {
+                var data = result.data || {};
+                if (data.success && data.entry) {
+                    lastAutoCallNextTime = Date.now();
+                    renderNowServing(data.entry, false);
+                }
+                setTimeout(fetchFeed, 400);
+            })
+            .catch(function() { setTimeout(fetchFeed, 600); })
+            .finally(function() { autoCallNextInFlight = false; });
+    }
+
+    function normalizeTicket(s) {
+        return (s || '').toString().toUpperCase().replace(/\s+/g, '').trim();
+    }
+
+    /** For voice dedupe only — align row label "42" with feed "OPD-042" via numeric suffix. */
+    function ticketKeyLoose(q) {
+        var s = String(q || '');
+        var digits = s.replace(/\D/g, '');
+        if (digits.length) return 'n' + digits;
+        return s.toUpperCase().replace(/[^0-9A-Z]/g, '');
+    }
+
+    function ticketMatches(hay, needle) {
+        if (!needle) return false;
+        const h = normalizeTicket(hay);
+        const n = normalizeTicket(needle);
+        if (!n) return false;
+        return h === n || h.includes(n) || n.includes(h);
+    }
+
+    function applyTicketHighlight() {
+        const needle = ticketInput ? ticketInput.value : '';
+        const norm = normalizeTicket(needle);
+        const hero = document.getElementById('qms-head-ticket');
+        document.querySelectorAll('[data-ticket]').forEach(el => {
+            const t = el.getAttribute('data-ticket') || '';
+            const match = ticketMatches(t, needle);
+            el.classList.toggle('is-highlight', match && norm.length >= 1);
+            el.classList.toggle('is-match', match && norm.length >= 1);
+        });
+        if (hero) {
+            const ht = hero.getAttribute('data-ticket') || '';
+            const servingMatch = ticketMatches(ht, needle);
+            hero.classList.toggle('is-match', servingMatch && norm.length >= 1);
+        }
+        if (ticketStatus) {
+            if (!norm) {
+                ticketStatus.textContent = '';
+                ticketStatus.classList.remove('is-ok');
+            } else {
+                const anyChip = document.querySelector('.qms-chip.is-highlight');
+                const serving = hero && hero.classList.contains('is-match');
+                if (serving) {
+                    ticketStatus.textContent = 'That ticket is called — please head towards the room and clinician shown above.';
+                    ticketStatus.classList.add('is-ok');
+                } else if (anyChip) {
+                    ticketStatus.textContent = 'You are still in line — watch the “Please head towards” display.';
+                    ticketStatus.classList.remove('is-ok');
+                } else {
+                    ticketStatus.textContent = 'No match on screen — check the number on your SMS.';
+                    ticketStatus.classList.remove('is-ok');
+                }
+            }
+        }
+    }
+
+    if (ticketInput) {
+        ticketInput.addEventListener('input', applyTicketHighlight);
+        ticketInput.addEventListener('change', applyTicketHighlight);
+    }
+
+    function syncVoiceToggleAppearance() {
+        if (!speechSynthesisSupported) return;
+        var unmuted = !voiceMutedByPreference;
+        if (audioToggleBtn) {
+            audioToggleBtn.classList.toggle('active', unmuted);
+            audioToggleBtn.textContent = unmuted ? 'Mute voice' : 'Turn voice on';
+        }
+        if (audioIndicator) {
+            var ic = audioIndicator.querySelector('i');
+            if (ic) ic.className = unmuted ? 'bi bi-volume-up' : 'bi bi-volume-mute';
+        }
+    }
+
     function checkSpeechSupport() {
         speechSynthesisSupported = 'speechSynthesis' in window;
-        if (!speechSynthesisSupported) {
-            console.warn('⚠️ Speech Synthesis not supported in this browser');
-            if (audioToggleBtn) {
-                audioToggleBtn.disabled = true;
-                audioToggleBtn.textContent = '🔇 Voice Not Supported';
-            }
+        if (!speechSynthesisSupported && audioToggleBtn) {
+            audioToggleBtn.disabled = true;
+            audioToggleBtn.textContent = 'Audio not available here';
+        } else if (speechSynthesisSupported) {
+            try {
+                window.speechSynthesis.getVoices();
+            } catch (e) { /* ignore */ }
+            syncVoiceToggleAppearance();
         }
         return speechSynthesisSupported;
     }
 
-    // Enable audio after first user interaction (to satisfy browser autoplay policy)
-    function enableAudioOnInteraction() {
-        if (userInteracted) return;
-        userInteracted = true;
-        // Auto-enable audio after first user interaction
-        if (speechSynthesisSupported && !audioEnabled) {
-            setAudioState(true);
-            console.log('✅ Audio enabled after user interaction');
-        }
+    function resumeSpeechSynth() {
+        try {
+            if (window.speechSynthesis && window.speechSynthesis.paused) {
+                window.speechSynthesis.resume();
+            }
+        } catch (e) { /* ignore */ }
     }
 
-    // Add event listeners for user interaction (multiple events to catch any interaction)
-    document.addEventListener('click', enableAudioOnInteraction, { once: true });
-    document.addEventListener('touchstart', enableAudioOnInteraction, { once: true });
-    document.addEventListener('keydown', enableAudioOnInteraction, { once: true });
-    document.addEventListener('mousedown', enableAudioOnInteraction, { once: true });
-    
-    // Also enable on page load if user has already interacted (for page refreshes)
-    if (document.hasFocus()) {
-        setTimeout(() => {
-            if (speechSynthesisSupported && !audioEnabled) {
-                enableAudioOnInteraction();
+    function enableAudioOnInteraction() {
+        if (!userInteracted) {
+            userInteracted = true;
+            if (speechSynthesisSupported && !voiceMutedByPreference) {
+                setAudioState(true);
             }
-        }, 1000);
+            if (speechSynthesisSupported && audioEnabled && lastNowServingEntry) {
+                lastAnnounceSig = '';
+                var sig0 = announceContentKey(lastNowServingEntry, false);
+                if (announce(lastNowServingEntry, false, false)) {
+                    lastAnnounceSig = sig0;
+                }
+            }
+        }
+        resumeSpeechSynth();
     }
+
+    /**
+     * Chromium often blocks speak() when it only runs inside fetch().then().
+     * A short priming utterance on mousedown (same user gesture) plus immediate speak for staff calls fixes this.
+     */
+    function primeSpeechFromUserGesture() {
+        if (!speechSynthesisSupported) return;
+        enableAudioOnInteraction();
+        try {
+            window.speechSynthesis.cancel();
+            lastVoicePlayingKey = '';
+            var priming = new SpeechSynthesisUtterance('\u00A0');
+            priming.volume = 0.03;
+            priming.rate = 10;
+            window.speechSynthesis.speak(priming);
+        } catch (e) { /* ignore */ }
+    }
+
+    /**
+     * Turn voice on without waiting for a tap — best-effort for unattended queue TVs.
+     * Some browsers still block TTS until a real pointer/key event; handlers below then unlock.
+     */
+    function bootstrapAutomaticQueueVoice() {
+        if (!speechSynthesisSupported || voiceMutedByPreference) return;
+        userInteracted = true;
+        setAudioState(true);
+        resumeSpeechSynth();
+        try {
+            window.speechSynthesis.getVoices();
+        } catch (e) { /* ignore */ }
+        try {
+            window.speechSynthesis.cancel();
+            lastVoicePlayingKey = '';
+            var warm = new SpeechSynthesisUtterance('\u00A0');
+            warm.volume = 0.02;
+            warm.rate = 10;
+            window.speechSynthesis.speak(warm);
+        } catch (e) { /* ignore */ }
+        function syncServingSpeech() {
+            if (!lastNowServingEntry || !audioEnabled) return;
+            var sig = announceContentKey(lastNowServingEntry, false);
+            if (!sig || sig === lastAnnounceSig) return;
+            lastAnnounceSig = '';
+            if (announce(lastNowServingEntry, false, false)) {
+                lastAnnounceSig = sig;
+            }
+        }
+        syncServingSpeech();
+        window.speechSynthesis.addEventListener('voiceschanged', function onVoicesBoot() {
+            window.speechSynthesis.removeEventListener('voiceschanged', onVoicesBoot);
+            resumeSpeechSynth();
+            syncServingSpeech();
+        }, { once: true });
+    }
+
+    window.addEventListener('pointerdown', function() { enableAudioOnInteraction(); }, { passive: true, capture: true });
+    window.addEventListener('keydown', function() { enableAudioOnInteraction(); }, { capture: true });
 
     function setAudioState(enabled) {
         audioEnabled = enabled && speechSynthesisSupported;
+        try {
+            localStorage.setItem('qms_voice_enabled', enabled ? '1' : '0');
+            if (enabled) {
+                localStorage.removeItem('qms_voice_muted');
+            } else {
+                localStorage.setItem('qms_voice_muted', '1');
+            }
+            voiceMutedByPreference = !enabled;
+        } catch (e) { /* ignore */ }
         if (audioToggleBtn) {
             audioToggleBtn.classList.toggle('active', audioEnabled);
-            if (!speechSynthesisSupported) {
-                audioToggleBtn.textContent = '🔇 Voice Not Supported';
-                audioToggleBtn.disabled = true;
-            } else {
-                audioToggleBtn.textContent = audioEnabled ? '🔊 Voice Enabled' : '🔈 Enable Voice Callouts';
-                audioToggleBtn.disabled = false;
+            if (speechSynthesisSupported) {
+                audioToggleBtn.textContent = audioEnabled ? 'Mute voice' : 'Turn voice on';
             }
         }
         if (audioIndicator) {
-            audioIndicator.querySelector('i').className = audioEnabled ? 'bi bi-volume-up' : 'bi bi-volume-mute';
-            audioIndicator.title = audioEnabled ? 'Queue audio is active' : 'Queue audio is muted';
-            audioIndicator.style.opacity = speechSynthesisSupported ? '1' : '0.5';
+            const i = audioIndicator.querySelector('i');
+            if (i) i.className = audioEnabled ? 'bi bi-volume-up' : 'bi bi-volume-mute';
         }
     }
 
     function toggleAudio() {
-        if (!speechSynthesisSupported) {
-            alert('Speech synthesis is not supported in your browser. Please use a modern browser like Chrome, Firefox, or Edge.');
-            return;
-        }
-        enableAudioOnInteraction(); // Ensure user has interacted
-        const newState = !audioEnabled;
-        setAudioState(newState);
-        console.log(`🔊 Audio ${newState ? 'ENABLED' : 'DISABLED'}`);
-        if (newState) {
-            // Test announcement
-            const testEntry = {
-                queue_number: 'TEST',
-                patient: { full_name: 'Test Patient' }
-            };
-            setTimeout(() => announce(testEntry, true), 500);
+        if (!speechSynthesisSupported) return;
+        userInteracted = true;
+        resumeSpeechSynth();
+        const turningOn = !audioEnabled;
+        setAudioState(!audioEnabled);
+        if (audioEnabled && turningOn) {
+            if (lastNowServingEntry) {
+                lastAnnounceSig = '';
+                var sig = announceContentKey(lastNowServingEntry, false);
+                if (announce(lastNowServingEntry, false, false)) {
+                    lastAnnounceSig = sig;
+                }
+            } else {
+                speakQueueUtterance(new SpeechSynthesisUtterance('Queue voice is on.'), true, true);
+            }
         }
     }
 
     audioToggleBtn?.addEventListener('click', toggleAudio);
     audioIndicator?.addEventListener('click', toggleAudio);
 
-    function announce(entry, force = false) {
-        // Check prerequisites
-        if (!entry) {
-            console.warn('⚠️ Cannot announce: No entry provided');
-            return;
-        }
-        
-        if (!speechSynthesisSupported) {
-            console.warn('⚠️ Cannot announce: Speech synthesis not supported');
-            return;
-        }
-        
-        if (!audioEnabled && !force) {
-            console.log('🔇 Audio disabled, skipping announcement');
-            return;
-        }
+    function servingSignature(entry) {
+        if (!entry) return '';
+        /* Do NOT include called_time / timestamps — the next JSON poll often changes them and
+           retriggers announce(), which cancel()'d the previous utterance and cut speech short. */
+        return [
+            entry.id || '',
+            entry.queue_number || '',
+            entry.room_number || '',
+            (entry.assigned_doctor || '').trim(),
+            (entry.patient || '').trim()
+        ].join('|');
+    }
 
+    /** Stable identity for TTS dedupe: ticket + room + doctor only (no DB id — optimistic row vs API often differ). */
+    function entryVoiceIdentity(entry) {
+        if (!entry) return '';
+        var qn = ticketKeyLoose(entry.queue_number || '');
+        var room = (entry.room_number != null && entry.room_number !== '') ? String(entry.room_number).trim() : '';
+        var doc = (entry.assigned_doctor || '').trim();
+        return [qn, room, doc].join('|');
+    }
+
+    /** Row template may append payer badges to .qms-row-name — keep spoken name short. */
+    function stripDisplayPatientName(raw) {
+        if (!raw) return '';
+        var s = String(raw).replace(/\s+/g, ' ').trim();
+        var cut = s.split(/\n|·|•|–|—/)[0].trim();
+        return cut;
+    }
+
+    /** What was last announced: identity + whether the spoken phrase included the patient name. */
+    function announceContentKey(entry, includePatientName) {
+        if (!entry) return '';
+        return entryVoiceIdentity(entry) + '|pn:' + (includePatientName ? '1' : '0');
+    }
+
+    function pickEnglishVoice() {
         try {
-            // Ensure user has interacted (required by browser autoplay policy)
-            if (!userInteracted) {
-                console.log('⏳ Waiting for user interaction before announcing...');
-                return;
-            }
-
-            // Build announcement message
-            const queueNum = entry.queue_number ? entry.queue_number.replace('-', ' ') : 'Unknown';
-            const roomInfo = entry.room_number ? `Room ${entry.room_number}` : 'the consultation area';
-            const message = `Ticket number ${queueNum}, please proceed to ${roomInfo}.`;
-            
-            console.log('🔊 Announcing:', message);
-            
-            // Create and configure utterance
-            const utterance = new SpeechSynthesisUtterance(message);
-            utterance.rate = 0.9; // Slightly slower for clarity
-            utterance.pitch = 1.0;
-            utterance.volume = 1.0;
-            utterance.lang = 'en-US';
-            
-            // Handle events
-            utterance.onstart = () => {
-                console.log('✅ Speech started');
-            };
-            
-            utterance.onerror = (event) => {
-                console.error('❌ Speech error:', event.error);
-                if (event.error === 'not-allowed') {
-                    alert('Audio permission denied. Please enable audio in your browser settings.');
-                }
-            };
-            
-            utterance.onend = () => {
-                console.log('✅ Speech ended');
-            };
-            
-            // Cancel any ongoing speech and speak
-            window.speechSynthesis.cancel();
-            
-            // Small delay to ensure cancellation is processed
-            setTimeout(() => {
-                window.speechSynthesis.speak(utterance);
-            }, 100);
-            
-        } catch (error) {
-            console.error('❌ Error in announce function:', error);
+            var voices = window.speechSynthesis.getVoices();
+            if (!voices || !voices.length) return null;
+            var en = voices.filter(function(v) {
+                return (v.lang || '').toLowerCase().indexOf('en') === 0;
+            });
+            var pool = en.length ? en : voices;
+            var pick = pool.find(function(v) {
+                return /natural|neural|premium|google|microsoft|samantha|zira|hazel/i.test(v.name);
+            });
+            return pick || pool[0];
+        } catch (e) {
+            return null;
         }
     }
 
-    function renderNowServing(entry) {
-        const numberEl = document.getElementById('now-serving-number');
-        const roomEl = document.getElementById('now-serving-room');
-        const doctorEl = document.getElementById('now-serving-doctor');
+    /**
+     * @param {SpeechSynthesisUtterance} utterance
+     * @param {boolean} immediate - run speak() on next frame vs double-rAF (use true for call-outs)
+     * @param {boolean} interruptPrevious - if false, queue after current speech (avoids cutting off mid-sentence)
+     */
+    function speakQueueUtterance(utterance, immediate, interruptPrevious) {
+        if (!speechSynthesisSupported || !utterance) return;
+        if (interruptPrevious === undefined) interruptPrevious = true;
+        utterance.volume = 1;
+        utterance.pitch = 1;
+        if (!utterance.lang) utterance.lang = 'en-US';
+        var v = pickEnglishVoice();
+        if (v) utterance.voice = v;
+
+        var spoke = false;
+        function doSpeakOnce() {
+            if (spoke) return;
+            spoke = true;
+            v = pickEnglishVoice();
+            if (v) utterance.voice = v;
+            resumeSpeechSynth();
+            if (interruptPrevious) {
+                try {
+                    window.speechSynthesis.cancel();
+                } catch (e) { /* ignore */ }
+                lastVoicePlayingKey = '';
+            }
+            function fireSpeak() {
+                try {
+                    if (utterance._qmsVoiceKey) {
+                        /* Set before speak() so a fast follow-up poll does not cancel() mid-phrase */
+                        lastVoicePlayingKey = utterance._qmsVoiceKey;
+                    }
+                    window.speechSynthesis.speak(utterance);
+                } catch (e) { /* ignore */ }
+            }
+            if (utterance._qmsVoiceKey) {
+                utterance.onend = function() {
+                    if (lastVoicePlayingKey === utterance._qmsVoiceKey) lastVoicePlayingKey = '';
+                };
+                utterance.onerror = function() {
+                    if (lastVoicePlayingKey === utterance._qmsVoiceKey) lastVoicePlayingKey = '';
+                };
+            }
+            if (immediate) {
+                fireSpeak();
+                return;
+            }
+            requestAnimationFrame(function() {
+                requestAnimationFrame(fireSpeak);
+            });
+        }
+
+        var voices = window.speechSynthesis.getVoices();
+        if (voices && voices.length) {
+            doSpeakOnce();
+            return;
+        }
+        var fallbackTid = null;
+        function onVoices() {
+            if (fallbackTid) {
+                clearTimeout(fallbackTid);
+                fallbackTid = null;
+            }
+            window.speechSynthesis.removeEventListener('voiceschanged', onVoices);
+            doSpeakOnce();
+        }
+        window.speechSynthesis.addEventListener('voiceschanged', onVoices);
+        try {
+            window.speechSynthesis.getVoices();
+        } catch (e) { /* ignore */ }
+        fallbackTid = setTimeout(function() {
+            window.speechSynthesis.removeEventListener('voiceschanged', onVoices);
+            doSpeakOnce();
+        }, 900);
+    }
+
+    /**
+     * @param {boolean} force - bypass mute / unlock audio (staff call or board action)
+     * @param {boolean} includePatientName - only true when staff explicitly calls (Call / Call next); live feed uses ticket only
+     */
+    function announce(entry, force, includePatientName) {
+        if (includePatientName === undefined) includePatientName = false;
+        if (!entry || !speechSynthesisSupported) return false;
+        if (!audioEnabled && !force) return false;
+        if (force) {
+            userInteracted = true;
+        } else if (!userInteracted) {
+            return false;
+        }
+        var voiceKey = announceContentKey(entry, includePatientName);
+        if (!force && voiceKey && voiceKey === lastVoicePlayingKey) {
+            return true;
+        }
+        const queueNum = (entry.queue_number || '').toString().replace(/-/g, ' ');
+        const roomInfo = entry.room_number ? ('consultation room ' + entry.room_number) : 'the consultation room';
+        const who = (entry.assigned_doctor || '').trim();
+        var patientName = (entry.patient || '').trim();
+        if (includePatientName && !patientName) {
+            var headP = document.getElementById('qms-head-patient');
+            if (headP) {
+                var ht = stripDisplayPatientName(headP.textContent || '');
+                if (ht && ht !== '—' && ht !== '-') patientName = ht;
+            }
+        } else if (includePatientName && patientName) {
+            patientName = stripDisplayPatientName(patientName);
+        }
+        let msg = '';
+        if (includePatientName && patientName) {
+            msg = patientName + ', ticket number ' + queueNum + ', please head towards ' + roomInfo + '.';
+        } else {
+            msg = 'Ticket number ' + queueNum + ', please head towards ' + roomInfo + '.';
+        }
+        if (who) {
+            const doctorPrefix = /^dr\.?\s+/i.test(who) ? '' : 'Doctor ';
+            msg += ' ' + doctorPrefix + who + ' will see you now.';
+        }
+        const utterance = new SpeechSynthesisUtterance(msg);
+        utterance.rate = 0.88;
+        utterance.lang = 'en-US';
+        utterance._qmsVoiceKey = voiceKey;
+        if (includePatientName) {
+            lastNamedCallIdentity = entryVoiceIdentity(entry);
+        }
+        /* Always interrupt: partial phrases were common when ticket-only used interrupt false (queued behind stuck synth). */
+        speakQueueUtterance(utterance, true, true);
+        return true;
+    }
+
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) return;
+        resumeSpeechSynth();
+        if (speechSynthesisSupported && !voiceMutedByPreference) {
+            userInteracted = true;
+            if (!audioEnabled) setAudioState(true);
+        }
+    });
+
+    function flashHero() {
+        const el = document.getElementById('qms-head-ticket');
+        if (!el) return;
+        el.classList.remove('is-flash');
+        void el.offsetWidth;
+        el.classList.add('is-flash');
+        setTimeout(() => el.classList.remove('is-flash'), 1100);
+    }
+
+    function renderNowServing(entry, forceVoice) {
+        const numberEl = document.getElementById('qms-head-ticket');
+        const patientEl = document.getElementById('qms-head-patient');
+        const roomEl = document.getElementById('qms-head-room');
+        const doctorEl = document.getElementById('qms-head-clinician');
         if (!numberEl || !roomEl || !doctorEl) return;
 
         if (!entry) {
-            numberEl.textContent = '--';
-            roomEl.textContent = 'Waiting Area';
-            doctorEl.textContent = '---';
+            clearTimeout(announceDebounceTimer);
+            announceDebounceTimer = null;
+            numberEl.textContent = '—';
+            numberEl.setAttribute('data-ticket', '');
+            if (patientEl) patientEl.textContent = '—';
+            roomEl.textContent = 'Please wait — you will be called to your consultation room';
+            doctorEl.textContent = '—';
+            lastServingNumber = '—';
+            lastNowServingEntry = null;
+            lastAnnounceSig = '';
+            lastVoicePlayingKey = '';
+            lastNamedCallIdentity = '';
+            applyTicketHighlight();
             return;
         }
 
-        numberEl.textContent = entry.queue_number;
-        roomEl.textContent = entry.room_number ? `📍 Room ${entry.room_number}` : '⏳ Please wait nearby';
-        doctorEl.textContent = entry.assigned_doctor || '---';
-
-        // Announce when queue number changes (new patient called)
-        if (entry.id && entry.id !== lastAnnouncementId) {
-            console.log('📢 New queue entry detected:', entry.queue_number, 'Previous:', lastAnnouncementId);
-            announce(entry);
-            lastAnnouncementId = entry.id;
-        }
-    }
-
-    function renderUpNext(entries) {
-        if (!upNextList) return;
-        upNextList.innerHTML = '';
-        if (!entries || !entries.length) {
-            upNextList.innerHTML = '<li class="text-muted">✨ Queue is clear! We\'re ready to serve you. 🎉</li>';
-            return;
-        }
-        entries.forEach(entry => {
-            const li = document.createElement('li');
-            li.className = 'd-flex align-items-center justify-content-between py-2 border-bottom';
-            li.innerHTML = `<span class="fw-bold">${entry.queue_number}</span><small class="text-muted">${entry.patient || ''}</small>`;
-            upNextList.appendChild(li);
-        });
-    }
-
-    let tipsInitialized = false;
-    
-    function renderTips(tips) {
-        if (!healthTipContainer || tipsInitialized) return;
-
-        const normalizeTips = (items) => {
-            return items
-                .filter(Boolean)
-                .map(item => ({
-                    icon: item.icon || '💡',
-                    title: item.title || '',
-                    message: item.message || '',
-                    category: item.category || 'General'
-                }));
+        lastNowServingEntry = {
+            id: entry.id,
+            queue_number: entry.queue_number,
+            room_number: entry.room_number,
+            assigned_doctor: entry.assigned_doctor,
+            patient: entry.patient
         };
 
-        let tipsToRender = Array.isArray(tips) ? normalizeTips(tips) : [];
+        const prev = lastServingNumber;
+        const num = entry.queue_number || '—';
+        const changed = normalizeTicket(num) !== normalizeTicket(prev);
+        numberEl.textContent = num;
+        numberEl.setAttribute('data-ticket', num);
+        const pname = ((entry.patient || '').trim() || '—');
+        if (patientEl) patientEl.textContent = pname;
+        roomEl.textContent = entry.room_number ? ('Head towards consultation room ' + entry.room_number) : 'Please wait — you will be called to your consultation room';
+        doctorEl.textContent = ((entry.assigned_doctor || '').trim() || '—');
 
-        if (tipsToRender.length > 0 && tipsToRender.length < 2 && defaultHealthTips.length) {
-            const needed = Math.min(defaultHealthTips.length, 3 - tipsToRender.length);
-            tipsToRender = tipsToRender.concat(defaultHealthTips.slice(0, needed));
-        }
-
-        if (tipsToRender.length === 0) {
-            if (defaultHealthTips.length > 0) {
-                tipsToRender = normalizeTips(defaultHealthTips.slice(0, 3));
-            } else {
-                const existingCards = healthTipContainer.querySelectorAll('.health-tip-card');
-                if (existingCards.length > 0) {
-                    tipsInitialized = true;
-                    tipPointer = 0;
-                    healthTipContainer.dataset.initialized = '1';
+        var contentKeyTicketOnly = announceContentKey(entry, false);
+        var contentKeyNamed = announceContentKey(entry, true);
+        /* Debounce: rapid polls or flickering feed was starting a second utterance that cancel()'d the first mid-sentence */
+        if (forceVoice) {
+            clearTimeout(announceDebounceTimer);
+            announceDebounceTimer = null;
+            if (contentKeyNamed && contentKeyNamed !== lastAnnounceSig) {
+                if (announce(entry, true, true)) {
+                    lastAnnounceSig = contentKeyNamed;
                 }
-                return;
+            }
+        } else if (contentKeyTicketOnly && contentKeyTicketOnly !== lastAnnounceSig) {
+            if (entryVoiceIdentity(entry) === lastNamedCallIdentity) {
+                lastAnnounceSig = contentKeyTicketOnly;
+            } else {
+                clearTimeout(announceDebounceTimer);
+                var debounceEntry = entry;
+                var debounceKey = contentKeyTicketOnly;
+                announceDebounceTimer = setTimeout(function() {
+                    announceDebounceTimer = null;
+                    if (announce(debounceEntry, false, false)) {
+                        lastAnnounceSig = debounceKey;
+                    }
+                }, 1000);
             }
         }
+        if (changed && prev && normalizeTicket(prev) && normalizeTicket(prev) !== normalizeTicket('—')) {
+            flashHero();
+            lastNamedCallIdentity = '';
+        }
+        lastServingNumber = num;
+        applyTicketHighlight();
+    }
 
+    function updateLiveSync(isoTimestamp, ok) {
+        if (!syncTextEl || !syncPillEl) return;
+        syncPillEl.classList.toggle('is-live', !!ok);
+        syncPillEl.classList.toggle('is-error', !ok);
+        if (ok && isoTimestamp) {
+            try {
+                const d = new Date(isoTimestamp);
+                const t = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+                syncTextEl.textContent = 'Synced ' + t;
+            } catch (err) {
+                syncTextEl.textContent = 'Live feed connected';
+            }
+        } else if (!ok) {
+            syncTextEl.textContent = 'Reconnecting to live feed…';
+        }
+    }
+
+    function renderUpNextRail(entries) {
+        if (!upNextRail) return;
+        upNextRail.innerHTML = '';
+        if (!entries || !entries.length) {
+            const empty = document.createElement('div');
+            empty.className = 'text-secondary small py-3 px-2';
+            empty.style.maxWidth = '28rem';
+            empty.textContent = 'No tickets waiting right now. New check-ins appear here automatically.';
+            upNextRail.appendChild(empty);
+            applyTicketHighlight();
+            return;
+        }
+        entries.slice(0, 18).forEach((entry, idx) => {
+            const chip = document.createElement('div');
+            chip.className = 'qms-chip';
+            chip.style.opacity = '0';
+            chip.style.transform = 'translateY(10px)';
+            chip.setAttribute('data-ticket', entry.queue_number || '');
+            chip.innerHTML = '<div class="qms-chip-num"></div><div class="qms-chip-doc"></div><div class="qms-chip-name"></div>';
+            chip.querySelector('.qms-chip-num').textContent = entry.queue_number || '—';
+            const docEl = chip.querySelector('.qms-chip-doc');
+            const docName = (entry.assigned_doctor || '').trim();
+            if (docName) {
+                docEl.textContent = docName;
+            } else {
+                docEl.style.display = 'none';
+            }
+            chip.querySelector('.qms-chip-name').textContent = entry.patient || '';
+            upNextRail.appendChild(chip);
+            const delay = Math.min(idx * 45, 400);
+            setTimeout(() => {
+                chip.style.transition = 'opacity 0.45s ease, transform 0.45s ease';
+                chip.style.opacity = '1';
+                chip.style.transform = 'translateY(0)';
+            }, delay);
+        });
+        applyTicketHighlight();
+    }
+
+    function renderTips(tips) {
+        if (!healthTipContainer || tipsInitialized) return;
+        let items = Array.isArray(tips) ? tips.filter(Boolean) : [];
+        if (items.length < 2) {
+            items = items.concat(defaultHealthTips.slice(0, 3 - items.length));
+        }
+        if (!items.length) return;
         healthTipContainer.innerHTML = '';
-        tipsToRender.forEach((tip, index) => {
+        items.forEach((tip, index) => {
             const card = document.createElement('div');
             card.className = 'health-tip-card' + (index === 0 ? ' active' : '');
             card.dataset.tipIndex = index;
-            card.innerHTML = `
-                <div class="health-tip-title">${tip.icon || '💡'} ${tip.title}</div>
-                <div class="health-tip-message">${tip.message}</div>
-                <small class="fw-bold">${tip.category || 'General'}</small>
-            `;
+            card.innerHTML =
+                '<div class="health-tip-title">' + (tip.icon || '💡') + ' ' + (tip.title || '') + '</div>' +
+                '<div class="health-tip-message">' + (tip.message || '') + '</div>' +
+                '<small class="text-secondary fw-bold">' + (tip.category || 'General') + '</small>';
             healthTipContainer.appendChild(card);
         });
-
         healthTipContainer.dataset.initialized = '1';
         tipsInitialized = true;
         tipPointer = 0;
     }
-    
+
     function rotateTips() {
         if (!healthTipContainer || !tipsInitialized) return;
         const cards = Array.from(healthTipContainer.querySelectorAll('.health-tip-card'));
         if (cards.length <= 1) return;
-        
-        // Find current active card
-        const activeIndex = cards.findIndex(card => card.classList.contains('active'));
-        if (activeIndex === -1 && cards.length > 0) {
-            cards[0].classList.add('active');
-            tipPointer = 0;
-            return;
-        }
-        
-        // Remove active class with transition
-        cards.forEach(card => card.classList.remove('active'));
-        
-        // Set next active card after a brief delay for smooth transition
-        setTimeout(() => {
-            tipPointer = (activeIndex + 1) % cards.length;
-            if (cards[tipPointer]) {
-                cards[tipPointer].classList.add('active');
-            }
-        }, 50);
+        const activeIndex = cards.findIndex(c => c.classList.contains('active'));
+        cards.forEach(c => c.classList.remove('active'));
+        const next = (activeIndex + 1 + cards.length) % cards.length;
+        cards[next].classList.add('active');
     }
 
     function updateCounts(waitingLength, progressLength, completedCount, avgWait) {
-        // Normalize values
-        const newWaiting = parseInt(waitingLength) || 0;
-        const newProgress = parseInt(progressLength) || 0;
-        const newCompleted = parseInt(completedCount) || 0;
-        const newAvgWait = avgWait !== null && avgWait !== undefined ? parseInt(avgWait) : null;
-        
-        // Only update if values changed to prevent unnecessary reflows and blinking
-        if (waitingCountEl) {
-            const currentWaiting = parseInt(waitingCountEl.textContent) || 0;
-            if (currentWaiting !== newWaiting) {
-                waitingCountEl.textContent = newWaiting;
-            }
+        const w = parseInt(waitingLength, 10) || 0;
+        const p = parseInt(progressLength, 10) || 0;
+        const c = parseInt(completedCount, 10) || 0;
+        if (waitingCountEl) waitingCountEl.textContent = w;
+        if (progressCountEl) progressCountEl.textContent = p;
+        if (waitingBadge) waitingBadge.textContent = w;
+        if (progressBadge) progressBadge.textContent = p;
+        const completedEl = document.getElementById('completedCount');
+        if (completedEl) completedEl.textContent = c;
+        const avgEl = document.getElementById('avgWaitTime');
+        if (avgEl) {
+            avgEl.textContent = (avgWait !== null && avgWait !== undefined && !isNaN(parseInt(avgWait, 10)))
+                ? parseInt(avgWait, 10) : '—';
         }
-        
-        if (progressCountEl) {
-            const currentProgress = parseInt(progressCountEl.textContent) || 0;
-            if (currentProgress !== newProgress) {
-                progressCountEl.textContent = newProgress;
-            }
+    }
+
+    function updateHeaderClock() {
+        const now = new Date();
+        if (headerClock) {
+            const h = now.getHours();
+            const m = now.getMinutes().toString().padStart(2, '0');
+            const ampm = h >= 12 ? 'PM' : 'AM';
+            const dh = h % 12 || 12;
+            headerClock.textContent = dh + ':' + m + ' ' + ampm;
         }
-        
-        const completedCountEl = document.getElementById('completedCount');
-        if (completedCountEl) {
-            // Parse current value - handle both numeric and '--' or other text
-            let currentCompleted = 0;
-            const currentText = completedCountEl.textContent.trim();
-            if (currentText && currentText !== '--' && !isNaN(currentText)) {
-                currentCompleted = parseInt(currentText) || 0;
-            }
-            
-            if (currentCompleted !== newCompleted) {
-                completedCountEl.textContent = newCompleted;
-                console.log('✅ Updated completed count:', currentCompleted, '->', newCompleted);
-            } else if (newCompleted === 0 && currentText === '--') {
-                // Also update if showing '--' and we have 0
-                completedCountEl.textContent = newCompleted;
-            }
+        const calendarTime = document.getElementById('calendarTime');
+        if (calendarTime) {
+            const hours = now.getHours();
+            const minutes = now.getMinutes().toString().padStart(2, '0');
+            const ampm = hours >= 12 ? 'PM' : 'AM';
+            const displayHours = hours % 12 || 12;
+            calendarTime.textContent = displayHours + ':' + minutes + ' ' + ampm;
         }
-        
-        const avgWaitEl = document.getElementById('avgWaitTime');
-        if (avgWaitEl) {
-            const currentAvgWait = avgWaitEl.textContent === '--' ? null : parseInt(avgWaitEl.textContent);
-            if (currentAvgWait !== newAvgWait) {
-                avgWaitEl.textContent = newAvgWait !== null ? newAvgWait : '--';
-            }
+        const calendarDate = document.getElementById('calendarDate');
+        const calendarDay = document.getElementById('calendarDay');
+        const calendarMonthYear = document.getElementById('calendarMonthYear');
+        if (calendarDate) calendarDate.textContent = now.getDate();
+        if (calendarDay) {
+            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            calendarDay.textContent = days[now.getDay()];
+        }
+        if (calendarMonthYear) {
+            const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+            calendarMonthYear.textContent = months[now.getMonth()] + ' ' + now.getFullYear();
         }
     }
 
     async function fetchFeed() {
         try {
-            const response = await fetch(feedUrl, { 
+            const response = await fetch(feedUrl, {
                 headers: { 'Accept': 'application/json' },
-                cache: 'no-cache'
+                cache: 'no-cache',
+                credentials: 'same-origin'
             });
-            if (!response.ok) {
-                console.warn('Queue feed response not OK:', response.status);
+            if (!response.ok) throw new Error('bad status');
+            const data = await response.json();
+            feedOk = true;
+            if (livePulse) livePulse.classList.remove('is-offline');
+
+            var doForceVoice = forceAnnounceAfterNextPoll;
+            forceAnnounceAfterNextPoll = false;
+            renderNowServing(data.now_serving, doForceVoice);
+            renderUpNextRail(data.up_next);
+
+            if (!healthTipContainer.dataset.initialized) {
+                if (data.health_tips && data.health_tips.length) {
+                    renderTips(data.health_tips);
+                } else if (healthTipContainer.querySelectorAll('.health-tip-card').length) {
+                    healthTipContainer.dataset.initialized = '1';
+                }
+            }
+
+            const waitingCount = data.waiting_count !== undefined ? parseInt(data.waiting_count, 10) : (data.up_next || []).length;
+            const progressCount = data.in_progress_count !== undefined ? parseInt(data.in_progress_count, 10) : 0;
+            let completedCount = 0;
+            if (data.completed_today !== undefined && data.completed_today !== null && data.completed_today !== '') {
+                const parsed = parseInt(data.completed_today, 10);
+                if (!isNaN(parsed)) completedCount = parsed;
+            }
+            const avgWait = data.avg_wait_minutes;
+            updateCounts(waitingCount, progressCount, completedCount, avgWait);
+            updateLiveSync(data.timestamp, true);
+            maybeScheduleAutoCallNext(data);
+        } catch (e) {
+            feedOk = false;
+            if (livePulse) livePulse.classList.add('is-offline');
+            updateLiveSync(null, false);
+        }
+    }
+
+    checkSpeechSupport();
+    bootstrapAutomaticQueueVoice();
+    setTimeout(bootstrapAutomaticQueueVoice, 0);
+    setTimeout(bootstrapAutomaticQueueVoice, 600);
+    window.addEventListener('load', bootstrapAutomaticQueueVoice);
+
+    document.getElementById('waitingList')?.addEventListener('click', function(e) {
+        var ctl = e.target.closest('.qms-btn-call');
+        if (!ctl) return;
+        e.preventDefault();
+
+        /* Legacy: old Queue model — GET queue_action (staff must be logged in). */
+        if (ctl.tagName === 'A' && ctl.getAttribute('href')) {
+            if (!qmsStaffQueueActions) {
+                alert('Sign in on this browser to call patients from the board.');
                 return;
             }
-            const data = await response.json();
-            
-            // Render components (only update what changed)
-            renderNowServing(data.now_serving);
-            renderUpNext(data.up_next);
-            
-            // Only initialize tips once, don't re-render on every update to prevent blinking
-            // This prevents the tips from being re-rendered on every feed update which causes blinking
-            if (!healthTipContainer.dataset.initialized) {
-                if (data.health_tips && data.health_tips.length > 0) {
-                    renderTips(data.health_tips);
-                } else {
-                    // Initialize with default tips from HTML if no tips from API
-                    const defaultCards = healthTipContainer.querySelectorAll('.health-tip-card');
-                    if (defaultCards.length > 0) {
-                        healthTipContainer.dataset.initialized = '1';
-                        tipPointer = 0;
+            clearAutoCallNextSchedule();
+            enableAudioOnInteraction();
+            primeSpeechFromUserGesture();
+            var rowLegacy = ctl.closest('.qms-patient-row');
+            if (rowLegacy) {
+                var ticketL = rowLegacy.getAttribute('data-ticket') || '';
+                if (ticketL) {
+                    var optimisticL = {
+                        id: String(rowLegacy.getAttribute('data-queue-id') || ''),
+                        queue_number: ticketL,
+                        room_number: (rowLegacy.getAttribute('data-room') || '').trim(),
+                        assigned_doctor: (rowLegacy.getAttribute('data-doctor') || '').trim(),
+                        patient: ''
+                    };
+                    var nameElL = rowLegacy.querySelector('.qms-row-name');
+                    if (nameElL) optimisticL.patient = stripDisplayPatientName(nameElL.textContent || '');
+                    lastAnnounceSig = '';
+                    if (announce(optimisticL, true, true)) {
+                        lastAnnounceSig = announceContentKey(optimisticL, true);
                     }
                 }
             }
-            
-            // Use proper counts from the API response - ensure we get numbers, not strings
-            const waitingCount = data.waiting_count !== undefined ? parseInt(data.waiting_count) || 0 : (data.up_next || []).length;
-            const progressCount = data.in_progress_count !== undefined ? parseInt(data.in_progress_count) || 0 : (data.now_serving ? 1 : 0);
-            
-            // Fix completed count - handle all edge cases
-            let completedCount = 0;
-            if (data.completed_today !== undefined && data.completed_today !== null && data.completed_today !== '') {
-                // Convert to number, handling strings and numbers
-                const parsed = parseInt(data.completed_today);
-                if (!isNaN(parsed)) {
-                    completedCount = parsed;
+            forceAnnounceAfterNextPoll = true;
+            fetch(ctl.href, {
+                credentials: 'same-origin',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                redirect: 'follow'
+            })
+                .then(function() { setTimeout(fetchFeed, 350); })
+                .catch(function() { setTimeout(fetchFeed, 600); });
+            return;
+        }
+
+        /* QueueEntry: POST JSON API (same as My Consultations) — GET queue_action was unreliable (redirect/HTML, kiosk not logged in). */
+        if (ctl.getAttribute('data-api-call') !== '1') return;
+        var apiUrl = ctl.getAttribute('data-call-url') || '';
+        if (!apiUrl) return;
+        if (!qmsStaffQueueActions) {
+            alert('Sign in on this browser to call patients from the board (or use My Consultations).');
+            return;
+        }
+        clearAutoCallNextSchedule();
+        enableAudioOnInteraction();
+        primeSpeechFromUserGesture();
+        var row = ctl.closest('.qms-patient-row');
+        var roomNum = row ? (row.getAttribute('data-room') || '').trim() : '';
+        var csrf = getCsrfTokenForQueue();
+        ctl.disabled = true;
+        fetch(apiUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrf,
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({ room_number: roomNum })
+        })
+            .then(function(res) {
+                return res.text().then(function(text) {
+                    try {
+                        return { ok: res.ok, status: res.status, data: JSON.parse(text) };
+                    } catch (err) {
+                        return { ok: res.ok, status: res.status, data: { success: false, message: text || 'Invalid response' } };
+                    }
+                });
+            })
+            .then(function(result) {
+                var data = result.data || {};
+                if (data.success && data.entry) {
+                    lastAnnounceSig = '';
+                    renderNowServing(data.entry, true);
+                    setTimeout(fetchFeed, 200);
                 } else {
-                    completedCount = 0;
+                    var msg = (data.message || data.error || 'Could not call patient.') + '';
+                    if (result.status === 409 || data.error === 'ahead_entries') {
+                        msg = data.message || 'There are other patients ahead in the queue. Use Call next or ask reception.';
+                    }
+                    alert(msg);
+                    setTimeout(fetchFeed, 400);
                 }
-            } else {
-                completedCount = 0;
-            }
-            
-            const avgWait = data.avg_wait_minutes !== undefined && data.avg_wait_minutes !== null ? parseInt(data.avg_wait_minutes) : null;
-            
-            // Debug logging for completed count
-            if (data.completed_today !== undefined) {
-                console.log('📊 Queue Feed Data:', {
-                    waiting: waitingCount,
-                    in_progress: progressCount,
-                    completed_raw: data.completed_today,
-                    completed_type: typeof data.completed_today,
-                    completed_parsed: completedCount,
-                    avg_wait: avgWait,
-                    timestamp: new Date().toLocaleTimeString()
-                });
-            }
-            
-            updateCounts(
-                waitingCount, 
-                progressCount,
-                completedCount,
-                avgWait
-            );
-        } catch (error) {
-            console.error('Queue feed error:', error);
-        }
-    }
+            })
+            .catch(function() {
+                alert('Network error while calling patient. Check your connection and try again.');
+                setTimeout(fetchFeed, 600);
+            })
+            .finally(function() {
+                ctl.disabled = false;
+            });
+    });
 
-    function updateTimers() {
-        document.querySelectorAll('.wait-timer').forEach(timer => {
-            const checkedIn = new Date(timer.dataset.checkedIn);
-            const now = new Date();
-            const diffMinutes = Math.floor((now - checkedIn) / 60000);
-            const textNode = timer.querySelector('.timer-text');
-            if (!textNode) return;
-
-            if (diffMinutes < 1) {
-                textNode.textContent = 'Just now';
-            } else if (diffMinutes < 60) {
-                textNode.textContent = `${diffMinutes} min`;
-            } else {
-                const hours = Math.floor(diffMinutes / 60);
-                const mins = diffMinutes % 60;
-                textNode.textContent = `${hours}h ${mins}m`;
-            }
-        });
-    }
-
-    function updateCalendar() {
-        const now = new Date();
-        const calendarTime = document.getElementById('calendarTime');
-        const calendarDate = document.getElementById('calendarDate');
-        const calendarDay = document.getElementById('calendarDay');
-        const calendarMonthYear = document.getElementById('calendarMonthYear');
-        
-        if (calendarTime) {
-            const hours = now.getHours();
-            const minutes = now.getMinutes();
-            const ampm = hours >= 12 ? 'PM' : 'AM';
-            const displayHours = hours % 12 || 12;
-            const displayMinutes = minutes.toString().padStart(2, '0');
-            calendarTime.textContent = `${displayHours}:${displayMinutes} ${ampm}`;
+    if (callNextForm && callNextBtn) {
+        if (!qmsStaffQueueActions) {
+            callNextBtn.disabled = true;
+            callNextBtn.title = 'Sign in on this device to call the next patient from the board (or use My Consultations).';
         }
-        
-        if (calendarDate) {
-            calendarDate.textContent = now.getDate();
-        }
-        
-        if (calendarDay) {
-            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-            calendarDay.textContent = days[now.getDay()];
-        }
-        
-        if (calendarMonthYear) {
-            const months = ['January', 'February', 'March', 'April', 'May', 'June', 
-                          'July', 'August', 'September', 'October', 'November', 'December'];
-            calendarMonthYear.textContent = `${months[now.getMonth()]} ${now.getFullYear()}`;
-        }
-    }
-
-    // Initialize tip rotation interval - only start once
-    let tipRotationInterval = null;
-    let rotationStarted = false;
-    
-    function startTipRotation() {
-        if (rotationStarted || tipRotationInterval) return;
-        rotationStarted = true;
-        
-        tipRotationInterval = setInterval(() => {
-            rotateTips();
-        }, 12000); // Rotate every 12 seconds to reduce blinking
-    }
-    
-    // Start tip rotation after tips are initialized
-    if (healthTipContainer) {
-        setTimeout(() => {
-            startTipRotation();
-        }, 5000); // Start rotation 5 seconds after page load
-    }
-    
-    // Check speech synthesis support on load
-    checkSpeechSupport();
-    
-    // Handle "Call Next" button to trigger announcement
-    const callNextBtn = document.getElementById('callNextBtn');
-    const callNextForm = document.getElementById('callNextForm');
-    
-    if (callNextForm) {
         callNextForm.addEventListener('submit', function(e) {
-            enableAudioOnInteraction(); // Enable audio if not already enabled
-            console.log('📞 Call Next button clicked');
-            
-            // After form submission, wait a bit then fetch updated data and announce
-            setTimeout(() => {
-                fetchFeed().then(() => {
-                    // Small delay to ensure data is updated
-                    setTimeout(() => {
-                        fetchFeed();
-                    }, 500);
-                }).catch(err => {
-                    console.error('Error fetching after call next:', err);
-                    // Retry after a longer delay
-                    setTimeout(() => fetchFeed(), 1000);
-                });
-            }, 300);
-        });
-    }
-    
-    // Also listen for "Call" buttons in the waiting list
-    if (waitingList) {
-        const originalListener = waitingList.onclick;
-        waitingList.addEventListener('click', function(e) {
-            const callBtn = e.target.closest('a[href*="queue_action"], a[href*="call"], .btn-call');
-            if (callBtn && callBtn.href) {
-                enableAudioOnInteraction();
-                console.log('📞 Individual Call button clicked');
-                // After clicking, wait a bit then fetch updated data
-                setTimeout(() => {
-                    fetchFeed();
-                }, 1000);
+            e.preventDefault();
+            if (!qmsStaffQueueActions) {
+                alert('Sign in on this browser to call the next patient from the board, or use My Consultations to call patients.');
+                return;
             }
+            clearAutoCallNextSchedule();
+            primeSpeechFromUserGesture();
+            const fd = new FormData(callNextForm);
+            var csrfToken = fd.get('csrfmiddlewaretoken');
+            callNextBtn.disabled = true;
+            const orig = callNextBtn.innerHTML;
+            callNextBtn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Calling…';
+            var headers = { 'X-Requested-With': 'XMLHttpRequest' };
+            if (csrfToken) headers['X-CSRFToken'] = csrfToken;
+            fetch(callNextAction, {
+                method: 'POST',
+                headers: headers,
+                body: fd,
+                credentials: 'same-origin'
+            })
+            .then(function(r) {
+                return r.json().then(function(data) {
+                    return { ok: r.ok, status: r.status, data: data };
+                }).catch(function() {
+                    return { ok: r.ok, status: r.status, data: {} };
+                });
+            })
+            .then(function(result) {
+                var data = result.data || {};
+                if (data.success && data.entry) {
+                    renderNowServing(data.entry, true);
+                }
+                setTimeout(fetchFeed, 400);
+            })
+            .catch(function() { setTimeout(fetchFeed, 600); })
+            .finally(() => {
+                callNextBtn.disabled = false;
+                callNextBtn.innerHTML = orig;
+            });
         });
     }
-    
-    // Debug: Log slideshow images
-    console.log('🔍 DEBUG: Checking slideshow images...');
-    {% if slideshow_images %}
-    console.log('✅ Slideshow images found:', {{ slideshow_images|length }});
-    {% for slide in slideshow_images|slice:":5" %}
-    console.log('  📷 {{ slide.url }}');
-    {% endfor %}
-    {% if slideshow_images|length > 5 %}
-    console.log('  ... and {{ slideshow_images|length|add:"-5" }} more');
-    {% endif %}
-    {% else %}
-    console.warn('⚠️ No slideshow images found in template');
-    console.warn('⚠️ This means the view did not find any images');
-    console.warn('⚠️ Check server console for image search debug output');
-    console.warn('⚠️ Searched folders: media/queue_display/, media/waiting_room_slides/, media/reception_slides/, media/imaging_studies/');
-    {% endif %}
-    
-    // Verify gallery viewport exists
-    const viewport = document.getElementById('gallery-viewport');
-    if (viewport) {
-        console.log('✅ Gallery viewport found in DOM');
-        console.log('📐 Viewport height:', viewport.offsetHeight, 'px');
-        const emptyDiv = viewport.querySelector('.gallery-empty');
-        const slides = viewport.querySelectorAll('.gallery-slide');
-        console.log('📊 Empty div:', emptyDiv ? 'FOUND' : 'NOT FOUND');
-        console.log('📊 Slides:', slides.length);
-    } else {
-        console.error('❌ Gallery viewport NOT found in DOM!');
-    }
-    
-    // Check if right column exists
-    const rightColumn = document.querySelector('.queue-right');
-    const mainContainer = document.querySelector('.queue-main');
-    const leftColumn = document.querySelector('.queue-left');
-    
-    console.log('🔍 LAYOUT CHECK:');
-    console.log('  - queue-main exists:', mainContainer ? 'YES' : 'NO');
-    console.log('  - queue-left exists:', leftColumn ? 'YES' : 'NO');
-    console.log('  - queue-right exists:', rightColumn ? 'YES' : 'NO');
-    
-    if (rightColumn) {
-        console.log('  - Right column width:', rightColumn.offsetWidth, 'px');
-        console.log('  - Right column visible:', window.getComputedStyle(rightColumn).display !== 'none');
-        console.log('  - Right column opacity:', window.getComputedStyle(rightColumn).opacity);
-    }
-    
-    if (mainContainer) {
-        console.log('  - Main container display:', window.getComputedStyle(mainContainer).display);
-        console.log('  - Main container flex-direction:', window.getComputedStyle(mainContainer).flexDirection);
-        console.log('  - Main container width:', mainContainer.offsetWidth, 'px');
-    }
-    
-    // Initial fetch
-    fetchFeed();
-    
-    // Set up periodic updates - use reasonable interval
-    let feedInterval = setInterval(() => {
-        fetchFeed();
-    }, 8000); // Update every 8 seconds
-    
-    // Update timers
-    updateTimers();
-    let timerInterval = setInterval(updateTimers, 60000);
-    
-    // Update calendar
-    updateCalendar();
-    let calendarInterval = setInterval(updateCalendar, 1000);
-    
-    // Clean up intervals on page unload
-    window.addEventListener('beforeunload', () => {
-        if (tipRotationInterval) clearInterval(tipRotationInterval);
-        if (feedInterval) clearInterval(feedInterval);
-        if (timerInterval) clearInterval(timerInterval);
-        if (calendarInterval) clearInterval(calendarInterval);
-        if (window.speechSynthesis) {
-            window.speechSynthesis.cancel();
+
+    setTimeout(() => {
+        if (!tipRotationInterval) {
+            tipRotationInterval = setInterval(rotateTips, 12000);
         }
+    }, 4000);
+
+    fetchFeed();
+    setInterval(fetchFeed, 3200);
+    updateHeaderClock();
+    setInterval(updateHeaderClock, 1000);
+
+    var REASSURANCE_INTERVAL_MS = 30 * 60 * 1000;
+    var REASSURANCE_ASSISTIVE_CLEAR_MS = 12000;
+    var REASSURANCE_MESSAGE = "Thank you for waiting. Please don't worry — our doctors will call you soon. We appreciate your patience.";
+    var reassuranceBannerEl = document.getElementById('qms-reassurance-banner');
+    var reassuranceHideTimer = null;
+
+    function getWaitingCountFromDom() {
+        if (!waitingCountEl) return 0;
+        var n = parseInt(waitingCountEl.textContent, 10);
+        return isNaN(n) ? 0 : n;
+    }
+
+    /** First user gesture unlocks AudioContext so scheduled chimes can play on TVs after that. */
+    function wireReassuranceAudioUnlockOnce() {
+        function unlock() {
+            try {
+                if (window._qmsReassuranceAudioCtx && window._qmsReassuranceAudioCtx.state === 'suspended') {
+                    window._qmsReassuranceAudioCtx.resume();
+                }
+            } catch (e) { /* ignore */ }
+        }
+        window.addEventListener('pointerdown', unlock, { passive: true, capture: true });
+        window.addEventListener('keydown', unlock, { capture: true });
+    }
+    wireReassuranceAudioUnlockOnce();
+
+    /** Short two-tone chime so waiting patients get a cue even when speech synthesis drops or is blocked. */
+    function playReassuranceChime() {
+        try {
+            var Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) return;
+            if (!window._qmsReassuranceAudioCtx) {
+                window._qmsReassuranceAudioCtx = new Ctx();
+            }
+            var ctx = window._qmsReassuranceAudioCtx;
+            if (ctx.state === 'suspended') {
+                ctx.resume();
+            }
+            function tone(freqHz, startT, durSec) {
+                var o = ctx.createOscillator();
+                var g = ctx.createGain();
+                o.type = 'sine';
+                o.frequency.setValueAtTime(freqHz, startT);
+                g.gain.setValueAtTime(0, startT);
+                g.gain.linearRampToValueAtTime(0.065, startT + 0.02);
+                g.gain.exponentialRampToValueAtTime(0.001, startT + durSec);
+                o.connect(g);
+                g.connect(ctx.destination);
+                o.start(startT);
+                o.stop(startT + durSec + 0.04);
+            }
+            var t0 = ctx.currentTime;
+            tone(587.33, t0, 0.26);
+            tone(880, t0 + 0.16, 0.3);
+        } catch (e) { /* ignore */ }
+    }
+
+    function pulseAssistiveReassuranceText() {
+        if (!reassuranceBannerEl) return;
+        reassuranceBannerEl.textContent = REASSURANCE_MESSAGE;
+        if (reassuranceHideTimer) {
+            clearTimeout(reassuranceHideTimer);
+            reassuranceHideTimer = null;
+        }
+        reassuranceHideTimer = setTimeout(function() {
+            reassuranceBannerEl.textContent = '';
+            reassuranceHideTimer = null;
+        }, REASSURANCE_ASSISTIVE_CLEAR_MS);
+    }
+
+    function showWaitingRoomReassurance(opts) {
+        opts = opts || {};
+        var fromUserClick = !!opts.fromUserClick;
+        if (!fromUserClick) {
+            if (getWaitingCountFromDom() < 1) return;
+            if (typeof document.hidden === 'boolean' && document.hidden) return;
+            if (voiceMutedByPreference) return;
+        }
+        playReassuranceChime();
+        if (!speechSynthesisSupported) {
+            if (fromUserClick) pulseAssistiveReassuranceText();
+            return;
+        }
+        if (fromUserClick) {
+            userInteracted = true;
+            pulseAssistiveReassuranceText();
+            var ruNow = new SpeechSynthesisUtterance(REASSURANCE_MESSAGE);
+            ruNow.rate = 0.9;
+            ruNow.lang = 'en-US';
+            speakQueueUtterance(ruNow, true, false);
+        } else if (audioEnabled && userInteracted) {
+            pulseAssistiveReassuranceText();
+            var ruSched = new SpeechSynthesisUtterance(REASSURANCE_MESSAGE);
+            ruSched.rate = 0.9;
+            ruSched.lang = 'en-US';
+            /* Do not cancel patient call-outs — wait and play after them */
+            speakQueueUtterance(ruSched, false, false);
+        }
+    }
+
+    document.getElementById('qms-reassurance-now-btn')?.addEventListener('click', function() {
+        primeSpeechFromUserGesture();
+        showWaitingRoomReassurance({ fromUserClick: true });
     });
-    
-    // Log initial state
-    console.log('🎙️ Audio system initialized:', {
-        speechSupported: speechSynthesisSupported,
-        audioEnabled: audioEnabled,
-        userInteracted: userInteracted,
-        nowServingId: lastAnnouncementId
-    });
+
+    setInterval(function() { showWaitingRoomReassurance({}); }, REASSURANCE_INTERVAL_MS);
+
+    applyTicketHighlight();
 })();
 </script>
 {% endblock %}
-
-
-
-
-
-
-
-
-
-

@@ -10,9 +10,15 @@ from django.utils import timezone
 from django.db.models import Q, Sum
 from django.http import JsonResponse
 from decimal import Decimal
+import logging
 
 from .models_procurement import ProcurementRequest, ProcurementRequestItem
 from .procurement_accounting_integration import auto_create_accounting_on_approval
+from .models import Staff
+from .models_accounting import Account
+from .services.sms_service import SMSService
+
+logger = logging.getLogger(__name__)
 
 
 # ==================== PROCUREMENT STAFF VIEWS ====================
@@ -60,41 +66,8 @@ def create_procurement_request(request):
     Create new procurement request
     Anyone can create a request
     """
-    if request.method == 'POST':
-        try:
-            # Create the request
-            pr = ProcurementRequest.objects.create(
-                requested_by_store=request.user.staff.store if hasattr(request.user, 'staff') and hasattr(request.user.staff, 'store') else None,
-                requested_by=request.user.staff if hasattr(request.user, 'staff') else None,
-                priority=request.POST.get('priority', 'normal'),
-                justification=request.POST.get('justification', ''),
-                notes=request.POST.get('notes', ''),
-                status='draft'
-            )
-            
-            # Add items
-            item_count = int(request.POST.get('item_count', 0))
-            for i in range(item_count):
-                item_name = request.POST.get(f'item_name_{i}')
-                quantity = request.POST.get(f'quantity_{i}')
-                unit_price = request.POST.get(f'unit_price_{i}')
-                
-                if item_name and quantity:
-                    ProcurementRequestItem.objects.create(
-                        request=pr,
-                        item_name=item_name,
-                        quantity=int(quantity),
-                        estimated_unit_price=Decimal(unit_price or 0),
-                        line_total=int(quantity) * Decimal(unit_price or 0)
-                    )
-            
-            messages.success(request, f'Procurement request {pr.request_number} created successfully!')
-            return redirect('hospital:procurement_detail', pr_id=pr.id)
-        
-        except Exception as e:
-            messages.error(request, f'Error creating request: {e}')
-    
-    return render(request, 'hospital/procurement/create_request.html')
+    # Use the primary procurement request creation flow (inline formset with 20 item rows).
+    return redirect('hospital:procurement_request_create')
 
 
 @login_required
@@ -112,12 +85,12 @@ def submit_procurement_request(request, pr_id):
     
     if pr.status != 'draft':
         messages.error(request, 'Only draft requests can be submitted')
-        return redirect('hospital:procurement_detail', pr_id=pr.id)
+        return redirect('hospital:procurement_approval_detail', pr_id=pr.id)
     
     # Check if has items
     if not pr.items.exists():
         messages.error(request, 'Please add at least one item before submitting')
-        return redirect('hospital:procurement_detail', pr_id=pr.id)
+        return redirect('hospital:procurement_approval_detail', pr_id=pr.id)
     
     # Submit
     pr.status = 'submitted'
@@ -125,7 +98,7 @@ def submit_procurement_request(request, pr_id):
     pr.save()
     
     messages.success(request, f'Request {pr.request_number} submitted for approval!')
-    return redirect('hospital:procurement_detail', pr_id=pr.id)
+    return redirect('hospital:procurement_approval_detail', pr_id=pr.id)
 
 
 # ==================== ADMINISTRATOR APPROVAL ====================
@@ -172,6 +145,13 @@ def approve_admin(request, pr_id):
         pr.admin_approved_at = timezone.now()
         pr.admin_notes = comments
         pr.save()
+        
+        # Send SMS notification to accountants
+        try:
+            _send_procurement_approval_sms_to_accountants(pr)
+        except Exception as e:
+            logger.error(f"Error sending SMS notification to accountants for procurement request {pr.request_number}: {str(e)}", exc_info=True)
+            # Don't fail the approval if SMS fails
         
         messages.success(request, f'Request {pr.request_number} approved! Now pending accounts approval.')
         return redirect('hospital:admin_approval_list')
@@ -250,6 +230,11 @@ def approve_accounts(request, pr_id):
     if request.method == 'POST':
         comments = request.POST.get('comments', '')
         
+        # Optional: accounts for debit/credit (finance selection)
+        expense_account_id = request.POST.get('expense_account') or None
+        liability_account_id = request.POST.get('liability_account') or None
+        payment_account_id = request.POST.get('payment_account') or None
+        
         # Approve
         pr.status = 'accounts_approved'
         pr.accounts_approved_by = request.user.staff if hasattr(request.user, 'staff') else None
@@ -257,9 +242,14 @@ def approve_accounts(request, pr_id):
         pr.accounts_notes = comments
         pr.save()
         
-        # ✨ AUTOMATIC ACCOUNTING ENTRY CREATION ✨
+        # Create accounting entries (with selected debit/credit accounts if provided)
         try:
-            result = auto_create_accounting_on_approval(pr)
+            result = auto_create_accounting_on_approval(
+                pr,
+                expense_account=expense_account_id,
+                liability_account=liability_account_id,
+                payment_account=payment_account_id,
+            )
             
             if result:
                 messages.success(
@@ -284,9 +274,31 @@ def approve_accounts(request, pr_id):
         
         return redirect('hospital:accounts_approval_list')
     
+    # For Accounts approval: pass chart of accounts so they can select debit/credit
+    expense_accounts = []
+    liability_accounts = []
+    payment_accounts = []
+    if pr.status == 'admin_approved':
+        expense_accounts = Account.objects.filter(
+            account_type='expense', is_active=True, is_deleted=False
+        ).order_by('account_code')
+        liability_accounts = Account.objects.filter(
+            account_type='liability', is_active=True, is_deleted=False
+        ).order_by('account_code')
+        payment_accounts = Account.objects.filter(
+            account_type='asset', is_active=True, is_deleted=False
+        ).filter(account_code__startswith='10').order_by('account_code')
+        if not payment_accounts.exists():
+            payment_accounts = Account.objects.filter(
+                account_type='asset', is_active=True, is_deleted=False
+            ).order_by('account_code')[:20]
+    
     context = {
         'procurement_request': pr,
         'approval_type': 'Accounts',
+        'expense_accounts': expense_accounts,
+        'liability_accounts': liability_accounts,
+        'payment_accounts': payment_accounts,
     }
     
     return render(request, 'hospital/procurement/approve_request.html', context)
@@ -316,6 +328,94 @@ def reject_accounts(request, pr_id):
         return redirect('hospital:accounts_approval_list')
     
     return redirect('hospital:approve_accounts', pr_id=pr.id)
+
+
+# ==================== POST TO LEDGER (Accountant: record approved procurements) ====================
+
+@login_required
+@permission_required('hospital.can_approve_procurement_accounts', raise_exception=True)
+def procurement_post_to_ledger_list(request):
+    """
+    List approved procurement requests that do not yet have accounting entries.
+    Accountant can open each and select debit/credit accounts to post to finance.
+    """
+    from .procurement_accounting_integration import ProcurementAccountingIntegration
+    approved = ProcurementRequest.objects.filter(
+        status='accounts_approved', is_deleted=False
+    ).order_by('-accounts_approved_at')
+    pending_post = []
+    for pr in approved:
+        summary = ProcurementAccountingIntegration.get_procurement_accounting_summary(pr)
+        if not summary.get('has_accounting_entries'):
+            pending_post.append({'request': pr, 'summary': summary})
+    context = {'pending_post': pending_post}
+    return render(request, 'hospital/procurement/post_to_ledger_list.html', context)
+
+
+@login_required
+@permission_required('hospital.can_approve_procurement_accounts', raise_exception=True)
+def procurement_post_to_ledger(request, pr_id):
+    """
+    Post an approved procurement to the ledger: select expense (debit), liability (credit AP), payment (credit bank).
+    Creates AP, Expense, Payment Voucher and posts to General Ledger; updates finance reports.
+    """
+    pr = get_object_or_404(ProcurementRequest, id=pr_id, is_deleted=False)
+    from .procurement_accounting_integration import (
+        ProcurementAccountingIntegration,
+        auto_create_accounting_on_approval,
+    )
+    summary = ProcurementAccountingIntegration.get_procurement_accounting_summary(pr)
+    if summary.get('has_accounting_entries'):
+        messages.info(request, f'{pr.request_number} already has accounting entries.')
+        return redirect('hospital:procurement_post_to_ledger_list')
+    if pr.status != 'accounts_approved':
+        messages.error(request, 'Only approved procurements can be posted to the ledger.')
+        return redirect('hospital:procurement_post_to_ledger_list')
+
+    if request.method == 'POST':
+        expense_account_id = request.POST.get('expense_account') or None
+        liability_account_id = request.POST.get('liability_account') or None
+        payment_account_id = request.POST.get('payment_account') or None
+        try:
+            result = auto_create_accounting_on_approval(
+                pr,
+                expense_account=expense_account_id,
+                liability_account=liability_account_id,
+                payment_account=payment_account_id,
+            )
+            if result:
+                messages.success(
+                    request,
+                    f'Posted to ledger: AP {result["accounts_payable"].bill_number}, '
+                    f'Expense {result["expense"].expense_number}, '
+                    f'Voucher {result["payment_voucher"].voucher_number}.'
+                )
+            else:
+                messages.warning(request, 'Accounting entries could not be created. Try again or create manually.')
+        except Exception as e:
+            messages.error(request, str(e))
+        return redirect('hospital:procurement_post_to_ledger_list')
+
+    expense_accounts = Account.objects.filter(
+        account_type='expense', is_active=True, is_deleted=False
+    ).order_by('account_code')
+    liability_accounts = Account.objects.filter(
+        account_type='liability', is_active=True, is_deleted=False
+    ).order_by('account_code')
+    payment_accounts = Account.objects.filter(
+        account_type='asset', is_active=True, is_deleted=False
+    ).filter(account_code__startswith='10').order_by('account_code')
+    if not payment_accounts.exists():
+        payment_accounts = Account.objects.filter(
+            account_type='asset', is_active=True, is_deleted=False
+        ).order_by('account_code')[:20]
+    context = {
+        'procurement_request': pr,
+        'expense_accounts': expense_accounts,
+        'liability_accounts': liability_accounts,
+        'payment_accounts': payment_accounts,
+    }
+    return render(request, 'hospital/procurement/post_to_ledger.html', context)
 
 
 # ==================== COMMON VIEWS ====================
@@ -403,4 +503,85 @@ def procurement_stats_api(request):
     stats['approved_amount'] = float(approved_amount)
     
     return JsonResponse(stats)
+
+
+def _send_procurement_approval_sms_to_accountants(procurement_request):
+    """
+    Send SMS notification to all accountants when a procurement request is approved by admin
+    and ready for accounts approval.
+    """
+    try:
+        # Get all accountant staff (accountants, account officers, senior account officers)
+        accountant_professions = ['accountant', 'account_officer', 'account_personnel', 'senior_account_officer']
+        accountant_staff = Staff.objects.filter(
+            profession__in=accountant_professions,
+            is_active=True,
+            is_deleted=False
+        ).select_related('user').exclude(phone_number__isnull=True).exclude(phone_number='')
+        
+        if not accountant_staff.exists():
+            logger.info(f"No accountant staff found with phone numbers for procurement request {procurement_request.request_number}")
+            return
+        
+        # Prepare SMS message
+        request_number = procurement_request.request_number
+        estimated_total = procurement_request.estimated_total
+        requested_by = procurement_request.requested_by.full_name if procurement_request.requested_by else "Unknown"
+        
+        message = (
+            f"🔔 Procurement Approval Required\n\n"
+            f"Request: {request_number}\n"
+            f"Amount: GHS {estimated_total:,.2f}\n"
+            f"Requested by: {requested_by}\n"
+            f"Status: Pending Accounts Approval\n\n"
+            f"Please review and approve at:\n"
+            f"/hms/procurement/accounts/pending/\n\n"
+            f"PrimeCare Hospital"
+        )
+        
+        # Send SMS to each accountant
+        sms_service = SMSService()
+        sent_count = 0
+        failed_count = 0
+        
+        for staff in accountant_staff:
+            if not staff.phone_number:
+                continue
+                
+            try:
+                phone = staff.phone_number.strip()
+                # Ensure phone number starts with +233 or 0
+                if phone.startswith('0'):
+                    phone = '+233' + phone[1:]
+                elif not phone.startswith('+'):
+                    phone = '+233' + phone
+                
+                recipient_name = staff.full_name or (staff.user.get_full_name() if staff.user else "Accountant")
+                
+                sms_log = sms_service.send_sms(
+                    phone_number=phone,
+                    message=message,
+                    message_type='procurement_approval',
+                    recipient_name=recipient_name,
+                    related_object_id=str(procurement_request.id),
+                    related_object_type='ProcurementRequest'
+                )
+                
+                if sms_log and sms_log.status == 'sent':
+                    sent_count += 1
+                    logger.info(f"SMS sent to accountant {recipient_name} ({phone}) for procurement request {request_number}")
+                else:
+                    failed_count += 1
+                    logger.warning(f"Failed to send SMS to accountant {recipient_name} ({phone}) for procurement request {request_number}")
+                    
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"Error sending SMS to accountant {staff.full_name} for procurement request {request_number}: {str(e)}", exc_info=True)
+                continue
+        
+        logger.info(f"Procurement approval SMS notifications: {sent_count} sent, {failed_count} failed for request {request_number}")
+        
+    except Exception as e:
+        logger.error(f"Error in _send_procurement_approval_sms_to_accountants for request {procurement_request.request_number}: {str(e)}", exc_info=True)
+        raise
 

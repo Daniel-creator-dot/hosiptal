@@ -6,10 +6,15 @@ from django.shortcuts import render
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.http import JsonResponse
 from .utils_data_validation import run_data_integrity_checks
+from .utils_roles import get_user_role
 
 def is_admin(user):
-    """Check if user is admin or superuser"""
-    return user.is_authenticated and (user.is_staff or user.is_superuser)
+    """Strict admin check (no is_staff fallback)."""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    return get_user_role(user) == 'admin'
 
 
 @login_required

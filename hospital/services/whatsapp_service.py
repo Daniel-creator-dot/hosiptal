@@ -259,12 +259,10 @@ class WhatsAppService:
     def send_lab_result_whatsapp(self, lab_result, patient, include_pdf=False, pdf_url=''):
         """Send lab result ready notification via WhatsApp"""
         try:
-            test_name = lab_result.test.name
-            
-            # Build WhatsApp message
+            # Build WhatsApp message (no specific test name)
             message = f"🏥 *PrimeCare Hospital*\n\n"
             message += f"Dear {patient.first_name},\n\n"
-            message += f"Your lab test result for *{test_name}* is ready.\n\n"
+            message += "Your lab test results are ready.\n\n"
             
             # Add result summary if completed
             if lab_result.status == 'completed' and lab_result.value:
@@ -291,7 +289,6 @@ class WhatsAppService:
             
             # Add reference
             message += f"\n*Patient MRN:* {patient.mrn}\n"
-            message += f"*Test Code:* {lab_result.test.code}\n"
             
             if include_pdf and pdf_url:
                 message += f"\n📄 Full report attached"

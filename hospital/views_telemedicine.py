@@ -1130,7 +1130,19 @@ def prescription_management(request, consultation_id):
         quantity = request.POST.get('quantity', 1)
         
         try:
-            drug = Drug.objects.get(pk=drug_id)
+            drug = Drug.objects.filter(
+                pk=drug_id,
+                is_active=True,
+                is_deleted=False,
+                name__isnull=False
+            ).exclude(
+                name__iexact=''
+            ).exclude(
+                name__icontains='INVALID'
+            ).first()
+            if not drug:
+                messages.error(request, 'Selected drug is invalid or has been removed.')
+                return redirect('telemedicine:prescription_management', consultation_id=consultation_id)
             
             prescription = TelemedicinePrescription.objects.create(
                 consultation=consultation,
@@ -1148,7 +1160,15 @@ def prescription_management(request, consultation_id):
             messages.error(request, 'Invalid drug selected.')
     
     # Get available drugs
-    drugs = Drug.objects.filter(is_active=True, is_deleted=False).order_by('name')
+    drugs = Drug.objects.filter(
+        is_active=True, 
+        is_deleted=False,
+        name__isnull=False
+    ).exclude(
+        name__iexact=''
+    ).exclude(
+        name__icontains='INVALID'
+    ).order_by('name')
     
     # Get existing prescriptions
     prescriptions = TelemedicinePrescription.objects.filter(
@@ -1180,7 +1200,19 @@ def lab_order_management(request, consultation_id):
         is_urgent = request.POST.get('is_urgent') == 'on'
         
         try:
-            test = LabTest.objects.get(pk=test_id)
+            test = LabTest.objects.filter(
+                pk=test_id,
+                is_active=True,
+                is_deleted=False,
+                name__isnull=False
+            ).exclude(
+                name__iexact=''
+            ).exclude(
+                name__icontains='INVALID'
+            ).first()
+            if not test:
+                messages.error(request, 'Selected test is invalid or has been removed.')
+                return redirect('telemedicine:lab_order_management', consultation_id=consultation_id)
             
             lab_order = TelemedicineLabOrder.objects.create(
                 consultation=consultation,
@@ -1195,7 +1227,15 @@ def lab_order_management(request, consultation_id):
             messages.error(request, 'Invalid test selected.')
     
     # Get available tests
-    tests = LabTest.objects.filter(is_active=True, is_deleted=False).order_by('name')
+    tests = LabTest.objects.filter(
+        is_active=True, 
+        is_deleted=False,
+        name__isnull=False
+    ).exclude(
+        name__iexact=''
+    ).exclude(
+        name__icontains='INVALID'
+    ).order_by('name')
     
     # Get existing lab orders
     lab_orders = TelemedicineLabOrder.objects.filter(

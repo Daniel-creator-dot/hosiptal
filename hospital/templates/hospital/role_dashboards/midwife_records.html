@@ -1,0 +1,321 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Maternity Records - Midwife Dashboard{% endblock %}
+
+{% block page_title %}Maternity Medical Records{% endblock %}
+{% block page_subtitle %}View and manage maternity care documentation{% endblock %}
+
+{% block extra_css %}
+<style>
+    .maternity-records-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        border-left: 4px solid #ec4899;
+    }
+    
+    .stat-card {
+        background: linear-gradient(135deg, #ec4899 0%, #be185d 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    
+    .stat-number {
+        font-size: 2.5rem;
+        font-weight: bold;
+        margin-bottom: 8px;
+    }
+    
+    .stat-label {
+        font-size: 0.9rem;
+        opacity: 0.9;
+    }
+    
+    .patient-folder {
+        background: white;
+        border: 1px solid #e9ecef;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 16px;
+        transition: all 0.3s ease;
+        border-left: 4px solid #ec4899;
+    }
+    
+    .patient-folder:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transform: translateY(-2px);
+    }
+    
+    .badge-antenatal {
+        background: #3b82f6;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+    
+    .badge-postnatal {
+        background: #f59e0b;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+    
+    .record-item {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 8px;
+        border-left: 3px solid #ec4899;
+    }
+    
+    .action-btn {
+        background: #ec4899;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        text-decoration: none;
+        display: inline-block;
+        margin: 4px;
+        transition: all 0.3s ease;
+    }
+    
+    .action-btn:hover {
+        background: #be185d;
+        color: white;
+        text-decoration: none;
+        transform: translateY(-1px);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Statistics Cards -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-3 col-sm-6">
+            <div class="stat-card">
+                <div class="stat-number">{{ stats.total_records }}</div>
+                <div class="stat-label">Total Records</div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="stat-card">
+                <div class="stat-number">{{ stats.total_patients }}</div>
+                <div class="stat-label">Maternity Patients</div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="stat-card">
+                <div class="stat-number">{{ stats.antenatal_records }}</div>
+                <div class="stat-label">Antenatal Records</div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="stat-card">
+                <div class="stat-number">{{ stats.postnatal_records }}</div>
+                <div class="stat-label">Postnatal Records</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="maternity-records-card">
+        <h5 class="mb-3">
+            <i class="bi bi-lightning-charge-fill me-2" style="color: #ec4899;"></i>Quick Actions
+        </h5>
+        <div class="row g-3">
+            <div class="col-md-3 col-sm-6">
+                <a href="{% url 'hospital:midwife_dashboard' %}" class="action-btn w-100 text-center d-block">
+                    <i class="bi bi-speedometer2 me-2"></i>Midwife Dashboard
+                </a>
+            </div>
+            <div class="col-md-3 col-sm-6">
+                <a href="{% url 'hospital:antenatal_care' %}" class="action-btn w-100 text-center d-block" style="background: #3b82f6;">
+                    <i class="bi bi-heart-pulse me-2"></i>Antenatal Care
+                </a>
+            </div>
+            <div class="col-md-3 col-sm-6">
+                <a href="{% url 'hospital:postnatal_care' %}" class="action-btn w-100 text-center d-block" style="background: #f59e0b;">
+                    <i class="bi bi-heart-pulse me-2"></i>Postnatal Care
+                </a>
+            </div>
+            <div class="col-md-3 col-sm-6">
+                <a href="{% url 'hospital:patient_list' %}?gender=F" class="action-btn w-100 text-center d-block" style="background: #10b981;">
+                    <i class="bi bi-people-fill me-2"></i>All Maternity Patients
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search and Filters -->
+    <div class="maternity-records-card">
+        <h5 class="mb-3">
+            <i class="bi bi-funnel me-2" style="color: #ec4899;"></i>Search & Filter
+        </h5>
+        <form method="get" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">Search</label>
+                <input type="text" class="form-control" name="q" placeholder="Patient name, MRN, or record content"
+                       value="{{ search_query }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Record Type</label>
+                <select class="form-select" name="type">
+                    <option value="">All Types</option>
+                    <option value="consultation_note" {% if type_filter == 'consultation_note' %}selected{% endif %}>Consultation Note</option>
+                    <option value="lab_result" {% if type_filter == 'lab_result' %}selected{% endif %}>Lab Result</option>
+                    <option value="imaging" {% if type_filter == 'imaging' %}selected{% endif %}>Imaging Report</option>
+                    <option value="discharge_summary" {% if type_filter == 'discharge_summary' %}selected{% endif %}>Discharge Summary</option>
+                    <option value="surgical_report" {% if type_filter == 'surgical_report' %}selected{% endif %}>Surgical Report</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Care Type</label>
+                <select class="form-select" name="care_type">
+                    <option value="">All Care Types</option>
+                    <option value="antenatal" {% if care_type_filter == 'antenatal' %}selected{% endif %}>Antenatal</option>
+                    <option value="postnatal" {% if care_type_filter == 'postnatal' %}selected{% endif %}>Postnatal</option>
+                </select>
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-search me-2"></i>Search
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Patient Records -->
+    {% if patient_records %}
+    <div class="maternity-records-card">
+        <h5 class="mb-3">
+            <i class="bi bi-folder-fill me-2" style="color: #ec4899;"></i>Patient Records
+            <span class="badge bg-primary ms-2">{{ patient_records|length }} patient{{ patient_records|length|pluralize }}</span>
+        </h5>
+        
+        {% for folder in patient_records %}
+        <div class="patient-folder">
+            <div class="d-flex justify-content-between align-items-start mb-3">
+                <div>
+                    <h6 class="mb-1">
+                        <i class="bi bi-person-fill me-2"></i>{{ folder.patient.full_name }}
+                    </h6>
+                    <small class="text-muted">
+                        MRN: {{ folder.patient.mrn }} · 
+                        {{ folder.patient.age }} years old · 
+                        Last updated {{ folder.last_created|naturaltime }}
+                    </small>
+                </div>
+                <div class="text-end">
+                    <span class="badge bg-primary me-2">{{ folder.record_count }} record{{ folder.record_count|pluralize }}</span>
+                    {% if folder.antenatal_count > 0 %}
+                        <span class="badge-antenatal me-1">{{ folder.antenatal_count }} Antenatal</span>
+                    {% endif %}
+                    {% if folder.postnatal_count > 0 %}
+                        <span class="badge-postnatal me-1">{{ folder.postnatal_count }} Postnatal</span>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <div class="mb-2">
+                {% for record_type, count in folder.service_counts %}
+                    <span class="badge bg-light text-dark me-1">{{ record_type|title }}: {{ count }}</span>
+                {% endfor %}
+            </div>
+            
+            <div class="d-flex gap-2 mb-3">
+                <a href="{% url 'hospital:comprehensive_medical_record' folder.patient.id %}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-folder-open me-1"></i>View Full Record
+                </a>
+                <a href="{% url 'hospital:patient_detail' pk=folder.patient.pk %}" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-person me-1"></i>Patient Profile
+                </a>
+            </div>
+            
+            <div class="accordion" id="accordion{{ forloop.counter }}">
+                <div class="accordion-item">
+                    <h2 class="accordion-header" id="heading{{ forloop.counter }}">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                                data-bs-target="#collapse{{ forloop.counter }}" aria-expanded="false"
+                                aria-controls="collapse{{ forloop.counter }}">
+                            <i class="bi bi-file-medical me-2"></i>View Records ({{ folder.records|length }})
+                        </button>
+                    </h2>
+                    <div id="collapse{{ forloop.counter }}" class="accordion-collapse collapse"
+                         aria-labelledby="heading{{ forloop.counter }}" data-bs-parent="#accordion{{ forloop.counter }}">
+                        <div class="accordion-body">
+                            {% for record in folder.records %}
+                            <div class="record-item">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div class="flex-grow-1">
+                                        <h6 class="mb-1">{{ record.title }}</h6>
+                                        <p class="text-muted small mb-2">{{ record.content|truncatewords:20 }}</p>
+                                        <div class="d-flex gap-2 flex-wrap">
+                                            <span class="badge bg-info">{{ record.record_type|title }}</span>
+                                            {% if record.encounter %}
+                                                {% if 'antenatal' in record.encounter.encounter_type|lower %}
+                                                    <span class="badge-antenatal">Antenatal</span>
+                                                {% elif 'postnatal' in record.encounter.encounter_type|lower %}
+                                                    <span class="badge-postnatal">Postnatal</span>
+                                                {% endif %}
+                                            {% endif %}
+                                            <small class="text-muted">
+                                                <i class="bi bi-calendar3 me-1"></i>{{ record.created|date:"M d, Y H:i" }}
+                                            </small>
+                                            {% if record.created_by %}
+                                                <small class="text-muted">
+                                                    <i class="bi bi-person me-1"></i>{{ record.created_by.user.get_full_name|default:record.created_by.user.username }}
+                                                </small>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <a href="{% url 'hospital:medical_record_detail' record.pk %}" class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-eye"></i> View
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="maternity-records-card">
+        <div class="alert alert-info text-center">
+            <i class="bi bi-info-circle me-2"></i>
+            No maternity records found{% if search_query or type_filter or care_type_filter %} for the selected filters{% endif %}.
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+
+

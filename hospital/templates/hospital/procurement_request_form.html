@@ -31,6 +31,22 @@
     .add-row {
         margin-top: 16px;
     }
+    .request-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        background: #f8fafc;
+        margin-bottom: 12px;
+    }
+    .request-actions .hint {
+        color: #64748b;
+        font-size: 13px;
+    }
 </style>
 {% endblock %}
 
@@ -50,6 +66,19 @@
                 
                 <div class="mt-4">
                     <h5 style="font-weight: 600; margin-bottom: 16px;">Request Items</h5>
+                    <div class="request-actions">
+                        <div class="hint">
+                            Fill at least <strong>one</strong> item line to enable <strong>Submit Request</strong>.
+                        </div>
+                        <div class="d-flex gap-2 flex-wrap">
+                            <button type="submit" name="action" value="save" class="btn btn-primary btn-modern">
+                                <i class="bi bi-save"></i> Save Draft
+                            </button>
+                            <button type="submit" name="action" value="submit" class="btn btn-success btn-modern" id="submitRequestBtnTop" disabled>
+                                <i class="bi bi-send"></i> Submit Request
+                            </button>
+                        </div>
+                    </div>
                     <!-- Formset Management Form - Required hidden fields -->
                     {{ formset.management_form }}
                     {% if formset.management_form.errors %}
@@ -126,8 +155,11 @@
                 </div>
                 
                 <div class="mt-4">
-                    <button type="submit" class="btn btn-primary btn-modern">
-                        <i class="bi bi-save"></i> Save Request
+                    <button type="submit" name="action" value="save" class="btn btn-primary btn-modern">
+                        <i class="bi bi-save"></i> Save Draft
+                    </button>
+                    <button type="submit" name="action" value="submit" class="btn btn-success btn-modern" id="submitRequestBtnBottom" disabled>
+                        <i class="bi bi-send"></i> Submit Request
                     </button>
                     <a href="{% if object %}{% url 'hospital:procurement_request_detail' object.pk %}{% else %}{% url 'hospital:procurement_requests_list' %}{% endif %}" class="btn btn-outline-secondary btn-modern">
                         Cancel
@@ -144,6 +176,29 @@
     // Calculate line totals dynamically
     document.addEventListener('DOMContentLoaded', function() {
         const table = document.getElementById('itemTableBody');
+        const submitTop = document.getElementById('submitRequestBtnTop');
+        const submitBottom = document.getElementById('submitRequestBtnBottom');
+
+        function hasAtLeastOneCompleteLine() {
+            if (!table) return false;
+            const rows = table.querySelectorAll('tr.formset-row');
+            for (const row of rows) {
+                const name = (row.querySelector('input[name$="-item_name"]')?.value || '').trim();
+                const qtyRaw = row.querySelector('input[name$="-quantity"]')?.value;
+                const priceRaw = row.querySelector('input[name$="-estimated_unit_price"]')?.value;
+                const qty = qtyRaw !== undefined && qtyRaw !== null && qtyRaw !== '' ? parseFloat(qtyRaw) : 0;
+                const hasPrice = priceRaw !== undefined && priceRaw !== null && String(priceRaw).trim() !== '';
+                if (name && qty > 0 && hasPrice) return true;
+            }
+            return false;
+        }
+
+        function updateSubmitButtons() {
+            const enabled = hasAtLeastOneCompleteLine();
+            if (submitTop) submitTop.disabled = !enabled;
+            if (submitBottom) submitBottom.disabled = !enabled;
+        }
+
         if (table) {
             table.addEventListener('input', function(e) {
                 if (e.target.type === 'number') {
@@ -156,8 +211,12 @@
                         totalCell.textContent = 'GHS ' + total.toFixed(2);
                     }
                 }
+                updateSubmitButtons();
             });
+            table.addEventListener('change', updateSubmitButtons);
         }
+
+        updateSubmitButtons();
     });
 </script>
 {{ formset.media }}

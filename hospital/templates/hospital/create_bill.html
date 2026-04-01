@@ -16,6 +16,12 @@
                 <i class="bi bi-info-circle"></i> A bill has already been issued for this encounter.
             </div>
             {% endif %}
+            {% if invoice.total_amount <= 0 and not has_bill %}
+            <div class="alert alert-warning">
+                <i class="bi bi-exclamation-triangle"></i>
+                <strong>No chargeable items yet.</strong> Add services (e.g. lab tests, pharmacy, procedures) to this encounter first, then return here to issue the bill. You cannot issue a bill with zero amount.
+            </div>
+            {% endif %}
             
             <div class="row mb-3">
                 <div class="col-md-6">
@@ -47,11 +53,11 @@
                     </div>
                 </div>
                 
-                <div id="insurance-section" style="display: none;">
+                <div id="insurance-section" class="d-none">
                     <div class="mb-3">
                         <label class="form-label">Insurance Coverage Amount</label>
                         <input type="number" name="insurance_covered" step="0.01" min="0" max="{{ invoice.total_amount }}" 
-                               value="0" class="form-control form-control-modern" id="insurance_amount">
+                               value="0" class="form-control form-control-modern" id="insurance_amount" title="Enter number" placeholder="Enter number">
                         <small class="text-muted">Enter the amount covered by insurance</small>
                     </div>
                 </div>
@@ -72,7 +78,7 @@
                 </div>
                 
                 <div class="d-flex gap-2">
-                    <button type="submit" class="btn btn-primary-modern btn-modern">
+                    <button type="submit" class="btn btn-primary-modern btn-modern" {% if invoice.total_amount <= 0 or has_bill %}disabled{% endif %}>
                         <i class="bi bi-receipt"></i> Issue Bill
                     </button>
                     <a href="{% url 'hospital:patient_flow' encounter.pk %}" class="btn btn-outline-secondary">
@@ -83,7 +89,7 @@
         </div>
         
         <!-- Invoice Lines -->
-        {% if invoice.lines.exists %}
+        {% if invoice_lines %}
         <div class="modern-card">
             <h6 style="font-weight: 600; margin-bottom: 16px;">Invoice Items</h6>
             <div class="table-responsive">
@@ -97,12 +103,12 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for line in invoice.lines.all %}
+                        {% for line in invoice_lines %}
                         <tr>
                             <td>{{ line.description }}</td>
                             <td>{{ line.quantity }}</td>
-                            <td>GHS {{ line.unit_price|floatformat:2 }}</td>
-                            <td><strong>GHS {{ line.line_total|floatformat:2 }}</strong></td>
+                            <td>GHS {{ line.display_unit_price|floatformat:2 }}</td>
+                            <td><strong>GHS {{ line.display_line_total|floatformat:2 }}</strong></td>
                         </tr>
                         {% endfor %}
                     </tbody>

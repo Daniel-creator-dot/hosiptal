@@ -1,4 +1,5 @@
 @echo off
+setlocal enabledelayedexpansion
 echo ========================================
 echo Starting HMS Local Server
 echo ========================================
@@ -42,6 +43,22 @@ echo.
 echo Server will be available at:
 echo   - http://localhost:8000
 echo   - http://127.0.0.1:8000
+echo.
+echo Getting your WiFi IP address for network access...
+set IP_FOUND=0
+for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /i /c:"IPv4"') do (
+    set WIFI_IP=%%a
+    set WIFI_IP=!WIFI_IP: =!
+    if "!WIFI_IP!" neq "" (
+        set /a IP_FOUND+=1
+        if !IP_FOUND! equ 1 (
+            echo   - http://!WIFI_IP!:8000 (WiFi access - use this on other devices)
+        )
+    )
+)
+if !IP_FOUND! equ 0 (
+    echo   (Run 'ipconfig' to find your IP address)
+)
 echo.
 echo Press Ctrl+C to stop the server
 echo.

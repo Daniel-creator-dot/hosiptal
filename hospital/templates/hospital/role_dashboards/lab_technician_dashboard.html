@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load static %}
+{% load static hospital_extras %}
 
 {% block title %}Lab Technician Dashboard{% endblock %}
 
@@ -104,20 +104,68 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 30000;
                             Lab Technician Dashboard
                         </h2>
                         <p class="text-muted mb-0">
-                            Welcome back, {{ staff.user.get_full_name|default:staff.user.username }}
+                            Welcome back, {% if staff %}{{ staff.user.get_full_name|default:staff.user.username }}{% else %}{{ request.user.get_full_name|default:request.user.username }}{% endif %}
                         </p>
                     </div>
                     <div class="text-end">
+                        {% if staff %}
                         <span class="badge bg-info fs-6">{{ staff.get_profession_display }}</span>
                         <br>
-                        <small class="text-muted">{{ staff.department.name }}</small>
+                        <small class="text-muted">{{ staff.department.name|default:"" }}</small>
+                        {% else %}
+                        <span class="badge bg-info fs-6">Administrator</span>
+                        {% endif %}
+                        {% if is_hod %}
+                        <br><br>
+                        <a href="{% url 'hospital:hod_shift_monitoring_dashboard' %}" class="btn btn-primary btn-sm">
+                            <i class="bi bi-calendar-check me-1"></i> Manage Shifts
+                        </a>
+                        {% endif %}
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
+    <div class="alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2 mb-4" role="alert">
+        <div>
+            <strong>Full lab operations</strong> (work date, charts, overdue cleanup, all queues) live on the
+            <a href="{% url 'hospital:laboratory_dashboard' %}" class="alert-link fw-semibold">Laboratory Control Center</a>.
+            Your role home page now opens there automatically; this page is a shorter team summary.
+        </div>
+        <a href="{% url 'hospital:laboratory_dashboard' %}" class="btn btn-sm btn-primary text-nowrap">Open Control Center</a>
+    </div>
+
     {% include 'hospital/includes/performance_snapshot.html' with snapshot=performance_snapshot heading="Laboratory Impact (Last 14 Days)" %}
+
+    <!-- HOD Shift Management Card (if HOD) -->
+    {% if is_hod %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; border-left: 4px solid #fff;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h4 class="mb-2">
+                            <i class="bi bi-calendar-check me-2"></i>
+                            Shift Management - Head of Laboratory
+                        </h4>
+                        <p class="mb-0" style="opacity: 0.9;">
+                            Create shifts, monitor attendance, and track compliance for your department staff
+                        </p>
+                    </div>
+                    <div>
+                        <a href="{% url 'hospital:hod_shift_monitoring_dashboard' %}" class="btn btn-light btn-lg me-2">
+                            <i class="bi bi-calendar-check me-2"></i> Manage Shifts
+                        </a>
+                        <a href="{% url 'hospital:hod_create_shift_enhanced' %}" class="btn btn-outline-light btn-lg">
+                            <i class="bi bi-plus-circle me-2"></i> Create Shift
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- Statistics Cards -->
     <div class="row mb-4">
@@ -165,6 +213,7 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 30000;
                                         <a href="{% url 'hospital:patient_detail' order.encounter.patient.pk %}" class="text-decoration-none">
                                             {{ order.encounter.patient.full_name }}
                                         </a>
+                                        {% patient_payer_badges order.encounter.patient order.encounter %}
                                     {% else %}
                                         <span class="text-muted">Unassigned patient</span>
                                     {% endif %}
@@ -213,6 +262,7 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 30000;
                                         <a href="{% url 'hospital:patient_detail' test.encounter.patient.pk %}" class="text-decoration-none">
                                             {{ test.encounter.patient.full_name }}
                                         </a>
+                                        {% patient_payer_badges test.encounter.patient test.encounter %}
                                     {% else %}
                                         <span class="text-muted">Unassigned patient</span>
                                     {% endif %}
@@ -263,6 +313,7 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 30000;
                                         <a href="{% url 'hospital:patient_detail' result.order.encounter.patient.pk %}" class="text-decoration-none">
                                             {{ result.order.encounter.patient.full_name }}
                                         </a>
+                                        {% patient_payer_badges result.order.encounter.patient result.order.encounter %}
                                     {% else %}
                                         <span class="text-muted">Unassigned patient</span>
                                     {% endif %}
@@ -279,7 +330,7 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 30000;
                                 <span class="status-badge status-completed">Completed</span>
                                 <br>
                                 <div class="mt-2">
-                                    <a href="{% url 'hospital:tabular_lab_report' result.pk %}" class="action-btn btn-success me-2">
+                                    <a href="{% lab_result_entry_url result %}" class="action-btn btn-success me-2">
                                         <i class="bi bi-eye me-1"></i>View
                                     </a>
                                     <a href="{% url 'hospital:send_lab_result_sms' result.pk %}" class="action-btn btn-info" title="Send SMS to Patient">
@@ -334,6 +385,9 @@ window.DASHBOARD_AUTO_REFRESH_INTERVAL = 30000;
                     Quick Actions
                 </h5>
                 <div class="d-flex flex-wrap gap-2">
+                    <a href="{% url 'hospital:flow_dashboard' %}" class="action-btn" style="background: #667eea;">
+                        <i class="bi bi-diagram-3 me-1"></i>Patient Flowboard
+                    </a>
                     <a href="{% url 'hospital:order_create' %}" class="action-btn">
                         <i class="bi bi-plus-circle me-1"></i>New Test
                     </a>

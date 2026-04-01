@@ -8,8 +8,12 @@ from django.utils import timezone
 from django.db.models import Q, Count, Avg, F
 from django.db import transaction as db_transaction
 from decimal import Decimal
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
+
+# Prefixes that read badly on SMS / displays (e.g. first 3 letters of "Accounts" → ACC)
+_BLOCKED_QUEUE_PREFIXES = frozenset({'ACC', 'XXX', 'ASS'})
 
 
 class QueueService:
@@ -23,7 +27,7 @@ class QueueService:
     
     def generate_queue_number(self, department, priority=3):
         """
-        Generate next queue number for department
+        Generate next queue number for department with race condition protection
         
         Args:
             department: Department object
@@ -33,42 +37,89 @@ class QueueService:
             tuple: (queue_number, sequence_number)
         """
         from hospital.models_queue import QueueEntry, QueueConfiguration
+        from django.db import transaction
+        import random
         
         try:
             today = timezone.now().date()
             
-            # Get department prefix
-            try:
-                config = QueueConfiguration.objects.get(department=department)
-                prefix = config.queue_prefix
-            except QueueConfiguration.DoesNotExist:
-                prefix = self._get_default_prefix(department)
-            
-            # Get next sequence number for today
-            last_queue = QueueEntry.objects.filter(
-                queue_date=today,
-                department=department,
-                is_deleted=False
-            ).order_by('-sequence_number').first()
-            
-            sequence = (last_queue.sequence_number + 1) if last_queue else 1
-            
-            # Format queue number
-            queue_number = f"{prefix}-{sequence:03d}"  # e.g., OPD-001
-            
-            self.logger.info(f"Generated queue number: {queue_number} (sequence: {sequence})")
-            
-            return queue_number, sequence
+            prefix = self._resolve_prefix_for_department(department)
+
+            # Use select_for_update to prevent race conditions
+            # Lock the last queue entry to ensure atomic sequence generation
+            with transaction.atomic():
+                # Get the maximum sequence number for today with lock
+                last_queue = QueueEntry.objects.filter(
+                    queue_date=today,
+                    department=department,
+                    is_deleted=False
+                ).select_for_update().order_by('-sequence_number', '-id').first()
+                
+                sequence = (last_queue.sequence_number + 1) if last_queue else 1
+                
+                # Generate base queue number
+                base_queue_number = f"{prefix}-{sequence:03d}"  # e.g., OPD-001
+                queue_number = base_queue_number
+                
+                # Check if this queue number already exists (with lock to prevent race conditions)
+                # Use select_for_update to lock existing entries during check
+                max_attempts = 50  # Reasonable limit
+                attempt = 0
+                
+                # Lock and check for existing queue number
+                while attempt < max_attempts:
+                    # Use select_for_update to lock any existing entry with this queue_number
+                    existing = QueueEntry.objects.filter(
+                        queue_number=queue_number, 
+                        is_deleted=False
+                    ).select_for_update().first()
+                    
+                    if not existing:
+                        # Queue number is available, break out of loop
+                        break
+                    
+                    attempt += 1
+                    if attempt <= 20:
+                        # Try incrementing sequence first (most common case)
+                        sequence += 1
+                        queue_number = f"{prefix}-{sequence:03d}"
+                    elif attempt <= 40:
+                        # Add microsecond-based suffix
+                        import time
+                        microsecond_suffix = int(time.time() * 1000000) % 10000  # Last 4 digits
+                        queue_number = f"{prefix}-{sequence:03d}-{microsecond_suffix}"
+                    else:
+                        # Last resort: use timestamp + random for guaranteed uniqueness
+                        timestamp = int(timezone.now().timestamp() * 1000000) % 1000000
+                        random_suffix = random.randint(1000, 9999)
+                        queue_number = f"{prefix}-{timestamp}{random_suffix}"
+                        self.logger.warning(
+                            f"Queue number collision after {attempt} attempts, using timestamp-based: {queue_number}"
+                        )
+                        break
+                
+                if attempt >= max_attempts:
+                    # Absolute last resort: use UUID-like suffix
+                    import uuid
+                    uuid_suffix = str(uuid.uuid4())[:8].replace('-', '').upper()
+                    queue_number = f"{prefix}-{uuid_suffix}"
+                    self.logger.error(f"Exhausted queue number generation attempts, using UUID suffix: {queue_number}")
+                
+                self.logger.info(f"Generated queue number: {queue_number} (sequence: {sequence}, attempts: {attempt})")
+                
+                return queue_number, sequence
             
         except Exception as e:
             self.logger.error(f"Error generating queue number: {str(e)}", exc_info=True)
-            # Fallback: use timestamp-based number
+            # Fallback: use timestamp-based number with random suffix
             import random
-            fallback = f"Q-{int(timezone.now().timestamp())}{random.randint(10,99)}"
+            timestamp = int(timezone.now().timestamp() * 1000) % 1000000  # Last 6 digits
+            random_suffix = random.randint(100, 999)
+            fallback = f"Q-{timestamp}{random_suffix}"
             return fallback, 1
     
     def create_queue_entry(self, patient, encounter, department, assigned_doctor=None, 
-                          priority=3, notes=''):
+                          priority=3, notes='', room_number='', consulting_room=None):
         """
         Create a new queue entry for a patient
         
@@ -79,6 +130,8 @@ class QueueService:
             assigned_doctor: Doctor user object (optional)
             priority: Priority level (1-4)
             notes: Additional notes
+            room_number: Room number string (optional)
+            consulting_room: ConsultingRoom object (optional) - if provided, extracts room_number
         
         Returns:
             QueueEntry object
@@ -87,14 +140,114 @@ class QueueService:
         
         from django.db import IntegrityError
 
+        # Extract room number from consulting_room if provided
+        if consulting_room and not room_number:
+            room_number = consulting_room.room_number if hasattr(consulting_room, 'room_number') else ''
+        
+        # If assigned_doctor has a room assignment, use that room
+        if assigned_doctor and not room_number:
+            try:
+                from hospital.models_consulting_rooms import DoctorRoomAssignment
+                today = timezone.now().date()
+                assignment = DoctorRoomAssignment.objects.filter(
+                    doctor=assigned_doctor,
+                    assignment_date=today,
+                    is_active=True,
+                    is_deleted=False
+                ).select_related('room').first()
+                if assignment and assignment.room:
+                    room_number = assignment.room.room_number
+            except Exception:
+                pass
+
         last_error = None
-        for attempt in range(5):
+        max_retries = 30  # Increased retries for better collision handling
+        
+        for attempt in range(max_retries):
             try:
                 with db_transaction.atomic():
-                    queue_number, sequence = self.generate_queue_number(department, priority=priority)
+                    # Check if queue entry already exists for this patient/encounter today
+                    today = timezone.now().date()
+                    existing_entry = QueueEntry.objects.filter(
+                        patient=patient,
+                        encounter=encounter,
+                        queue_date=today,
+                        is_deleted=False
+                    ).select_for_update().first()
+                    
+                    if existing_entry:
+                        self.logger.info(
+                            f"Queue entry already exists for patient {patient.mrn}: {existing_entry.queue_number}"
+                        )
+                        return existing_entry
+                    
+                    # Guard against ticket churn: if the same patient already has an active
+                    # queue entry today (possibly from a different encounter path), reuse it.
+                    patient_active_entry = QueueEntry.objects.filter(
+                        patient=patient,
+                        queue_date=today,
+                        status__in=['checked_in', 'called', 'vitals_completed', 'in_progress'],
+                        is_deleted=False,
+                    ).select_for_update().order_by('-check_in_time', '-created').first()
+                    if patient_active_entry:
+                        # If data already has multiple active rows for this patient today,
+                        # keep the earliest ticket and retire the rest to stop ticket flipping.
+                        active_qs = QueueEntry.objects.filter(
+                            patient=patient,
+                            queue_date=today,
+                            status__in=['checked_in', 'called', 'vitals_completed', 'in_progress'],
+                            is_deleted=False,
+                        ).order_by('sequence_number', 'check_in_time', 'created')
+                        canonical_entry = active_qs.first()
+                        if canonical_entry and canonical_entry.id != patient_active_entry.id:
+                            patient_active_entry = canonical_entry
+                        duplicate_ids = list(
+                            active_qs.exclude(pk=patient_active_entry.pk).values_list('pk', flat=True)
+                        )
+                        if duplicate_ids:
+                            QueueEntry.objects.filter(pk__in=duplicate_ids).update(status='cancelled')
+
+                        fields_to_update = []
+                        if encounter and patient_active_entry.encounter_id != getattr(encounter, 'id', None):
+                            patient_active_entry.encounter = encounter
+                            fields_to_update.append('encounter')
+                        if department and patient_active_entry.department_id != getattr(department, 'id', None):
+                            patient_active_entry.department = department
+                            fields_to_update.append('department')
+                        if assigned_doctor and patient_active_entry.assigned_doctor_id != getattr(assigned_doctor, 'id', None):
+                            patient_active_entry.assigned_doctor = assigned_doctor
+                            fields_to_update.append('assigned_doctor')
+                        if room_number and patient_active_entry.room_number != room_number:
+                            patient_active_entry.room_number = room_number
+                            fields_to_update.append('room_number')
+                        if fields_to_update:
+                            patient_active_entry.save(update_fields=fields_to_update + ['modified'])
+                        self.logger.info(
+                            "Reusing active queue entry for patient %s to keep stable ticket: %s",
+                            patient.mrn,
+                            patient_active_entry.queue_number,
+                        )
+                        return patient_active_entry
+                    
+                    # Generate queue number WITHIN the transaction
+                    # This ensures atomicity between generation and creation
+                    queue_number, sequence = self._generate_queue_number_atomic(
+                        department, priority=priority, attempt=attempt
+                    )
+                    
+                    # Final check with lock - if it exists, we'll get IntegrityError and retry
+                    # This check is redundant but provides extra safety
+                    if QueueEntry.objects.filter(queue_number=queue_number, is_deleted=False).select_for_update().exists():
+                        # This should rarely happen due to atomic generation, but if it does, retry
+                        self.logger.warning(
+                            f"Queue number {queue_number} exists after generation, will retry (attempt {attempt + 1})"
+                        )
+                        raise IntegrityError(f"Queue number {queue_number} collision detected")
+                    
                     position = self.get_current_queue_length(department) + 1
                     estimated_wait = self.calculate_estimated_wait(department, position)
 
+                    # Create the queue entry
                     queue_entry = QueueEntry.objects.create(
                         queue_number=queue_number,
                         sequence_number=sequence,
@@ -105,7 +258,8 @@ class QueueService:
                         priority=priority,
                         status='checked_in',
                         estimated_wait_minutes=estimated_wait,
-                        notes=notes
+                        notes=notes,
+                        room_number=room_number
                     )
 
                     self.logger.info(
@@ -113,21 +267,81 @@ class QueueService:
                         f"(Position: {position}, Est. wait: {estimated_wait} mins)"
                     )
                     return queue_entry
+                    
             except IntegrityError as ie:
                 last_error = ie
-                self.logger.warning(
-                    "Queue number collision when creating entry for %s (attempt %s)",
-                    patient.id,
-                    attempt + 1,
-                    exc_info=True
-                )
-                continue
+                error_str = str(ie)
+                
+                # Check if it's a queue_number collision
+                if 'queue_number' in error_str.lower() or 'unique' in error_str.lower() or 'duplicate' in error_str.lower():
+                    self.logger.warning(
+                        f"Queue number collision for patient {patient.id} (attempt {attempt + 1}/{max_retries})"
+                    )
+                    # Wait a small random amount before retry to reduce collision probability
+                    import time
+                    import random
+                    time.sleep(random.uniform(0.05, 0.15))  # Longer wait to reduce collisions
+                    # Will retry with new queue number on next iteration
+                    continue
+                else:
+                    # Different integrity error (e.g., patient/encounter constraint)
+                    self.logger.error(f"Integrity error (not queue_number): {error_str}", exc_info=True)
+                    raise
             except Exception as e:
                 self.logger.error(f"Error creating queue entry: {str(e)}", exc_info=True)
                 raise
 
-        self.logger.error("Unable to allocate unique queue number after multiple attempts.")
+        self.logger.error(
+            f"Unable to allocate unique queue number after {max_retries} attempts for patient {patient.id}"
+        )
         raise IntegrityError("Unable to generate unique queue number") from last_error
+    
+    def _generate_queue_number_atomic(self, department, priority=3, attempt=0):
+        """
+        Generate queue number atomically within a transaction
+        This is called from within create_queue_entry's transaction
+        """
+        from hospital.models_queue import QueueEntry, QueueConfiguration
+        import random
+        import time
+        
+        today = timezone.now().date()
+        
+        prefix = self._resolve_prefix_for_department(department)
+
+        # Get the maximum sequence number for today with lock
+        last_queue = QueueEntry.objects.filter(
+            queue_date=today,
+            department=department,
+            is_deleted=False
+        ).select_for_update().order_by('-sequence_number', '-id').first()
+        
+        base_sequence = (last_queue.sequence_number + 1) if last_queue else 1
+        
+        # Adjust sequence based on attempt number to reduce collisions
+        sequence = base_sequence + attempt
+        
+        # Generate base queue number
+        queue_number = f"{prefix}-{sequence:03d}"
+        
+        # If this is a retry attempt, add suffix to ensure uniqueness
+        if attempt > 0:
+            # Add microsecond-based suffix for retries
+            microsecond_suffix = int(time.time() * 1000000) % 100000  # Last 5 digits
+            random_suffix = random.randint(100, 999)
+            queue_number = f"{prefix}-{sequence:03d}-{microsecond_suffix}{random_suffix}"
+        
+        # Final check with lock - if exists, add more randomness
+        if QueueEntry.objects.filter(queue_number=queue_number, is_deleted=False).select_for_update().exists():
+            # Add UUID suffix as absolute guarantee
+            import uuid
+            uuid_suffix = str(uuid.uuid4())[:8].replace('-', '').upper()
+            queue_number = f"{prefix}-{uuid_suffix}"
+            self.logger.warning(f"Queue number collision, using UUID suffix: {queue_number}")
+        
+        self.logger.info(f"Generated queue number: {queue_number} (sequence: {sequence}, attempt: {attempt})")
+        
+        return queue_number, sequence
     
     def calculate_estimated_wait(self, department, position_in_queue):
         """
@@ -171,7 +385,7 @@ class QueueService:
         ahead_count = QueueEntry.objects.filter(
             queue_date=queue_entry.queue_date,
             department=queue_entry.department,
-            status__in=['checked_in', 'called'],
+            status__in=['checked_in', 'called', 'vitals_completed'],
             is_deleted=False
         ).filter(
             Q(priority__lt=queue_entry.priority) |  # Higher priority
@@ -232,29 +446,68 @@ class QueueService:
         
         return queryset.first()
     
-    def call_next_patient(self, queue_entry, room_number=''):
+    def call_next_patient(self, queue_entry, room_number='', doctor=None):
         """
         Mark patient as called and send notification
         
         Args:
             queue_entry: QueueEntry object
-            room_number: Consultation room assignment
+            room_number: Consultation room assignment (optional, auto-detected if not provided)
+            doctor: Doctor user object (optional, for auto-detecting room)
         
         Returns:
             QueueEntry object (updated)
         """
         try:
+            # Auto-detect room if not provided but doctor is
+            if not room_number and doctor:
+                try:
+                    from hospital.models_consulting_rooms import DoctorRoomAssignment
+                    today = timezone.now().date()
+                    assignment = DoctorRoomAssignment.objects.filter(
+                        doctor=doctor,
+                        assignment_date=today,
+                        is_active=True,
+                        is_deleted=False
+                    ).select_related('room').first()
+                    if assignment and assignment.room:
+                        room_number = assignment.room.room_number
+                except Exception as e:
+                    self.logger.warning(f"Could not auto-detect room for doctor: {str(e)}")
+            
+            # Use existing room_number from queue_entry if not provided
+            if not room_number:
+                room_number = queue_entry.room_number or ''
+            
             queue_entry.status = 'called'
             queue_entry.called_time = timezone.now()
             if room_number:
                 queue_entry.room_number = room_number
+            # Who called is who patients should see on the board / hear in callouts
+            if doctor:
+                queue_entry.assigned_doctor = doctor
             queue_entry.save()
             
-            self.logger.info(f"📢 Called patient: {queue_entry.queue_number}")
+            self.logger.info(f"📢 Called patient: {queue_entry.queue_number} (Room: {room_number or 'N/A'})")
             
-            # Send ready notification
-            from .queue_notification_service import queue_notification_service
-            queue_notification_service.send_ready_notification(queue_entry)
+            # Send ready notification with room and doctor info
+            try:
+                from .queue_notification_service import queue_notification_service
+                sms_sent = queue_notification_service.send_ready_notification(queue_entry)
+                if sms_sent:
+                    self.logger.info(f"✅ SMS notification sent successfully to patient {queue_entry.patient.full_name}")
+                else:
+                    self.logger.warning(
+                        f"⚠️ SMS notification failed for patient {queue_entry.patient.full_name} "
+                        f"(Queue: {queue_entry.queue_number}). "
+                        f"Phone: {getattr(queue_entry.patient, 'phone_number', 'Not set')}"
+                    )
+            except Exception as sms_error:
+                self.logger.error(
+                    f"❌ Error sending SMS notification for queue {queue_entry.queue_number}: {str(sms_error)}",
+                    exc_info=True
+                )
+                # Don't fail the queue action if SMS fails
             
             return queue_entry
             
@@ -275,6 +528,9 @@ class QueueService:
         try:
             queue_entry.status = 'in_progress'
             queue_entry.started_time = timezone.now()
+            # Ensure in-progress entries have a call marker used by live display ordering.
+            if not getattr(queue_entry, 'called_time', None):
+                queue_entry.called_time = queue_entry.started_time
             
             # Calculate actual wait time
             if queue_entry.check_in_time:
@@ -429,7 +685,7 @@ class QueueService:
     
     def _get_default_prefix(self, department):
         """Get default queue prefix based on department name"""
-        dept_name = department.name.upper()
+        dept_name = (department.name or '').upper().replace(' ', '')
         
         if 'EMERGENCY' in dept_name or 'EMG' in dept_name:
             return 'EMG'
@@ -439,9 +695,48 @@ class QueueService:
             return 'IPD'
         elif 'SPECIALIST' in dept_name or 'SPL' in dept_name:
             return 'SPL'
+        elif 'PEDIATRIC' in dept_name or 'PEDS' in dept_name:
+            return 'PED'
         else:
-            # Use first 3 letters of department name
-            return dept_name[:3]
+            base = dept_name[:3]
+            if base in _BLOCKED_QUEUE_PREFIXES:
+                code = (getattr(department, 'code', None) or '').strip().upper()
+                code = ''.join(c for c in code if c.isalnum())[:5]
+                if code and code not in _BLOCKED_QUEUE_PREFIXES:
+                    return code
+                return (getattr(settings, 'QUEUE_TICKET_PREFIX_FALLBACK', None) or 'VIS').strip().upper()[:5]
+            return base[:5]
+
+    def _normalize_ticket_prefix(self, raw_prefix, department):
+        """
+        Ensure SMS-friendly ticket prefixes (avoid ACC- and similar from name truncation).
+        Respects QueueConfiguration max_length=5.
+        """
+        p = (raw_prefix or '').strip().upper().replace(' ', '')
+        p = ''.join(c for c in p if c.isalnum())[:5]
+        if len(p) < 2:
+            p = 'VIS'
+        fallback = (getattr(settings, 'QUEUE_TICKET_PREFIX_FALLBACK', None) or 'VIS').strip().upper()[:5]
+        if p in _BLOCKED_QUEUE_PREFIXES:
+            code = (getattr(department, 'code', None) or '').strip().upper()
+            code = ''.join(c for c in code if c.isalnum())[:5]
+            if code and code not in _BLOCKED_QUEUE_PREFIXES:
+                return code
+            return fallback
+        return p
+
+    def _resolve_prefix_for_department(self, department):
+        """Prefix from QueueConfiguration when set, else default; then normalize for patient-facing tickets."""
+        from hospital.models_queue import QueueConfiguration
+        raw = None
+        try:
+            cfg = QueueConfiguration.objects.get(department=department)
+            raw = (cfg.queue_prefix or '').strip()
+        except QueueConfiguration.DoesNotExist:
+            pass
+        if not raw:
+            raw = self._get_default_prefix(department)
+        return self._normalize_ticket_prefix(raw, department)
 
 
 # Global instance

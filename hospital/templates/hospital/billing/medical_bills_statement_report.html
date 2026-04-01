@@ -1,0 +1,385 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Medical Bills Statement Report - HMS{% endblock %}
+{% block page_title %}Medical Bills Statement Report{% endblock %}
+
+{% block extra_css %}
+<style>
+    .mbr-chart-wrap { position: relative; height: 280px; }
+    @media (min-width: 992px) {
+        .mbr-chart-wrap.tall { height: 320px; }
+    }
+    .mbr-kpi .card-body { min-height: 88px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="card">
+        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <h5 class="mb-0"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Medical Bills Statement Report</h5>
+            <div class="d-flex flex-wrap gap-2">
+                <a href="{% url 'hospital:medical_bills_statement_processing' %}" class="btn btn-sm btn-primary">
+                    <i class="bi bi-gear"></i> Process Statements
+                </a>
+                <a href="{% url 'hospital:claims_bills_hub' %}" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Claims Bills Hub
+                </a>
+            </div>
+        </div>
+        <div class="card-body">
+            <form method="get" class="mb-4">
+                <div class="row g-3 align-items-end">
+                    <div class="col-6 col-md-3 col-lg-2">
+                        <label class="form-label">From</label>
+                        <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+                    </div>
+                    <div class="col-6 col-md-3 col-lg-2">
+                        <label class="form-label">To</label>
+                        <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+                    </div>
+                    <div class="col-6 col-md-3 col-lg-2">
+                        <label class="form-label">Account</label>
+                        <select name="account_scope" class="form-select">
+                            <option value="all" {% if account_scope == 'all' %}selected{% endif %}>All</option>
+                            <option value="corporate" {% if account_scope == 'corporate' %}selected{% endif %}>Corporate</option>
+                            <option value="individual" {% if account_scope == 'individual' %}selected{% endif %}>Individual (payer)</option>
+                        </select>
+                    </div>
+                    <div class="col-6 col-md-3 col-lg-2">
+                        <label class="form-label">Status</label>
+                        <select name="status" class="form-select">
+                            <option value="">Any status</option>
+                            {% for val, label in statement_status_choices %}
+                            <option value="{{ val }}" {% if status_filter == val %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-12 col-md-6 col-lg-3">
+                        <label class="form-label">Search</label>
+                        <input type="search" name="search" class="form-control" placeholder="Statement #, company, payer…" value="{{ search }}">
+                    </div>
+                    <div class="col-6 col-md-3 col-lg-2">
+                        <label class="form-label">Sort</label>
+                        <select name="sort" class="form-select">
+                            <option value="statement_date_desc" {% if sort == 'statement_date_desc' %}selected{% endif %}>Statement date (newest)</option>
+                            <option value="statement_date_asc" {% if sort == 'statement_date_asc' %}selected{% endif %}>Statement date (oldest)</option>
+                            <option value="closing_balance_desc" {% if sort == 'closing_balance_desc' %}selected{% endif %}>Closing balance (high)</option>
+                            <option value="total_charges_desc" {% if sort == 'total_charges_desc' %}selected{% endif %}>Total charges (high)</option>
+                        </select>
+                    </div>
+                    <div class="col-6 col-md-3 col-lg-2">
+                        <button type="submit" class="btn btn-primary w-100"><i class="bi bi-funnel"></i> Apply</button>
+                    </div>
+                </div>
+                {% if request.GET %}
+                <p class="text-muted small mt-2 mb-0">
+                    <a href="{% url 'hospital:medical_bills_statement_report' %}">Reset filters</a>
+                </p>
+                {% endif %}
+            </form>
+
+            <p class="text-muted small mb-4">
+                Analytics reflect the <strong>filtered</strong> set above.
+                Trend uses <strong>daily</strong> buckets for ranges up to 62 days, otherwise <strong>monthly</strong>.
+            </p>
+
+            <div class="row g-3 mb-4 mbr-kpi">
+                <div class="col-6 col-md-3">
+                    <div class="card border-0 bg-primary text-white h-100">
+                        <div class="card-body py-3">
+                            <div class="small opacity-75">Statements</div>
+                            <div class="fs-5 fw-semibold">{{ summary.total_statements|default:0|intcomma }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="card border-0 bg-success text-white h-100">
+                        <div class="card-body py-3">
+                            <div class="small opacity-75">Total charges</div>
+                            <div class="fs-5 fw-semibold">GHS {{ summary.total_charges|default:0|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="card border-0 bg-info text-white h-100">
+                        <div class="card-body py-3">
+                            <div class="small opacity-75">Total payments</div>
+                            <div class="fs-5 fw-semibold">GHS {{ summary.total_payments|default:0|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="card border-0 bg-warning text-dark h-100">
+                        <div class="card-body py-3">
+                            <div class="small opacity-75">Closing balance (sum)</div>
+                            <div class="fs-5 fw-semibold">GHS {{ summary.closing_balance|default:0|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4 mb-4">
+                <div class="col-lg-8">
+                    <div class="card h-100">
+                        <div class="card-header py-2 d-flex justify-content-between align-items-center flex-wrap gap-1">
+                            <span class="fw-semibold">Trend: charges vs payments</span>
+                            <span class="text-muted small">(<span id="mbr-granularity-label">—</span>)</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="mbr-chart-wrap tall">
+                                <canvas id="mbrChartTrend"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-4">
+                    <div class="card mb-3 h-100">
+                        <div class="card-header py-2"><span class="fw-semibold">By status</span></div>
+                        <div class="card-body">
+                            <div class="mbr-chart-wrap">
+                                <canvas id="mbrChartStatus"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4 mb-4">
+                <div class="col-md-6">
+                    <div class="card h-100">
+                        <div class="card-header py-2"><span class="fw-semibold">Corporate vs individual</span></div>
+                        <div class="card-body">
+                            <div class="mbr-chart-wrap">
+                                <canvas id="mbrChartAccountType"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card h-100">
+                        <div class="card-header py-2"><span class="fw-semibold">Summary by account type</span></div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Type</th>
+                                            <th class="text-end">Count</th>
+                                            <th class="text-end">Charges</th>
+                                            <th class="text-end">Payments</th>
+                                            <th class="text-end">Closing bal.</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for row in by_type %}
+                                        <tr>
+                                            <td><strong>{{ row.label }}</strong></td>
+                                            <td class="text-end">{{ row.count|intcomma }}</td>
+                                            <td class="text-end">GHS {{ row.total_charges|floatformat:2|intcomma }}</td>
+                                            <td class="text-end">GHS {{ row.total_payments|floatformat:2|intcomma }}</td>
+                                            <td class="text-end">GHS {{ row.closing_balance|floatformat:2|intcomma }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if statements.paginator.count %}
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <h6 class="mb-0">Statements (page {{ statements.number }} of {{ statements.paginator.num_pages }})</h6>
+                    <span class="text-muted small">{{ statements.paginator.count|intcomma }} total</span>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Statement #</th>
+                                    <th>Account</th>
+                                    <th>Period</th>
+                                    <th class="text-end">Charges</th>
+                                    <th class="text-end">Payments</th>
+                                    <th class="text-end">Closing</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for statement in statements %}
+                                <tr>
+                                    <td><strong>{{ statement.statement_number }}</strong></td>
+                                    <td>{{ statement.corporate_account.company_name|default:statement.payer.name|default:"N/A" }}</td>
+                                    <td>{{ statement.period_start|date:"Y-m-d" }} → {{ statement.period_end|date:"Y-m-d" }}</td>
+                                    <td class="text-end">GHS {{ statement.total_charges|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">GHS {{ statement.total_payments|floatformat:2|intcomma }}</td>
+                                    <td class="text-end"><strong>GHS {{ statement.closing_balance|floatformat:2|intcomma }}</strong></td>
+                                    <td>
+                                        <span class="badge bg-{% if statement.status == 'paid' %}success{% elif statement.status == 'overdue' %}danger{% elif statement.status == 'sent' %}warning{% elif statement.status == 'partially_paid' %}info{% else %}secondary{% endif %}">
+                                            {{ statement.get_status_display|default:statement.status|title }}
+                                        </span>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {% if statements.has_other_pages %}
+                    <nav class="mt-3" aria-label="Statement pages">
+                        <ul class="pagination pagination-sm flex-wrap mb-0">
+                            {% if statements.has_previous %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page=1{% if page_querystring %}&{{ page_querystring }}{% endif %}">First</a>
+                            </li>
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ statements.previous_page_number }}{% if page_querystring %}&{{ page_querystring }}{% endif %}">Prev</a>
+                            </li>
+                            {% endif %}
+                            <li class="page-item disabled"><span class="page-link">{{ statements.number }} / {{ statements.paginator.num_pages }}</span></li>
+                            {% if statements.has_next %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ statements.next_page_number }}{% if page_querystring %}&{{ page_querystring }}{% endif %}">Next</a>
+                            </li>
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ statements.paginator.num_pages }}{% if page_querystring %}&{{ page_querystring }}{% endif %}">Last</a>
+                            </li>
+                            {% endif %}
+                        </ul>
+                    </nav>
+                    {% endif %}
+                </div>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox" style="font-size: 48px; color: #ccc;"></i>
+                <p class="text-muted mt-3 mb-0">No statements match these filters.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{{ analytics_data|json_script:"medical-bills-report-analytics" }}
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    const el = document.getElementById('medical-bills-report-analytics');
+    if (!el || typeof Chart === 'undefined') return;
+    let A;
+    try {
+        A = JSON.parse(el.textContent);
+    } catch (e) { return; }
+
+    const meta = A.meta || {};
+    const gLabel = document.getElementById('mbr-granularity-label');
+    if (gLabel) gLabel.textContent = meta.granularity === 'monthly' ? 'monthly' : 'daily';
+
+    const colors = ['#6366f1', '#8b5cf6', '#10b981', '#f59e0b', '#3b82f6', '#ec4899', '#64748b', '#14b8a6', '#ef4444'];
+
+    function doughnutMoneyOpts(amounts) {
+        return {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
+                tooltip: {
+                    callbacks: {
+                        afterLabel: function (ctx) {
+                            const i = ctx.dataIndex;
+                            const amt = amounts && amounts[i] != null ? amounts[i] : 0;
+                            return 'GHS ' + Number(amt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    const st = A.charts && A.charts.status;
+    if (st && st.labels && st.labels.length) {
+        const c = document.getElementById('mbrChartStatus');
+        if (c) {
+            new Chart(c, {
+                type: 'doughnut',
+                data: {
+                    labels: st.labels,
+                    datasets: [{ data: st.counts, backgroundColor: colors, borderWidth: 0 }]
+                },
+                options: doughnutMoneyOpts(st.amounts)
+            });
+        }
+    }
+
+    const at = A.charts && A.charts.account_type;
+    if (at && at.labels && at.labels.length && at.counts.some(function (n) { return n > 0; })) {
+        const c = document.getElementById('mbrChartAccountType');
+        if (c) {
+            new Chart(c, {
+                type: 'doughnut',
+                data: {
+                    labels: at.labels,
+                    datasets: [{ data: at.balances, backgroundColor: ['#4f46e5', '#0d9488'], borderWidth: 0 }]
+                },
+                options: doughnutMoneyOpts(at.balances)
+            });
+        }
+    }
+
+    const tr = A.charts && A.charts.trend;
+    if (tr && tr.labels && tr.labels.length) {
+        const c = document.getElementById('mbrChartTrend');
+        if (c) {
+            new Chart(c, {
+                type: 'bar',
+                data: {
+                    labels: tr.labels,
+                    datasets: [
+                        {
+                            label: 'Charges (GHS)',
+                            data: tr.charges || [],
+                            backgroundColor: 'rgba(99, 102, 241, 0.7)',
+                            borderRadius: 4
+                        },
+                        {
+                            label: 'Payments (GHS)',
+                            data: tr.payments || [],
+                            backgroundColor: 'rgba(16, 185, 129, 0.7)',
+                            borderRadius: 4
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { ticks: { maxRotation: 45, minRotation: 0, font: { size: 10 } } },
+                        y: { beginAtZero: true }
+                    },
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: {
+                            callbacks: {
+                                label: function (ctx) {
+                                    const v = ctx.parsed && ctx.parsed.y != null ? ctx.parsed.y : ctx.raw;
+                                    return ctx.dataset.label + ': GHS ' + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+})();
+</script>
+{% endblock %}

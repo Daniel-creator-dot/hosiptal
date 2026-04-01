@@ -1,0 +1,200 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Inventory Duplicates - HMS{% endblock %}
+{% block page_title %}Inventory Duplicate Detection{% endblock %}
+{% block page_subtitle %}Identify and merge duplicate inventory items{% endblock %}
+
+{% block extra_css %}
+<style>
+    .duplicate-group {
+        background: white;
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        border-left: 4px solid #ef4444;
+    }
+    
+    .duplicate-item {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        border: 1px solid #dee2e6;
+    }
+    
+    .duplicate-item.keep-item {
+        background: #d1fae5;
+        border-color: #10b981;
+        border-left: 4px solid #10b981;
+    }
+    
+    .merge-btn {
+        margin-top: 16px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Summary Cards -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title text-muted">Duplicate Groups</h5>
+                    <h2 class="mb-0">{{ total_groups }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title text-muted">Total Duplicates</h5>
+                    <h2 class="mb-0">{{ total_duplicates }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title text-muted">Actions</h5>
+                    <a href="{% url 'hospital:procurement_dashboard' %}" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-arrow-left"></i> Back to Dashboard
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    {% if duplicate_groups %}
+    <!-- Duplicate Groups -->
+    {% for group in duplicate_groups %}
+    <div class="duplicate-group">
+        <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+                <h4 class="mb-1">
+                    <i class="bi bi-exclamation-triangle text-danger"></i>
+                    {{ group.items.0.item_name }}
+                </h4>
+                <p class="text-muted mb-0">
+                    <strong>Store:</strong> {{ group.store_name }} | 
+                    <strong>Duplicates:</strong> {{ group.count }} items
+                </p>
+            </div>
+            <div class="text-end">
+                <div class="badge bg-danger">Merge Required</div>
+            </div>
+        </div>
+        
+        <div class="row mb-3">
+            <div class="col-md-3">
+                <small class="text-muted">Total Quantity</small>
+                <div class="h5 mb-0">{{ group.total_quantity|intcomma }}</div>
+            </div>
+            <div class="col-md-3">
+                <small class="text-muted">Total Value</small>
+                <div class="h5 mb-0">GHS {{ group.total_value|floatformat:2|intcomma }}</div>
+            </div>
+            <div class="col-md-3">
+                <small class="text-muted">Avg Cost</small>
+                <div class="h5 mb-0">GHS {{ group.avg_cost|floatformat:2|intcomma }}</div>
+            </div>
+            <div class="col-md-3">
+                <small class="text-muted">After Merge</small>
+                <div class="h5 mb-0 text-success">1 item</div>
+            </div>
+        </div>
+        
+        <hr>
+        
+        <h6 class="mb-3">Items in this group:</h6>
+        {% for item in group.items %}
+        <div class="duplicate-item {% if forloop.first %}keep-item{% endif %}">
+            <div class="d-flex justify-content-between align-items-start">
+                <div class="flex-grow-1">
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        {% if forloop.first %}
+                        <span class="badge bg-success">
+                            <i class="bi bi-check-circle"></i> Keep This
+                        </span>
+                        {% else %}
+                        <span class="badge bg-danger">
+                            <i class="bi bi-x-circle"></i> Merge
+                        </span>
+                        {% endif %}
+                        <strong>{{ item.item_name }}</strong>
+                    </div>
+                    <div class="row text-muted small">
+                        <div class="col-md-3">
+                            <strong>Code:</strong> {{ item.item_code|default:"-" }}
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Quantity:</strong> {{ item.quantity_on_hand|intcomma }}
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Cost:</strong> GHS {{ item.unit_cost|floatformat:2 }}
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Created:</strong> {{ item.created|date:"Y-m-d" }}
+                        </div>
+                    </div>
+                </div>
+                <div class="ms-3">
+                    <input type="checkbox" 
+                           class="form-check-input merge-checkbox" 
+                           data-item-id="{{ item.id }}"
+                           {% if not forloop.first %}checked{% endif %}>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+        
+        <div class="merge-btn">
+            <button class="btn btn-primary" onclick="mergeGroup({{ group.items.0.id }}, [{% for item in group.items %}{% if not forloop.first %}'{{ item.id }}'{% if not forloop.last %},{% endif %}{% endif %}{% endfor %}])">
+                <i class="bi bi-arrow-down-up"></i> Merge Duplicates
+            </button>
+        </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="alert alert-success">
+        <i class="bi bi-check-circle"></i> No duplicates found! Your inventory is clean.
+    </div>
+    {% endif %}
+</div>
+
+<script>
+function mergeGroup(keepId, mergeIds) {
+    if (!confirm('Are you sure you want to merge these duplicate items? This action cannot be undone.')) {
+        return;
+    }
+    
+    fetch('{% url "hospital:merge_duplicates" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}'
+        },
+        body: JSON.stringify({
+            keep_id: keepId,
+            merge_ids: mergeIds
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert('Error: ' + data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('An error occurred while merging duplicates.');
+    });
+}
+</script>
+{% endblock %}

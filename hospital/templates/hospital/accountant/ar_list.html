@@ -1,0 +1,167 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Accounts Receivable - HMS{% endblock %}
+{% block page_title %}Accounts Receivable{% endblock %}
+{% block page_subtitle %}Manage Accounts Receivable Entries{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header with Create Button -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-0"><i class="bi bi-receipt-cutoff me-2"></i>Accounts Receivable</h2>
+            <p class="text-muted mb-0">Manage all accounts receivable entries</p>
+        </div>
+        <a href="{% url 'hospital:ar_create' %}" class="btn btn-primary">
+            <i class="bi bi-plus-circle me-2"></i>Add New AR Entry
+        </a>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Status</label>
+                    <select name="status" class="form-select">
+                        <option value="">All</option>
+                        <option value="overdue" {% if status_filter == 'overdue' %}selected{% endif %}>Overdue</option>
+                        <option value="current" {% if status_filter == 'current' %}selected{% endif %}>Current</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Aging</label>
+                    <select name="aging" class="form-select">
+                        <option value="">All</option>
+                        <option value="current" {% if aging_filter == 'current' %}selected{% endif %}>Current</option>
+                        <option value="0-30" {% if aging_filter == '0-30' %}selected{% endif %}>0-30 Days</option>
+                        <option value="31-60" {% if aging_filter == '31-60' %}selected{% endif %}>31-60 Days</option>
+                        <option value="61-90" {% if aging_filter == '61-90' %}selected{% endif %}>61-90 Days</option>
+                        <option value="90+" {% if aging_filter == '90+' %}selected{% endif %}>90+ Days</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">&nbsp;</label>
+                    <div>
+                        <button type="submit" class="btn btn-primary me-2">
+                            <i class="bi bi-funnel me-1"></i>Filter
+                        </button>
+                        <a href="{% url 'hospital:ar_list' %}" class="btn btn-outline-secondary">
+                            <i class="bi bi-x-circle me-1"></i>Clear
+                        </a>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card border-0 shadow-sm" style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white;">
+                <div class="card-body">
+                    <h5 class="card-title">Total AR</h5>
+                    <h2 class="mb-0">GHS {{ total_ar|floatformat:2|intcomma }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card border-0 shadow-sm" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white;">
+                <div class="card-body">
+                    <h5 class="card-title">Overdue AR</h5>
+                    <h2 class="mb-0">GHS {{ overdue_ar|floatformat:2|intcomma }}</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AR List -->
+    <div class="card">
+        <div class="card-body">
+            {% if ar_list %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Invoice #</th>
+                            <th>Patient</th>
+                            <th>Invoice Amount</th>
+                            <th>Amount Paid</th>
+                            <th>Balance Due</th>
+                            <th>Due Date</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for ar in ar_list %}
+                        <tr>
+                            <td>
+                                {% if ar.invoice %}
+                                    <a href="{% url 'hospital:invoice_detail' ar.invoice.id %}">{{ ar.invoice.invoice_number }}</a>
+                                {% else %}
+                                    <span class="text-muted">Manual Entry</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:patient_detail' ar.patient.id %}">{{ ar.patient.full_name }}</a>
+                            </td>
+                            <td>GHS {{ ar.invoice_amount|floatformat:2|intcomma }}</td>
+                            <td>GHS {{ ar.amount_paid|floatformat:2|intcomma }}</td>
+                            <td>
+                                <strong class="{% if ar.is_overdue %}text-danger{% else %}text-success{% endif %}">
+                                    GHS {{ ar.balance_due|floatformat:2|intcomma }}
+                                </strong>
+                            </td>
+                            <td>{{ ar.due_date|date:"M d, Y" }}</td>
+                            <td>
+                                {% if ar.is_overdue %}
+                                    <span class="badge bg-danger">{{ ar.aging_bucket }} Days Overdue</span>
+                                {% else %}
+                                    <span class="badge bg-success">Current</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:ar_detail' ar.id %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                <a href="{% url 'hospital:ar_edit' ar.id %}" class="btn btn-sm btn-outline-warning">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            {% if ar_list.has_other_pages %}
+            <nav aria-label="Page navigation">
+                <ul class="pagination justify-content-center">
+                    {% if ar_list.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ ar_list.previous_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if aging_filter %}&aging={{ aging_filter }}{% endif %}">Previous</a>
+                    </li>
+                    {% endif %}
+                    <li class="page-item active">
+                        <span class="page-link">Page {{ ar_list.number }} of {{ ar_list.paginator.num_pages }}</span>
+                    </li>
+                    {% if ar_list.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ ar_list.next_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if aging_filter %}&aging={{ aging_filter }}{% endif %}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>No accounts receivable entries found.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -23,6 +23,8 @@ class Command(BaseCommand):
             {'code': 'WBC', 'name': 'White Blood Cell Count', 'specimen_type': 'Whole Blood', 'tat_minutes': 30, 'price': Decimal('20.00')},
             {'code': 'DIFF', 'name': 'Blood Film/Differential Count', 'specimen_type': 'Whole Blood', 'tat_minutes': 60, 'price': Decimal('30.00')},
             {'code': 'RETIC', 'name': 'Reticulocyte Count', 'specimen_type': 'Whole Blood', 'tat_minutes': 60, 'price': Decimal('40.00')},
+            {'code': 'BF', 'name': 'Blood Film', 'specimen_type': 'Whole Blood', 'tat_minutes': 60, 'price': Decimal('30.00')},
+            {'code': 'BF-MP', 'name': 'Blood Film for Malaria Parasite (Microscopy)', 'specimen_type': 'Whole Blood', 'tat_minutes': 45, 'price': Decimal('30.00')},
             
             # Malaria Tests
             {'code': 'MP-RDT', 'name': 'Malaria Rapid Diagnostic Test (RDT)', 'specimen_type': 'Whole Blood', 'tat_minutes': 15, 'price': Decimal('25.00')},
@@ -67,6 +69,7 @@ class Command(BaseCommand):
             {'code': 'HIV-ELISA', 'name': 'HIV ELISA', 'specimen_type': 'Serum', 'tat_minutes': 180, 'price': Decimal('80.00')},
             {'code': 'HBsAg', 'name': 'Hepatitis B Surface Antigen (HBsAg)', 'specimen_type': 'Serum', 'tat_minutes': 60, 'price': Decimal('50.00')},
             {'code': 'HBV', 'name': 'Hepatitis B Profile', 'specimen_type': 'Serum', 'tat_minutes': 120, 'price': Decimal('150.00')},
+            {'code': 'HBV-VL', 'name': 'Hepatitis B Viral Load', 'specimen_type': 'Plasma', 'tat_minutes': 2880, 'price': Decimal('450.00')},
             {'code': 'HCV', 'name': 'Hepatitis C Antibody', 'specimen_type': 'Serum', 'tat_minutes': 60, 'price': Decimal('60.00')},
             {'code': 'VDRL', 'name': 'VDRL (Syphilis Screening)', 'specimen_type': 'Serum', 'tat_minutes': 60, 'price': Decimal('40.00')},
             {'code': 'TPHA', 'name': 'TPHA (Syphilis Confirmation)', 'specimen_type': 'Serum', 'tat_minutes': 180, 'price': Decimal('60.00')},
@@ -75,6 +78,7 @@ class Command(BaseCommand):
             {'code': 'TB-MAN', 'name': 'Mantoux Test (TB)', 'specimen_type': 'Intradermal', 'tat_minutes': 2880, 'price': Decimal('40.00')},
             {'code': 'TB-GENE', 'name': 'TB GeneXpert', 'specimen_type': 'Sputum', 'tat_minutes': 120, 'price': Decimal('150.00')},
             {'code': 'AFB', 'name': 'Acid Fast Bacilli (AFB)', 'specimen_type': 'Sputum', 'tat_minutes': 120, 'price': Decimal('50.00')},
+            {'code': 'H-PYLORI', 'name': 'H. pylori (Helicobacter pylori)', 'specimen_type': 'Stool', 'tat_minutes': 60, 'price': Decimal('135.00')},
             {'code': 'CRP', 'name': 'C-Reactive Protein (CRP)', 'specimen_type': 'Serum', 'tat_minutes': 60, 'price': Decimal('50.00')},
             {'code': 'ASO', 'name': 'Anti-Streptolysin O (ASO)', 'specimen_type': 'Serum', 'tat_minutes': 120, 'price': Decimal('60.00')},
             {'code': 'RF', 'name': 'Rheumatoid Factor (RF)', 'specimen_type': 'Serum', 'tat_minutes': 120, 'price': Decimal('60.00')},
@@ -141,6 +145,7 @@ class Command(BaseCommand):
             {'code': 'APTT', 'name': 'Activated Partial Thromboplastin Time (APTT)', 'specimen_type': 'Citrated Plasma', 'tat_minutes': 60, 'price': Decimal('40.00')},
             {'code': 'INR', 'name': 'International Normalized Ratio (INR)', 'specimen_type': 'Citrated Plasma', 'tat_minutes': 60, 'price': Decimal('40.00')},
             {'code': 'D-DIM', 'name': 'D-Dimer', 'specimen_type': 'Citrated Plasma', 'tat_minutes': 120, 'price': Decimal('80.00')},
+            {'code': 'CLOT-Q', 'name': 'Clothing Profile - Quantitative', 'specimen_type': 'Citrated Plasma', 'tat_minutes': 120, 'price': Decimal('120.00')},
             
             # Microbiology
             {'code': 'BLOOD-C&S', 'name': 'Blood Culture & Sensitivity', 'specimen_type': 'Blood', 'tat_minutes': 5760, 'price': Decimal('150.00')},
@@ -159,10 +164,12 @@ class Command(BaseCommand):
             {'code': 'LDH', 'name': 'Lactate Dehydrogenase (LDH)', 'specimen_type': 'Serum', 'tat_minutes': 60, 'price': Decimal('60.00')},
             {'code': 'CK', 'name': 'Creatine Kinase (CK)', 'specimen_type': 'Serum', 'tat_minutes': 60, 'price': Decimal('60.00')},
             {'code': 'CK-MB', 'name': 'CK-MB (Cardiac)', 'specimen_type': 'Serum', 'tat_minutes': 120, 'price': Decimal('100.00')},
-            {'code': 'TROP', 'name': 'Troponin', 'specimen_type': 'Serum', 'tat_minutes': 60, 'price': Decimal('150.00')},
+            {'code': 'TROP', 'name': 'Troponin', 'specimen_type': 'Serum', 'tat_minutes': 60, 'price': Decimal('200.00')},
             {'code': 'BNP', 'name': 'Brain Natriuretic Peptide (BNP)', 'specimen_type': 'Serum', 'tat_minutes': 180, 'price': Decimal('200.00')},
             {'code': 'URIC', 'name': 'Uric Acid', 'specimen_type': 'Serum', 'tat_minutes': 60, 'price': Decimal('35.00')},
             {'code': 'LACT', 'name': 'Lactate', 'specimen_type': 'Whole Blood', 'tat_minutes': 30, 'price': Decimal('60.00')},
+            # Synovial fluid / crystal identification (qualitative: Seen / Not seen)
+            {'code': 'KNEE-UA', 'name': 'Knee joint aspirate for uric acid crystals, qualitative', 'specimen_type': 'Synovial fluid (knee aspirate)', 'tat_minutes': 60, 'price': Decimal('80.00')},
             
             # Semen Analysis
             {'code': 'SEMEN', 'name': 'Semen Analysis', 'specimen_type': 'Semen', 'tat_minutes': 120, 'price': Decimal('80.00')},
@@ -192,6 +199,20 @@ class Command(BaseCommand):
                 updated_count += 1
                 self.stdout.write(self.style.WARNING(f'Updated: {test.code} - {test.name}'))
         
+        # Invalidate lab tests cache so doctors see new tests in consultation
+        try:
+            from django.core.cache import cache
+            cache.delete('hms:active_lab_tests')
+            self.stdout.write(self.style.SUCCESS('Lab tests cache invalidated.'))
+            self.stdout.write(
+                self.style.WARNING(
+                    'If the new test does not appear on the consultation page: '
+                    'restart the Django server, or run: python manage.py invalidate_lab_tests_cache'
+                )
+            )
+        except Exception as e:
+            self.stdout.write(self.style.WARNING(f'Could not invalidate cache: {e}'))
+
         self.stdout.write(
             self.style.SUCCESS(
                 f'\nSuccessfully seeded lab tests!\n'

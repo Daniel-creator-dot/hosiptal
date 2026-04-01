@@ -9,12 +9,12 @@
         <div class="col-md-12">
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
-                    <li class="breadcrumb-item"><a href="{% url 'hospital:pharmacy_walkin_sales_list' %}">Walk-in Sales</a></li>
+                    <li class="breadcrumb-item"><a href="{% url 'hospital:pharmacy_walkin_sales_list' %}">Prescribe Sales</a></li>
                     <li class="breadcrumb-item"><a href="{% url 'hospital:pharmacy_walkin_sale_detail' sale.id %}">{{ sale.sale_number }}</a></li>
                     <li class="breadcrumb-item active">Dispense</li>
                 </ol>
             </nav>
-            <h2 class="fw-bold mb-1">🩺 Dispense Walk-in Sale</h2>
+            <h2 class="fw-bold mb-1">🩺 Dispense Prescribe Sale</h2>
             <p class="text-muted mb-0">Verify cashier payment before releasing medications. Stock will reduce automatically.</p>
         </div>
     </div>
@@ -28,23 +28,45 @@
                 <div class="card-body">
                     <div class="alert alert-info">
                         <strong>Status:</strong>
-                        {% if sale.payment_status == 'paid' %}
+                        {% if is_billed_to_company %}
+                            <span class="badge bg-info">Billed to {{ sale.payer.name|default:"Company" }}</span>
+                            <br><small>Invoice sent to company. Dispense now – stock will move.</small>
+                        {% elif sale.payment_status == 'paid' %}
                             <span class="badge bg-success">Payment Verified</span>
+                            <br><small>Cashier receipt recorded. Dispense to release stock.</small>
                         {% elif sale.payment_status == 'partial' %}
                             <span class="badge bg-warning text-dark">Partial Payment</span>
                         {% else %}
                             <span class="badge bg-danger">Payment Pending</span>
                         {% endif %}
-                        <br>
-                        <small>Cashier receipt required before dispensing.</small>
                     </div>
 
-                    {% if sale.payment_status != 'paid' %}
+                    {% if not can_dispense %}
                         <div class="alert alert-danger">
                             <i class="bi bi-exclamation-triangle"></i>
-                            Payment is not complete. Ask the customer to pay at cashier with sale number
-                            <strong>{{ sale.sale_number }}</strong> before dispensing.
+                            Payment is not complete on this sale record. If cash was already collected on the invoice,
+                            use <strong>Confirm payment collected</strong> below (pharmacy), or ask cashier to record payment with sale number
+                            <strong>{{ sale.sale_number }}</strong>.
                         </div>
+                        {% if show_payment_confirm %}
+                        <div class="card border-warning mb-3">
+                            <div class="card-body">
+                                <h6 class="card-title text-warning">Cash collected but sale still shows due?</h6>
+                                <p class="small text-muted mb-2">Use this only when payment was taken at cashier / invoice and the system did not update this sale — so you can dispense and move stock.</p>
+                                <form method="post">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="confirm_cash_collected_on_invoice">
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input" type="checkbox" name="confirm" id="id_confirm_invoice_paid" value="on" required>
+                                        <label class="form-check-label" for="id_confirm_invoice_paid">
+                                            I confirm full payment was received (cashier / invoice settled for this sale)
+                                        </label>
+                                    </div>
+                                    <button type="submit" class="btn btn-warning">Confirm payment collected</button>
+                                </form>
+                            </div>
+                        </div>
+                        {% endif %}
                     {% else %}
                         <form method="post">
                             {% csrf_token %}

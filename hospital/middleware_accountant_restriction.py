@@ -33,19 +33,19 @@ ACCOUNTING_ALLOWED_PATTERNS = [
     '/hms/staff/dashboard',  # Staff dashboard
     '/hms/staff/my-schedule',  # Staff schedule view
     '/hms/performance-reviews',  # Performance reviews
-    '/hms/admin',  # Admin panel access for accounting models
     '/hms/logout',
     '/hms/login',
     '/hms/static',
     '/hms/media',
-    '/admin',  # Django admin - full access for accountants
-    '/admin/',  # Django admin root
-    '/admin/logout',
+    '/accounting/petty-cash',  # Petty cash management
+    '/accounting/pv',  # Payment vouchers
     '/api/notifications',  # Allow notifications API
     '/api/hospital/invoice',  # Invoice API
     '/api/hospital/payment',  # Payment API
     '/hms/notifications/mark-all-read',  # Allow notification actions
+    '/hms/notifications/clear-all',  # Clear all notifications
     '/hms/notifications/',  # Allow notifications list
+    '/admin/',  # Allow Django admin for account management and other necessary features
 ]
 
 
@@ -87,16 +87,14 @@ class AccountantRestrictionMiddleware:
                     response = self.get_response(request)
                     return response
                 
-                # Always allow admin access for accountants with staff status
-                if current_path.startswith('/admin/'):
-                    # Accountants with staff status can access admin panel fully
-                    if request.user.is_staff:
-                        response = self.get_response(request)
-                        return response
-                    else:
-                        # If not staff, redirect to dashboard
-                        messages.error(request, "Admin access requires staff status.")
-                        return redirect('hospital:accountant_comprehensive_dashboard')
+                # Allow accountants to access admin panel for account management and other necessary features
+                # Only block admin dashboard, not the admin panel itself
+                if current_path.startswith('/hms/admin-dashboard'):
+                    messages.error(
+                        request, 
+                        "Access denied. Accountants can only access accounting, cashier, and financial features."
+                    )
+                    return redirect('hospital:accountant_comprehensive_dashboard')
                 
                 # Check if the current path is accounting-related
                 is_accounting_url = any(

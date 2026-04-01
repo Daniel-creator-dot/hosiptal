@@ -1,0 +1,333 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<style>
+    .flowboard-container {
+        padding: 20px;
+        background: #f8f9fa;
+        min-height: 100vh;
+    }
+    
+    .status-column {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .status-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 15px;
+        border-bottom: 2px solid #e9ecef;
+    }
+    
+    .status-title {
+        font-size: 18px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .status-count {
+        background: #667eea;
+        color: white;
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-weight: 600;
+    }
+    
+    .patient-card {
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 15px;
+        transition: all 0.3s;
+    }
+    
+    .patient-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        transform: translateY(-2px);
+    }
+    
+    .patient-name {
+        font-size: 16px;
+        font-weight: 600;
+        color: #212529;
+        margin-bottom: 8px;
+    }
+    
+    .patient-meta {
+        font-size: 13px;
+        color: #6c757d;
+        margin-bottom: 10px;
+    }
+    
+    .wait-time {
+        font-size: 18px;
+        font-weight: 700;
+        padding: 8px 15px;
+        border-radius: 6px;
+        display: inline-block;
+        margin-top: 10px;
+    }
+    
+    .wait-time.pending {
+        background: #fff3cd;
+        color: #856404;
+    }
+    
+    .wait-time.ready {
+        background: #d1ecf1;
+        color: #0c5460;
+    }
+    
+    .wait-time.urgent {
+        background: #f8d7da;
+        color: #721c24;
+        animation: blink 1s infinite;
+    }
+    
+    @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    
+    .stats-row {
+        margin-bottom: 30px;
+    }
+    
+    .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .stat-value {
+        font-size: 32px;
+        font-weight: 700;
+        color: #667eea;
+        margin: 10px 0;
+    }
+    
+    .stat-label {
+        font-size: 14px;
+        color: #6c757d;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+</style>
+
+<div class="flowboard-container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-capsule"></i> {{ title }}</h2>
+        <div>
+            <a href="{% url 'hospital:pharmacy_dashboard' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Dashboard
+            </a>
+        </div>
+    </div>
+    
+    <!-- Statistics -->
+    <div class="row stats-row">
+        <div class="col-md-4">
+            <div class="stat-card">
+                <div class="stat-label">Total Patients</div>
+                <div class="stat-value">{{ total_patients }}</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stat-card">
+                <div class="stat-label">Avg Wait Time</div>
+                <div class="stat-value">{{ avg_wait_time }} min</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stat-card">
+                <div class="stat-label">Delayed (>60 min)</div>
+                <div class="stat-value text-danger">{{ delayed_count }}</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Queue Columns -->
+    <div class="row">
+        <!-- Pending Payment -->
+        <div class="col-md-4">
+            <div class="status-column">
+                <div class="status-header">
+                    <div class="status-title">
+                        <i class="bi bi-clock-history text-warning"></i>
+                        Pending Payment
+                    </div>
+                    <span class="status-count">{{ queue_by_status.pending_payment|length }}</span>
+                </div>
+                
+                {% for patient in queue_by_status.pending_payment %}
+                <div class="patient-card">
+                    <div class="patient-name">{{ patient.patient_name }}</div>
+                    <div class="patient-meta">
+                        <div><i class="bi bi-person-badge"></i> MRN: {{ patient.mrn }}</div>
+                        <div><i class="bi bi-hospital"></i> {{ patient.encounter_type }}</div>
+                        {% if patient.drug %}
+                            <div><i class="bi bi-capsule"></i> {{ patient.drug.name }}</div>
+                            <div><i class="bi bi-123"></i> Qty: {{ patient.quantity }}</div>
+                        {% endif %}
+                    </div>
+                    <div class="wait-time pending {% if patient.wait_minutes > 60 %}urgent{% endif %}" 
+                         data-wait-minutes="{{ patient.wait_minutes }}"
+                         id="wait-{{ patient.encounter_id }}">
+                        <i class="bi bi-clock"></i> <span class="time-display">{{ patient.wait_minutes }}</span> min
+                    </div>
+                    <div class="mt-2">
+                        <a href="{% url 'hospital:pharmacy_dispense_enforced' patient.prescription.id %}" 
+                           class="btn btn-sm btn-warning">
+                            <i class="bi bi-eye"></i> View Details
+                        </a>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="text-center text-muted py-4">
+                    <i class="bi bi-inbox" style="font-size: 48px;"></i>
+                    <p class="mt-2">No patients waiting</p>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        
+        <!-- Ready to Dispense -->
+        <div class="col-md-4">
+            <div class="status-column">
+                <div class="status-header">
+                    <div class="status-title">
+                        <i class="bi bi-check-circle text-success"></i>
+                        Ready to Dispense
+                    </div>
+                    <span class="status-count bg-success">{{ queue_by_status.ready_to_dispense|length }}</span>
+                </div>
+                
+                {% for patient in queue_by_status.ready_to_dispense %}
+                <div class="patient-card">
+                    <div class="patient-name">{{ patient.patient_name }}</div>
+                    <div class="patient-meta">
+                        <div><i class="bi bi-person-badge"></i> MRN: {{ patient.mrn }}</div>
+                        <div><i class="bi bi-hospital"></i> {{ patient.encounter_type }}</div>
+                        {% if patient.drug %}
+                            <div><i class="bi bi-capsule"></i> {{ patient.drug.name }}</div>
+                            <div><i class="bi bi-123"></i> Qty: {{ patient.quantity }}</div>
+                        {% endif %}
+                    </div>
+                    <div class="wait-time ready {% if patient.wait_minutes > 60 %}urgent{% endif %}" 
+                         data-wait-minutes="{{ patient.wait_minutes }}"
+                         id="wait-{{ patient.encounter_id }}">
+                        <i class="bi bi-clock"></i> <span class="time-display">{{ patient.wait_minutes }}</span> min
+                    </div>
+                    <div class="mt-2">
+                        <a href="{% url 'hospital:pharmacy_dispense_enforced' patient.prescription.id %}" 
+                           class="btn btn-sm btn-success">
+                            <i class="bi bi-capsule"></i> Dispense Now
+                        </a>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="text-center text-muted py-4">
+                    <i class="bi bi-inbox" style="font-size: 48px;"></i>
+                    <p class="mt-2">No patients ready</p>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        
+        <!-- In Progress -->
+        <div class="col-md-4">
+            <div class="status-column">
+                <div class="status-header">
+                    <div class="status-title">
+                        <i class="bi bi-arrow-repeat text-info"></i>
+                        In Progress
+                    </div>
+                    <span class="status-count bg-info">{{ queue_by_status.in_progress|length }}</span>
+                </div>
+                
+                {% for patient in queue_by_status.in_progress %}
+                <div class="patient-card">
+                    <div class="patient-name">{{ patient.patient_name }}</div>
+                    <div class="patient-meta">
+                        <div><i class="bi bi-person-badge"></i> MRN: {{ patient.mrn }}</div>
+                        <div><i class="bi bi-hospital"></i> {{ patient.encounter_type }}</div>
+                        {% if patient.drug %}
+                            <div><i class="bi bi-capsule"></i> {{ patient.drug.name }}</div>
+                        {% endif %}
+                    </div>
+                    <div class="wait-time ready {% if patient.wait_minutes > 60 %}urgent{% endif %}" 
+                         data-wait-minutes="{{ patient.wait_minutes }}"
+                         id="wait-{{ patient.encounter_id }}">
+                        <i class="bi bi-clock"></i> <span class="time-display">{{ patient.wait_minutes }}</span> min
+                    </div>
+                    <div class="mt-2">
+                        {% if patient.prescription %}
+                            <a href="{% url 'hospital:pharmacy_dispense_enforced' patient.prescription.id %}" 
+                               class="btn btn-sm btn-primary">
+                                <i class="bi bi-eye"></i> View
+                            </a>
+                        {% else %}
+                            <a href="{% url 'hospital:patient_flow' patient.encounter_id %}" 
+                               class="btn btn-sm btn-primary">
+                                <i class="bi bi-eye"></i> View Flow
+                            </a>
+                        {% endif %}
+                    </div>
+                </div>
+                {% empty %}
+                <div class="text-center text-muted py-4">
+                    <i class="bi bi-inbox" style="font-size: 48px;"></i>
+                    <p class="mt-2">No patients in progress</p>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Auto-refresh every 15 seconds
+setInterval(function() {
+    location.reload();
+}, 15000);
+
+// Update wait times every minute (blinking effect)
+const startTime = Date.now();
+
+function updateWaitTimes() {
+    document.querySelectorAll('.wait-time').forEach(function(element) {
+        const waitMinutes = parseInt(element.getAttribute('data-wait-minutes')) || 0;
+        const timeDisplay = element.querySelector('.time-display');
+        if (timeDisplay) {
+            // Calculate elapsed time since page load
+            const elapsedMinutes = Math.floor((Date.now() - startTime) / 60000);
+            const newTime = waitMinutes + elapsedMinutes;
+            timeDisplay.textContent = newTime;
+            
+            // Add urgent class if > 60 minutes and start blinking
+            if (newTime > 60 && !element.classList.contains('urgent')) {
+                element.classList.add('urgent');
+            }
+        }
+    });
+}
+
+// Update every minute
+setInterval(updateWaitTimes, 60000);
+updateWaitTimes(); // Initial update
+</script>
+{% endblock %}

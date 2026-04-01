@@ -46,7 +46,7 @@ def sync_all_invoices():
                     'invoice_amount': invoice.total_amount,
                     'amount_paid': invoice.total_amount - invoice.balance,
                     'balance_due': invoice.balance,
-                    'due_date': invoice.due_date or (timezone.now().date() + timezone.timedelta(days=30)),
+                    'due_date': invoice.due_at.date() if invoice.due_at else (timezone.now().date() + timezone.timedelta(days=30)),
                 }
             )
             

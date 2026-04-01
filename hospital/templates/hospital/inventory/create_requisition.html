@@ -1,0 +1,294 @@
+{% extends "hospital/base.html" %}
+{% load static %}
+
+{% block title %}Create Inventory Requisition{% endblock %}
+
+{% block extra_css %}
+<style>
+    .form-section {
+        background: white;
+        border-radius: 12px;
+        padding: 30px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .store-items-section { margin-top: 1.5rem; }
+    .store-items-table { font-size: 0.9rem; }
+    .store-items-table th { white-space: nowrap; }
+    .store-items-table .qty-input { width: 5rem; text-align: right; }
+    .stock-ok { color: var(--bs-success); }
+    .stock-low { color: var(--bs-warning); }
+    .stock-zero { color: var(--bs-danger); }
+    #storeItemsLoading { min-height: 80px; display: flex; align-items: center; justify-content: center; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-md-10 offset-md-1">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h1 style="font-weight: 700; color: var(--dark);">
+                        <i class="bi bi-plus-circle"></i> Create Inventory Requisition
+                    </h1>
+                    <p class="text-muted mb-0">Request inventory items from a store</p>
+                </div>
+                <a href="{% url 'hospital:inventory:requisitions_list' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Back to List
+                </a>
+            </div>
+
+            <div class="form-section">
+                <form method="post" id="requisitionForm">
+                    {% csrf_token %}
+                    <input type="hidden" name="requisition_lines" id="requisition_lines" value="">
+                    {% if messages %}
+                        {% for message in messages %}
+                        <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                        {% endfor %}
+                    {% endif %}
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="department" class="form-label fw-semibold">Requesting Department <span class="text-danger">*</span></label>
+                            <select name="department" id="department" class="form-select" required>
+                                <option value="">Select Department</option>
+                                {% for dept in departments %}
+                                <option value="{{ dept.id }}">{{ dept.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="store" class="form-label fw-semibold">Request From Store <span class="text-danger">*</span></label>
+                            <select name="store" id="store" class="form-select" required>
+                                <option value="">Select Store</option>
+                                {% for store in stores %}
+                                <option value="{{ store.id }}" {% if initial_requested_from_store_id and store.id|stringformat:"s" == initial_requested_from_store_id %}selected{% endif %}>{{ store.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="priority" class="form-label fw-semibold">Priority</label>
+                            <select name="priority" id="priority" class="form-select">
+                                <option value="low">Low</option>
+                                <option value="normal" selected>Normal</option>
+                                <option value="high">High</option>
+                                <option value="urgent">Urgent/Emergency</option>
+                            </select>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="required_by_date" class="form-label fw-semibold">Required By Date</label>
+                            <input type="date" name="required_by_date" id="required_by_date" class="form-control">
+                        </div>
+
+                        <div class="col-12">
+                            <label for="purpose" class="form-label fw-semibold">Purpose/Justification <span class="text-danger">*</span></label>
+                            <textarea name="purpose" id="purpose" class="form-control" rows="4" required placeholder="Explain why these items are needed..."></textarea>
+                        </div>
+
+                        <div class="col-12">
+                            <label for="notes" class="form-label fw-semibold">Additional Notes</label>
+                            <textarea name="notes" id="notes" class="form-control" rows="3" placeholder="Any additional information..."></textarea>
+                        </div>
+
+                        <!-- Items in selected store: quantity left, last taken, request qty -->
+                        <div class="col-12 store-items-section">
+                            <label class="form-label fw-semibold d-block">Items in store</label>
+                            <p class="text-muted small mb-2">Select a store above to see items. Enter the quantity you want to request for each item.</p>
+                            <div id="storeItemsContainer">
+                                <div id="storeItemsPlaceholder" class="text-muted py-3 border rounded bg-light px-3">
+                                    <i class="bi bi-inbox"></i> Select a store above to load items.
+                                </div>
+                                <div id="storeItemsLoading" class="d-none py-3">
+                                    <span class="spinner-border spinner-border-sm me-2"></span> Loading items…
+                                </div>
+                                <div id="storeItemsError" class="alert alert-danger d-none" role="alert"></div>
+                                <div id="storeItemsTableWrap" class="d-none">
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-bordered store-items-table">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th>Item</th>
+                                                    <th>Qty in store</th>
+                                                    <th>Last taken</th>
+                                                    <th>Last taken (date)</th>
+                                                    <th>Unit</th>
+                                                    <th>Request qty</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="storeItemsBody"></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                <div id="storeItemsEmpty" class="text-muted py-3 d-none">No items in this store. Select another store or add items to the store first.</div>
+                            </div>
+                        </div>
+
+                        <div class="col-12">
+                            <hr>
+                            <div class="d-flex justify-content-end gap-2">
+                                <a href="{% url 'hospital:inventory:requisitions_list' %}" class="btn btn-outline-secondary">Cancel</a>
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-check-circle"></i> Create Requisition
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var apiUrl = '{{ api_store_items_url|escapejs }}';
+    var storeSelect = document.getElementById('store');
+    var placeholder = document.getElementById('storeItemsPlaceholder');
+    var loading = document.getElementById('storeItemsLoading');
+    var errEl = document.getElementById('storeItemsError');
+    var tableWrap = document.getElementById('storeItemsTableWrap');
+    var tbody = document.getElementById('storeItemsBody');
+    var emptyEl = document.getElementById('storeItemsEmpty');
+    if (!storeSelect || !loading || !errEl || !tableWrap || !tbody || !emptyEl) return;
+
+    var currentStoreId = null;
+    var currentItems = [];
+
+    function hidePlaceholder() { if (placeholder) placeholder.classList.add('d-none'); }
+    function showPlaceholder() {
+        if (placeholder) placeholder.classList.remove('d-none');
+        if (loading) loading.classList.add('d-none');
+        if (errEl) errEl.classList.add('d-none');
+        if (tableWrap) tableWrap.classList.add('d-none');
+        if (emptyEl) emptyEl.classList.add('d-none');
+    }
+    function showLoading(show) {
+        if (show) {
+            hidePlaceholder();
+            if (loading) loading.classList.remove('d-none');
+            if (tableWrap) tableWrap.classList.add('d-none');
+            if (errEl) errEl.classList.add('d-none');
+            if (emptyEl) emptyEl.classList.add('d-none');
+        } else {
+            if (loading) loading.classList.add('d-none');
+        }
+    }
+    function showError(msg) {
+        hidePlaceholder();
+        if (loading) loading.classList.add('d-none');
+        if (errEl) {
+            errEl.textContent = msg || 'Failed to load items.';
+            errEl.classList.remove('d-none');
+        }
+        if (tableWrap) tableWrap.classList.add('d-none');
+        if (emptyEl) emptyEl.classList.add('d-none');
+    }
+    function showTable(items) {
+        currentItems = items || [];
+        hidePlaceholder();
+        if (loading) loading.classList.add('d-none');
+        if (errEl) errEl.classList.add('d-none');
+        if (!items || items.length === 0) {
+            if (tableWrap) tableWrap.classList.add('d-none');
+            if (emptyEl) emptyEl.classList.remove('d-none');
+            return;
+        }
+        if (emptyEl) emptyEl.classList.add('d-none');
+        tbody.innerHTML = items.map(function(it) {
+            var qtyClass = it.available_quantity === 0 ? 'stock-zero' : (it.is_low_stock ? 'stock-low' : 'stock-ok');
+            var lastQty = it.last_issue_quantity != null ? it.last_issue_quantity : '—';
+            var lastDate = it.last_issue_date || '—';
+            var qty = it.available_quantity != null ? it.available_quantity : '—';
+            return '<tr data-item-id="' + (it.id || '') + '">' +
+                '<td><span class="fw-medium">' + (it.item_code || '') + '</span> ' + (it.item_name || '') + '</td>' +
+                '<td><span class="' + qtyClass + '">' + qty + '</span></td>' +
+                '<td>' + lastQty + '</td>' +
+                '<td>' + lastDate + '</td>' +
+                '<td>' + (it.unit_of_measure || 'units') + '</td>' +
+                '<td><input type="number" min="0" step="1" class="form-control form-control-sm qty-input store-qty-input" data-item-id="' + (it.id || '') + '" placeholder="0"></td>' +
+                '</tr>';
+        }).join('');
+        if (tableWrap) tableWrap.classList.remove('d-none');
+    }
+
+    function loadStoreItems(storeId) {
+        if (!storeId) {
+            currentStoreId = null;
+            currentItems = [];
+            showPlaceholder();
+            return;
+        }
+        currentStoreId = storeId;
+        showLoading(true);
+        if (!apiUrl) {
+            showError('Configuration error: API URL missing. Please contact support.');
+            return;
+        }
+        var url = apiUrl + (apiUrl.indexOf('?') !== -1 ? '&' : '?') + 'store_id=' + encodeURIComponent(storeId) + '&with_last_issue=1';
+        fetch(url, { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' } })
+            .then(function(r) {
+                var ct = (r.headers.get('content-type') || '').toLowerCase();
+                if (!r.ok) {
+                    if (ct.indexOf('application/json') !== -1) {
+                        return r.json().then(function(data) { throw new Error(data.error || 'Request failed'); });
+                    }
+                    throw new Error(r.status === 404 ? 'Store or API not found.' : r.status === 403 ? 'Access denied.' : 'Request failed (' + r.status + ').');
+                }
+                if (ct.indexOf('application/json') === -1) {
+                    throw new Error('Session may have expired. Please refresh the page and try again.');
+                }
+                return r.json();
+            })
+            .then(function(data) {
+                if (currentStoreId !== storeId) return;
+                showLoading(false);
+                if (data && data.error) { showError(data.error); return; }
+                showTable(data && data.items ? data.items : []);
+            })
+            .catch(function(e) {
+                if (currentStoreId !== storeId) return;
+                showLoading(false);
+                showError(e && e.message ? e.message : 'Could not load items. Try again.');
+            });
+    }
+
+    storeSelect.addEventListener('change', function() {
+        var id = (storeSelect.value || '').trim();
+        loadStoreItems(id || null);
+    });
+
+    var form = document.getElementById('requisitionForm');
+    if (form) {
+        form.addEventListener('submit', function() {
+            var inputs = document.querySelectorAll('.store-qty-input');
+            var lines = [];
+            inputs.forEach(function(inp) {
+                var qty = parseInt(inp.value, 10);
+                if (qty > 0 && inp.dataset.itemId) {
+                    lines.push({ item_id: inp.dataset.itemId, quantity: qty });
+                }
+            });
+            var hidden = document.getElementById('requisition_lines');
+            if (hidden) hidden.value = JSON.stringify(lines);
+        });
+    }
+
+    if (storeSelect.value && storeSelect.value.trim()) {
+        loadStoreItems(storeSelect.value.trim());
+    } else if (placeholder) {
+        placeholder.classList.remove('d-none');
+    }
+});
+</script>
+{% endblock %}
+

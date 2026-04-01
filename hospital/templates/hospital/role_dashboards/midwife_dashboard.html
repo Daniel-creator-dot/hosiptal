@@ -1,0 +1,1093 @@
+{% extends "hospital/base.html" %}
+{% load static %}
+
+{% block title %}Midwife Dashboard - Maternity Care{% endblock %}
+
+{% block extra_css %}
+<style>
+    .midwife-stat-card {
+        background: linear-gradient(135deg, #ec4899 0%, #f472b6 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 6px rgba(236, 72, 153, 0.2);
+        border: none;
+    }
+    .midwife-stat-card .stat-number {
+        font-size: 2.5rem;
+        font-weight: bold;
+        margin-bottom: 0.5rem;
+    }
+    .midwife-stat-card .stat-label {
+        font-size: 0.9rem;
+        opacity: 0.95;
+    }
+    .midwife-stat-card i {
+        font-size: 3rem;
+        opacity: 0.3;
+        position: absolute;
+        right: 1rem;
+        top: 50%;
+        transform: translateY(-50%);
+    }
+    .maternity-card {
+        border-left: 4px solid #ec4899;
+        margin-bottom: 1rem;
+        transition: all 0.3s ease;
+    }
+    .maternity-card:hover {
+        box-shadow: 0 4px 12px rgba(236, 72, 153, 0.15);
+        transform: translateY(-2px);
+    }
+    .pregnancy-badge {
+        background: #fce7f3;
+        color: #be185d;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    .antenatal-badge {
+        background: #dbeafe;
+        color: #1e40af;
+    }
+    .postnatal-badge {
+        background: #fef3c7;
+        color: #92400e;
+    }
+    .delivery-badge {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+    .quick-action-btn {
+        background: linear-gradient(135deg, #ec4899 0%, #f472b6 100%);
+        color: white;
+        border: none;
+        padding: 0.75rem 1.5rem;
+        border-radius: 8px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        text-decoration: none;
+        display: inline-block;
+    }
+    .quick-action-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(236, 72, 153, 0.3);
+        color: white;
+    }
+    .appointment-card {
+        background: #fef3c7;
+        border-left: 4px solid #f59e0b;
+        padding: 1rem;
+        margin-bottom: 0.75rem;
+        border-radius: 8px;
+    }
+    .patient-priority {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 0.5rem;
+    }
+    .priority-high { background: #ef4444; }
+    .priority-medium { background: #f59e0b; }
+    .priority-low { background: #10b981; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h2 class="mb-0">
+                        <i class="bi bi-heart-pulse-fill text-danger me-2"></i>
+                        Midwife Dashboard
+                    </h2>
+                    <p class="text-muted mb-0">
+                        <i class="bi bi-hospital me-1"></i>
+                        Maternity & Midwifery Care Management
+                        {% if maternity_dept %}
+                            <span class="badge bg-danger ms-2">{{ maternity_dept.name }}</span>
+                        {% endif %}
+                    </p>
+                </div>
+                <div>
+                    <a href="{% url 'hospital:encounter_create' %}" class="quick-action-btn">
+                        <i class="bi bi-plus-circle me-2"></i>New Maternity Visit
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Prominent: Bill Antenatal Items -->
+    <a href="{% url 'hospital:antenatal_items_billing' %}" class="text-decoration-none d-block mb-4">
+        <div class="p-4 rounded-3 d-flex align-items-center justify-content-between flex-wrap gap-3" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);">
+            <div class="d-flex align-items-center">
+                <i class="bi bi-capsule-fill me-3" style="font-size: 2.5rem; opacity: 0.9;"></i>
+                <div>
+                    <h5 class="mb-1 fw-bold">Bill Antenatal Items</h5>
+                    <p class="mb-0 opacity-90">Select patient and pharmacy items to create a bill</p>
+                </div>
+            </div>
+            <span class="btn btn-light text-success fw-bold">
+                <i class="bi bi-arrow-right-circle me-2"></i>Open
+            </span>
+        </div>
+    </a>
+
+    <!-- Midwife-Specific Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-3 mb-3">
+            <div class="midwife-stat-card position-relative">
+                <div class="stat-number">{{ stats.antenatal_visits_today }}</div>
+                <div class="stat-label">Antenatal Visits Today</div>
+                <i class="bi bi-calendar-heart"></i>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="midwife-stat-card position-relative">
+                <div class="stat-number">{{ stats.postnatal_visits_today }}</div>
+                <div class="stat-label">Postnatal Visits Today</div>
+                <i class="bi bi-heart-fill"></i>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="midwife-stat-card position-relative">
+                <div class="stat-number">{{ stats.active_maternity_cases }}</div>
+                <div class="stat-label">Active Maternity Cases</div>
+                <i class="bi bi-clipboard-pulse"></i>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="midwife-stat-card position-relative">
+                <div class="stat-number">{{ stats.upcoming_appointments }}</div>
+                <div class="stat-label">Upcoming Appointments</div>
+                <i class="bi bi-calendar-check"></i>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Section - Outstanding Visualizations -->
+    <div class="row mb-4">
+        <div class="col-12 mb-3">
+            <h4 class="mb-0">
+                <i class="bi bi-bar-chart-fill text-danger me-2"></i>
+                Maternity Care Analytics & Trends
+            </h4>
+            <p class="text-muted">Visual insights into maternity care patterns</p>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <!-- Monthly Trends Chart -->
+        <div class="col-lg-8 mb-4">
+            <div class="card maternity-card">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-graph-up me-2"></i>
+                        Monthly Visit Trends (Last 6 Months)
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="monthlyTrendsChart" style="max-height: 350px;"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Visit Types Distribution -->
+        <div class="col-lg-4 mb-4">
+            <div class="card maternity-card">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-pie-chart me-2"></i>
+                        Visit Types Distribution
+                    </h5>
+                    <small class="text-white-50">Last 30 Days</small>
+                </div>
+                <div class="card-body">
+                    <canvas id="visitTypesChart" style="max-height: 250px;"></canvas>
+                    <div class="mt-3">
+                        {% for type, count in visit_types_data.items %}
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span>
+                                {% if type == 'Antenatal' %}
+                                    <span class="pregnancy-badge antenatal-badge">{{ type }}</span>
+                                {% elif type == 'Postnatal' %}
+                                    <span class="pregnancy-badge postnatal-badge">{{ type }}</span>
+                                {% elif type == 'Delivery' %}
+                                    <span class="pregnancy-badge delivery-badge">{{ type }}</span>
+                                {% else %}
+                                    <span class="pregnancy-badge">{{ type }}</span>
+                                {% endif %}
+                            </span>
+                            <strong class="text-danger">{{ count }}</strong>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <!-- Weekly Trends Chart -->
+        <div class="col-lg-12 mb-4">
+            <div class="card maternity-card">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0">
+                        <i class="bi bi-calendar-week me-2"></i>
+                        Weekly Visit Trends (Last 4 Weeks)
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="weeklyTrendsChart" style="max-height: 300px;"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Active Maternity Cases -->
+        <div class="col-lg-7 mb-4">
+            <div class="card maternity-card">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-clipboard-pulse me-2"></i>
+                        Active Maternity Cases
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% if active_maternity_encounters %}
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Patient</th>
+                                        <th>Visit Type</th>
+                                        <th>Date</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for encounter in active_maternity_encounters %}
+                                    <tr>
+                                        <td>
+                                            <strong>{{ encounter.patient.get_full_name }}</strong>
+                                            <br>
+                                            <small class="text-muted">MRN: {{ encounter.patient.mrn }}</small>
+                                        </td>
+                                        <td>
+                                            {% if 'antenatal' in encounter.encounter_type|lower|default:'' %}
+                                                <span class="pregnancy-badge antenatal-badge">Antenatal</span>
+                                            {% elif 'postnatal' in encounter.encounter_type|lower|default:'' %}
+                                                <span class="pregnancy-badge postnatal-badge">Postnatal</span>
+                                            {% elif 'delivery' in encounter.encounter_type|lower|default:'' %}
+                                                <span class="pregnancy-badge delivery-badge">Delivery</span>
+                                            {% else %}
+                                                <span class="pregnancy-badge">Maternity</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ encounter.created|date:"M d, Y" }}</td>
+                                        <td>
+                                            <span class="badge bg-success">Active</span>
+                                        </td>
+                                        <td>
+                                            <a href="{% url 'hospital:encounter_detail' encounter.id %}" class="btn btn-sm btn-outline-primary">
+                                                <i class="bi bi-eye"></i> View
+                                            </a>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="text-center py-4">
+                            <i class="bi bi-inbox fs-1 text-muted"></i>
+                            <p class="text-muted mt-2">No active maternity cases</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Upcoming Appointments -->
+        <div class="col-lg-5 mb-4">
+            <div class="card maternity-card">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0">
+                        <i class="bi bi-calendar-check me-2"></i>
+                        Upcoming Appointments
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% if upcoming_appointments %}
+                        <div class="list-group list-group-flush">
+                            {% for appointment in upcoming_appointments %}
+                            <div class="appointment-card">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div class="flex-grow-1">
+                                        <h6 class="mb-1">
+                                            <i class="bi bi-person-circle me-1"></i>
+                                            {{ appointment.patient.get_full_name }}
+                                        </h6>
+                                        <small class="text-muted d-block">
+                                            <i class="bi bi-calendar me-1"></i>
+                                            {{ appointment.appointment_date|date:"M d, Y" }}
+                                            {% if appointment.appointment_time %}
+                                                at {{ appointment.appointment_time|time:"g:i A" }}
+                                            {% endif %}
+                                        </small>
+                                        {% if appointment.reason %}
+                                            <small class="text-muted d-block mt-1">
+                                                <i class="bi bi-info-circle me-1"></i>{{ appointment.reason|truncatewords:10 }}
+                                            </small>
+                                        {% endif %}
+                                    </div>
+                                    <span class="badge bg-warning text-dark">{{ appointment.status|title }}</span>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="text-center py-4">
+                            <i class="bi bi-calendar-x fs-1 text-muted"></i>
+                            <p class="text-muted mt-2">No upcoming appointments</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Recent Maternity Patients -->
+        <div class="col-lg-6 mb-4">
+            <div class="card maternity-card">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-people-fill me-2"></i>
+                        Recent Maternity Patients
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% if recent_maternity_patients %}
+                        <div class="list-group list-group-flush">
+                            {% for patient in recent_maternity_patients %}
+                            <div class="list-group-item">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div class="flex-grow-1">
+                                        <h6 class="mb-1">
+                                            <i class="bi bi-person-circle me-1"></i>
+                                            {{ patient.get_full_name }}
+                                        </h6>
+                                        <small class="text-muted d-block">MRN: {{ patient.mrn }}</small>
+                                        {% if patient.phone_number %}
+                                            <small class="text-muted d-block">
+                                                <i class="bi bi-telephone me-1"></i>{{ patient.phone_number }}
+                                            </small>
+                                        {% endif %}
+                                    </div>
+                                    <div>
+                                        <a href="{% url 'hospital:patient_detail' patient.id %}" class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+                                        <a href="{% url 'hospital:encounter_create' %}?patient={{ patient.id }}" class="btn btn-sm btn-outline-success">
+                                            <i class="bi bi-plus-circle"></i>
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="text-center py-4">
+                            <i class="bi bi-inbox fs-1 text-muted"></i>
+                            <p class="text-muted mt-2">No recent maternity patients</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Pending Vital Signs -->
+        <div class="col-lg-6 mb-4">
+            <div class="card maternity-card">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0">
+                        <i class="bi bi-thermometer-half me-2"></i>
+                        Pending Vital Signs
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% if pending_vitals %}
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Patient</th>
+                                        <th>Last Vitals</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for encounter in pending_vitals %}
+                                    <tr>
+                                        <td>
+                                            <strong>{{ encounter.patient.get_full_name }}</strong>
+                                            <br>
+                                            <small class="text-muted">{{ encounter.patient.mrn }}</small>
+                                        </td>
+                                        <td>
+                                            {% if encounter.vitals.exists %}
+                                                <small>{{ encounter.vitals.first.recorded_at|date:"M d, Y" }}</small>
+                                            {% else %}
+                                                <span class="text-danger small">Not recorded</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <a href="{% url 'hospital:encounter_detail' encounter.id %}" class="btn btn-sm btn-primary">
+                                                <i class="bi bi-plus-circle"></i> Record
+                                            </a>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="text-center py-4">
+                            <i class="bi bi-check-circle fs-1 text-success"></i>
+                            <p class="text-success mt-2">All vital signs are up to date!</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Midwife Quick Actions -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-lightning-charge me-2"></i>
+                        Quick Actions
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:encounter_create' %}" class="quick-action-btn w-100 text-center">
+                                <i class="bi bi-plus-circle me-2"></i>New Antenatal Visit
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:antenatal_items_billing' %}" class="quick-action-btn w-100 text-center" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none;">
+                                <i class="bi bi-capsule me-2"></i>Bill Antenatal Items
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:patient_list' %}?gender=F" class="quick-action-btn w-100 text-center">
+                                <i class="bi bi-people-fill me-2"></i>Maternity Patients
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:encounter_list' %}" class="quick-action-btn w-100 text-center">
+                                <i class="bi bi-clipboard-pulse me-2"></i>All Encounters
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:vitals_dashboard_legacy' %}" class="quick-action-btn w-100 text-center">
+                                <i class="bi bi-thermometer-half me-2"></i>Vital Signs
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:frontdesk_appointment_list' %}" class="quick-action-btn w-100 text-center">
+                                <i class="bi bi-calendar-check me-2"></i>Appointments
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:appointment_create' %}" class="quick-action-btn w-100 text-center">
+                                <i class="bi bi-calendar-plus me-2"></i>Schedule Visit
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:midwife_records' %}" class="quick-action-btn w-100 text-center">
+                                <i class="bi bi-file-medical me-2"></i>Maternity Records
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:patient_list' %}" class="quick-action-btn w-100 text-center">
+                                <i class="bi bi-search me-2"></i>Search Patients
+                            </a>
+                        </div>
+                        <!-- Nursing Features (Midwives can act as nurses) -->
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:triage_dashboard_enhanced' %}" class="quick-action-btn w-100 text-center" style="background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);">
+                                <i class="bi bi-clipboard-pulse me-2"></i>Triage Dashboard
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:nurse_dashboard' %}" class="quick-action-btn w-100 text-center" style="background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);">
+                                <i class="bi bi-heart-fill me-2"></i>Nursing Dashboard
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:nurse_patient_flowboard' %}" class="quick-action-btn w-100 text-center" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                <i class="bi bi-diagram-3 me-2"></i>Nurse Flowboard
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:bed_management_worldclass' %}" class="quick-action-btn w-100 text-center" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                <i class="bi bi-columns-gap me-2"></i>Bed Manager
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:admission_list' %}" class="quick-action-btn w-100 text-center" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                <i class="bi bi-hospital me-2"></i>Admissions
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:admission_create' %}" class="quick-action-btn w-100 text-center" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                <i class="bi bi-plus-circle me-2"></i>New Admission
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:admitted_patients_list' %}" class="quick-action-btn w-100 text-center" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                <i class="bi bi-people me-2"></i>Admitted Patients
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:orders_list' %}" class="quick-action-btn w-100 text-center" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                <i class="bi bi-clipboard-check me-2"></i>Orders
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:screening_dashboard' %}" class="quick-action-btn w-100 text-center" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                <i class="bi bi-clipboard2-check me-2"></i>Pre-admission Screening
+                            </a>
+                        </div>
+                        <div class="col-md-3 col-sm-6">
+                            <a href="{% url 'hospital:flow_dashboard' %}" class="quick-action-btn w-100 text-center" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                <i class="bi bi-diagram-3 me-2"></i>Patient Flow
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Nursing Features Section (Midwives can act as nurses) -->
+    {% if assigned_wards or ward_patients or triage_patients %}
+    <div class="row mt-4">
+        <div class="col-12 mb-3">
+            <h4 class="mb-0">
+                <i class="bi bi-heart-fill text-info me-2"></i>
+                Nursing Features (Midwife as Nurse)
+            </h4>
+            <p class="text-muted">Access nursing duties including triage, ward management, and patient care</p>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Triage Patients -->
+        {% if triage_patients %}
+        <div class="col-lg-6 mb-4">
+            <div class="card maternity-card">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-clipboard-pulse me-2"></i>
+                        Triage Patients
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Patient</th>
+                                    <th>Priority</th>
+                                    <th>Wait Time</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for triage in triage_patients|slice:":10" %}
+                                <tr>
+                                    <td>
+                                        <strong>
+                                            {% if triage.encounter.patient %}
+                                                {% if triage.encounter.patient.full_name %}
+                                                    {{ triage.encounter.patient.full_name }}
+                                                {% elif triage.encounter.patient.first_name or triage.encounter.patient.last_name %}
+                                                    {{ triage.encounter.patient.first_name|default:"" }} {{ triage.encounter.patient.last_name|default:"" }}
+                                                {% else %}
+                                                    {{ triage.encounter.patient.mrn|default:"Unknown" }}
+                                                {% endif %}
+                                            {% else %}
+                                                Unknown
+                                            {% endif %}
+                                        </strong>
+                                        <br>
+                                        <small class="text-muted">
+                                            {% if triage.encounter.patient.mrn %}
+                                                MRN: {{ triage.encounter.patient.mrn }}
+                                            {% endif %}
+                                        </small>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-{% if 'esi_1' in triage.triage_level or 'mts_red' in triage.triage_level %}danger{% elif 'esi_2' in triage.triage_level or 'mts_orange' in triage.triage_level %}warning{% else %}info{% endif %}">
+                                            {{ triage.get_triage_level_display|default:triage.triage_level }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <small>{{ triage.wait_time_minutes|default:0 }} min</small>
+                                    </td>
+                                    <td>
+                                        <a href="{% url 'hospital:encounter_detail' triage.encounter.id %}" class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-eye"></i> View
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="mt-3 text-center">
+                        <a href="{% url 'hospital:triage_dashboard_enhanced' %}" class="btn btn-info">
+                            <i class="bi bi-clipboard-pulse me-2"></i>View All Triage Patients
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Ward Patients & Bed Status -->
+        {% if assigned_wards or ward_patients %}
+        <div class="col-lg-6 mb-4">
+            <div class="card maternity-card">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-hospital me-2"></i>
+                        Ward Management
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% if assigned_wards %}
+                    <div class="mb-3">
+                        <h6>Assigned Wards ({{ stats.assigned_wards }})</h6>
+                        <div class="d-flex flex-wrap gap-2">
+                            {% for ward in assigned_wards|slice:":5" %}
+                            <span class="badge bg-success">{{ ward.name|default:ward.code }}</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if ward_patients %}
+                    <div class="mb-3">
+                        <h6>Ward Patients ({{ stats.ward_patients }})</h6>
+                        <div class="list-group list-group-flush">
+                            {% for patient in ward_patients|slice:":5" %}
+                            <div class="list-group-item">
+                                <div class="d-flex justify-content-between">
+                                    <div>
+                                        <strong>
+                                            {% if patient.full_name %}
+                                                {{ patient.full_name }}
+                                            {% elif patient.first_name or patient.last_name %}
+                                                {{ patient.first_name|default:"" }} {{ patient.last_name|default:"" }}
+                                            {% else %}
+                                                {{ patient.mrn|default:"Unknown" }}
+                                            {% endif %}
+                                        </strong>
+                                        <br>
+                                        <small class="text-muted">MRN: {{ patient.mrn|default:"-" }}</small>
+                                    </div>
+                                    <a href="{% url 'hospital:patient_detail' patient.id %}" class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-eye"></i>
+                                    </a>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if bed_status %}
+                    <div>
+                        <h6>Bed Status</h6>
+                        <div class="d-flex justify-content-between mb-2">
+                            <span>Total Beds: <strong>{{ stats.total_beds }}</strong></span>
+                            <span>Occupied: <strong class="text-danger">{{ stats.occupied_beds }}</strong></span>
+                            <span>Available: <strong class="text-success">{{ stats.total_beds|add:"-"|add:stats.occupied_beds }}</strong></span>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2">
+                            {% for bed in bed_status|slice:":10" %}
+                            <span class="badge bg-{% if bed.status == 'occupied' %}danger{% elif bed.status == 'available' %}success{% else %}warning{% endif %}">
+                                {{ bed.bed_number|default:bed.code }}
+                            </span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Pending Medications (Nursing Duty) -->
+    {% if pending_medications %}
+    <div class="row mt-4">
+        <div class="col-12 mb-4">
+            <div class="card maternity-card">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0">
+                        <i class="bi bi-capsule me-2"></i>
+                        Pending Medication Administration ({{ stats.pending_medications }})
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Patient</th>
+                                    <th>Medication</th>
+                                    <th>Status</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for med in pending_medications|slice:":10" %}
+                                <tr>
+                                    <td>
+                                        <strong>
+                                            {% if med.encounter.patient %}
+                                                {% if med.encounter.patient.full_name %}
+                                                    {{ med.encounter.patient.full_name }}
+                                                {% elif med.encounter.patient.first_name or med.encounter.patient.last_name %}
+                                                    {{ med.encounter.patient.first_name|default:"" }} {{ med.encounter.patient.last_name|default:"" }}
+                                                {% else %}
+                                                    {{ med.encounter.patient.mrn|default:"Unknown" }}
+                                                {% endif %}
+                                            {% else %}
+                                                Unknown
+                                            {% endif %}
+                                        </strong>
+                                    </td>
+                                    <td>
+                                        {% if med.prescription and med.prescription.drug %}
+                                            {{ med.prescription.drug.name|default:"-" }}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-warning">{{ med.get_status_display|default:med.status }}</span>
+                                    </td>
+                                    <td>
+                                        <a href="{% url 'hospital:encounter_detail' med.encounter.id %}" class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-eye"></i> View
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<!-- Chart.js Library -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Chart colors - Midwife theme (pink/red)
+    const midwifeColors = {
+        antenatal: {
+            border: 'rgba(59, 130, 246, 1)',      // Blue for antenatal
+            background: 'rgba(59, 130, 246, 0.1)'
+        },
+        postnatal: {
+            border: 'rgba(245, 158, 11, 1)',      // Yellow/Orange for postnatal
+            background: 'rgba(245, 158, 11, 0.1)'
+        },
+        delivery: {
+            border: 'rgba(239, 68, 68, 1)',       // Red for delivery
+            background: 'rgba(239, 68, 68, 0.1)'
+        },
+        general: {
+            border: 'rgba(236, 72, 153, 1)',      // Pink for general
+            background: 'rgba(236, 72, 153, 0.1)'
+        }
+    };
+
+    // Monthly Trends Chart
+    const monthlyCtx = document.getElementById('monthlyTrendsChart');
+    if (monthlyCtx) {
+        new Chart(monthlyCtx, {
+            type: 'line',
+            data: {
+                labels: {{ chart_months|safe }},
+                datasets: [{
+                    label: 'Antenatal Visits',
+                    data: {{ antenatal_data|safe }},
+                    borderColor: midwifeColors.antenatal.border,
+                    backgroundColor: midwifeColors.antenatal.background,
+                    tension: 0.4,
+                    fill: true,
+                    borderWidth: 3,
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
+                    pointBackgroundColor: midwifeColors.antenatal.border,
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2
+                }, {
+                    label: 'Postnatal Visits',
+                    data: {{ postnatal_data|safe }},
+                    borderColor: midwifeColors.postnatal.border,
+                    backgroundColor: midwifeColors.postnatal.background,
+                    tension: 0.4,
+                    fill: true,
+                    borderWidth: 3,
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
+                    pointBackgroundColor: midwifeColors.postnatal.border,
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 15,
+                            font: {
+                                size: 13,
+                                weight: '600'
+                            }
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        padding: 12,
+                        titleFont: {
+                            size: 14,
+                            weight: 'bold'
+                        },
+                        bodyFont: {
+                            size: 13
+                        },
+                        borderColor: '#ec4899',
+                        borderWidth: 2,
+                        cornerRadius: 8
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            precision: 0,
+                            font: {
+                                size: 12
+                            }
+                        },
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        }
+                    },
+                    x: {
+                        ticks: {
+                            font: {
+                                size: 12
+                            }
+                        },
+                        grid: {
+                            display: false
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Visit Types Distribution Chart (Doughnut)
+    const visitTypesCtx = document.getElementById('visitTypesChart');
+    if (visitTypesCtx) {
+        const visitTypesData = {{ visit_types_data_json|safe }};
+        const labels = Object.keys(visitTypesData);
+        const data = Object.values(visitTypesData);
+        
+        new Chart(visitTypesCtx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: data,
+                    backgroundColor: [
+                        'rgba(59, 130, 246, 0.8)',    // Antenatal - Blue
+                        'rgba(245, 158, 11, 0.8)',    // Postnatal - Yellow
+                        'rgba(239, 68, 68, 0.8)',     // Delivery - Red
+                        'rgba(236, 72, 153, 0.8)'     // General - Pink
+                    ],
+                    borderColor: [
+                        'rgba(59, 130, 246, 1)',
+                        'rgba(245, 158, 11, 1)',
+                        'rgba(239, 68, 68, 1)',
+                        'rgba(236, 72, 153, 1)'
+                    ],
+                    borderWidth: 3,
+                    hoverOffset: 10
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 12,
+                            font: {
+                                size: 12,
+                                weight: '600'
+                            }
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        padding: 12,
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.label || '';
+                                if (label) {
+                                    label += ': ';
+                                }
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const percentage = total > 0 ? ((context.parsed / total) * 100).toFixed(1) : 0;
+                                label += context.parsed + ' visits (' + percentage + '%)';
+                                return label;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Weekly Trends Chart
+    const weeklyCtx = document.getElementById('weeklyTrendsChart');
+    if (weeklyCtx) {
+        new Chart(weeklyCtx, {
+            type: 'bar',
+            data: {
+                labels: {{ weekly_labels|safe }},
+                datasets: [{
+                    label: 'Antenatal Visits',
+                    data: {{ weekly_antenatal|safe }},
+                    backgroundColor: 'rgba(59, 130, 246, 0.8)',
+                    borderColor: 'rgba(59, 130, 246, 1)',
+                    borderWidth: 2,
+                    borderRadius: 8
+                }, {
+                    label: 'Postnatal Visits',
+                    data: {{ weekly_postnatal|safe }},
+                    backgroundColor: 'rgba(245, 158, 11, 0.8)',
+                    borderColor: 'rgba(245, 158, 11, 1)',
+                    borderWidth: 2,
+                    borderRadius: 8
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 15,
+                            font: {
+                                size: 13,
+                                weight: '600'
+                            }
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        padding: 12,
+                        borderColor: '#ec4899',
+                        borderWidth: 2
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            precision: 0,
+                            font: {
+                                size: 12
+                            }
+                        },
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        }
+                    },
+                    x: {
+                        ticks: {
+                            font: {
+                                size: 12
+                            }
+                        },
+                        grid: {
+                            display: false
+                        }
+                    }
+                }
+            }
+        });
+    }
+});
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+
+

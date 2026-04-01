@@ -29,7 +29,7 @@ class Command(BaseCommand):
             {
                 'service_code': 'consultation_specialist',
                 'description': 'Specialist Consultation Fee',
-                'default_price': Decimal('100.00'),
+                'default_price': Decimal('300.00'),  # Updated to 300 for cash patients
                 'currency': 'GHS'
             },
             {

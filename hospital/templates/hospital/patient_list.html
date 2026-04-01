@@ -1,6 +1,7 @@
 {% extends 'hospital/base.html' %}
 {% load static %}
 {% load humanize %}
+{% load hospital_extras %}
 
 {% block title %}Patients - HMS{% endblock %}
 {% block page_title %}Patients{% endblock %}
@@ -106,11 +107,13 @@
     <form method="get" class="row g-3 align-items-end">
         <div class="col-md-8">
             <label class="form-label" style="font-size: 13px; font-weight: 600; color: var(--gray);">Search Patients</label>
-            <input type="text" class="form-control form-control-modern" name="q" placeholder="Search by name, MRN, phone, or email..." value="{{ query }}">
+            <input type="text" class="form-control form-control-modern" name="q" id="patientSearchInput" placeholder="Search by name, MRN, phone, or email..." value="{{ query }}" autocomplete="off" title="Enter text" placeholder="Enter text">
+            <input type="hidden" name="patient_id" id="selectedPatientId" value="">
+            <input type="hidden" name="patient_url" id="selectedPatientUrl" value="">
         </div>
         <div class="col-md-2">
             <label class="form-label" style="font-size: 13px; font-weight: 600; color: var(--gray);">Source</label>
-            <select class="form-select form-control-modern" name="source">
+            <select class="form-select form-control-modern" name="source" title="Select option" aria-label="Select option">
                 <option value="all" {% if source == 'all' %}selected{% endif %}>All ({{ new_count|add:legacy_count }})</option>
                 <option value="new" {% if source == 'new' %}selected{% endif %}>New System ({{ new_count }})</option>
                 <option value="legacy" {% if source == 'legacy' %}selected{% endif %}>Imported Legacy ({{ legacy_count }})</option>
@@ -122,6 +125,31 @@
             </button>
         </div>
     </form>
+    
+    <!-- Selected Patient Display Section -->
+    <div id="selectedPatientDisplay" style="display: none; margin-top: 20px; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; color: white;">
+        <div class="d-flex justify-content-between align-items-start">
+            <div class="flex-grow-1">
+                <h5 style="margin: 0 0 8px 0; font-weight: 600;">
+                    <i class="bi bi-person-check"></i> Selected Patient
+                </h5>
+                <div id="selectedPatientInfo" style="font-size: 14px; line-height: 1.8;">
+                    <!-- Patient info will be populated here -->
+                </div>
+            </div>
+            <div class="d-flex gap-2">
+                <a href="#" id="viewPatientBtn" class="btn btn-light btn-sm" style="border-radius: 8px;">
+                    <i class="bi bi-eye"></i> View
+                </a>
+                <a href="#" id="createVisitBtn" class="btn btn-success btn-sm" style="border-radius: 8px;">
+                    <i class="bi bi-clipboard-plus"></i> Create Visit
+                </a>
+                <button type="button" class="btn btn-light btn-sm" onclick="clearSelectedPatient()" style="border-radius: 8px;">
+                    <i class="bi bi-x"></i> Clear
+                </button>
+            </div>
+        </div>
+    </div>
     {% if legacy_count > 0 %}
     <div class="alert alert-info mt-3 mb-0" style="font-size: 13px;">
         <i class="bi bi-info-circle"></i> <strong>{{ legacy_count|intcomma }} imported legacy patients</strong> are now available! 
@@ -212,6 +240,7 @@
             <div class="patient-info flex-grow-1">
                 <h5>
                     <a href="{{ patient.view_url }}">{{ patient.name }}</a>
+                    {% if patient.django_patient %}{% patient_payer_badges patient.django_patient %}{% endif %}
                     {% if patient.source == 'legacy' %}
                     <span class="badge bg-secondary" style="font-size: 10px; font-weight: 500; margin-left: 8px;">Legacy</span>
                     {% else %}
@@ -244,42 +273,8 @@
     </div>
     {% endfor %}
     
-    <!-- Pagination -->
-    {% if page_obj and page_obj.has_other_pages %}
-    <nav aria-label="Page navigation" class="mt-4">
-        <ul class="pagination justify-content-center">
-            {% if page_obj and page_obj.has_previous %}
-                <li class="page-item">
-                    <a class="page-link" href="?page=1{% if query %}&q={{ query }}{% endif %}{% if source %}&source={{ source }}{% endif %}" style="border-radius: 10px 0 0 10px; border-color: var(--border);">
-                        First
-                    </a>
-                </li>
-                <li class="page-item">
-                    <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if query %}&q={{ query }}{% endif %}{% if source %}&source={{ source }}{% endif %}" style="border-color: var(--border);">
-                        Previous
-                    </a>
-                </li>
-            {% endif %}
-            <li class="page-item active">
-                <span class="page-link" style="background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); border: none; border-radius: 10px; margin: 0 5px;">
-                    Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
-                </span>
-            </li>
-            {% if page_obj and page_obj.has_next %}
-                <li class="page-item">
-                    <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if query %}&q={{ query }}{% endif %}{% if source %}&source={{ source }}{% endif %}" style="border-color: var(--border);">
-                        Next
-                    </a>
-                </li>
-                <li class="page-item">
-                    <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}{% if query %}&q={{ query }}{% endif %}{% if source %}&source={{ source }}{% endif %}" style="border-radius: 0 10px 10px 0; border-color: var(--border);">
-                        Last
-                    </a>
-                </li>
-            {% endif %}
-        </ul>
-    </nav>
-    {% endif %}
+    <!-- Pagination: full HTML built in view to avoid INVALID on server -->
+    {% if pagination_html %}{{ pagination_html|safe }}{% endif %}
 {% elif not patients or patients|length == 0 %}
     <div class="modern-card text-center" style="padding: 60px 20px;">
         <div style="font-size: 64px; margin-bottom: 20px; opacity: 0.3;">👥</div>
@@ -301,4 +296,117 @@
         {% endif %}
     </div>
 {% endif %}
+
+<script>
+// Initialize autocomplete for patient search
+document.addEventListener('DOMContentLoaded', function() {
+    const patientSearchInput = document.getElementById('patientSearchInput');
+    if (patientSearchInput) {
+        const sourceSelect = document.querySelector('select[name="source"]');
+        const patientIdField = document.getElementById('selectedPatientId');
+        const patientUrlField = document.getElementById('selectedPatientUrl');
+        const selectedPatientDisplay = document.getElementById('selectedPatientDisplay');
+        const selectedPatientInfo = document.getElementById('selectedPatientInfo');
+        const viewPatientBtn = document.getElementById('viewPatientBtn');
+        const createVisitBtn = document.getElementById('createVisitBtn');
+
+        // Function to show selected patient
+        function showSelectedPatient(patient) {
+            if (!selectedPatientDisplay || !selectedPatientInfo) return;
+            
+            // Build patient info HTML
+            let infoHtml = `<div style="margin-bottom: 8px;"><strong>${patient.name || patient.display || 'Unknown'}</strong></div>`;
+            if (patient.mrn && patient.mrn !== 'N/A') {
+                infoHtml += `<div style="margin-bottom: 4px;"><i class="bi bi-card-text"></i> MRN: ${patient.mrn}</div>`;
+            }
+            if (patient.phone && patient.phone !== 'N/A') {
+                infoHtml += `<div style="margin-bottom: 4px;"><i class="bi bi-telephone"></i> ${patient.phone}</div>`;
+            }
+            if (patient.email && patient.email !== 'N/A') {
+                infoHtml += `<div><i class="bi bi-envelope"></i> ${patient.email}</div>`;
+            }
+            
+            selectedPatientInfo.innerHTML = infoHtml;
+            selectedPatientDisplay.style.display = 'block';
+            
+            // Smooth scroll to show the selected patient section
+            setTimeout(() => {
+                selectedPatientDisplay.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }, 100);
+            
+            // Set button URLs
+            if (viewPatientBtn && patient.view_url) {
+                viewPatientBtn.href = patient.view_url;
+            }
+            if (createVisitBtn) {
+                // Use quick_visit_url from API if available, otherwise construct it
+                if (patient.quick_visit_url) {
+                    createVisitBtn.href = patient.quick_visit_url;
+                    createVisitBtn.style.display = 'inline-block';
+                } else if (patient.id && patient.source !== 'legacy' && !patient.id.toString().startsWith('legacy-')) {
+                    // Construct quick visit URL for new system patients
+                    const patientId = patient.id.toString().replace('legacy-', '');
+                    createVisitBtn.href = `/hms/patients/${patientId}/quick-visit/`;
+                    createVisitBtn.style.display = 'inline-block';
+                } else {
+                    // Legacy patients - hide create visit button
+                    createVisitBtn.style.display = 'none';
+                }
+            }
+        }
+
+        // Function to clear selected patient
+        window.clearSelectedPatient = function() {
+            if (patientSearchInput) patientSearchInput.value = '';
+            if (patientIdField) patientIdField.value = '';
+            if (patientUrlField) patientUrlField.value = '';
+            if (selectedPatientDisplay) selectedPatientDisplay.style.display = 'none';
+            if (selectedPatientInfo) selectedPatientInfo.innerHTML = '';
+        };
+
+        // If user edits the text, clear any previously selected patient
+        patientSearchInput.addEventListener('input', function() {
+            if (patientIdField) patientIdField.value = '';
+            if (patientUrlField) patientUrlField.value = '';
+            if (selectedPatientDisplay) selectedPatientDisplay.style.display = 'none';
+        });
+
+        // If the user selected a patient from suggestions, the Search button should take them directly to that record.
+        const form = patientSearchInput.closest('form');
+        if (form) {
+            form.addEventListener('submit', function(e) {
+                if (patientUrlField && patientUrlField.value) {
+                    e.preventDefault();
+                    window.location.href = patientUrlField.value;
+                }
+            });
+        }
+
+        new AutocompleteSearch(patientSearchInput, {
+            apiUrl: '{% url "hospital:api_autocomplete_patients" %}',
+            minChars: 2,
+            delay: 300,
+            maxResults: 20,
+            displayField: 'display',
+            valueField: 'id',
+            resultsKey: 'results',
+            subtextField: 'subtext',
+            showNoResults: false, // don't show a big "No results found" popup
+            extraParams: function() {
+                // Ensure autocomplete matches the Source filter (All/New/Legacy)
+                return sourceSelect ? { source: sourceSelect.value } : {};
+            },
+            onSelect: function(patient, input) {
+                // Set the input value
+                input.value = patient.display;
+                // Store selection for Search button behavior
+                if (patientIdField) patientIdField.value = patient.id || '';
+                if (patientUrlField) patientUrlField.value = patient.view_url || '';
+                // Show selected patient in display section
+                showSelectedPatient(patient);
+            }
+        });
+    }
+});
+</script>
 {% endblock %}

@@ -1,0 +1,168 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Activity Log Detail{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-3">
+        <div class="col-12 d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+                <h4 class="mb-1">Activity Log Detail</h4>
+                <p class="text-muted mb-0">What was done, who it involved, and technical context.</p>
+            </div>
+            <div class="d-flex gap-2 flex-wrap">
+                <a href="{% url 'hospital:audit_logs' %}" class="btn btn-primary">
+                    <i class="bi bi-shield-check me-1"></i>Audit Activities
+                </a>
+                <a href="{% url 'hospital:activity_logs' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left me-1"></i>Back to Activity Logs
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Plain-language summary (from enriched logging) -->
+    <div class="card border-0 shadow-sm mb-4 border-start border-primary border-4">
+        <div class="card-body">
+            <h5 class="card-title"><i class="bi bi-info-circle me-2"></i>What actually happened</h5>
+            {% if activity_meta.summary %}
+            <p class="mb-2 lead fs-6">{{ activity_meta.summary }}</p>
+            {% endif %}
+            <p class="mb-0 text-muted small"><strong>Logged line:</strong> {{ log.description }}</p>
+            {% if activity_meta.submitted_patient_name and not activity_meta.patient %}
+            <p class="mb-0 mt-2"><span class="badge bg-secondary">New registration (form)</span> {{ activity_meta.submitted_patient_name }}</p>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if activity_meta.patient %}
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white"><strong><i class="bi bi-person-heart me-2"></i>Patient</strong></div>
+        <div class="card-body">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <div>
+                    <h5 class="mb-1">{{ activity_meta.patient.name }}</h5>
+                    {% if activity_meta.patient.mrn %}<span class="badge bg-light text-dark">MRN {{ activity_meta.patient.mrn }}</span>{% endif %}
+                </div>
+                <a href="{% url 'hospital:patient_detail' activity_meta.patient.id %}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-box-arrow-up-right me-1"></i>Open patient record
+                </a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if activity_meta.walk_in_customer %}
+    <div class="alert alert-light border mb-4">
+        <strong>Walk-in customer:</strong> {{ activity_meta.walk_in_customer }}
+        {% if activity_meta.pharmacy_sale_number %}<span class="text-muted ms-2">Sale {{ activity_meta.pharmacy_sale_number }}</span>{% endif %}
+    </div>
+    {% endif %}
+
+    {% if activity_meta.drugs_sold %}
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white"><strong><i class="bi bi-capsule me-2"></i>Medications (sale / prescription)</strong></div>
+        <div class="table-responsive">
+            <table class="table table-sm mb-0">
+                <thead class="table-light"><tr><th>Drug</th><th>Quantity</th></tr></thead>
+                <tbody>
+                    {% for row in activity_meta.drugs_sold %}
+                    <tr><td>{{ row.name }}</td><td>{{ row.quantity }}</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if activity_meta.prescription_drug %}
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white"><strong><i class="bi bi-prescription2 me-2"></i>Prescription dispense</strong></div>
+        <div class="card-body">
+            <p class="mb-1"><strong>{{ activity_meta.prescription_drug.name }}</strong> — qty {{ activity_meta.prescription_drug.quantity }}</p>
+            {% if activity_meta.prescription_drug.dose %}<p class="mb-0 text-muted small">Dose: {{ activity_meta.prescription_drug.dose }}</p>{% endif %}
+            {% if activity_meta.drug_dispensed %}<p class="mb-0 mt-2"><span class="badge bg-info text-dark">Stock line</span> {{ activity_meta.drug_dispensed }}</p>{% endif %}
+        </div>
+    </div>
+    {% elif activity_meta.drug_dispensed %}
+    <div class="alert alert-info mb-4 py-2"><strong>Dispensed drug:</strong> {{ activity_meta.drug_dispensed }}</div>
+    {% endif %}
+
+    {% if activity_meta.lab_test %}
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white"><strong><i class="bi bi-droplet me-2"></i>Laboratory</strong></div>
+        <div class="card-body">
+            <p class="mb-0"><strong>{{ activity_meta.lab_test.name }}</strong>{% if activity_meta.lab_test.status %} <span class="badge bg-secondary">{{ activity_meta.lab_test.status }}</span>{% endif %}</p>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if activity_meta.imaging %}
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white"><strong><i class="bi bi-radioactive me-2"></i>Imaging</strong></div>
+        <div class="card-body">
+            <p class="mb-1"><strong>{{ activity_meta.imaging.study_type }}</strong> — {{ activity_meta.imaging.modality }}</p>
+            <p class="mb-0 text-muted small">Body part: {{ activity_meta.imaging.body_part }}</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <small class="text-muted d-block">Timestamp</small>
+                    <strong>{{ log.created|date:"Y-m-d H:i:s" }}</strong>
+                    <div class="small text-muted">{{ log.created|naturaltime }}</div>
+                </div>
+                <div class="col-md-6">
+                    <small class="text-muted d-block">User</small>
+                    <strong>{% if log.user %}{{ log.user.username }}{% else %}System{% endif %}</strong>
+                </div>
+                <div class="col-md-6">
+                    <small class="text-muted d-block">Activity Type</small>
+                    <span class="badge bg-info">{{ log.activity_type }}</span>
+                </div>
+                <div class="col-md-6">
+                    <small class="text-muted d-block">Session Key</small>
+                    <code>{{ log.session_key|default:"-" }}</code>
+                </div>
+                <div class="col-md-6">
+                    <small class="text-muted d-block">IP Address</small>
+                    <strong>{{ log.ip_address|default:"-" }}</strong>
+                </div>
+                <div class="col-md-6">
+                    <small class="text-muted d-block">Activity ID</small>
+                    <code>{{ log.id }}</code>
+                </div>
+                <div class="col-12">
+                    <small class="text-muted d-block">Description (stored)</small>
+                    <div class="p-3 rounded bg-light border">{{ log.description }}</div>
+                </div>
+                <div class="col-12">
+                    <small class="text-muted d-block">User Agent</small>
+                    <div class="p-3 rounded bg-light border text-break">{{ log.user_agent|default:"-" }}</div>
+                </div>
+                <div class="col-12">
+                    <small class="text-muted d-block">Metadata (JSON)</small>
+                    <div class="p-3 rounded bg-light border">
+                        {% if metadata_pretty %}
+                            <pre class="mb-0 small text-break">{{ metadata_pretty }}</pre>
+                        {% else %}
+                            <span class="text-muted">No extra metadata (older log or path not resolved).</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% if activity_meta.path %}
+                <div class="col-12">
+                    <a href="{{ activity_meta.path }}" class="btn btn-primary">
+                        <i class="bi bi-box-arrow-up-right me-1"></i>Open Related Page
+                    </a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

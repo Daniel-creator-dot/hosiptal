@@ -1,0 +1,749 @@
+{% extends "hospital/base.html" %}
+{% load humanize %}
+{% load static %}
+
+{% block title %}Inventory Analytics - World-Class Inventory Management{% endblock %}
+
+{% block extra_css %}
+<style>
+    .analytics-container {
+        padding: 20px;
+        background: #f8f9fa;
+        min-height: 100vh;
+    }
+    
+    .chart-card {
+        background: white;
+        border-radius: 16px;
+        padding: 30px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        margin-bottom: 25px;
+    }
+    
+    .chart-card h5 {
+        font-weight: 700;
+        color: #1f2937;
+        margin-bottom: 20px;
+        padding-bottom: 15px;
+        border-bottom: 2px solid #e5e7eb;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .chart-container {
+        position: relative;
+        height: 350px;
+        margin-top: 20px;
+    }
+    
+    .chart-container-small {
+        position: relative;
+        height: 250px;
+        margin-top: 20px;
+    }
+    
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+    
+    .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 25px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        border-left: 4px solid #6366f1;
+        transition: transform 0.2s;
+    }
+    
+    .stat-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.12);
+    }
+    
+    .stat-card.success {
+        border-left-color: #10b981;
+    }
+    
+    .stat-card.warning {
+        border-left-color: #f59e0b;
+    }
+    
+    .stat-card.danger {
+        border-left-color: #ef4444;
+    }
+    
+    .stat-card.info {
+        border-left-color: #3b82f6;
+    }
+    
+    .stat-card h6 {
+        color: #6b7280;
+        font-size: 0.875rem;
+        margin-bottom: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 600;
+    }
+    
+    .stat-card .stat-value {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: #1f2937;
+        margin-bottom: 5px;
+    }
+    
+    .stat-card .stat-label {
+        color: #9ca3af;
+        font-size: 0.875rem;
+    }
+    
+    .table-container {
+        background: white;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    }
+    
+    .filter-section {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 25px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    }
+    
+    .metrics-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="analytics-container">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1 style="font-weight: 700; color: var(--dark);">
+                <i class="bi bi-graph-up-arrow"></i> Inventory Analytics
+            </h1>
+            <p class="text-muted mb-0">Comprehensive inventory insights, trends, and performance metrics</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:inventory:inventory_dashboard' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Dashboard
+            </a>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="filter-section">
+        <form method="get" class="row g-3">
+            <div class="col-md-4">
+                <label for="store" class="form-label fw-semibold">Store</label>
+                <select name="store" id="store" class="form-select">
+                    <option value="">All Stores</option>
+                    {% for store in all_stores %}
+                    <option value="{{ store.id }}" {% if selected_store == store.id|stringformat:"s" %}selected{% endif %}>{{ store.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label for="days" class="form-label fw-semibold">Time Period</label>
+                <select name="days" id="days" class="form-select">
+                    <option value="7" {% if days == 7 %}selected{% endif %}>Last 7 Days</option>
+                    <option value="30" {% if days == 30 %}selected{% endif %}>Last 30 Days</option>
+                    <option value="60" {% if days == 60 %}selected{% endif %}>Last 60 Days</option>
+                    <option value="90" {% if days == 90 %}selected{% endif %}>Last 90 Days</option>
+                    <option value="180" {% if days == 180 %}selected{% endif %}>Last 6 Months</option>
+                    <option value="365" {% if days == 365 %}selected{% endif %}>Last Year</option>
+                </select>
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-funnel"></i> Apply Filters
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Key Metrics -->
+    <div class="stats-grid">
+        <div class="stat-card info">
+            <h6><i class="bi bi-currency-dollar"></i> Total Inventory Value</h6>
+            <div class="stat-value">₵{{ total_inventory_value|floatformat:2|intcomma }}</div>
+            <div class="stat-label">Current stock value</div>
+        </div>
+        <div class="stat-card success">
+            <h6><i class="bi bi-box-seam"></i> Total Items</h6>
+            <div class="stat-value">{{ stock_status.total|intcomma }}</div>
+            <div class="stat-label">Active inventory items</div>
+        </div>
+        <div class="stat-card warning">
+            <h6><i class="bi bi-exclamation-triangle"></i> Low Stock</h6>
+            <div class="stat-value">{{ stock_status.low_stock|intcomma }}</div>
+            <div class="stat-label">Below reorder level</div>
+        </div>
+        <div class="stat-card danger">
+            <h6><i class="bi bi-x-circle"></i> Out of Stock</h6>
+            <div class="stat-value">{{ stock_status.out_of_stock|intcomma }}</div>
+            <div class="stat-label">Zero quantity items</div>
+        </div>
+        <div class="stat-card info">
+            <h6><i class="bi bi-arrow-repeat"></i> Turnover Rate</h6>
+            <div class="stat-value">{{ turnover_rate|floatformat:2 }}x</div>
+            <div class="stat-label">Annual inventory turnover</div>
+        </div>
+        <div class="stat-card success">
+            <h6><i class="bi bi-arrow-down-up"></i> Transfers</h6>
+            <div class="stat-value">{{ transfers.in|add:transfers.out|intcomma }}</div>
+            <div class="stat-label">In: {{ transfers.in }} | Out: {{ transfers.out }}</div>
+        </div>
+    </div>
+
+    <!-- Charts Row 1 -->
+    <div class="row">
+        <div class="col-md-6">
+            <div class="chart-card">
+                <h5><i class="bi bi-pie-chart"></i> Stock Status Breakdown</h5>
+                <div class="chart-container-small">
+                    <canvas id="stockStatusChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="chart-card">
+                <h5><i class="bi bi-bar-chart"></i> Inventory Value by Store</h5>
+                <div class="chart-container-small">
+                    <canvas id="inventoryByStoreChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row 2 -->
+    <div class="row">
+        <div class="col-md-6">
+            <div class="chart-card">
+                <h5><i class="bi bi-pie-chart-fill"></i> Inventory Value by Category</h5>
+                <div class="chart-container-small">
+                    <canvas id="inventoryByCategoryChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="chart-card">
+                <h5><i class="bi bi-graph-up"></i> Monthly Inventory Value Trend</h5>
+                <div class="chart-container-small">
+                    <canvas id="monthlyTrendChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Daily Transaction Trends Chart -->
+    <div class="chart-card">
+        <h5><i class="bi bi-bar-chart-line"></i> Daily Transaction Trends</h5>
+        <div class="chart-container">
+            <canvas id="dailyTransactionsChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Transaction Types Breakdown -->
+    {% if transactions_by_type %}
+    <div class="chart-card">
+        <h5><i class="bi bi-pie-chart"></i> Transaction Types Breakdown</h5>
+        <div class="chart-container">
+            <canvas id="transactionTypesChart"></canvas>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Top Items by Value -->
+    {% if top_items_by_value %}
+    <div class="chart-card">
+        <h5><i class="bi bi-trophy"></i> Top 10 Items by Value</h5>
+        <div class="chart-container">
+            <canvas id="topItemsChart"></canvas>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Fast Moving Items -->
+    {% if fast_moving %}
+    <div class="table-container">
+        <div class="p-3 border-bottom bg-light">
+            <h5 class="mb-0"><i class="bi bi-speedometer2"></i> Fast Moving Items (Top 10)</h5>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Item Name</th>
+                        <th>Store</th>
+                        <th>Quantity on Hand</th>
+                        <th>Transactions ({{ days }} days)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in fast_moving %}
+                    <tr>
+                        <td><strong>{{ item.item_name }}</strong></td>
+                        <td>
+                            {% if item.store %}
+                                {{ item.store.name }}
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ item.quantity_on_hand|intcomma }}</td>
+                        <td><span class="badge bg-success">{{ item.usage|default:0|intcomma }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Slow Moving Items -->
+    {% if slow_moving %}
+    <div class="table-container mt-4">
+        <div class="p-3 border-bottom bg-light">
+            <h5 class="mb-0"><i class="bi bi-hourglass-split"></i> Slow Moving Items (Low Activity)</h5>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Item Name</th>
+                        <th>Store</th>
+                        <th>Quantity on Hand</th>
+                        <th>Transactions ({{ days }} days)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in slow_moving %}
+                    <tr>
+                        <td><strong>{{ item.item_name }}</strong></td>
+                        <td>
+                            {% if item.store %}
+                                {{ item.store.name }}
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ item.quantity_on_hand|intcomma }}</td>
+                        <td><span class="badge bg-warning">{{ item.usage|default:0|intcomma }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Empty State -->
+    {% if not transactions_by_type and not fast_moving and not slow_moving and not inventory_by_store %}
+    <div class="text-center py-5">
+        <i class="bi bi-graph-down" style="font-size: 4rem; color: #d1d5db;"></i>
+        <h4 class="mt-3 text-muted">No Analytics Data</h4>
+        <p class="text-muted">There is no transaction data for the selected period.</p>
+        <a href="{% url 'hospital:inventory:inventory_dashboard' %}" class="btn btn-primary mt-3">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </a>
+    </div>
+    {% endif %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+// Stock Status Breakdown Chart
+const stockStatusData = {
+    labels: ['In Stock', 'Low Stock', 'Out of Stock'],
+    data: [
+        {{ stock_status.in_stock|default:0 }},
+        {{ stock_status.low_stock|default:0 }},
+        {{ stock_status.out_of_stock|default:0 }}
+    ],
+    colors: ['#10b981', '#f59e0b', '#ef4444']
+};
+
+const stockStatusCtx = document.getElementById('stockStatusChart');
+if (stockStatusCtx) {
+    new Chart(stockStatusCtx, {
+        type: 'doughnut',
+        data: {
+            labels: stockStatusData.labels,
+            datasets: [{
+                data: stockStatusData.data,
+                backgroundColor: stockStatusData.colors,
+                borderWidth: 2,
+                borderColor: '#fff'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+}
+
+// Inventory Value by Store Chart
+{% if inventory_by_store %}
+const storeData = {
+    labels: [
+        {% for store in inventory_by_store %}
+        '{{ store.name|truncatewords:3 }}'{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    ],
+    values: [
+        {% for store in inventory_by_store %}
+        {{ store.total_value|default:0|floatformat:2 }}{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    ]
+};
+
+const storeCtx = document.getElementById('inventoryByStoreChart');
+if (storeCtx) {
+    new Chart(storeCtx, {
+        type: 'bar',
+        data: {
+            labels: storeData.labels,
+            datasets: [{
+                label: 'Inventory Value (₵)',
+                data: storeData.values,
+                backgroundColor: 'rgba(99, 102, 241, 0.8)',
+                borderColor: '#6366f1',
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return '₵' + value.toLocaleString();
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+{% endif %}
+
+// Inventory Value by Category Chart
+{% if inventory_by_category %}
+const categoryData = {
+    labels: [
+        {% for cat in inventory_by_category %}
+        '{{ cat.category__name|truncatewords:2 }}'{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    ],
+    values: [
+        {% for cat in inventory_by_category %}
+        {{ cat.total_value|default:0|floatformat:2 }}{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    ]
+};
+
+const categoryCtx = document.getElementById('inventoryByCategoryChart');
+if (categoryCtx) {
+    new Chart(categoryCtx, {
+        type: 'pie',
+        data: {
+            labels: categoryData.labels,
+            datasets: [{
+                data: categoryData.values,
+                backgroundColor: [
+                    'rgba(99, 102, 241, 0.8)',
+                    'rgba(16, 185, 129, 0.8)',
+                    'rgba(245, 158, 11, 0.8)',
+                    'rgba(239, 68, 68, 0.8)',
+                    'rgba(59, 130, 246, 0.8)',
+                    'rgba(139, 92, 246, 0.8)',
+                    'rgba(236, 72, 153, 0.8)',
+                    'rgba(14, 165, 233, 0.8)',
+                    'rgba(34, 197, 94, 0.8)',
+                    'rgba(251, 146, 60, 0.8)'
+                ],
+                borderWidth: 2,
+                borderColor: '#fff'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+}
+{% endif %}
+
+// Monthly Trend Chart
+{% if monthly_trends %}
+const monthlyData = {
+    labels: [
+        {% for trend in monthly_trends %}
+        '{{ trend.period }}'{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    ],
+    values: [
+        {% for trend in monthly_trends %}
+        {{ trend.value|floatformat:2 }}{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    ]
+};
+
+const monthlyCtx = document.getElementById('monthlyTrendChart');
+if (monthlyCtx) {
+    new Chart(monthlyCtx, {
+        type: 'line',
+        data: {
+            labels: monthlyData.labels,
+            datasets: [{
+                label: 'Inventory Value (₵)',
+                data: monthlyData.values,
+                borderColor: '#6366f1',
+                backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return '₵' + value.toLocaleString();
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+{% endif %}
+
+// Daily Transactions Chart
+{% if daily_transactions %}
+const dailyData = {
+    labels: [
+        {% for transaction in daily_transactions %}
+        '{{ transaction.day|date:"M d" }}'{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    ],
+    transactions: [
+        {% for transaction in daily_transactions %}
+        {{ transaction.count|default:0 }}{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    ],
+    values: [
+        {% for transaction in daily_transactions %}
+        {{ transaction.total_value|default:0|floatformat:2 }}{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    ]
+};
+
+const dailyCtx = document.getElementById('dailyTransactionsChart');
+if (dailyCtx) {
+    new Chart(dailyCtx, {
+        type: 'line',
+        data: {
+            labels: dailyData.labels,
+            datasets: [
+                {
+                    label: 'Transaction Count',
+                    data: dailyData.transactions,
+                    borderColor: '#6366f1',
+                    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                    tension: 0.4,
+                    fill: true,
+                    yAxisID: 'y'
+                },
+                {
+                    label: 'Total Value (₵)',
+                    data: dailyData.values,
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    tension: 0.4,
+                    fill: true,
+                    yAxisID: 'y1'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top'
+                }
+            },
+            scales: {
+                y: {
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Transaction Count'
+                    }
+                },
+                y1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Value (₵)'
+                    },
+                    grid: {
+                        drawOnChartArea: false
+                    }
+                }
+            }
+        }
+    });
+}
+{% endif %}
+
+// Transaction Types Chart
+{% if transactions_by_type %}
+const typeData = {
+    labels: [
+        {% for transaction_type in transactions_by_type %}
+        '{{ transaction_type.transaction_type|title }}'{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    ],
+    counts: [
+        {% for transaction_type in transactions_by_type %}
+        {{ transaction_type.count|default:0 }}{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    ]
+};
+
+const typeCtx = document.getElementById('transactionTypesChart');
+if (typeCtx) {
+    new Chart(typeCtx, {
+        type: 'doughnut',
+        data: {
+            labels: typeData.labels,
+            datasets: [{
+                data: typeData.counts,
+                backgroundColor: [
+                    'rgba(99, 102, 241, 0.8)',
+                    'rgba(16, 185, 129, 0.8)',
+                    'rgba(245, 158, 11, 0.8)',
+                    'rgba(239, 68, 68, 0.8)',
+                    'rgba(59, 130, 246, 0.8)',
+                    'rgba(139, 92, 246, 0.8)',
+                    'rgba(236, 72, 153, 0.8)',
+                    'rgba(14, 165, 233, 0.8)'
+                ],
+                borderWidth: 2,
+                borderColor: '#fff'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'right'
+                }
+            }
+        }
+    });
+}
+{% endif %}
+
+// Top Items by Value Chart
+{% if top_items_by_value %}
+const topItemsData = {
+    labels: [
+        {% for item in top_items_by_value %}
+        '{{ item.item_name|truncatewords:4 }}'{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    ],
+    values: [
+        {% for item in top_items_by_value %}
+        {{ item.item_value|floatformat:2 }}{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    ]
+};
+
+const topItemsCtx = document.getElementById('topItemsChart');
+if (topItemsCtx) {
+    new Chart(topItemsCtx, {
+        type: 'bar',
+        data: {
+            labels: topItemsData.labels,
+            datasets: [{
+                label: 'Item Value (₵)',
+                data: topItemsData.values,
+                backgroundColor: 'rgba(99, 102, 241, 0.8)',
+                borderColor: '#6366f1',
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return '₵' + value.toLocaleString();
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+{% endif %}
+</script>
+{% endblock %}

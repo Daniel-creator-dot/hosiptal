@@ -1,0 +1,213 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Create QC Test - HMS{% endblock %}
+{% block page_title %}<i class="bi bi-clipboard-check me-2"></i>Create Quality Control Test{% endblock %}
+{% block page_subtitle %}Record a new quality control test result{% endblock %}
+
+{% block extra_css %}
+<style>
+    .form-section {
+        background: white;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    .form-section h6 {
+        color: #6366f1;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 2px solid #e2e8f0;
+    }
+    .required-field::after {
+        content: " *";
+        color: #ef4444;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-lg-10 mx-auto">
+            <form method="post" id="qcTestForm">
+                {% csrf_token %}
+                
+                <!-- Equipment Selection -->
+                <div class="form-section">
+                    <h6><i class="bi bi-cpu me-2"></i>Equipment & Test Information</h6>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label required-field">Equipment</label>
+                            <select class="form-select" name="equipment" id="equipment_select" required>
+                                <option value="">Select Equipment</option>
+                                {% for equipment in equipment_list %}
+                                <option value="{{ equipment.pk }}">{{ equipment.name }} ({{ equipment.equipment_code }})</option>
+                                {% endfor %}
+                            </select>
+                            <small class="text-muted">Select the equipment used for this QC test</small>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label required-field">QC Type</label>
+                            <select class="form-select" name="qc_type" required>
+                                <option value="daily">Daily QC</option>
+                                <option value="weekly">Weekly QC</option>
+                                <option value="monthly">Monthly QC</option>
+                                <option value="calibration">Calibration</option>
+                                <option value="proficiency">Proficiency Testing</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label required-field">Test Date</label>
+                            <input type="date" class="form-control" name="test_date" id="test_date" 
+                                   value="{% now 'Y-m-d' %}" required>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label required-field">Test Time</label>
+                            <input type="time" class="form-control" name="test_time" id="test_time" 
+                                   value="{% now 'H:i' %}" required>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Control Material</label>
+                            <select class="form-select" name="control_material" id="control_material">
+                                <option value="">None / Not Applicable</option>
+                                {% for material in control_materials %}
+                                <option value="{{ material.pk }}">{{ material.name }} ({{ material.batch_number|default:"No batch" }})</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Test Details -->
+                <div class="form-section">
+                    <h6><i class="bi bi-clipboard-data me-2"></i>Test Results</h6>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label required-field">Test Name</label>
+                            <input type="text" class="form-control" name="test_name" id="test_name" 
+                                   placeholder="e.g., Glucose, Hemoglobin, etc." required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Batch Number</label>
+                            <input type="text" class="form-control" name="batch_number" id="batch_number" 
+                                   placeholder="Control material batch number">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Expected Value</label>
+                            <input type="text" class="form-control" name="expected_value" id="expected_value" 
+                                   placeholder="Target/Expected value">
+                            <small class="text-muted">The expected or target value for the control</small>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label required-field">Observed Value</label>
+                            <input type="text" class="form-control" name="observed_value" id="observed_value" 
+                                   placeholder="Actual measured value" required>
+                            <small class="text-muted">The actual value obtained from the test</small>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Units</label>
+                            <input type="text" class="form-control" name="units" id="units" 
+                                   placeholder="e.g., mg/dL, g/L, mmol/L">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="within_range" id="within_range">
+                                <label class="form-check-label" for="within_range">
+                                    Within Acceptable Range
+                                </label>
+                                <small class="text-muted d-block">Check if the observed value is within acceptable limits</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Notes -->
+                <div class="form-section">
+                    <h6><i class="bi bi-sticky me-2"></i>Additional Notes</h6>
+                    <div class="mb-3">
+                        <label class="form-label">Notes</label>
+                        <textarea class="form-control" name="notes" id="notes" rows="4" 
+                                  placeholder="Any additional observations, issues, or comments about this QC test..."></textarea>
+                    </div>
+                </div>
+
+                <!-- Form Actions -->
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <a href="{% url 'hospital:quality_control_dashboard' %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left me-2"></i>Cancel
+                    </a>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-circle me-2"></i>Create QC Test
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Set default date and time if not already set
+    const testDate = document.getElementById('test_date');
+    const testTime = document.getElementById('test_time');
+    
+    if (!testDate.value) {
+        const today = new Date().toISOString().split('T')[0];
+        testDate.value = today;
+    }
+    
+    if (!testTime.value) {
+        const now = new Date();
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        testTime.value = `${hours}:${minutes}`;
+    }
+    
+    // Form validation
+    const form = document.getElementById('qcTestForm');
+    form.addEventListener('submit', function(e) {
+        const equipment = document.getElementById('equipment_select').value;
+        const testName = document.getElementById('test_name').value.trim();
+        const observedValue = document.getElementById('observed_value').value.trim();
+        
+        if (!equipment) {
+            e.preventDefault();
+            alert('Please select equipment');
+            return false;
+        }
+        
+        if (!testName) {
+            e.preventDefault();
+            alert('Please enter test name');
+            return false;
+        }
+        
+        if (!observedValue) {
+            e.preventDefault();
+            alert('Please enter observed value');
+            return false;
+        }
+    });
+});
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+

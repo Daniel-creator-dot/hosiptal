@@ -11,6 +11,7 @@ from django.core.cache import cache
 from datetime import timedelta
 import logging
 import os
+from .utils_roles import get_user_role
 
 # Try to import psutil, but handle gracefully if not available
 try:
@@ -24,8 +25,13 @@ logger = logging.getLogger(__name__)
 
 
 def is_admin(user):
-    """Check if user is admin or superuser"""
-    return user.is_authenticated and (user.is_staff or user.is_superuser)
+    """Check if user is admin, superuser, or IT staff"""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    # Allow IT and Admin roles explicitly (do NOT rely on is_staff)
+    return get_user_role(user) in {'admin', 'it'}
 
 
 @login_required

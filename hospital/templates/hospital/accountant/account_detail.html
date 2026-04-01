@@ -1,0 +1,230 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Account Detail - {{ account.account_code }} - {{ account.account_name }}{% endblock %}
+{% block page_title %}Account Detail{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Account Information -->
+    <div class="card mb-3">
+        <div class="card-header bg-primary text-white">
+            <div class="d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="bi bi-file-earmark-text me-2"></i>
+                    {{ account.account_code }} - {{ account.account_name }}
+                </h5>
+                <div class="btn-group">
+                    <a href="{% url 'hospital:accountant_account_edit' account.id %}" class="btn btn-light btn-sm">
+                        <i class="bi bi-pencil"></i> Edit Account
+                    </a>
+                <a href="{% url 'hospital:accountant_chart_of_accounts' %}" class="btn btn-light btn-sm">
+                    <i class="bi bi-arrow-left"></i> Back to Chart of Accounts
+                </a>
+                </div>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <dl class="row mb-0">
+                        <dt class="col-sm-4">Account Code:</dt>
+                        <dd class="col-sm-8"><strong>{{ account.account_code }}</strong></dd>
+                        
+                        <dt class="col-sm-4">Account Name:</dt>
+                        <dd class="col-sm-8">{{ account.account_name }}</dd>
+                        
+                        <dt class="col-sm-4">Account Type:</dt>
+                        <dd class="col-sm-8">
+                            <span class="badge bg-{% if account.account_type == 'asset' %}primary{% elif account.account_type == 'liability' %}warning{% elif account.account_type == 'equity' %}info{% elif account.account_type == 'revenue' %}success{% else %}danger{% endif %}">
+                                {{ account.get_account_type_display }}
+                            </span>
+                        </dd>
+                        
+                        <dt class="col-sm-4">Status:</dt>
+                        <dd class="col-sm-8">
+                            {% if account.is_active %}
+                            <span class="badge bg-success">Active</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Inactive</span>
+                            {% endif %}
+                        </dd>
+                    </dl>
+                </div>
+                <div class="col-md-6">
+                    <dl class="row mb-0">
+                        {% if account.parent_account %}
+                        <dt class="col-sm-4">Parent Account:</dt>
+                        <dd class="col-sm-8">
+                            <a href="{% url 'hospital:accountant_account_detail' account.parent_account.id %}">
+                                {{ account.parent_account.account_code|default:"-" }} - {{ account.parent_account.account_name|default:"-" }}
+                            </a>
+                        </dd>
+                        {% endif %}
+                        
+                        {% if account.description %}
+                        <dt class="col-sm-4">Description:</dt>
+                        <dd class="col-sm-8">{{ account.description }}</dd>
+                        {% endif %}
+                    </dl>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Account Balance Summary -->
+    <div class="row mb-3">
+        <div class="col-md-3">
+            <div class="card border-primary">
+                <div class="card-body text-center">
+                    <h6 class="text-muted mb-2">Opening Balance</h6>
+                    <h4 class="mb-0 text-primary">
+                        GHS {{ opening_balance|default:0|floatformat:2|intcomma }}
+                    </h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-danger">
+                <div class="card-body text-center">
+                    <h6 class="text-muted mb-2">Total Debits</h6>
+                    <h4 class="mb-0 text-danger">
+                        GHS {{ total_debits|default:0|floatformat:2|intcomma }}
+                    </h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-success">
+                <div class="card-body text-center">
+                    <h6 class="text-muted mb-2">Total Credits</h6>
+                    <h4 class="mb-0 text-success">
+                        GHS {{ total_credits|default:0|floatformat:2|intcomma }}
+                    </h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-info">
+                <div class="card-body text-center">
+                    <h6 class="text-muted mb-2">Closing Balance</h6>
+                    <h4 class="mb-0 {% if closing_balance|default:0 >= 0 %}text-success{% else %}text-danger{% endif %}">
+                        GHS {{ closing_balance|default:0|floatformat:2|intcomma }}
+                    </h4>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Date Range Filter -->
+    <div class="card mb-3">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Start Date</label>
+                    <input type="date" name="start_date" value="{{ start_date }}" class="form-control">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">End Date</label>
+                    <input type="date" name="end_date" value="{{ end_date }}" class="form-control">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">&nbsp;</label>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary flex-fill">Filter</button>
+                        <a href="{% url 'hospital:accountant_account_detail' account.id %}" class="btn btn-outline-secondary">Reset</a>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Transactions -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>Transactions</h5>
+        </div>
+        <div class="card-body">
+            {% if transactions %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Date</th>
+                            <th>Description</th>
+                            <th>Reference</th>
+                            <th class="text-end">Debit</th>
+                            <th class="text-end">Credit</th>
+                            <th class="text-end">Balance</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for transaction in transactions %}
+                        <tr>
+                            <td>{{ transaction.date|date:"Y-m-d"|default:"-" }}</td>
+                            <td>{{ transaction.description|default:"-" }}</td>
+                            <td>
+                                {% if transaction.reference %}
+                                <small class="text-muted">{{ transaction.reference|default:"-" }}</small>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                {% if transaction.debit|default:0 > 0 %}
+                                <span class="text-danger">GHS {{ transaction.debit|default:0|floatformat:2|intcomma }}</span>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                {% if transaction.credit|default:0 > 0 %}
+                                <span class="text-success">GHS {{ transaction.credit|default:0|floatformat:2|intcomma }}</span>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                <strong class="{% if transaction.running_balance|default:0 >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                    GHS {{ transaction.running_balance|default:0|floatformat:2|intcomma }}
+                                </strong>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination -->
+            {% if transactions.has_other_pages %}
+            <nav aria-label="Transaction pagination">
+                <ul class="pagination justify-content-center">
+                    {% if transactions.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ transactions.previous_page_number }}&start_date={{ start_date }}&end_date={{ end_date }}">Previous</a>
+                    </li>
+                    {% endif %}
+                    
+                    <li class="page-item active">
+                        <span class="page-link">Page {{ transactions.number }} of {{ transactions.paginator.num_pages }}</span>
+                    </li>
+                    
+                    {% if transactions.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ transactions.next_page_number }}&start_date={{ start_date }}&end_date={{ end_date }}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>
+                No transactions found for this account in the selected date range.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+

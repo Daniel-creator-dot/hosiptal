@@ -9,7 +9,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.utils import timezone
 from django.db.models import Q
-from .models import Staff, Notification
+from .models import Staff, Notification, Department
 from .models_advanced import LeaveRequest
 from .models_audit import ActivityLog, AuditLog
 from .models_hr import PerformanceReview
@@ -24,8 +24,25 @@ def staff_portal(request):
     try:
         staff = Staff.objects.get(user=request.user, is_deleted=False)
     except Staff.DoesNotExist:
-        messages.error(request, "Staff profile not found. Please contact HR.")
-        return redirect('hospital:dashboard')
+        # Auto-provision a minimal staff profile for superusers/admins so they can access the portal
+        if request.user.is_superuser or request.user.is_staff:
+            dept, _ = Department.objects.get_or_create(
+                name="Administration",
+                defaults={
+                    "code": "ADMIN",
+                    "description": "System Administration",
+                },
+            )
+            staff = Staff.objects.create(
+                user=request.user,
+                profession='admin',
+                department=dept,
+                employee_id=f"ADM-{request.user.id}",
+                phone_number=request.user.email or '',
+            )
+        else:
+            messages.error(request, "Staff profile not found. Please contact HR.")
+            return redirect('hospital:dashboard')
     
     # Get recent notifications
     recent_notifications = Notification.objects.filter(
@@ -59,6 +76,14 @@ def staff_portal(request):
         is_deleted=False
     ).order_by('start_date')[:5]
     
+    # Get pending medical chits
+    from .models_hr import StaffMedicalChit
+    pending_medical_chits = StaffMedicalChit.objects.filter(
+        staff=staff,
+        status='pending',
+        is_deleted=False
+    ).order_by('-created')[:5]
+    
     # Get staff information
     staff_info = {
         'name': staff.user.get_full_name() or staff.user.username,
@@ -78,6 +103,7 @@ def staff_portal(request):
         'recent_activities': recent_activities,
         'pending_leaves': pending_leaves,
         'upcoming_leaves': upcoming_leaves,
+        'pending_medical_chits': pending_medical_chits,
     }
     
     return render(request, 'hospital/staff/portal.html', context)
@@ -301,3 +327,83 @@ def staff_performance_reviews(request):
     }
     
     return render(request, 'hospital/staff_performance_reviews.html', context)
+
+
+@login_required
+def my_profile(request):
+    """Allow users to view their own profile"""
+    try:
+        staff = Staff.objects.select_related('user', 'department').get(
+            user=request.user, 
+            is_deleted=False
+        )
+    except Staff.DoesNotExist:
+        messages.error(request, "Staff profile not found. Please contact HR.")
+        return redirect('hospital:dashboard')
+    
+    # Get related data (similar to HR staff_detail but for own profile)
+    from .models_hr import StaffContract, LeaveBalance, Payroll, PerformanceReview, TrainingRecord, StaffDocument
+    
+    try:
+        contract = StaffContract.objects.get(staff=staff, is_active=True, is_deleted=False)
+    except StaffContract.DoesNotExist:
+        contract = None
+    
+    leave_balance = LeaveBalance.objects.filter(staff=staff, is_deleted=False).first()
+    
+    # Get recent payrolls (last 6 months)
+    from datetime import timedelta
+    six_months_ago = timezone.now() - timedelta(days=180)
+    payrolls = Payroll.objects.filter(
+        staff=staff,
+        is_deleted=False,
+        created__gte=six_months_ago
+    ).select_related('period').order_by('-period__start_date')[:6]
+    
+    # Get recent performance reviews
+    performance_reviews = PerformanceReview.objects.filter(
+        staff=staff,
+        is_deleted=False
+    ).select_related('reviewed_by', 'reviewed_by__user').order_by('-review_date')[:5]
+    
+    # Get recent training records
+    training_records = TrainingRecord.objects.filter(
+        staff=staff,
+        is_deleted=False
+    ).order_by('-start_date')[:10]
+    
+    # Get active documents (only non-sensitive ones)
+    documents = StaffDocument.objects.filter(
+        staff=staff,
+        is_active=True,
+        is_deleted=False,
+        document_type__in=['certificate', 'qualification', 'id_card', 'other']  # Exclude sensitive docs
+    ).order_by('-created')[:10]
+    
+    # Get recent leave requests
+    recent_leaves = LeaveRequest.objects.filter(
+        staff=staff,
+        is_deleted=False
+    ).order_by('-created')[:10]
+    
+    # Calculate years of service
+    years_of_service = None
+    if staff.date_of_joining:
+        delta = timezone.now().date() - staff.date_of_joining
+        years_of_service = delta.days / 365.25
+    
+    context = {
+        'title': 'My Profile',
+        'staff': staff,
+        'contract': contract,
+        'leave_balance': leave_balance,
+        'payrolls': payrolls,
+        'performance_reviews': performance_reviews,
+        'training_records': training_records,
+        'documents': documents,
+        'recent_leaves': recent_leaves,
+        'years_of_service': years_of_service,
+        'is_own_profile': True,  # Flag to show this is user's own profile
+    }
+    
+    return render(request, 'hospital/staff/my_profile.html', context)

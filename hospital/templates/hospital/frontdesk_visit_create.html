@@ -1,0 +1,382 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Create Visit - {{ patient.full_name }} - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    .visit-form-container {
+        max-width: 700px;
+        margin: 40px auto;
+        animation: fadeInUp 0.5s ease-out;
+    }
+    
+    @keyframes fadeInUp {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    .patient-info-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 25px;
+        border-radius: 15px;
+        margin-bottom: 30px;
+    }
+    
+    .form-card {
+        background: white;
+        border-radius: 15px;
+        padding: 30px;
+        box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+    }
+    
+    .btn-create-visit {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border: none;
+        padding: 12px 40px;
+        font-size: 16px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    
+    .btn-create-visit:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    }
+    
+    .info-badge {
+        background: rgba(255, 255, 255, 0.2);
+        padding: 5px 10px;
+        border-radius: 5px;
+        font-size: 0.85em;
+        display: inline-block;
+        margin-top: 5px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="visit-form-container">
+    <!-- Breadcrumb Navigation -->
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'hospital:dashboard' %}">Dashboard</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'hospital:patient_list' %}">Patients</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'hospital:patient_detail' patient.pk %}">{{ patient.full_name }}</a></li>
+            <li class="breadcrumb-item active">Create Visit</li>
+        </ol>
+    </nav>
+    
+    <!-- Patient Info -->
+    <div class="patient-info-card">
+        <h3><i class="bi bi-person-circle"></i> Patient Information</h3>
+        <hr style="border-color: rgba(255,255,255,0.3);">
+        <div class="row">
+            <div class="col-md-6">
+                <p><strong>Name:</strong> {{ patient.full_name }}</p>
+                <p><strong>MRN:</strong> {{ patient.mrn }}</p>
+            </div>
+            <div class="col-md-6">
+                <p><strong>Age:</strong> {{ patient.age }} years</p>
+                <p><strong>Gender:</strong> {{ patient.get_gender_display }}</p>
+            </div>
+        </div>
+        {% if current_payer %}
+        <div class="mt-3">
+            <span class="info-badge">
+                <i class="bi bi-credit-card"></i> Current Payer: {{ current_payer.name }} ({{ current_payer_type|title }})
+            </span>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Visit Form -->
+    <div class="form-card">
+        <div class="alert alert-success border-2 border-success mb-4 py-3 px-4" role="alert">
+            <strong><i class="bi bi-currency-exchange me-2"></i>Visit prices to cashier:</strong>
+            <span class="ms-2"><strong>Antenatal = 235 GHS</strong></span>
+            <span class="mx-2">|</span>
+            <span><strong>Gynae / Special = 260 GHS</strong></span>
+            <span class="ms-2 text-muted">— select from <strong>Visit Type</strong> below.</span>
+        </div>
+        <h2 class="mb-4"><i class="bi bi-clipboard-plus"></i> Create New Visit</h2>
+        
+        <form method="post">
+            {% csrf_token %}
+            
+            <div class="mb-4">
+                <label for="encounter_type" class="form-label fw-bold">Visit Type <span class="text-danger">*</span></label>
+                <select name="encounter_type" id="encounter_type" class="form-select form-select-lg" required title="Select option" aria-label="Select option">
+                    <option value="outpatient" selected>Outpatient Visit</option>
+                    <option value="antenatal">Antenatal — 235 GHS (price goes to cashier)</option>
+                    <option value="gynae">Gynae / Special — 260 GHS (price goes to cashier)</option>
+                    <option value="specialist">Special Consultation *sp</option>
+                    <option value="er">Emergency</option>
+                    <option value="inpatient">Inpatient</option>
+                    <option value="surgery">Surgery</option>
+                </select>
+                <small class="form-text text-muted d-block mt-1">
+                    <strong>Antenatal</strong> = 235 GHS &nbsp;|&nbsp; <strong>Gynae / Special</strong> = 260 GHS. Selecting either sends that amount straight to the cashier.
+                </small>
+            </div>
+            
+            <div class="mb-4">
+                <label class="form-label fw-bold">Visit Type <span class="text-danger">*</span></label>
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="radio" name="visit_reason" id="visit_reason_new" value="new" checked>
+                    <label class="form-check-label fw-bold" for="visit_reason_new">
+                        <i class="bi bi-plus-circle text-primary"></i> New Visit (Charges Apply)
+                    </label>
+                    <small class="d-block text-muted ms-4">First time visit or new consultation - consultation fee (GHS 160 for cash) will be charged</small>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="visit_reason" id="visit_reason_review" value="review">
+                    <label class="form-check-label fw-bold" for="visit_reason_review">
+                        <i class="bi bi-arrow-repeat text-success"></i> Review Visit (No Charges)
+                    </label>
+                    <small class="d-block text-muted ms-4">Follow-up or review visit - NO consultation charges will be applied</small>
+                </div>
+            </div>
+            
+            <div class="mb-4">
+                <label for="chief_complaint" class="form-label fw-bold">Chief Complaint / Reason for Visit <span class="text-danger">*</span></label>
+                <textarea 
+                    name="chief_complaint" 
+                    id="chief_complaint" 
+                    class="form-control form-control-lg" 
+                    rows="4" 
+                    placeholder="e.g., Fever and cough for 3 days, Follow-up for hypertension, Regular checkup..."
+                    required></textarea>
+                <small class="form-text text-muted">Brief description of why the patient is visiting today</small>
+            </div>
+            
+            <!-- Doctor Assignment -->
+            <div class="mb-4">
+                <label for="assigned_doctor" class="form-label fw-bold">
+                    <i class="bi bi-person-badge"></i> Assign Doctor (Optional)
+                </label>
+                <select name="assigned_doctor" id="assigned_doctor" class="form-select form-select-lg">
+                    <option value="">Select Doctor (Optional)...</option>
+                    {% for doctor in available_doctors %}
+                        <option value="{{ doctor.id }}">
+                            {% if doctor.user.get_full_name %}
+                                Dr. {{ doctor.user.get_full_name }}
+                            {% else %}
+                                Dr. {{ doctor.user.username }}
+                            {% endif %}
+                            {% if doctor.department %} - {{ doctor.department.name }}{% endif %}
+                            {% if not doctor.is_active %} (Inactive){% endif %}
+                        </option>
+                    {% endfor %}
+                </select>
+                <small class="form-text text-muted">
+                    <i class="bi bi-info-circle"></i> Select a doctor to assign this patient to. 
+                    The doctor will receive an in-app notification and SMS (if phone number is available).
+                </small>
+            </div>
+            
+            <!-- Payer Type Selection -->
+            <div class="mb-4">
+                <label for="payer_type" class="form-label fw-bold">
+                    <i class="bi bi-credit-card"></i> Payment Type <span class="text-danger">*</span>
+                </label>
+                <select name="payer_type" id="payer_type" class="form-select form-select-lg" required>
+                    <option value="">Select Payment Type...</option>
+                    {% if current_payer_type %}
+                        {% if current_payer_type == 'cash' %}
+                            <option value="cash" selected>Cash Payment</option>
+                            <option value="insurance">Insurance</option>
+                            <option value="corporate">Corporate</option>
+                        {% elif current_payer_type == 'insurance' or current_payer_type == 'private' or current_payer_type == 'nhis' %}
+                            <option value="cash">Cash Payment</option>
+                            <option value="insurance" selected>Insurance</option>
+                            <option value="corporate">Corporate</option>
+                        {% elif current_payer_type == 'corporate' %}
+                            <option value="cash">Cash Payment</option>
+                            <option value="insurance">Insurance</option>
+                            <option value="corporate" selected>Corporate</option>
+                        {% else %}
+                            <option value="cash" selected>Cash Payment</option>
+                            <option value="insurance">Insurance</option>
+                            <option value="corporate">Corporate</option>
+                        {% endif %}
+                    {% else %}
+                        <option value="cash" selected>Cash Payment</option>
+                        <option value="insurance">Insurance</option>
+                        <option value="corporate">Corporate</option>
+                    {% endif %}
+                </select>
+                <small class="form-text text-muted">
+                    {% if current_payer %}
+                        Current: <strong>{{ current_payer.name }}</strong> ({{ current_payer_type|title }}) - Verify or change if needed
+                    {% else %}
+                        Current: <strong>Cash</strong> (Not Set) - Please select payment type
+                    {% endif %}
+                </small>
+            </div>
+            
+            <!-- Manual Price Override: only for amounts other than Antenatal 235 / Gynae 260 -->
+            <div class="mb-4">
+                <label for="manual_price" class="form-label fw-bold">
+                    <i class="bi bi-currency-exchange"></i> Override Price (Optional)
+                </label>
+                <input type="number" name="manual_price" id="manual_price" class="form-control form-control-lg" step="0.01" min="0" placeholder="Only for other amounts; leave blank for Antenatal 235 / Gynae 260">
+                <small class="form-text text-muted">For <strong>Antenatal (235 GHS)</strong> or <strong>Gynae (260 GHS)</strong>, select from Visit Type above — no need to enter here. Use this field only for a different amount.</small>
+            </div>
+            
+            <!-- Insurance Company & Plan (visible when Insurance selected) -->
+            <div id="visit_insurance_fields" class="mb-4" style="display: {% if current_payer_type == 'insurance' or current_payer_type == 'private' or current_payer_type == 'nhis' %}block{% else %}none{% endif %};">
+                <div class="card border-primary">
+                    <div class="card-body">
+                        <h6 class="text-primary mb-3"><i class="bi bi-shield-check"></i> Select Insurance & Plan</h6>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="visit_insurance_company" class="form-label">Insurance Company</label>
+                                <select name="insurance_company" id="visit_insurance_company" class="form-select">
+                                    <option value="">Select company...</option>
+                                    {% for company in insurance_companies %}
+                                    <option value="{{ company.id }}">{{ company.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="visit_insurance_plan" class="form-label">Insurance Plan</label>
+                                <select name="insurance_plan" id="visit_insurance_plan" class="form-select">
+                                    <option value="">Select company first</option>
+                                </select>
+                                <small class="text-muted">Accredited plans per company</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Corporate Company (visible when Corporate selected) -->
+            <div id="visit_corporate_fields" class="mb-4" style="display: block;">
+                <div class="card border-success">
+                    <div class="card-body">
+                        <h6 class="text-success mb-3"><i class="bi bi-building"></i> Select Corporate Company</h6>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="visit_corporate_company" class="form-label">Corporate Company</label>
+                                <select name="corporate_company" id="visit_corporate_company" class="form-select">
+                                    <option value="">Select company...</option>
+                                    {% for payer in corporate_payers %}
+                                    <option value="{{ payer.id }}" {% if current_payer and current_payer.id == payer.id %}selected{% endif %}>{{ payer.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <small class="text-muted">e.g. Electricity Company of Ghana (ECG)</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="d-flex justify-content-between align-items-center">
+                <a href="{% url 'hospital:patient_detail' patient.pk %}" class="btn btn-secondary btn-lg">
+                    <i class="bi bi-arrow-left"></i> Cancel
+                </a>
+                <button type="submit" class="btn btn-primary btn-create-visit">
+                    <i class="bi bi-check-circle"></i> Create Visit
+                </button>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Recent Visits Info -->
+    {% if patient.encounters.all %}
+    <div class="mt-4 p-3 bg-light rounded">
+        <h6><i class="bi bi-clock-history"></i> Recent Visits</h6>
+        <ul class="list-unstyled mb-0">
+            {% for encounter in patient.encounters.all|slice:":3" %}
+            <li class="mb-2">
+                <small>
+                    <strong>{{ encounter.started_at|date:"M d, Y" }}</strong> - 
+                    {{ encounter.get_encounter_type_display }} - 
+                    {{ encounter.chief_complaint|truncatewords:10 }}
+                </small>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Auto-focus on chief complaint field
+    const chiefComplaintField = document.getElementById('chief_complaint');
+    if (chiefComplaintField) {
+        chiefComplaintField.focus();
+    }
+    
+    // Toggle insurance fields when payer type is insurance
+    const payerType = document.getElementById('payer_type');
+    const insuranceFields = document.getElementById('visit_insurance_fields');
+    const companySelect = document.getElementById('visit_insurance_company');
+    const planSelect = document.getElementById('visit_insurance_plan');
+    
+    const corporateFields = document.getElementById('visit_corporate_fields');
+    
+    function toggleInsuranceFields() {
+        const isInsurance = payerType && (payerType.value === 'insurance' || payerType.value === 'private' || payerType.value === 'nhis');
+        if (insuranceFields) {
+            insuranceFields.style.display = isInsurance ? 'block' : 'none';
+        }
+        // Corporate always visible so ECG and other corporate options are seen
+        if (corporateFields) {
+            corporateFields.style.display = 'block';
+        }
+        if (!isInsurance && planSelect) {
+            planSelect.innerHTML = '<option value="">Select company first</option>';
+        }
+    }
+    
+    function loadPlansForVisit(companyId) {
+        if (!planSelect) return;
+        planSelect.innerHTML = '<option value="">Loading...</option>';
+        planSelect.disabled = true;
+        if (!companyId) {
+            planSelect.innerHTML = '<option value="">Select company first</option>';
+            planSelect.disabled = false;
+            return;
+        }
+        fetch('/hms/api/insurance/companies/' + companyId + '/plans/')
+            .then(r => r.json())
+            .then(data => {
+                planSelect.innerHTML = '<option value="">Select plan...</option>';
+                (data.plans || []).forEach(function(p) {
+                    const opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.textContent = p.plan_name + (p.plan_code ? ' (' + p.plan_code + ')' : '');
+                    planSelect.appendChild(opt);
+                });
+                planSelect.disabled = false;
+            })
+            .catch(function(err) {
+                console.error('Error loading plans:', err);
+                planSelect.innerHTML = '<option value="">Error loading plans</option>';
+                planSelect.disabled = false;
+            });
+    }
+    
+    if (payerType) {
+        payerType.addEventListener('change', toggleInsuranceFields);
+        toggleInsuranceFields();
+    }
+    
+    if (companySelect && planSelect) {
+        companySelect.addEventListener('change', function() {
+            loadPlansForVisit(this.value);
+        });
+    }
+});
+</script>
+{% endblock %}

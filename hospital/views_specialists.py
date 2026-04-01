@@ -6,13 +6,14 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.http import JsonResponse
 from django.utils import timezone
-from django.db.models import Q
+from django.db.models import Q, Value
+from django.db.models.functions import Concat
 import logging
 
 from .models import Patient, Encounter, Staff
 from .models_specialists import (
     Specialty, SpecialistProfile, DentalChart, ToothCondition, DentalProcedure,
-    CardiologyChart, OphthalmologyChart, SpecialistConsultation, Referral,
+    CardiologyChart, OphthalmologyChart, PsychiatricChart, GynecologyChart, SpecialistConsultation, Referral,
     DentalProcedureCatalog
 )
 from .forms import ReferralForm, ReferralResponseForm
@@ -39,6 +40,205 @@ def specialist_dashboard(request):
         'specialists_by_specialty': specialists_by_specialty,
     }
     return render(request, 'hospital/specialists/dashboard.html', context)
+
+
+@login_required
+def specialist_personal_dashboard(request):
+    """
+    Comprehensive Specialist-Friendly Dashboard
+    Shows personalized information for the logged-in specialist
+    """
+    from datetime import timedelta
+    from django.db.models import Count, Q
+    from .models import Appointment
+    
+    # Get current staff
+    try:
+        current_staff = request.user.staff
+    except AttributeError:
+        messages.error(request, 'You must be registered as staff to access this page.')
+        return redirect('hospital:dashboard')
+    
+    # Check if user is a specialist
+    try:
+        specialist_profile = current_staff.specialist_profile
+        if not specialist_profile.is_active:
+            messages.error(request, 'Your specialist profile is not active.')
+            return redirect('hospital:dashboard')
+    except AttributeError:
+        messages.error(request, 'You are not registered as a specialist.')
+        return redirect('hospital:dashboard')
+    
+    # Date calculations
+    today = timezone.now().date()
+    today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = today - timedelta(days=today.weekday())
+    month_start = today.replace(day=1)
+    
+    # ========== STATISTICS ==========
+    # Pending referrals
+    pending_referrals_count = Referral.objects.filter(
+        specialist=specialist_profile,
+        status='pending',
+        is_deleted=False
+    ).count()
+    
+    # Active referrals
+    active_referrals_count = Referral.objects.filter(
+        specialist=specialist_profile,
+        status__in=['accepted', 'in_progress'],
+        is_deleted=False
+    ).count()
+    
+    # Today's consultations
+    consultations_today = SpecialistConsultation.objects.filter(
+        specialist=specialist_profile,
+        consultation_date__date=today,
+        is_deleted=False
+    ).count()
+    
+    # This week's consultations
+    consultations_this_week = SpecialistConsultation.objects.filter(
+        specialist=specialist_profile,
+        consultation_date__gte=week_start,
+        is_deleted=False
+    ).count()
+    
+    # This month's consultations
+    consultations_this_month = SpecialistConsultation.objects.filter(
+        specialist=specialist_profile,
+        consultation_date__gte=month_start,
+        is_deleted=False
+    ).count()
+    
+    # Today's appointments
+    appointments_today = Appointment.objects.filter(
+        provider=current_staff,
+        appointment_date__date=today,
+        status__in=['scheduled', 'confirmed'],
+        is_deleted=False
+    ).count()
+    
+    # ========== PENDING REFERRALS ==========
+    pending_referrals = Referral.objects.filter(
+        specialist=specialist_profile,
+        status='pending',
+        is_deleted=False
+    ).select_related('patient', 'encounter', 'referring_doctor__user', 'specialty').order_by(
+        '-priority', '-referred_date'
+    )[:10]
+    
+    # ========== ACTIVE REFERRALS ==========
+    active_referrals = Referral.objects.filter(
+        specialist=specialist_profile,
+        status__in=['accepted', 'in_progress'],
+        is_deleted=False
+    ).select_related('patient', 'encounter', 'referring_doctor__user', 'specialty').order_by(
+        '-priority', '-referred_date'
+    )[:10]
+    
+    # ========== TODAY'S CONSULTATIONS ==========
+    today_consultations = SpecialistConsultation.objects.filter(
+        specialist=specialist_profile,
+        consultation_date__date=today,
+        is_deleted=False
+    ).select_related('patient', 'encounter').order_by('-consultation_date')[:10]
+    
+    # ========== TODAY'S APPOINTMENTS ==========
+    today_appointments = Appointment.objects.filter(
+        provider=current_staff,
+        appointment_date__date=today,
+        status__in=['scheduled', 'confirmed'],
+        is_deleted=False
+    ).select_related('patient', 'department').order_by('appointment_date')[:10]
+    
+    # ========== RECENT CONSULTATIONS ==========
+    recent_consultations = SpecialistConsultation.objects.filter(
+        specialist=specialist_profile,
+        is_deleted=False
+    ).select_related('patient', 'encounter').order_by('-consultation_date')[:10]
+    
+    # ========== SPECIALTY-SPECIFIC CHARTS ==========
+    specialty_name = specialist_profile.specialty.name.lower()
+    recent_charts = []
+    
+    if 'dental' in specialty_name or 'dentistry' in specialty_name:
+        recent_dental_charts = DentalChart.objects.filter(
+            created_by=current_staff,
+            is_deleted=False
+        ).select_related('patient', 'encounter').order_by('-chart_date')[:5]
+        recent_charts = recent_dental_charts
+    elif 'cardiology' in specialty_name:
+        recent_cardiology_charts = CardiologyChart.objects.filter(
+            created_by=current_staff,
+            is_deleted=False
+        ).select_related('patient', 'encounter').order_by('-chart_date')[:5]
+        recent_charts = recent_cardiology_charts
+    elif 'ophthalmology' in specialty_name:
+        recent_ophthalmology_charts = OphthalmologyChart.objects.filter(
+            created_by=current_staff,
+            is_deleted=False
+        ).select_related('patient', 'encounter').order_by('-chart_date')[:5]
+        recent_charts = recent_ophthalmology_charts
+    elif 'psychiatric' in specialty_name or 'psychiatry' in specialty_name or 'mental' in specialty_name:
+        recent_psychiatric_charts = PsychiatricChart.objects.filter(
+            created_by=current_staff,
+            is_deleted=False
+        ).select_related('patient', 'encounter').order_by('-chart_date')[:5]
+        recent_charts = recent_psychiatric_charts
+    elif 'gynecology' in specialty_name or 'gynec' in specialty_name or 'obstetric' in specialty_name or 'obgyn' in specialty_name:
+        recent_gynecology_charts = GynecologyChart.objects.filter(
+            created_by=current_staff,
+            is_deleted=False
+        ).select_related('patient', 'encounter').order_by('-chart_date')[:5]
+        recent_charts = recent_gynecology_charts
+    
+    # ========== GET CONSULTATION URL BASED ON SPECIALTY ==========
+    consultation_url_map = {
+        'dental': 'hospital:dental_consultation_encounter',
+        'dentistry': 'hospital:dental_consultation_encounter',
+        'cardiology': 'hospital:cardiology_consultation_encounter',
+        'ophthalmology': 'hospital:ophthalmology_consultation_encounter',
+        'psychiatric': 'hospital:psychiatric_consultation_encounter',
+        'psychiatry': 'hospital:psychiatric_consultation_encounter',
+        'mental': 'hospital:psychiatric_consultation_encounter',
+        'gynecology': 'hospital:gynecology_consultation_encounter',
+        'gynec': 'hospital:gynecology_consultation_encounter',
+        'obstetric': 'hospital:gynecology_consultation_encounter',
+        'obgyn': 'hospital:gynecology_consultation_encounter',
+    }
+    
+    consultation_url = consultation_url_map.get(specialty_name, 'hospital:encounter_detail')
+    
+    context = {
+        'specialist_profile': specialist_profile,
+        'current_staff': current_staff,
+        'specialty': specialist_profile.specialty,
+        'consultation_url': consultation_url,
+        
+        # Statistics
+        'stats': {
+            'pending_referrals': pending_referrals_count,
+            'active_referrals': active_referrals_count,
+            'consultations_today': consultations_today,
+            'consultations_this_week': consultations_this_week,
+            'consultations_this_month': consultations_this_month,
+            'appointments_today': appointments_today,
+        },
+        
+        # Data lists
+        'pending_referrals': pending_referrals,
+        'active_referrals': active_referrals,
+        'today_consultations': today_consultations,
+        'today_appointments': today_appointments,
+        'recent_consultations': recent_consultations,
+        'recent_charts': recent_charts,
+        
+        # Date info
+        'today': today,
+    }
+    
+    return render(request, 'hospital/specialists/personal_dashboard.html', context)
 
 
 @login_required
@@ -75,6 +275,13 @@ def specialist_patient_select(request):
         'dentistry': 'hospital:dental_consultation_encounter',
         'cardiology': 'hospital:cardiology_consultation_encounter',
         'ophthalmology': 'hospital:ophthalmology_consultation_encounter',
+        'psychiatric': 'hospital:psychiatric_consultation_encounter',
+        'psychiatry': 'hospital:psychiatric_consultation_encounter',
+        'mental': 'hospital:psychiatric_consultation_encounter',
+        'gynecology': 'hospital:gynecology_consultation_encounter',
+        'gynec': 'hospital:gynecology_consultation_encounter',
+        'obstetric': 'hospital:gynecology_consultation_encounter',
+        'obgyn': 'hospital:gynecology_consultation_encounter',
     }
     
     consultation_url = specialty_url_map.get(specialty_filter, 'hospital:encounter_detail')
@@ -369,11 +576,9 @@ def save_dental_procedure(request):
         
         dental_chart = get_object_or_404(DentalChart, pk=dental_chart_id, is_deleted=False)
         
-        # Get current staff
-        current_staff = None
-        if hasattr(request.user, 'staff_profile'):
-            current_staff = request.user.staff
-        
+        # Staff profile is User.staff (OneToOne), not staff_profile
+        current_staff = getattr(request.user, 'staff', None)
+
         # Get or create procedure catalog entry
         procedure_catalog = None
         if procedure_code:
@@ -393,38 +598,66 @@ def save_dental_procedure(request):
             notes=notes,
         )
         
-        # Create invoice line if encounter exists
-        if dental_chart.encounter and fee > 0:
-            from .models import Invoice, InvoiceLine, ServiceCode, Payer
+        # Invoice: procedure fee + GHS 150 supplies/items per procedure (per unit quantity).
+        # Use unique ServiceCode per procedure row so InvoiceLine.save() merge logic does not
+        # collapse multiple procedures into one line.
+        if dental_chart.encounter:
+            from decimal import Decimal
+            from .models import InvoiceLine, ServiceCode
             from .utils_billing import get_or_create_encounter_invoice
-            
+
+            DENTAL_ITEMS_UNIT = Decimal('150.00')
+            fee_dec = Decimal(str(fee))
+            qty_dec = Decimal(str(quantity))
+
             try:
                 invoice = get_or_create_encounter_invoice(dental_chart.encounter)
-                
-                # Get or create service code for dental procedure
-                service_code, _ = ServiceCode.objects.get_or_create(
-                    code=f'DENT-{procedure_code}',
+                if not invoice:
+                    raise ValueError('Could not create invoice for encounter (no payer)')
+
+                if fee_dec > 0:
+                    proc_code = f'DENT-PROC-{procedure.pk}'
+                    proc_desc = (procedure_name or '').strip()[:120] or 'Dental procedure'
+                    service_code, _ = ServiceCode.objects.get_or_create(
+                        code=proc_code,
+                        defaults={
+                            'description': procedure_code or proc_desc,
+                            'category': 'Dental',
+                            'is_active': True,
+                        }
+                    )
+                    InvoiceLine.objects.create(
+                        invoice=invoice,
+                        service_code=service_code,
+                        description=(f"{procedure_name} - {teeth}" if teeth else procedure_name)[:200],
+                        quantity=qty_dec,
+                        unit_price=fee_dec,
+                        line_total=fee_dec * qty_dec,
+                    )
+
+                items_sc, _ = ServiceCode.objects.get_or_create(
+                    code=f'DENT-ITEMS-{procedure.pk}',
                     defaults={
-                        'description': procedure_name,
+                        'description': 'Dental procedure supplies & items',
                         'category': 'Dental',
                         'is_active': True,
                     }
                 )
-                
-                # Create invoice line
+                items_desc = (
+                    f'Supplies & items — {procedure_name}'
+                    + (f' ({teeth})' if teeth else '')
+                )
                 InvoiceLine.objects.create(
                     invoice=invoice,
-                    service_code=service_code,
-                    description=f"{procedure_name} - {teeth}" if teeth else procedure_name,
-                    quantity=quantity,
-                    unit_price=fee,
-                    line_total=fee * quantity,
+                    service_code=items_sc,
+                    description=items_desc[:200],
+                    quantity=qty_dec,
+                    unit_price=DENTAL_ITEMS_UNIT,
+                    line_total=DENTAL_ITEMS_UNIT * qty_dec,
                 )
-                
-                # Update invoice totals
+
                 invoice.update_totals()
             except Exception as e:
-                # Don't fail if invoice creation fails, just log it
                 import logging
                 logger = logging.getLogger(__name__)
                 logger.error(f"Failed to create invoice line for dental procedure: {e}")
@@ -572,6 +805,760 @@ def ophthalmology_consultation(request, patient_id=None, encounter_id=None):
         'ophthalmology_chart': ophthalmology_chart,
     }
     return render(request, 'hospital/specialists/ophthalmology_consultation.html', context)
+
+
+@login_required
+def psychiatric_consultation(request, patient_id=None, encounter_id=None):
+    """Comprehensive psychiatric consultation page"""
+    patient = None
+    encounter = None
+    psychiatric_chart = None
+    
+    if patient_id:
+        patient = get_object_or_404(Patient, pk=patient_id, is_deleted=False)
+        psychiatric_chart = PsychiatricChart.objects.filter(
+            patient=patient,
+            is_deleted=False
+        ).order_by('-chart_date').first()
+    
+    if encounter_id:
+        encounter = get_object_or_404(Encounter, pk=encounter_id, is_deleted=False)
+        if not patient:
+            patient = encounter.patient
+    
+    current_staff = None
+    if hasattr(request.user, 'staff'):
+        current_staff = request.user.staff
+    
+    if patient and not psychiatric_chart:
+        psychiatric_chart = PsychiatricChart.objects.create(
+            patient=patient,
+            encounter=encounter,
+            created_by=current_staff
+        )
+    
+    # Handle form submission
+    if request.method == 'POST':
+        try:
+            if psychiatric_chart:
+                # Chief Complaint & Presenting Problem
+                psychiatric_chart.chief_complaint = request.POST.get('chief_complaint', '')
+                psychiatric_chart.presenting_problem = request.POST.get('presenting_problem', '')
+                psychiatric_chart.duration_of_symptoms = request.POST.get('duration_of_symptoms', '')
+                
+                # Mental Status Examination
+                psychiatric_chart.appearance = request.POST.get('appearance', '')
+                psychiatric_chart.behavior = request.POST.get('behavior', '')
+                psychiatric_chart.speech = request.POST.get('speech', '')
+                psychiatric_chart.mood = request.POST.get('mood', '')
+                psychiatric_chart.affect = request.POST.get('affect', '')
+                psychiatric_chart.thought_process = request.POST.get('thought_process', '')
+                psychiatric_chart.thought_content = request.POST.get('thought_content', '')
+                psychiatric_chart.perception = request.POST.get('perception', '')
+                psychiatric_chart.cognition = request.POST.get('cognition', '')
+                psychiatric_chart.insight = request.POST.get('insight', '')
+                psychiatric_chart.judgment = request.POST.get('judgment', '')
+                
+                # Assessment Scales
+                phq9 = request.POST.get('phq9_score', '')
+                psychiatric_chart.phq9_score = int(phq9) if phq9 else None
+                gad7 = request.POST.get('gad7_score', '')
+                psychiatric_chart.gad7_score = int(gad7) if gad7 else None
+                pcl5 = request.POST.get('pcl5_score', '')
+                psychiatric_chart.pcl5_score = int(pcl5) if pcl5 else None
+                mmse = request.POST.get('mmse_score', '')
+                psychiatric_chart.mmse_score = int(mmse) if mmse else None
+                ybocs = request.POST.get('ybocs_score', '')
+                psychiatric_chart.ybocs_score = int(ybocs) if ybocs else None
+                
+                # Risk Assessment
+                psychiatric_chart.suicide_risk = request.POST.get('suicide_risk', '')
+                psychiatric_chart.suicide_ideation = request.POST.get('suicide_ideation', '')
+                psychiatric_chart.suicide_plan = request.POST.get('suicide_plan', '')
+                psychiatric_chart.suicide_means = request.POST.get('suicide_means', '')
+                psychiatric_chart.homicide_risk = request.POST.get('homicide_risk', '')
+                psychiatric_chart.violence_risk = request.POST.get('violence_risk', '')
+                psychiatric_chart.self_harm_risk = request.POST.get('self_harm_risk', '')
+                
+                # History
+                psychiatric_chart.psychiatric_history = request.POST.get('psychiatric_history', '')
+                psychiatric_chart.previous_diagnoses = request.POST.get('previous_diagnoses', '')
+                psychiatric_chart.previous_treatments = request.POST.get('previous_treatments', '')
+                psychiatric_chart.hospitalizations = request.POST.get('hospitalizations', '')
+                psychiatric_chart.family_psychiatric_history = request.POST.get('family_psychiatric_history', '')
+                psychiatric_chart.substance_use_history = request.POST.get('substance_use_history', '')
+                
+                # Medications
+                psychiatric_chart.current_medications = request.POST.get('current_medications', '')
+                psychiatric_chart.medication_compliance = request.POST.get('medication_compliance', '')
+                psychiatric_chart.medication_side_effects = request.POST.get('medication_side_effects', '')
+                
+                # Social History
+                psychiatric_chart.living_situation = request.POST.get('living_situation', '')
+                psychiatric_chart.occupation = request.POST.get('occupation', '')
+                psychiatric_chart.education = request.POST.get('education', '')
+                psychiatric_chart.social_support = request.POST.get('social_support', '')
+                psychiatric_chart.stressors = request.POST.get('stressors', '')
+                psychiatric_chart.coping_mechanisms = request.POST.get('coping_mechanisms', '')
+                
+                # Diagnosis
+                psychiatric_chart.primary_diagnosis = request.POST.get('primary_diagnosis', '')
+                psychiatric_chart.secondary_diagnosis = request.POST.get('secondary_diagnosis', '')
+                psychiatric_chart.provisional_diagnosis = request.POST.get('provisional_diagnosis', '')
+                psychiatric_chart.differential_diagnosis = request.POST.get('differential_diagnosis', '')
+                
+                # Treatment Plan
+                psychiatric_chart.treatment_plan = request.POST.get('treatment_plan', '')
+                psychiatric_chart.psychotherapy_plan = request.POST.get('psychotherapy_plan', '')
+                psychiatric_chart.medication_plan = request.POST.get('medication_plan', '')
+                psychiatric_chart.behavioral_interventions = request.POST.get('behavioral_interventions', '')
+                psychiatric_chart.goals = request.POST.get('goals', '')
+                
+                # Progress & Follow-up
+                psychiatric_chart.progress_notes = request.POST.get('progress_notes', '')
+                psychiatric_chart.response_to_treatment = request.POST.get('response_to_treatment', '')
+                follow_up = request.POST.get('follow_up_date', '')
+                if follow_up:
+                    from datetime import datetime
+                    try:
+                        psychiatric_chart.follow_up_date = datetime.strptime(follow_up, '%Y-%m-%d').date()
+                    except:
+                        pass
+                psychiatric_chart.follow_up_instructions = request.POST.get('follow_up_instructions', '')
+                psychiatric_chart.notes = request.POST.get('notes', '')
+                psychiatric_chart.recommendations = request.POST.get('recommendations', '')
+                
+                psychiatric_chart.save()
+                
+                messages.success(request, '✅ Psychiatric consultation saved successfully!')
+                
+                # Create or update specialist consultation record
+                try:
+                    specialist_profile = current_staff.specialist_profile
+                    consultation, created = SpecialistConsultation.objects.get_or_create(
+                        patient=patient,
+                        encounter=encounter,
+                        specialist=specialist_profile,
+                        consultation_date__date=timezone.now().date(),
+                        defaults={
+                            'chief_complaint': psychiatric_chart.chief_complaint,
+                            'assessment': psychiatric_chart.primary_diagnosis,
+                            'plan': psychiatric_chart.treatment_plan,
+                            'notes': psychiatric_chart.notes,
+                        }
+                    )
+                    if not created:
+                        consultation.chief_complaint = psychiatric_chart.chief_complaint
+                        consultation.assessment = psychiatric_chart.primary_diagnosis
+                        consultation.plan = psychiatric_chart.treatment_plan
+                        consultation.notes = psychiatric_chart.notes
+                        consultation.save()
+                except:
+                    pass  # If specialist profile doesn't exist, skip
+                
+                return redirect('hospital:psychiatric_consultation_encounter', encounter_id=encounter_id) if encounter_id else redirect('hospital:psychiatric_consultation', patient_id=patient_id)
+        except Exception as e:
+            logger.error(f"Error saving psychiatric consultation: {str(e)}")
+            messages.error(request, f'❌ Error saving consultation: {str(e)}')
+    
+    # Get previous charts for history
+    previous_charts = PsychiatricChart.objects.filter(
+        patient=patient,
+        is_deleted=False
+    ).exclude(pk=psychiatric_chart.pk if psychiatric_chart else None).order_by('-chart_date')[:5] if patient else []
+    
+    context = {
+        'patient': patient,
+        'encounter': encounter,
+        'psychiatric_chart': psychiatric_chart,
+        'previous_charts': previous_charts,
+    }
+    return render(request, 'hospital/specialists/psychiatric_consultation.html', context)
+
+
+@login_required
+def psychiatric_dashboard(request):
+    """Comprehensive psychiatric specialist dashboard with charts and analytics"""
+    # Get current staff
+    try:
+        current_staff = request.user.staff
+    except AttributeError:
+        messages.error(request, 'You must be registered as staff to access this page.')
+        return redirect('hospital:dashboard')
+    
+    # Check if user is a psychiatric specialist
+    try:
+        specialist_profile = current_staff.specialist_profile
+        specialty_name = specialist_profile.specialty.name.lower()
+        if 'psychiatric' not in specialty_name and 'psychiatry' not in specialty_name and 'mental' not in specialty_name:
+            messages.error(request, 'This dashboard is only for psychiatric specialists.')
+            return redirect('hospital:dashboard')
+    except AttributeError:
+        messages.error(request, 'You are not registered as a specialist.')
+        return redirect('hospital:dashboard')
+    
+    from datetime import timedelta
+    from django.db.models import Count, Q, Avg, Max, Min
+    from django.db.models.functions import TruncDate
+    
+    today = timezone.now().date()
+    today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = today - timedelta(days=7)
+    month_start = today.replace(day=1)
+    year_start = today.replace(month=1, day=1)
+    
+    # ========== STATISTICS ==========
+    # Today's consultations
+    consultations_today = PsychiatricChart.objects.filter(
+        created_by=current_staff,
+        chart_date=today,
+        is_deleted=False
+    ).count()
+    
+    # This week's consultations
+    consultations_this_week = PsychiatricChart.objects.filter(
+        created_by=current_staff,
+        chart_date__gte=week_start,
+        is_deleted=False
+    ).count()
+    
+    # This month's consultations
+    consultations_this_month = PsychiatricChart.objects.filter(
+        created_by=current_staff,
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).count()
+    
+    # Pending referrals
+    pending_referrals = Referral.objects.filter(
+        specialist=specialist_profile,
+        status='pending',
+        is_deleted=False
+    ).count()
+    
+    # Active referrals
+    active_referrals = Referral.objects.filter(
+        specialist=specialist_profile,
+        status__in=['accepted', 'in_progress'],
+        is_deleted=False
+    ).count()
+    
+    # High risk patients
+    high_risk_patients = PsychiatricChart.objects.filter(
+        created_by=current_staff,
+        is_deleted=False
+    ).filter(
+        Q(suicide_risk__in=['high', 'imminent']) |
+        Q(homicide_risk='high') |
+        Q(violence_risk='high')
+    ).values('patient').distinct().count()
+    
+    # ========== CHART DATA ==========
+    import json
+    from django.core.serializers.json import DjangoJSONEncoder
+    
+    # Consultations over time (last 30 days)
+    consultations_by_date = list(PsychiatricChart.objects.filter(
+        created_by=current_staff,
+        chart_date__gte=today - timedelta(days=30),
+        is_deleted=False
+    ).values('chart_date').annotate(count=Count('id')).order_by('chart_date'))
+    
+    # PHQ-9 scores over time (patient__full_name is a @property; use Concat for DB query)
+    phq9_scores = list(PsychiatricChart.objects.filter(
+        created_by=current_staff,
+        phq9_score__isnull=False,
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).annotate(
+        patient_name=Concat('patient__first_name', Value(' '), 'patient__last_name')
+    ).order_by('chart_date').values('chart_date', 'phq9_score', 'patient_name'))
+    
+    # GAD-7 scores over time (patient__full_name is a @property; use Concat for DB query)
+    gad7_scores = list(PsychiatricChart.objects.filter(
+        created_by=current_staff,
+        gad7_score__isnull=False,
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).annotate(
+        patient_name=Concat('patient__first_name', Value(' '), 'patient__last_name')
+    ).order_by('chart_date').values('chart_date', 'gad7_score', 'patient_name'))
+    
+    # Risk assessment distribution
+    suicide_risk_dist = list(PsychiatricChart.objects.filter(
+        created_by=current_staff,
+        suicide_risk__isnull=False,
+        suicide_risk__gt='',
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).values('suicide_risk').annotate(count=Count('id')))
+    
+    # Diagnosis distribution
+    diagnosis_dist = list(PsychiatricChart.objects.filter(
+        created_by=current_staff,
+        primary_diagnosis__isnull=False,
+        primary_diagnosis__gt='',
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).values('primary_diagnosis').annotate(count=Count('id')).order_by('-count')[:10])
+    
+    # Medication compliance
+    compliance_dist = list(PsychiatricChart.objects.filter(
+        created_by=current_staff,
+        medication_compliance__isnull=False,
+        medication_compliance__gt='',
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).values('medication_compliance').annotate(count=Count('id')))
+    
+    # Treatment response distribution
+    treatment_response_dist = list(PsychiatricChart.objects.filter(
+        created_by=current_staff,
+        response_to_treatment__isnull=False,
+        response_to_treatment__gt='',
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).values('response_to_treatment').annotate(count=Count('id')))
+    
+    # High risk cases over time
+    high_risk_by_date = list(PsychiatricChart.objects.filter(
+        created_by=current_staff,
+        chart_date__gte=today - timedelta(days=30),
+        is_deleted=False
+    ).filter(
+        Q(suicide_risk__in=['high', 'imminent']) |
+        Q(homicide_risk='high') |
+        Q(violence_risk='high')
+    ).values('chart_date').annotate(count=Count('id')).order_by('chart_date'))
+    
+    # Average scores
+    avg_phq9 = PsychiatricChart.objects.filter(
+        created_by=current_staff,
+        phq9_score__isnull=False,
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).aggregate(avg=Avg('phq9_score'))['avg'] or 0
+    
+    avg_gad7 = PsychiatricChart.objects.filter(
+        created_by=current_staff,
+        gad7_score__isnull=False,
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).aggregate(avg=Avg('gad7_score'))['avg'] or 0
+    
+    # ========== RECENT DATA ==========
+    recent_consultations = PsychiatricChart.objects.filter(
+        created_by=current_staff,
+        is_deleted=False
+    ).select_related('patient', 'encounter').order_by('-chart_date')[:10]
+    
+    pending_referrals_list = Referral.objects.filter(
+        specialist=specialist_profile,
+        status='pending',
+        is_deleted=False
+    ).select_related('patient', 'encounter', 'referring_doctor__user', 'specialty').order_by(
+        '-priority', '-referred_date'
+    )[:10]
+    
+    high_risk_list = PsychiatricChart.objects.filter(
+        created_by=current_staff,
+        is_deleted=False
+    ).filter(
+        Q(suicide_risk__in=['high', 'imminent']) |
+        Q(homicide_risk='high') |
+        Q(violence_risk='high')
+    ).select_related('patient', 'encounter').order_by('-chart_date')[:10]
+    
+    context = {
+        'specialist_profile': specialist_profile,
+        'today': today,
+        'stats': {
+            'consultations_today': consultations_today,
+            'consultations_this_week': consultations_this_week,
+            'consultations_this_month': consultations_this_month,
+            'pending_referrals': pending_referrals,
+            'active_referrals': active_referrals,
+            'high_risk_patients': high_risk_patients,
+            'avg_phq9': round(avg_phq9, 1) if avg_phq9 else 0,
+            'avg_gad7': round(avg_gad7, 1) if avg_gad7 else 0,
+        },
+        'chart_data': {
+            'consultations_by_date': json.dumps(consultations_by_date, cls=DjangoJSONEncoder),
+            'phq9_scores': json.dumps(phq9_scores, cls=DjangoJSONEncoder),
+            'gad7_scores': json.dumps(gad7_scores, cls=DjangoJSONEncoder),
+            'suicide_risk_dist': json.dumps(suicide_risk_dist, cls=DjangoJSONEncoder),
+            'diagnosis_dist': json.dumps(diagnosis_dist, cls=DjangoJSONEncoder),
+            'compliance_dist': json.dumps(compliance_dist, cls=DjangoJSONEncoder),
+            'treatment_response_dist': json.dumps(treatment_response_dist, cls=DjangoJSONEncoder),
+            'high_risk_by_date': json.dumps(high_risk_by_date, cls=DjangoJSONEncoder),
+        },
+        'recent_consultations': recent_consultations,
+        'pending_referrals_list': pending_referrals_list,
+        'high_risk_list': high_risk_list,
+    }
+    return render(request, 'hospital/specialists/psychiatric_dashboard.html', context)
+
+
+@login_required
+def gynecology_consultation(request, patient_id=None, encounter_id=None):
+    """Comprehensive gynecology consultation page"""
+    patient = None
+    encounter = None
+    gynecology_chart = None
+    
+    if patient_id:
+        patient = get_object_or_404(Patient, pk=patient_id, is_deleted=False)
+        gynecology_chart = GynecologyChart.objects.filter(
+            patient=patient,
+            is_deleted=False
+        ).order_by('-chart_date').first()
+    
+    if encounter_id:
+        encounter = get_object_or_404(Encounter, pk=encounter_id, is_deleted=False)
+        if not patient:
+            patient = encounter.patient
+    
+    current_staff = None
+    if hasattr(request.user, 'staff'):
+        current_staff = request.user.staff
+    
+    if patient and not gynecology_chart:
+        gynecology_chart = GynecologyChart.objects.create(
+            patient=patient,
+            encounter=encounter,
+            created_by=current_staff
+        )
+    
+    # Handle form submission
+    if request.method == 'POST':
+        try:
+            if gynecology_chart:
+                # Chief Complaint & History
+                gynecology_chart.chief_complaint = request.POST.get('chief_complaint', '')
+                gynecology_chart.presenting_problem = request.POST.get('presenting_problem', '')
+                gynecology_chart.menstrual_history = request.POST.get('menstrual_history', '')
+                gynecology_chart.obstetric_history = request.POST.get('obstetric_history', '')
+                gynecology_chart.gynecological_history = request.POST.get('gynecological_history', '')
+                gynecology_chart.contraceptive_history = request.POST.get('contraceptive_history', '')
+                gynecology_chart.sexual_history = request.POST.get('sexual_history', '')
+                
+                # Current Pregnancy
+                gynecology_chart.is_pregnant = request.POST.get('is_pregnant') == 'on'
+                ga_weeks = request.POST.get('gestational_age_weeks', '')
+                gynecology_chart.gestational_age_weeks = int(ga_weeks) if ga_weeks else None
+                edd = request.POST.get('edd', '')
+                if edd:
+                    from datetime import datetime
+                    try:
+                        gynecology_chart.edd = datetime.strptime(edd, '%Y-%m-%d').date()
+                    except:
+                        pass
+                gynecology_chart.pregnancy_complications = request.POST.get('pregnancy_complications', '')
+                gynecology_chart.prenatal_care = request.POST.get('prenatal_care', '')
+                
+                # Physical Examination
+                gynecology_chart.general_examination = request.POST.get('general_examination', '')
+                gynecology_chart.abdominal_examination = request.POST.get('abdominal_examination', '')
+                gynecology_chart.pelvic_examination = request.POST.get('pelvic_examination', '')
+                gynecology_chart.breast_examination = request.POST.get('breast_examination', '')
+                gynecology_chart.cervical_examination = request.POST.get('cervical_examination', '')
+                
+                # Vital Signs
+                gynecology_chart.blood_pressure = request.POST.get('blood_pressure', '')
+                pulse = request.POST.get('pulse', '')
+                gynecology_chart.pulse = int(pulse) if pulse else None
+                temp = request.POST.get('temperature', '')
+                gynecology_chart.temperature = float(temp) if temp else None
+                weight = request.POST.get('weight', '')
+                gynecology_chart.weight = float(weight) if weight else None
+                height = request.POST.get('height', '')
+                gynecology_chart.height = float(height) if height else None
+                bmi = request.POST.get('bmi', '')
+                gynecology_chart.bmi = float(bmi) if bmi else None
+                
+                # Investigations
+                gynecology_chart.pap_smear_result = request.POST.get('pap_smear_result', '')
+                pap_date = request.POST.get('pap_smear_date', '')
+                if pap_date:
+                    from datetime import datetime
+                    try:
+                        gynecology_chart.pap_smear_date = datetime.strptime(pap_date, '%Y-%m-%d').date()
+                    except:
+                        pass
+                gynecology_chart.hiv_status = request.POST.get('hiv_status', '')
+                hiv_date = request.POST.get('hiv_test_date', '')
+                if hiv_date:
+                    from datetime import datetime
+                    try:
+                        gynecology_chart.hiv_test_date = datetime.strptime(hiv_date, '%Y-%m-%d').date()
+                    except:
+                        pass
+                gynecology_chart.other_investigations = request.POST.get('other_investigations', '')
+                
+                # Diagnosis
+                gynecology_chart.primary_diagnosis = request.POST.get('primary_diagnosis', '')
+                gynecology_chart.secondary_diagnosis = request.POST.get('secondary_diagnosis', '')
+                gynecology_chart.provisional_diagnosis = request.POST.get('provisional_diagnosis', '')
+                gynecology_chart.differential_diagnosis = request.POST.get('differential_diagnosis', '')
+                
+                # Treatment Plan
+                gynecology_chart.treatment_plan = request.POST.get('treatment_plan', '')
+                gynecology_chart.medications_prescribed = request.POST.get('medications_prescribed', '')
+                gynecology_chart.procedures_planned = request.POST.get('procedures_planned', '')
+                gynecology_chart.lifestyle_advice = request.POST.get('lifestyle_advice', '')
+                
+                # Follow-up
+                follow_up = request.POST.get('follow_up_date', '')
+                if follow_up:
+                    from datetime import datetime
+                    try:
+                        gynecology_chart.follow_up_date = datetime.strptime(follow_up, '%Y-%m-%d').date()
+                    except:
+                        pass
+                gynecology_chart.follow_up_instructions = request.POST.get('follow_up_instructions', '')
+                gynecology_chart.progress_notes = request.POST.get('progress_notes', '')
+                gynecology_chart.notes = request.POST.get('notes', '')
+                gynecology_chart.recommendations = request.POST.get('recommendations', '')
+                
+                gynecology_chart.save()
+                
+                messages.success(request, '✅ Gynecology consultation saved successfully!')
+                
+                # Create or update specialist consultation record
+                try:
+                    specialist_profile = current_staff.specialist_profile
+                    consultation, created = SpecialistConsultation.objects.get_or_create(
+                        patient=patient,
+                        encounter=encounter,
+                        specialist=specialist_profile,
+                        consultation_date__date=timezone.now().date(),
+                        defaults={
+                            'chief_complaint': gynecology_chart.chief_complaint,
+                            'assessment': gynecology_chart.primary_diagnosis,
+                            'plan': gynecology_chart.treatment_plan,
+                            'notes': gynecology_chart.notes,
+                        }
+                    )
+                    if not created:
+                        consultation.chief_complaint = gynecology_chart.chief_complaint
+                        consultation.assessment = gynecology_chart.primary_diagnosis
+                        consultation.plan = gynecology_chart.treatment_plan
+                        consultation.notes = gynecology_chart.notes
+                        consultation.save()
+                except:
+                    pass
+                
+                return redirect('hospital:gynecology_consultation_encounter', encounter_id=encounter_id) if encounter_id else redirect('hospital:gynecology_consultation', patient_id=patient_id)
+        except Exception as e:
+            logger.error(f"Error saving gynecology consultation: {str(e)}")
+            messages.error(request, f'❌ Error saving consultation: {str(e)}')
+    
+    # Get previous charts for history
+    previous_charts = GynecologyChart.objects.filter(
+        patient=patient,
+        is_deleted=False
+    ).exclude(pk=gynecology_chart.pk if gynecology_chart else None).order_by('-chart_date')[:5] if patient else []
+    
+    context = {
+        'patient': patient,
+        'encounter': encounter,
+        'gynecology_chart': gynecology_chart,
+        'previous_charts': previous_charts,
+    }
+    return render(request, 'hospital/specialists/gynecology_consultation.html', context)
+
+
+@login_required
+def gynecology_dashboard(request):
+    """Comprehensive gynecology specialist dashboard with charts and analytics"""
+    # Get current staff
+    try:
+        current_staff = request.user.staff
+    except AttributeError:
+        messages.error(request, 'You must be registered as staff to access this page.')
+        return redirect('hospital:dashboard')
+    
+    # Check if user is a gynecology specialist
+    try:
+        specialist_profile = current_staff.specialist_profile
+        specialty_name = specialist_profile.specialty.name.lower()
+        if 'gynecology' not in specialty_name and 'gynec' not in specialty_name and 'obstetric' not in specialty_name and 'obgyn' not in specialty_name:
+            messages.error(request, 'This dashboard is only for gynecology specialists.')
+            return redirect('hospital:dashboard')
+    except AttributeError:
+        messages.error(request, 'You are not registered as a specialist.')
+        return redirect('hospital:dashboard')
+    
+    from datetime import timedelta
+    from django.db.models import Count, Q, Avg, Max, Min
+    from django.db.models.functions import TruncDate
+    import json
+    from django.core.serializers.json import DjangoJSONEncoder
+    
+    today = timezone.now().date()
+    today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = today - timedelta(days=7)
+    month_start = today.replace(day=1)
+    year_start = today.replace(month=1, day=1)
+    
+    # ========== STATISTICS ==========
+    # Today's consultations
+    consultations_today = GynecologyChart.objects.filter(
+        created_by=current_staff,
+        chart_date=today,
+        is_deleted=False
+    ).count()
+    
+    # This week's consultations
+    consultations_this_week = GynecologyChart.objects.filter(
+        created_by=current_staff,
+        chart_date__gte=week_start,
+        is_deleted=False
+    ).count()
+    
+    # This month's consultations
+    consultations_this_month = GynecologyChart.objects.filter(
+        created_by=current_staff,
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).count()
+    
+    # Pregnant patients
+    pregnant_patients = GynecologyChart.objects.filter(
+        created_by=current_staff,
+        is_pregnant=True,
+        is_deleted=False
+    ).values('patient').distinct().count()
+    
+    # Pending referrals
+    pending_referrals = Referral.objects.filter(
+        specialist=specialist_profile,
+        status='pending',
+        is_deleted=False
+    ).count()
+    
+    # Active referrals
+    active_referrals = Referral.objects.filter(
+        specialist=specialist_profile,
+        status__in=['accepted', 'in_progress'],
+        is_deleted=False
+    ).count()
+    
+    # Average BMI
+    avg_bmi = GynecologyChart.objects.filter(
+        created_by=current_staff,
+        bmi__isnull=False,
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).aggregate(avg=Avg('bmi'))['avg'] or 0
+    
+    # ========== CHART DATA ==========
+    # Consultations over time (last 30 days)
+    consultations_by_date = list(GynecologyChart.objects.filter(
+        created_by=current_staff,
+        chart_date__gte=today - timedelta(days=30),
+        is_deleted=False
+    ).values('chart_date').annotate(count=Count('id')).order_by('chart_date'))
+    
+    # BMI distribution (patient__full_name is a @property; use Concat for DB query)
+    bmi_data = list(GynecologyChart.objects.filter(
+        created_by=current_staff,
+        bmi__isnull=False,
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).annotate(
+        patient_name=Concat('patient__first_name', Value(' '), 'patient__last_name')
+    ).order_by('chart_date').values('chart_date', 'bmi', 'patient_name'))
+    
+    # Pregnancy status distribution
+    pregnancy_dist = list(GynecologyChart.objects.filter(
+        created_by=current_staff,
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).values('is_pregnant').annotate(count=Count('id')))
+    
+    # Gestational age distribution (for pregnant patients)
+    gestational_age_data = list(GynecologyChart.objects.filter(
+        created_by=current_staff,
+        is_pregnant=True,
+        gestational_age_weeks__isnull=False,
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).order_by('gestational_age_weeks').values('gestational_age_weeks').annotate(count=Count('id')))
+    
+    # Diagnosis distribution
+    diagnosis_dist = list(GynecologyChart.objects.filter(
+        created_by=current_staff,
+        primary_diagnosis__isnull=False,
+        primary_diagnosis__gt='',
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).values('primary_diagnosis').annotate(count=Count('id')).order_by('-count')[:10])
+    
+    # HIV status distribution
+    hiv_dist = list(GynecologyChart.objects.filter(
+        created_by=current_staff,
+        hiv_status__isnull=False,
+        hiv_status__gt='',
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).values('hiv_status').annotate(count=Count('id')))
+    
+    # Pap smear results
+    pap_smear_dist = list(GynecologyChart.objects.filter(
+        created_by=current_staff,
+        pap_smear_result__isnull=False,
+        pap_smear_result__gt='',
+        chart_date__gte=month_start,
+        is_deleted=False
+    ).values('pap_smear_result').annotate(count=Count('id')))
+    
+    # ========== RECENT DATA ==========
+    recent_consultations = GynecologyChart.objects.filter(
+        created_by=current_staff,
+        is_deleted=False
+    ).select_related('patient', 'encounter').order_by('-chart_date')[:10]
+    
+    pending_referrals_list = Referral.objects.filter(
+        specialist=specialist_profile,
+        status='pending',
+        is_deleted=False
+    ).select_related('patient', 'encounter', 'referring_doctor__user', 'specialty').order_by(
+        '-priority', '-referred_date'
+    )[:10]
+    
+    pregnant_patients_list = GynecologyChart.objects.filter(
+        created_by=current_staff,
+        is_pregnant=True,
+        is_deleted=False
+    ).select_related('patient', 'encounter').order_by('-chart_date')[:10]
+    
+    context = {
+        'specialist_profile': specialist_profile,
+        'today': today,
+        'stats': {
+            'consultations_today': consultations_today,
+            'consultations_this_week': consultations_this_week,
+            'consultations_this_month': consultations_this_month,
+            'pregnant_patients': pregnant_patients,
+            'pending_referrals': pending_referrals,
+            'active_referrals': active_referrals,
+            'avg_bmi': round(avg_bmi, 1) if avg_bmi else 0,
+        },
+        'chart_data': {
+            'consultations_by_date': json.dumps(consultations_by_date, cls=DjangoJSONEncoder),
+            'bmi_data': json.dumps(bmi_data, cls=DjangoJSONEncoder),
+            'pregnancy_dist': json.dumps(pregnancy_dist, cls=DjangoJSONEncoder),
+            'gestational_age_data': json.dumps(gestational_age_data, cls=DjangoJSONEncoder),
+            'diagnosis_dist': json.dumps(diagnosis_dist, cls=DjangoJSONEncoder),
+            'hiv_dist': json.dumps(hiv_dist, cls=DjangoJSONEncoder),
+            'pap_smear_dist': json.dumps(pap_smear_dist, cls=DjangoJSONEncoder),
+        },
+        'recent_consultations': recent_consultations,
+        'pending_referrals_list': pending_referrals_list,
+        'pregnant_patients_list': pregnant_patients_list,
+    }
+    return render(request, 'hospital/specialists/gynecology_dashboard.html', context)
 
 
 # ==================== REFERRAL VIEWS ====================

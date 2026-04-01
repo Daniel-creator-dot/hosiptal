@@ -1,0 +1,104 @@
+{% extends 'hospital/base.html' %}
+{% load humanize static %}
+
+{% block title %}Screening report – {{ encounter.patient.full_name }} – HMS{% endblock %}
+{% block page_title %}Screening report{% endblock %}
+{% block page_subtitle %}{{ encounter.patient.full_name }} · {{ encounter.get_encounter_type_display }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .report-form-card { background: white; border-radius: 16px; padding: 28px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); margin-bottom: 24px; }
+    .report-form-card h4 { font-size: 16px; font-weight: 700; margin-bottom: 14px; color: #1e293b; }
+    .suggested-box { background: #f0fdf4; border: 1px solid #86efac; border-radius: 10px; padding: 12px; font-size: 13px; color: #166534; margin-bottom: 12px; }
+    .result-badge { display: inline-block; padding: 8px 16px; border-radius: 10px; font-weight: 600; margin-right: 8px; }
+    .result-fit { background: #d1fae5; color: #065f46; }
+    .result-unfit { background: #fee2e2; color: #991b1b; }
+    .result-restrictions { background: #fef3c7; color: #92400e; }
+    .result-pending { background: #e0e7ff; color: #3730a3; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="mb-4">
+        <a href="{% url 'hospital:encounter_detail' pk=encounter.pk %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left me-1"></i> Back to encounter
+        </a>
+    </div>
+
+    <form method="post" action="">
+        {% csrf_token %}
+
+        <div class="report-form-card">
+            <h4>Overall result</h4>
+            <div class="mb-3">
+                <label class="form-label">Result</label>
+                <div>
+                    <label class="result-badge result-fit"><input type="radio" name="overall_result" value="fit" {% if report.overall_result == 'fit' %}checked{% endif %} class="me-1"> Fit</label>
+                    <label class="result-badge result-unfit"><input type="radio" name="overall_result" value="unfit" {% if report.overall_result == 'unfit' %}checked{% endif %} class="me-1"> Unfit</label>
+                    <label class="result-badge result-restrictions"><input type="radio" name="overall_result" value="fit_with_restrictions" {% if report.overall_result == 'fit_with_restrictions' %}checked{% endif %} class="me-1"> Fit with restrictions</label>
+                    <label class="result-badge result-pending"><input type="radio" name="overall_result" value="pending" {% if report.overall_result == 'pending' %}checked{% endif %} class="me-1"> Pending</label>
+                </div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Result notes (explanation for employer/school)</label>
+                <textarea name="result_notes" class="form-control" rows="3" placeholder="Brief explanation for fit/unfit or restrictions">{{ report.result_notes }}</textarea>
+            </div>
+        </div>
+
+        <div class="report-form-card">
+            <h4>Laboratory summary</h4>
+            {% if suggested_lab_summary %}
+            <div class="suggested-box">Suggested from results: <pre class="mb-0 mt-1" style="white-space: pre-wrap; font-size: 12px;">{{ suggested_lab_summary }}</pre></div>
+            {% endif %}
+            <textarea name="lab_summary" class="form-control" rows="5" placeholder="Summary of laboratory findings">{{ report.lab_summary }}</textarea>
+        </div>
+
+        <div class="report-form-card">
+            <h4>Imaging summary</h4>
+            {% if suggested_imaging_summary %}
+            <div class="suggested-box">Suggested from reports: <pre class="mb-0 mt-1" style="white-space: pre-wrap; font-size: 12px;">{{ suggested_imaging_summary }}</pre></div>
+            {% endif %}
+            <textarea name="imaging_summary" class="form-control" rows="4" placeholder="Summary of imaging/radiology findings">{{ report.imaging_summary }}</textarea>
+        </div>
+
+        <div class="report-form-card">
+            <h4>Physical examination</h4>
+            <textarea name="physical_exam_notes" class="form-control" rows="4" placeholder="Physical examination findings">{{ report.physical_exam_notes }}</textarea>
+        </div>
+
+        <div class="report-form-card">
+            <h4>General remarks & recommendations</h4>
+            <div class="mb-3">
+                <label class="form-label">General remarks (for employer/school)</label>
+                <textarea name="general_remarks" class="form-control" rows="2" placeholder="Any other remarks">{{ report.general_remarks }}</textarea>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Recommended actions / follow-up</label>
+                <textarea name="recommended_actions" class="form-control" rows="2" placeholder="Follow-up or recommendations">{{ report.recommended_actions }}</textarea>
+            </div>
+        </div>
+
+        <div class="report-form-card">
+            <h4>Requesting organization (optional)</h4>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Organization name</label>
+                    <input type="text" name="requesting_organization" class="form-control" value="{{ report.requesting_organization }}" placeholder="Company or school name">
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Contact person</label>
+                    <input type="text" name="requesting_contact" class="form-control" value="{{ report.requesting_contact }}" placeholder="Contact name">
+                </div>
+            </div>
+        </div>
+
+        <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary btn-lg">
+                <i class="bi bi-check2-circle me-1"></i> Save report
+            </button>
+            <a href="{% url 'hospital:encounter_detail' pk=encounter.pk %}" class="btn btn-outline-secondary btn-lg">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

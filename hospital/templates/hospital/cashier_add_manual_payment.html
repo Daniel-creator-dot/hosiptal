@@ -1,0 +1,366 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Add Manual Payment - Cashier - HMS{% endblock %}
+{% block page_title %}Add Manual Payment{% endblock %}
+{% block page_subtitle %}Record payment for services not yet billed (e.g. consultation paid at cashier){% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-lg-8 offset-lg-2">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-cash-coin me-2"></i>Add Manual Payment</h5>
+                    <a href="{% url 'hospital:centralized_cashier_dashboard' %}" class="btn btn-light btn-sm">
+                        <i class="bi bi-arrow-left"></i> Back to Dashboard
+                    </a>
+                </div>
+                <div class="card-body">
+                    <form method="post" id="manualPaymentForm">
+                        {% csrf_token %}
+                        
+                        <!-- Patient Selection -->
+                        <div class="mb-4">
+                            <label for="patient_search" class="form-label fw-bold">Patient <span class="text-danger">*</span></label>
+                            <input type="text" 
+                                   class="form-control form-control-lg" 
+                                   id="patient_search" 
+                                   placeholder="Type patient name, MRN, or phone..."
+                                   autocomplete="off"
+                                   required>
+                            <input type="hidden" name="patient_id" id="patient_id" required>
+                            <div id="patient_search_results" class="list-group mt-2 shadow-sm" 
+                                 style="max-height: 300px; overflow-y: auto; display: none; position: absolute; z-index: 1000; width: 100%;"></div>
+                            <div id="patient_selected_display" class="alert alert-info mt-2" style="display: none;">
+                                <strong id="patient_name_display"></strong> (MRN: <span id="patient_mrn_display"></span>)
+                                <button type="button" class="btn btn-sm btn-outline-primary float-end" id="clear_patient_btn">
+                                    <i class="bi bi-x-circle"></i> Change
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- Service Selection -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">Service</label>
+                            <div class="card mb-3 border-success">
+                                <div class="card-body py-3">
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_registration_fee" value="registration_fee" data-amount="{{ registration_fee_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_registration_fee">
+                                            Registration Fee — GHS {{ registration_fee_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_gp" value="gp" data-amount="{{ gp_price }}" checked>
+                                        <label class="form-check-label fw-semibold" for="service_gp">
+                                            General Consultation (GP) — GHS {{ gp_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_admission" value="admission" data-amount="{{ admission_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_admission">
+                                            Admission — GHS {{ admission_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_bed" value="bed" data-amount="{{ bed_price_cash }}">
+                                        <label class="form-check-label fw-semibold" for="service_bed">
+                                            Bed Fee — GHS {{ bed_price_cash|floatformat:0 }} (Cash) / GHS {{ bed_price_insurance|floatformat:0 }} (Insurance)
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_detainment" value="detainment" data-amount="{{ detainment_price_cash }}">
+                                        <label class="form-check-label fw-semibold" for="service_detainment">
+                                            Detainment Fee — GHS {{ detainment_price_cash|floatformat:0 }} (Cash) / GHS {{ detainment_price_insurance|floatformat:0 }} (Insurance)
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_doctor_care" value="doctor_care" data-amount="{{ doctor_care_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_doctor_care">
+                                            Doctor Care — GHS {{ doctor_care_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_nursing_care" value="nursing_care" data-amount="{{ nursing_care_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_nursing_care">
+                                            Nursing Care — GHS {{ nursing_care_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_dressing" value="dressing" data-amount="{{ dressing_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_dressing">
+                                            Dressing — GHS {{ dressing_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_injection" value="injection" data-amount="{{ injection_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_injection">
+                                            Injection — GHS {{ injection_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_ecg" value="ecg" data-amount="{{ ecg_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_ecg">
+                                            ECG — GHS {{ ecg_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_urinalysis" value="urinalysis" data-amount="{{ urinalysis_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_urinalysis">
+                                            Urinalysis — GHS {{ urinalysis_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_xray" value="xray" data-amount="{{ xray_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_xray">
+                                            X-Ray — GHS {{ xray_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_wound_care" value="wound_care" data-amount="{{ wound_care_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_wound_care">
+                                            Wound Care — GHS {{ wound_care_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_delivery_fee" value="delivery_fee" data-amount="{{ delivery_fee_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_delivery_fee">
+                                            Delivery Fee — GHS {{ delivery_fee_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_midwife_care" value="midwife_care" data-amount="{{ midwife_care_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_midwife_care">
+                                            Midwife Care — GHS {{ midwife_care_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="card border-secondary">
+                                <div class="card-body py-3">
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input" type="radio" name="service_type" id="service_custom" value="custom">
+                                        <label class="form-check-label fw-semibold" for="service_custom">
+                                            Other service (enter name and amount)
+                                        </label>
+                                    </div>
+                                    <div id="custom_service_fields" style="display: none;" class="ms-4 mt-2">
+                                        <div class="row g-2">
+                                            <div class="col-md-6">
+                                                <input type="text" name="custom_service_name" id="custom_service_name" 
+                                                       class="form-control" placeholder="Service name (e.g. Dressing, Injection)"
+                                                       maxlength="200">
+                                            </div>
+                                            <div class="col-md-6">
+                                                <input type="number" name="amount" id="custom_amount" 
+                                                       class="form-control" step="0.01" min="0.01" 
+                                                       placeholder="Amount (GHS)">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="preset_amount_field" class="mt-2">
+                                <input type="hidden" name="amount" id="preset_amount" value="{{ gp_price }}">
+                            </div>
+                        </div>
+                        
+                        <!-- Charge only (for reception - add without collecting payment) -->
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="charge_only" id="charge_only" value="1">
+                                <label class="form-check-label" for="charge_only">
+                                    <strong>Charge only</strong> — Add to bill without collecting payment (cashier will collect later)
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <!-- Payment Method -->
+                        <div class="mb-3" id="payment_method_group">
+                            <label for="payment_method" class="form-label">Payment Method <span class="text-danger">*</span></label>
+                            <select class="form-select" id="payment_method" name="payment_method" required>
+                                <option value="cash">Cash</option>
+                                <option value="mobile_money">Mobile Money</option>
+                                <option value="bank_transfer">Bank Transfer</option>
+                                <option value="card">Card</option>
+                                <option value="cheque">Cheque</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        
+                        <!-- Notes -->
+                        <div class="mb-4">
+                            <label for="notes" class="form-label">Notes</label>
+                            <textarea class="form-control" id="notes" name="notes" rows="2" 
+                                      placeholder="Optional notes..."></textarea>
+                        </div>
+                        
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                            <a href="{% url 'hospital:centralized_cashier_dashboard' %}" class="btn btn-secondary">Cancel</a>
+                            <button type="submit" class="btn btn-primary btn-lg" id="submit_btn">
+                                <i class="bi bi-check-circle me-1"></i><span id="submit_btn_text">Record Payment & Print Receipt</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const patientSearch = document.getElementById('patient_search');
+    const patientIdInput = document.getElementById('patient_id');
+    const patientResults = document.getElementById('patient_search_results');
+    const patientSelectedDisplay = document.getElementById('patient_selected_display');
+    const patientNameDisplay = document.getElementById('patient_name_display');
+    const patientMrnDisplay = document.getElementById('patient_mrn_display');
+    const clearPatientBtn = document.getElementById('clear_patient_btn');
+    const serviceGp = document.getElementById('service_gp');
+    const serviceCustom = document.getElementById('service_custom');
+    const customServiceFields = document.getElementById('custom_service_fields');
+    const customServiceName = document.getElementById('custom_service_name');
+    const customAmount = document.getElementById('custom_amount');
+    const presetAmountInput = document.getElementById('preset_amount');
+    const form = document.getElementById('manualPaymentForm');
+    const submitBtn = document.getElementById('submit_btn');
+    
+    let patientSearchTimeout;
+    
+    // Service type toggle: presets (gp, admission, detainment) vs custom
+    function updateServiceFields() {
+        const isCustom = serviceCustom.checked;
+        const presetRadios = document.querySelectorAll('.service-preset');
+        
+        if (isCustom) {
+            customServiceFields.style.display = 'block';
+            customServiceName.required = true;
+            customAmount.required = true;
+            presetAmountInput.removeAttribute('name');
+            customAmount.setAttribute('name', 'amount');
+        } else {
+            customServiceFields.style.display = 'none';
+            customServiceName.required = false;
+            customAmount.required = false;
+            customAmount.removeAttribute('name');
+            presetAmountInput.setAttribute('name', 'amount');
+            presetRadios.forEach(function(radio) {
+                if (radio.checked) {
+                    presetAmountInput.value = radio.getAttribute('data-amount') || '150';
+                }
+            });
+        }
+    }
+    serviceGp.addEventListener('change', updateServiceFields);
+    document.getElementById('service_admission').addEventListener('change', updateServiceFields);
+    document.getElementById('service_bed').addEventListener('change', updateServiceFields);
+    document.getElementById('service_detainment').addEventListener('change', updateServiceFields);
+    document.getElementById('service_doctor_care').addEventListener('change', updateServiceFields);
+    document.getElementById('service_nursing_care').addEventListener('change', updateServiceFields);
+    document.getElementById('service_dressing').addEventListener('change', updateServiceFields);
+    document.getElementById('service_injection').addEventListener('change', updateServiceFields);
+    document.getElementById('service_ecg').addEventListener('change', updateServiceFields);
+    document.getElementById('service_urinalysis').addEventListener('change', updateServiceFields);
+    document.getElementById('service_xray').addEventListener('change', updateServiceFields);
+    document.getElementById('service_wound_care').addEventListener('change', updateServiceFields);
+    document.getElementById('service_delivery_fee').addEventListener('change', updateServiceFields);
+    document.getElementById('service_midwife_care').addEventListener('change', updateServiceFields);
+    serviceCustom.addEventListener('change', updateServiceFields);
+    
+    // Patient search
+    patientSearch.addEventListener('input', function() {
+        clearTimeout(patientSearchTimeout);
+        const query = this.value.trim();
+        if (query.length < 2) {
+            patientResults.style.display = 'none';
+            patientIdInput.value = '';
+            return;
+        }
+        patientSearchTimeout = setTimeout(() => {
+            fetch(`{% url 'hospital:api_patient_search' %}?q=${encodeURIComponent(query)}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.patients && data.patients.length > 0) {
+                        patientResults.innerHTML = data.patients.map(p => `
+                            <a href="#" class="list-group-item list-group-item-action patient-select-item" 
+                               data-id="${p.id}" data-name="${p.name || p.full_name || 'Unknown'}" 
+                               data-mrn="${p.mrn || 'N/A'}">
+                                <strong>${p.name || p.full_name || 'Unknown'}</strong>
+                                <br><small class="text-muted">MRN: ${p.mrn || 'N/A'}</small>
+                            </a>
+                        `).join('');
+                        patientResults.style.display = 'block';
+                        patientResults.querySelectorAll('.patient-select-item').forEach(el => {
+                            el.addEventListener('click', function(e) {
+                                e.preventDefault();
+                                patientIdInput.value = this.dataset.id;
+                                patientSearch.value = this.dataset.name;
+                                patientNameDisplay.textContent = this.dataset.name;
+                                patientMrnDisplay.textContent = this.dataset.mrn;
+                                patientResults.style.display = 'none';
+                                patientSearch.style.display = 'none';
+                                patientSelectedDisplay.style.display = 'block';
+                            });
+                        });
+                    } else {
+                        patientResults.innerHTML = '<div class="list-group-item text-muted">No patients found</div>';
+                        patientResults.style.display = 'block';
+                    }
+                })
+                .catch(() => {
+                    patientResults.innerHTML = '<div class="list-group-item text-danger">Error searching</div>';
+                    patientResults.style.display = 'block';
+                });
+        }, 300);
+    });
+    
+    clearPatientBtn.addEventListener('click', function() {
+        patientIdInput.value = '';
+        patientSearch.value = '';
+        patientSearch.style.display = 'block';
+        patientSelectedDisplay.style.display = 'none';
+        patientSearch.focus();
+    });
+    
+    // Form validation
+    form.addEventListener('submit', function(e) {
+        if (!patientIdInput.value) {
+            e.preventDefault();
+            alert('Please select a patient.');
+            return;
+        }
+        if (serviceCustom.checked) {
+            if (!customServiceName.value.trim()) {
+                e.preventDefault();
+                alert('Please enter the service name.');
+                customServiceName.focus();
+                return;
+            }
+            if (!customAmount.value || parseFloat(customAmount.value) <= 0) {
+                e.preventDefault();
+                alert('Please enter a valid amount.');
+                customAmount.focus();
+                return;
+            }
+        }
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Processing...';
+    });
+    
+    // Toggle payment method visibility when charge_only is checked
+    document.getElementById('charge_only').addEventListener('change', function() {
+        const pmGroup = document.getElementById('payment_method_group');
+        const submitText = document.getElementById('submit_btn_text');
+        if (this.checked) {
+            pmGroup.style.opacity = '0.5';
+            if (submitText) submitText.textContent = 'Add Charge (No Payment)';
+        } else {
+            pmGroup.style.opacity = '1';
+            if (submitText) submitText.textContent = 'Record Payment & Print Receipt';
+        }
+    });
+});
+</script>
+{% endblock %}

@@ -4,17 +4,203 @@
 
 {% block title %}Cashbook - HMS{% endblock %}
 {% block page_title %}Cashbook{% endblock %}
-{% block page_subtitle %}Receipts and Payments (Held until next day){% endblock %}
+{% block page_subtitle %}Receipts and Payments (Held until next day) — All entries are automatically recorded. Analytics below reflect your current filters.{% endblock %}
+
+{% block extra_css %}
+<style>
+    .cashbook-kpi {
+        border-radius: 12px;
+        border: 1px solid rgba(0,0,0,0.08);
+        padding: 1rem 1.15rem;
+        height: 100%;
+        background: var(--bs-body-bg, #fff);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .cashbook-kpi .kpi-label {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--bs-secondary-color, #6c757d);
+        margin-bottom: 0.35rem;
+    }
+    .cashbook-kpi .kpi-value {
+        font-size: 1.35rem;
+        font-weight: 700;
+        line-height: 1.2;
+        color: var(--dark, #212529);
+    }
+    .cashbook-kpi .kpi-meta {
+        font-size: 0.8rem;
+        color: var(--bs-secondary-color, #6c757d);
+        margin-top: 0.35rem;
+    }
+    /* Dark theme: match .card surfaces; override global light-on-white inheritance */
+    body.theme-dark .cashbook-kpi {
+        background: #0f172a;
+        border-color: #334155;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+    }
+    body.theme-dark .cashbook-kpi .kpi-value {
+        color: #f8fafc !important;
+    }
+    body.theme-dark .cashbook-kpi .kpi-label {
+        color: #94a3b8 !important;
+    }
+    body.theme-dark .cashbook-kpi .kpi-meta {
+        color: #94a3b8 !important;
+    }
+    .cashbook-kpi.kpi-accent-green { border-left: 4px solid #198754; }
+    .cashbook-kpi.kpi-accent-red { border-left: 4px solid #dc3545; }
+    .cashbook-kpi.kpi-accent-purple { border-left: 4px solid #6f42c1; }
+    .cashbook-kpi.kpi-accent-amber { border-left: 4px solid #ffc107; }
+    .cashbook-kpi.kpi-accent-teal { border-left: 4px solid #0dcaf0; }
+    .cashbook-kpi.kpi-accent-slate { border-left: 4px solid #495057; }
+    .chart-wrap {
+        position: relative;
+        height: 280px;
+    }
+    @media (min-width: 992px) {
+        .chart-wrap.tall { height: 320px; }
+    }
+</style>
+{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
+    <div class="alert alert-light border mb-3 py-2 px-3 small">
+        <i class="bi bi-graph-up-arrow text-primary"></i>
+        <strong>Analytics</strong> — Totals, charts, and the table below use the same filters. Adjust status, type, or dates and click <strong>Filter</strong> to refresh.
+    </div>
+
+    <!-- KPI strip -->
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-xl-3">
+            <div class="cashbook-kpi kpi-accent-slate">
+                <div class="kpi-label">Entries (filtered)</div>
+                <div class="kpi-value">{{ analytics.total_count_fmt }}</div>
+                <div class="kpi-meta">{{ analytics.receipt_count_fmt }} receipts · {{ analytics.payment_count_fmt }} payments</div>
+            </div>
+        </div>
+        <div class="col-6 col-xl-3">
+            <div class="cashbook-kpi kpi-accent-green">
+                <div class="kpi-label">Receipts (GHS)</div>
+                <div class="kpi-value">GHS {{ analytics.receipt_total_fmt }}</div>
+                <div class="kpi-meta">Cash in from patients &amp; services</div>
+            </div>
+        </div>
+        <div class="col-6 col-xl-3">
+            <div class="cashbook-kpi kpi-accent-red">
+                <div class="kpi-label">Payments (GHS)</div>
+                <div class="kpi-value">GHS {{ analytics.payment_total_fmt }}</div>
+                <div class="kpi-meta">Outflows recorded as payment</div>
+            </div>
+        </div>
+        <div class="col-6 col-xl-3">
+            <div class="cashbook-kpi kpi-accent-purple">
+                <div class="kpi-label">Net (receipts − payments)</div>
+                <div class="kpi-value">GHS {{ analytics.net_flow_fmt }}</div>
+                <div class="kpi-meta">Avg ticket: GHS {{ analytics.avg_amount_fmt }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-4 col-xl-3">
+            <div class="cashbook-kpi kpi-accent-amber">
+                <div class="kpi-label">Pending (held)</div>
+                <div class="kpi-value">GHS {{ analytics.pending_amount_fmt }}</div>
+                <div class="kpi-meta">{{ analytics.pending_count_fmt }} entries awaiting classification</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-4 col-xl-3">
+            <div class="cashbook-kpi kpi-accent-teal">
+                <div class="kpi-label">Ready to classify</div>
+                <div class="kpi-value">{{ analytics.ready_to_classify_fmt }}</div>
+                <div class="kpi-meta">GHS {{ analytics.ready_amount_fmt }} · held until date passed</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-4 col-xl-3">
+            <div class="cashbook-kpi kpi-accent-green">
+                <div class="kpi-label">Classified (GHS)</div>
+                <div class="kpi-value">GHS {{ analytics.classified_amount_fmt }}</div>
+                <div class="kpi-meta">{{ analytics.classified_count_fmt }} entries posted to accounts</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-4 col-xl-3">
+            <div class="cashbook-kpi kpi-accent-slate">
+                <div class="kpi-label">Void / other (GHS)</div>
+                <div class="kpi-value">GHS {{ analytics.void_amount_fmt }}</div>
+                <div class="kpi-meta">Gross movement: GHS {{ analytics.total_amount_fmt }}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="row g-3 mb-4">
+        <div class="col-lg-8">
+            <div class="card h-100">
+                <div class="card-header py-3">
+                    <h6 class="mb-0"><i class="bi bi-bar-chart-line text-primary"></i> Daily cash movement</h6>
+                    <small class="text-muted">Receipts vs payments by entry date (filtered set)</small>
+                </div>
+                <div class="card-body">
+                    <div class="chart-wrap tall">
+                        <canvas id="cashbookDailyChart" aria-label="Daily cashbook chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="card h-100">
+                <div class="card-header py-3">
+                    <h6 class="mb-0"><i class="bi bi-pie-chart text-primary"></i> By status</h6>
+                    <small class="text-muted">Amount share</small>
+                </div>
+                <div class="card-body d-flex align-items-center justify-content-center">
+                    <div class="chart-wrap w-100" style="max-width: 340px;">
+                        <canvas id="cashbookStatusChart" aria-label="Status breakdown"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header py-3">
+                    <h6 class="mb-0"><i class="bi bi-arrow-left-right text-primary"></i> Receipts vs payments</h6>
+                    <small class="text-muted">Count and GHS total</small>
+                </div>
+                <div class="card-body">
+                    <div class="chart-wrap">
+                        <canvas id="cashbookTypeChart" aria-label="Entry type chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header py-3">
+                    <h6 class="mb-0"><i class="bi bi-wallet2 text-primary"></i> Payment method</h6>
+                    <small class="text-muted">Where cash was received or paid</small>
+                </div>
+                <div class="card-body">
+                    <div class="chart-wrap tall">
+                        <canvas id="cashbookMethodChart" aria-label="Payment method chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {{ chart_payload|json_script:"cashbook-analytics-data" }}
+
     <!-- Filters -->
     <div class="card mb-4">
         <div class="card-body">
             <form method="get" class="row g-3">
                 <div class="col-md-3">
                     <label class="form-label">Status</label>
-                    <select name="status" class="form-select">
+                    <select name="status" class="form-select" title="Select option" aria-label="Select option">
                         <option value="">All</option>
                         <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
                         <option value="classified" {% if status_filter == 'classified' %}selected{% endif %}>Classified</option>
@@ -22,7 +208,7 @@
                 </div>
                 <div class="col-md-3">
                     <label class="form-label">Type</label>
-                    <select name="entry_type" class="form-select">
+                    <select name="entry_type" class="form-select" title="Select option" aria-label="Select option">
                         <option value="">All</option>
                         <option value="receipt" {% if entry_type_filter == 'receipt' %}selected{% endif %}>Receipt</option>
                         <option value="payment" {% if entry_type_filter == 'payment' %}selected{% endif %}>Payment</option>
@@ -48,25 +234,26 @@
 
     <!-- Cashbook Entries -->
     <div class="card">
-        <div class="card-header d-flex justify-content-between align-items-center">
+        <div class="card-header">
             <h5><i class="bi bi-journal-text"></i> Cashbook Entries</h5>
-            <a href="{% url 'admin:hospital_cashbook_add' %}" class="btn btn-primary">
-                <i class="bi bi-plus-circle"></i> Add Entry
-            </a>
+            <p class="text-muted mb-0"><small><i class="bi bi-info-circle"></i> Entries are automatically created when payments are received. No manual entry needed. Extra columns help reconciliation.</small></p>
         </div>
         <div class="card-body">
             {% if entries %}
             <div class="table-responsive">
-                <table class="table table-hover">
+                <table class="table table-hover table-sm align-middle">
                     <thead>
                         <tr>
                             <th>Entry #</th>
                             <th>Date</th>
                             <th>Type</th>
                             <th>Payee/Payer</th>
-                            <th>Amount</th>
+                            <th>Method</th>
+                            <th class="text-end">Amount</th>
                             <th>Status</th>
                             <th>Held Until</th>
+                            <th>Reference</th>
+                            <th>Description</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -81,10 +268,11 @@
                                 </span>
                             </td>
                             <td>{{ entry.payee_or_payer }}</td>
-                            <td><strong>GHS {{ entry.amount|floatformat:2|intcomma }}</strong></td>
+                            <td><span class="text-nowrap small">{{ entry.get_payment_method_display }}</span></td>
+                            <td class="text-end"><strong>GHS {{ entry.amount|floatformat:2|intcomma }}</strong></td>
                             <td>
                                 {% if entry.status == 'pending' %}
-                                    <span class="badge bg-warning">Pending</span>
+                                    <span class="badge bg-warning text-dark">Pending</span>
                                 {% elif entry.status == 'classified' %}
                                     <span class="badge bg-success">Classified</span>
                                 {% else %}
@@ -92,6 +280,10 @@
                                 {% endif %}
                             </td>
                             <td>{{ entry.held_until|date:"M d, Y" }}</td>
+                            <td class="small text-muted">{{ entry.reference|default:"—" }}</td>
+                            <td class="small" style="max-width: 220px;">
+                                <span title="{{ entry.description }}">{{ entry.description|truncatechars:56 }}</span>
+                            </td>
                             <td>
                                 <a href="{% url 'hospital:cashbook_detail' entry.id %}" class="btn btn-sm btn-outline-primary">
                                     <i class="bi bi-eye"></i> View
@@ -108,27 +300,170 @@
                 </table>
             </div>
 
-            <!-- Pagination -->
             {% if entries.has_other_pages %}
-            <nav aria-label="Page navigation">
-                <ul class="pagination justify-content-center">
+            <nav aria-label="Page navigation" class="mt-3">
+                <ul class="pagination justify-content-center flex-wrap">
                     {% if entries.has_previous %}
-                    <li class="page-item"><a class="page-link" href="?page={{ entries.previous_page_number }}">Previous</a></li>
+                    <li class="page-item">
+                        <a class="page-link" href="?{% if filter_query %}{{ filter_query }}&amp;{% endif %}page={{ entries.previous_page_number }}">Previous</a>
+                    </li>
                     {% endif %}
                     <li class="page-item active"><span class="page-link">Page {{ entries.number }} of {{ entries.paginator.num_pages }}</span></li>
                     {% if entries.has_next %}
-                    <li class="page-item"><a class="page-link" href="?page={{ entries.next_page_number }}">Next</a></li>
+                    <li class="page-item">
+                        <a class="page-link" href="?{% if filter_query %}{{ filter_query }}&amp;{% endif %}page={{ entries.next_page_number }}">Next</a>
+                    </li>
                     {% endif %}
                 </ul>
             </nav>
             {% endif %}
             {% else %}
             <div class="alert alert-info">
-                <i class="bi bi-info-circle"></i> No cashbook entries found.
+                <i class="bi bi-info-circle"></i> <strong>No cashbook entries found.</strong>
+                <br><small>Cashbook entries are automatically created when payments are received for:
+                <ul class="mb-0 mt-2">
+                    <li>Patient invoices and bills</li>
+                    <li>Lab test payments</li>
+                    <li>Pharmacy payments</li>
+                    <li>Consultation fees</li>
+                    <li>Prescribe pharmacy sales</li>
+                    <li>All other service payments</li>
+                </ul>
+                Entries are held until the next day before classification to revenue accounts.</small>
             </div>
             {% endif %}
         </div>
     </div>
 </div>
-{% endblock %}
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    const root = document.getElementById('cashbook-analytics-data');
+    if (!root || !window.Chart) return;
+    let payload;
+    try {
+        payload = JSON.parse(root.textContent);
+    } catch (e) { return; }
+
+    const isDark = document.body.classList.contains('theme-dark');
+    const gridColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(0,0,0,0.06)';
+    const tickColor = isDark ? '#cbd5e1' : '#6c757d';
+    const commonOpts = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: tickColor } } },
+        scales: {
+            x: { ticks: { color: tickColor, maxRotation: 45, minRotation: 0 }, grid: { color: gridColor } },
+            y: { ticks: { color: tickColor }, grid: { color: gridColor } }
+        }
+    };
+
+    const daily = payload.daily || [];
+    const dailyLabels = daily.map(d => d.date);
+    const ctxD = document.getElementById('cashbookDailyChart');
+    if (ctxD && daily.length) {
+        new Chart(ctxD, {
+            type: 'bar',
+            data: {
+                labels: dailyLabels,
+                datasets: [
+                    { label: 'Receipts (GHS)', data: daily.map(d => d.receipts), backgroundColor: 'rgba(25, 135, 84, 0.75)', borderRadius: 4 },
+                    { label: 'Payments (GHS)', data: daily.map(d => d.payments), backgroundColor: 'rgba(220, 53, 69, 0.7)', borderRadius: 4 }
+                ]
+            },
+            options: {
+                ...commonOpts,
+                plugins: { ...commonOpts.plugins, tooltip: { callbacks: { label: c => c.dataset.label + ': GHS ' + (c.parsed.y || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) } } }
+            }
+        });
+    } else if (ctxD) {
+        ctxD.parentElement.innerHTML = '<p class="text-muted text-center py-5 mb-0">No dated entries in this filter — adjust filters or record payments to see a trend.</p>';
+    }
+
+    const st = payload.status || [];
+    const ctxS = document.getElementById('cashbookStatusChart');
+    if (ctxS && st.length) {
+        const colors = ['#ffc107', '#198754', '#6c757d', '#0dcaf0', '#6f42c1'];
+        new Chart(ctxS, {
+            type: 'doughnut',
+            data: {
+                labels: st.map(x => x.label),
+                datasets: [{ data: st.map(x => x.amount), backgroundColor: colors, borderWidth: 0 }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { color: tickColor, boxWidth: 12 } },
+                    tooltip: {
+                        callbacks: {
+                            label: (c) => {
+                                const v = (typeof c.raw === 'number' ? c.raw : c.parsed) || 0;
+                                return (c.label || '') + ': GHS ' + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    } else if (ctxS) {
+        ctxS.parentElement.innerHTML = '<p class="text-muted text-center py-4 mb-0 small">No status data</p>';
+    }
+
+    const et = payload.entryType || [];
+    const ctxT = document.getElementById('cashbookTypeChart');
+    if (ctxT && et.length) {
+        new Chart(ctxT, {
+            type: 'bar',
+            data: {
+                labels: et.map(x => x.label),
+                datasets: [
+                    { label: 'Entries', data: et.map(x => x.count), backgroundColor: 'rgba(111, 66, 193, 0.75)', yAxisID: 'y' },
+                    { label: 'Amount (GHS)', data: et.map(x => x.amount), backgroundColor: 'rgba(13, 202, 240, 0.65)', yAxisID: 'y1' }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { labels: { color: tickColor } } },
+                scales: {
+                    x: { ticks: { color: tickColor }, grid: { display: false } },
+                    y: { type: 'linear', position: 'left', ticks: { color: tickColor }, title: { display: true, text: 'Count', color: tickColor }, grid: { color: gridColor } },
+                    y1: { type: 'linear', position: 'right', ticks: { color: tickColor }, title: { display: true, text: 'GHS', color: tickColor }, grid: { drawOnChartArea: false } }
+                }
+            }
+        });
+    } else if (ctxT) {
+        ctxT.parentElement.innerHTML = '<p class="text-muted text-center py-5 mb-0">No type breakdown</p>';
+    }
+
+    const pm = payload.paymentMethod || [];
+    const ctxM = document.getElementById('cashbookMethodChart');
+    if (ctxM && pm.length) {
+        new Chart(ctxM, {
+            type: 'bar',
+            data: {
+                labels: pm.map(x => x.label),
+                datasets: [{ label: 'GHS', data: pm.map(x => x.amount), backgroundColor: 'rgba(13, 110, 253, 0.75)', borderRadius: 4 }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { afterLabel: (c) => { const row = pm[c.dataIndex]; return row ? (row.count + ' transactions') : ''; }, label: c => 'GHS ' + (c.parsed.x || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) } }
+                },
+                scales: {
+                    x: { ticks: { color: tickColor }, grid: { color: gridColor } },
+                    y: { ticks: { color: tickColor }, grid: { display: false } }
+                }
+            }
+        });
+    } else if (ctxM) {
+        ctxM.parentElement.innerHTML = '<p class="text-muted text-center py-5 mb-0">No payment method data</p>';
+    }
+})();
+</script>
+{% endblock %}

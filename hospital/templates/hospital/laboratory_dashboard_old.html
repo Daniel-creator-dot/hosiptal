@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load static humanize %}
+{% load static humanize hospital_extras %}
 
 {% block title %}Laboratory Dashboard - HMS{% endblock %}
 {% block page_title %}Laboratory Dashboard{% endblock %}
@@ -75,7 +75,13 @@
                                     {{ order.encounter.patient.full_name }}
                                 </a>
                             </td>
-                            <td>{{ order.requested_by.user.get_full_name|default:order.requested_by.user.username }}</td>
+                            <td>
+                                {% if order.requested_by and order.requested_by.user %}
+                                    {{ order.requested_by.user.get_full_name|default:order.requested_by.user.username|default:"Not assigned" }}
+                                {% else %}
+                                    Not assigned
+                                {% endif %}
+                            </td>
                             <td>{{ order.requested_at|timesince }} ago</td>
                             <td>
                                 <span class="badge-modern badge-{% if order.priority == 'stat' %}danger{% elif order.priority == 'urgent' %}warning{% else %}info{% endif %}">
@@ -136,10 +142,16 @@
                             </td>
                             <td>{{ result.test.name }}</td>
                             <td>{{ result.created|timesince }} ago</td>
-                            <td>{{ result.verified_by.user.get_full_name|default:"-" }}</td>
+                            <td>
+                                {% if result.verified_by and result.verified_by.user %}
+                                    {{ result.verified_by.user.get_full_name|default:result.verified_by.user.username|default:"-" }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
                             <td>
                                 <div class="btn-group btn-group-sm">
-                                    <a href="{% url 'hospital:tabular_lab_report' result.pk %}" class="btn btn-primary" title="Tabular Entry">
+                                    <a href="{% lab_result_entry_url result %}" class="btn btn-primary" title="Tabular Entry">
                                         <i class="bi bi-table"></i> Enter
                                     </a>
                                     <a href="{% url 'hospital:edit_lab_result' result.pk %}" class="btn btn-outline-secondary" title="Simple Entry">
@@ -234,7 +246,7 @@
                             <td>{{ result.created|timesince }} ago</td>
                             <td>
                                 <div class="btn-group btn-group-sm">
-                                    <a href="{% url 'hospital:tabular_lab_report' result.pk %}" class="btn btn-success" title="Start & Enter Results">
+                                    <a href="{% lab_result_entry_url result %}" class="btn btn-success" title="Start & Enter Results">
                                         <i class="bi bi-table"></i> Enter
                                     </a>
                                     <a href="/admin/hospital/labresult/{{ result.pk }}/change/" class="btn btn-outline-primary" title="View Details">

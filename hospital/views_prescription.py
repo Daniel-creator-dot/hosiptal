@@ -10,12 +10,14 @@ from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from hospital.models import Prescription, Staff
 from hospital.utils_roles import get_user_role
+from hospital.decorators import role_required
 import logging
 
 logger = logging.getLogger(__name__)
 
 
 @login_required
+@role_required('doctor', 'admin', message='Access denied. Only doctors can manage prescriptions.')
 @require_http_methods(["POST", "DELETE"])
 def delete_prescription(request, prescription_id):
     """
@@ -45,10 +47,13 @@ def delete_prescription(request, prescription_id):
         is_admin = user_role == 'admin'
         
         # Check if user created this prescription or is admin
+        order = getattr(prescription, "order", None)
+        encounter = getattr(order, "encounter", None) if order else None
+        provider = getattr(encounter, "provider", None) if encounter else None
         can_delete = (
-            prescription.prescribed_by == staff or
-            is_admin or
-            (is_doctor and prescription.order.encounter.provider == staff)
+            prescription.prescribed_by == staff
+            or is_admin
+            or (is_doctor and encounter and provider == staff)
         )
         
         if not can_delete:
@@ -57,17 +62,31 @@ def delete_prescription(request, prescription_id):
                 return JsonResponse({'success': False, 'error': 'Not authorized'}, status=403)
             return redirect('hospital:dashboard')
         
-        # Check if prescription has been dispensed (optional - you may want to prevent deletion if already dispensed)
-        # This is a safety check - you can remove it if you want to allow deletion even after dispensing
-        if hasattr(prescription, 'dispensing_record') and prescription.dispensing_record:
-            messages.warning(request, 'This prescription has already been dispensed. Contact pharmacy to cancel.')
-            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                return JsonResponse({'success': False, 'error': 'Prescription already dispensed'}, status=400)
-            return redirect('hospital:dashboard')
-        
+        # If already dispensed, do not allow delete (safety)
+        dispensing_record = getattr(prescription, "dispensing_record", None)
+        try:
+            if dispensing_record and getattr(dispensing_record, "is_dispensed", False):
+                messages.warning(request, 'This prescription has already been dispensed. Contact pharmacy to cancel.')
+                if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return JsonResponse({'success': False, 'error': 'Prescription already dispensed'}, status=400)
+                return redirect('hospital:dashboard')
+        except Exception:
+            pass
+
+        # Cascade to pharmacy and invoice: waive invoice lines, cancel dispensing
+        from hospital.services.prescription_cascade_service import cascade_prescription_deleted
+        cascade_prescription_deleted(prescription, waived_by_user=request.user)
+
         # Soft delete
         drug_name = prescription.drug.name
-        patient_name = prescription.order.encounter.patient.full_name if prescription.order.encounter else "Unknown"
+        patient_name = "Unknown"
+        try:
+            order = getattr(prescription, "order", None)
+            encounter = getattr(order, "encounter", None) if order else None
+            if encounter and getattr(encounter, "patient", None):
+                patient_name = encounter.patient.full_name
+        except Exception:
+            pass
         
         prescription.is_deleted = True
         prescription.save(update_fields=['is_deleted', 'modified'])
@@ -88,8 +107,10 @@ def delete_prescription(request, prescription_id):
             return redirect(next_url)
         
         # Default redirect to encounter if available
-        if prescription.order and prescription.order.encounter:
-            return redirect('hospital:encounter_detail', pk=prescription.order.encounter.id)
+        order = getattr(prescription, "order", None)
+        encounter = getattr(order, "encounter", None) if order else None
+        if order and encounter:
+            return redirect('hospital:encounter_detail', pk=encounter.id)
         
         return redirect('hospital:dashboard')
         

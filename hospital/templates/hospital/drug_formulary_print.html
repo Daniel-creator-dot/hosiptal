@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drug Formulary — {{ settings.hospital_name|default:"Hospital" }}</title>
+    <style>
+        @page {
+            size: A4 landscape;
+            margin: 12mm;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            font-size: 9pt;
+            line-height: 1.35;
+            color: #1a1a1a;
+            margin: 0;
+            padding: 16px;
+        }
+        .no-print {
+            margin-bottom: 16px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+        .no-print button, .no-print a {
+            font-size: 14px;
+            padding: 8px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            text-decoration: none;
+            border: none;
+            font-weight: 600;
+        }
+        .btn-print { background: #7c3aed; color: #fff; }
+        .btn-back { background: #e5e7eb; color: #111; display: inline-block; }
+        .btn-excel { background: #15803d; color: #fff; }
+        .header {
+            border-bottom: 3px solid {{ settings.report_header_color|default:'#7c3aed' }};
+            padding-bottom: 12px;
+            margin-bottom: 14px;
+        }
+        .header h1 {
+            margin: 0 0 4px 0;
+            font-size: 18pt;
+            color: {{ settings.report_header_color|default:'#7c3aed' }};
+        }
+        .meta { font-size: 8.5pt; color: #555; }
+        .filters { font-size: 8.5pt; color: #444; margin-top: 6px; }
+        table.formulary-main {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            table-layout: fixed;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 6px 8px;
+            text-align: left;
+            vertical-align: top;
+        }
+        .col-cat { width: 26%; word-wrap: break-word; overflow-wrap: anywhere; white-space: normal; }
+        .col-name { width: 18%; word-wrap: break-word; overflow-wrap: anywhere; white-space: normal; }
+        .col-generic { width: 12%; word-wrap: break-word; overflow-wrap: anywhere; white-space: normal; }
+        .col-tiny { width: 6%; white-space: nowrap; }
+        .col-small { width: 7%; }
+        th {
+            background: {{ settings.report_header_color|default:'#7c3aed' }};
+            color: #fff;
+            font-weight: 600;
+            font-size: 8pt;
+        }
+        tr:nth-child(even) { background: #f9fafb; }
+        .num { text-align: right; white-space: nowrap; }
+        .badge { font-size: 7.5pt; font-weight: 600; padding: 2px 6px; border-radius: 4px; }
+        .badge-yes { background: #d1fae5; color: #065f46; }
+        .badge-no { background: #f3f4f6; color: #4b5563; }
+        .badge-ctrl { background: #fee2e2; color: #991b1b; }
+        @media print {
+            .no-print { display: none !important; }
+            body { padding: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="no-print">
+        <button type="button" class="btn-print" onclick="window.print()">Print / Save as PDF</button>
+        <a href="{% url 'hospital:drug_formulary_excel' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn-back btn-excel">Download Excel</a>
+        <a href="{% url 'hospital:drug_formulary_list' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn-back">Back to formulary</a>
+    </div>
+
+    <div class="header">
+        <h1>Drug Formulary</h1>
+        <div class="meta">
+            {{ settings.hospital_name|default:"Hospital" }}
+            {% if settings.address %} — {{ settings.address }}{% endif %}
+            <br>
+            Generated {{ generated_at|date:"Y-m-d H:i" }} — {{ total_drugs }} drug{{ total_drugs|pluralize }}
+        </div>
+        {% if search_query or category_filter or form_filter or status_filter or controlled_filter %}
+        <div class="filters">
+            <strong>Filters:</strong>
+            {% if search_query %}Search “{{ search_query }}”{% endif %}
+            {% if category_filter %}{% if search_query %} · {% endif %}Category: {{ category_filter_label|default:category_filter }}{% endif %}
+            {% if form_filter %}{% if search_query or category_filter %} · {% endif %}Form: {{ form_filter }}{% endif %}
+            {% if status_filter %}{% if search_query or category_filter or form_filter %} · {% endif %}Status: {{ status_filter }}{% endif %}
+            {% if controlled_filter %}{% if search_query or category_filter or form_filter or status_filter %} · {% endif %}Controlled: {{ controlled_filter }}{% endif %}
+        </div>
+        {% endif %}
+    </div>
+
+    {% if not formulary_rows %}
+    <p>No drugs match the current filters.</p>
+    {% else %}
+    <table class="formulary-main">
+        <thead>
+            <tr>
+                <th class="col-cat">Therapeutic category</th>
+                <th class="col-name">Drug name</th>
+                <th class="col-generic">Generic</th>
+                <th class="col-small">Strength</th>
+                <th class="col-small">Form</th>
+                <th class="col-tiny">Pack</th>
+                <th class="col-tiny">Active</th>
+                <th class="col-tiny">Ctrl</th>
+                <th class="num">Unit (GHS)</th>
+                <th class="num">Cost (GHS)</th>
+                <th class="col-small">ATC</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for drug in formulary_rows %}
+            <tr>
+                <td class="col-cat">{{ drug.get_category_display }}</td>
+                <td class="col-name">{{ drug.name }}</td>
+                <td class="col-generic">{{ drug.generic_name|default:"—" }}</td>
+                <td>{{ drug.strength }}</td>
+                <td>{{ drug.form }}</td>
+                <td>{{ drug.pack_size|default:"—" }}</td>
+                <td>{% if drug.is_active %}<span class="badge badge-yes">Y</span>{% else %}<span class="badge badge-no">N</span>{% endif %}</td>
+                <td>{% if drug.is_controlled %}<span class="badge badge-ctrl">Y</span>{% else %}<span class="badge badge-no">N</span>{% endif %}</td>
+                <td class="num">{{ drug.unit_price }}</td>
+                <td class="num">{{ drug.cost_price }}</td>
+                <td>{{ drug.atc_code|default:"—" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if settings.report_footer_text %}
+    <p class="meta" style="margin-top: 20px;">{{ settings.report_footer_text|linebreaksbr }}</p>
+    {% endif %}
+</body>
+</html>

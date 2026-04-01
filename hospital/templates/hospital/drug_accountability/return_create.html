@@ -1,0 +1,510 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Create Drug Return - HMS{% endblock %}
+{% block page_title %}Create Drug Return Request{% endblock %}
+
+{% block extra_css %}
+<style>
+    #patientResults, #drugResults {
+        z-index: 1051 !important;
+        position: absolute !important;
+    }
+    .position-relative {
+        position: relative !important;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-arrow-return-left me-2"></i>Create Drug Return Request
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Recent Dispensing (Optional)</label>
+                        <select name="dispensing_id" class="form-select" id="dispensingSelect">
+                            <option value="">Select a recent dispensing...</option>
+                            {% for dispensing in recent_dispensings %}
+                            <option value="{{ dispensing.id }}" 
+                                    data-patient="{{ dispensing.patient.id }}"
+                                    data-drug="{{ dispensing.prescription.drug.id }}"
+                                    data-quantity="{{ dispensing.quantity_dispensed }}">
+                                {{ dispensing.patient.full_name }} - {{ dispensing.prescription.drug.name }} 
+                                ({{ dispensing.quantity_dispensed }} units) - {{ dispensing.dispensed_at|date:"M d, Y" }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <small class="text-muted">Select a recent dispensing to auto-fill form</small>
+                    </div>
+                    
+                    <hr>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Patient *</label>
+                            <div class="position-relative" style="z-index: 1050;">
+                                <input type="text" name="patient_search" id="patientSearch" class="form-control" 
+                                       placeholder="Type patient name, MRN, or phone to search..." autocomplete="off">
+                                <input type="hidden" name="patient_id" id="patientId" required>
+                                <div id="patientResults" class="list-group position-absolute w-100" 
+                                     style="z-index: 1051; display: none; max-height: 300px; overflow-y: auto; overflow-x: hidden; background: white; border: 1px solid #dee2e6; border-radius: 0.375rem; margin-top: 2px; box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15); top: 100%; left: 0; right: 0; position: absolute;"></div>
+                            </div>
+                            <small class="text-muted">Start typing to search patients by name, MRN, or phone number</small>
+                            <div id="selectedPatient" class="mt-2 p-2 bg-light rounded" style="display: none;">
+                                <strong>Selected:</strong> <span id="selectedPatientName"></span>
+                                <button type="button" class="btn btn-sm btn-outline-danger ms-2" onclick="clearPatient()">Clear</button>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Drug *</label>
+                            <div class="position-relative" style="z-index: 1050;">
+                                <input type="text" name="drug_search" id="drugSearch" class="form-control" 
+                                       placeholder="Type drug name or code to search..." autocomplete="off">
+                                <input type="hidden" name="drug_id" id="drugId" required>
+                                <div id="drugResults" class="list-group position-absolute w-100" 
+                                     style="z-index: 1051; display: none; max-height: 300px; overflow-y: auto; overflow-x: hidden; background: white; border: 1px solid #dee2e6; border-radius: 0.375rem; margin-top: 2px; box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15); top: 100%; left: 0; right: 0; position: absolute;"></div>
+                            </div>
+                            <small class="text-muted">Start typing to search drugs by name or code</small>
+                            <div id="selectedDrug" class="mt-2 p-2 bg-light rounded" style="display: none;">
+                                <strong>Selected:</strong> <span id="selectedDrugName"></span>
+                                <button type="button" class="btn btn-sm btn-outline-danger ms-2" onclick="clearDrug()">Clear</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Prescription ID (Optional)</label>
+                            <input type="text" name="prescription_id" class="form-control" 
+                                   placeholder="Prescription ID">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Quantity to Return *</label>
+                            <input type="number" name="quantity" id="quantity" class="form-control" required min="1">
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Return Reason *</label>
+                        <select name="return_reason" class="form-select" required>
+                            <option value="">Select reason...</option>
+                            {% for code, name in return_reasons %}
+                            <option value="{{ code }}">{{ name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Reason Details</label>
+                        <textarea name="reason_details" class="form-control" rows="3" 
+                                  placeholder="Provide detailed reason for return..."></textarea>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Condition on Return</label>
+                        <select name="condition_on_return" class="form-select">
+                            <option value="sealed">Sealed/Unopened</option>
+                            <option value="good">Good Condition</option>
+                            <option value="opened">Opened Package</option>
+                            <option value="damaged">Damaged</option>
+                            <option value="expired">Expired</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="return_to_inventory" 
+                                   id="returnToInventory" checked>
+                            <label class="form-check-label" for="returnToInventory">
+                                Return to Inventory Stock
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Notes</label>
+                        <textarea name="notes" class="form-control" rows="2" 
+                                  placeholder="Additional notes..."></textarea>
+                    </div>
+                    
+                    <div class="d-flex justify-content-between">
+                        <a href="{% url 'hospital:drug_returns_list' %}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left me-2"></i>Cancel
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-circle me-2"></i>Create Return Request
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let patientSearchTimeout;
+let drugSearchTimeout;
+
+// Wait for DOM to be ready
+document.addEventListener('DOMContentLoaded', function() {
+    const patientSearchInput = document.getElementById('patientSearch');
+    const drugSearchInput = document.getElementById('drugSearch');
+    
+    if (!patientSearchInput || !drugSearchInput) {
+        console.error('Search inputs not found');
+        return;
+    }
+    
+    // Patient search with debounce
+    patientSearchInput.addEventListener('input', function() {
+        console.log('⌨️ Input event triggered, value:', this.value);
+        const searchTerm = this.value.trim();
+        const resultsDiv = document.getElementById('patientResults');
+        
+        if (!resultsDiv) {
+            console.error('❌ Patient results div not found!');
+            return;
+        }
+        
+        console.log('📋 Results div found:', resultsDiv);
+        
+        clearTimeout(patientSearchTimeout);
+        
+        if (searchTerm.length < 2) {
+            console.log('⚠️ Search term too short:', searchTerm.length);
+            resultsDiv.style.display = 'none';
+            resultsDiv.style.visibility = 'hidden';
+            return;
+        }
+        
+        console.log('🔍 Starting search for:', searchTerm);
+        
+        // Show loading
+        resultsDiv.innerHTML = '<div class="list-group-item" style="padding: 10px 15px;">Searching...</div>';
+        resultsDiv.style.display = 'block';
+        resultsDiv.style.visibility = 'visible';
+        resultsDiv.style.opacity = '1';
+        resultsDiv.style.zIndex = '1051';
+        console.log('👁️ Loading state set, display:', resultsDiv.style.display);
+        
+        patientSearchTimeout = setTimeout(() => {
+            const url = `/hms/drug-returns/patient-search/?q=${encodeURIComponent(searchTerm)}`;
+            console.log('🔍 Searching patients:', url);
+            console.log('📋 Results div:', resultsDiv);
+            console.log('👁️ Results div display:', resultsDiv.style.display);
+            
+            fetch(url, {
+                method: 'GET',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json',
+                },
+                credentials: 'same-origin'
+            })
+                .then(response => {
+                    console.log('✅ Response received, status:', response.status);
+                    console.log('📄 Response headers:', response.headers);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('📦 Search results data:', data);
+                    console.log('📊 Results count:', data.results ? data.results.length : 0);
+                    
+                    if (data.error) {
+                        console.error('❌ Search error:', data.error);
+                        resultsDiv.innerHTML = `<div class="list-group-item text-danger" style="padding: 10px 15px;">Error: ${data.error}</div>`;
+                        resultsDiv.style.display = 'block';
+                        resultsDiv.style.visibility = 'visible';
+                        resultsDiv.style.opacity = '1';
+                        return;
+                    }
+                    
+                    resultsDiv.innerHTML = '';
+                    
+                    if (data.results && data.results.length > 0) {
+                        console.log('✅ Rendering', data.results.length, 'patients');
+                        data.results.forEach((patient, index) => {
+                            const item = document.createElement('a');
+                            item.href = '#';
+                            item.className = 'list-group-item list-group-item-action';
+                            item.style.cursor = 'pointer';
+                            item.style.padding = '10px 15px';
+                            item.style.borderBottom = '1px solid #dee2e6';
+                            item.innerHTML = `
+                                <strong>${patient.name || 'Unknown'}</strong><br>
+                                <small class="text-muted">MRN: ${patient.mrn || 'N/A'}${patient.phone ? ' | Phone: ' + patient.phone : ''}</small>
+                            `;
+                            item.addEventListener('click', function(e) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                console.log('👆 Patient selected:', patient.name);
+                                selectPatient(patient.id, patient.name);
+                            });
+                            item.addEventListener('mouseenter', function() {
+                                this.style.backgroundColor = '#f8f9fa';
+                            });
+                            item.addEventListener('mouseleave', function() {
+                                this.style.backgroundColor = 'white';
+                            });
+                            resultsDiv.appendChild(item);
+                        });
+                        resultsDiv.style.display = 'block';
+                        resultsDiv.style.visibility = 'visible';
+                        resultsDiv.style.opacity = '1';
+                        resultsDiv.style.zIndex = '1051';
+                        console.log('✅ Results displayed, count:', data.results.length);
+                        console.log('👁️ Results div after display:', {
+                            display: resultsDiv.style.display,
+                            visibility: resultsDiv.style.visibility,
+                            opacity: resultsDiv.style.opacity,
+                            zIndex: resultsDiv.style.zIndex,
+                            innerHTML: resultsDiv.innerHTML.substring(0, 100)
+                        });
+                    } else {
+                        console.log('ℹ️ No results found');
+                        const item = document.createElement('div');
+                        item.className = 'list-group-item text-muted';
+                        item.style.padding = '10px 15px';
+                        item.textContent = 'No patients found';
+                        resultsDiv.appendChild(item);
+                        resultsDiv.style.display = 'block';
+                        resultsDiv.style.visibility = 'visible';
+                        resultsDiv.style.opacity = '1';
+                        resultsDiv.style.zIndex = '1051';
+                    }
+                })
+                .catch(error => {
+                    console.error('❌ Search fetch error:', error);
+                    console.error('❌ Error stack:', error.stack);
+                    resultsDiv.innerHTML = `<div class="list-group-item text-danger" style="padding: 10px 15px;">Error: ${error.message}</div>`;
+                    resultsDiv.style.display = 'block';
+                    resultsDiv.style.visibility = 'visible';
+                    resultsDiv.style.opacity = '1';
+                });
+        }, 300);
+    });
+
+    // Drug search with debounce
+    drugSearchInput.addEventListener('input', function() {
+        const searchTerm = this.value.trim();
+        const resultsDiv = document.getElementById('drugResults');
+        
+        if (!resultsDiv) {
+            console.error('Drug results div not found');
+            return;
+        }
+        
+        clearTimeout(drugSearchTimeout);
+        
+        if (searchTerm.length < 2) {
+            resultsDiv.style.display = 'none';
+            resultsDiv.style.visibility = 'hidden';
+            return;
+        }
+        
+        // Show loading
+        resultsDiv.innerHTML = '<div class="list-group-item" style="padding: 10px 15px;">Searching...</div>';
+        resultsDiv.style.display = 'block';
+        resultsDiv.style.visibility = 'visible';
+        resultsDiv.style.opacity = '1';
+        
+        drugSearchTimeout = setTimeout(() => {
+            const url = `/hms/drug-returns/drug-search/?q=${encodeURIComponent(searchTerm)}`;
+            console.log('Searching drugs:', url);
+            
+            fetch(url, {
+                method: 'GET',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                credentials: 'same-origin'
+            })
+                .then(response => {
+                    console.log('Response status:', response.status);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Search results:', data);
+                    if (data.error) {
+                        console.error('Search error:', data.error);
+                        resultsDiv.innerHTML = `<div class="list-group-item text-danger">Error: ${data.error}</div>`;
+                        resultsDiv.style.display = 'block';
+                        return;
+                    }
+                    
+                    resultsDiv.innerHTML = '';
+                    
+                    if (data.results && data.results.length > 0) {
+                        data.results.forEach(drug => {
+                            const item = document.createElement('a');
+                            item.href = '#';
+                            item.className = 'list-group-item list-group-item-action';
+                            item.style.cursor = 'pointer';
+                            item.style.padding = '10px 15px';
+                            item.style.borderBottom = '1px solid #dee2e6';
+                            item.innerHTML = `
+                                <strong>${drug.name}</strong><br>
+                                <small class="text-muted">Code: ${drug.code}</small>
+                            `;
+                            item.addEventListener('click', function(e) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                selectDrug(drug.id, drug.name);
+                            });
+                            item.addEventListener('mouseenter', function() {
+                                this.style.backgroundColor = '#f8f9fa';
+                            });
+                            item.addEventListener('mouseleave', function() {
+                                this.style.backgroundColor = 'white';
+                            });
+                            resultsDiv.appendChild(item);
+                        });
+                        resultsDiv.style.display = 'block';
+                        resultsDiv.style.visibility = 'visible';
+                        resultsDiv.style.opacity = '1';
+                        console.log('Drug results displayed, count:', data.results.length);
+                    } else {
+                        const item = document.createElement('div');
+                        item.className = 'list-group-item text-muted';
+                        item.style.padding = '10px 15px';
+                        item.textContent = 'No drugs found';
+                        resultsDiv.appendChild(item);
+                        resultsDiv.style.display = 'block';
+                    }
+                })
+                .catch(error => {
+                    console.error('Search error:', error);
+                    resultsDiv.innerHTML = `<div class="list-group-item text-danger" style="padding: 10px 15px;">Error: ${error.message}</div>`;
+                    resultsDiv.style.display = 'block';
+                });
+        }, 300);
+    });
+
+    // Keep dropdown open on focus
+    if (patientSearchInput) {
+        patientSearchInput.addEventListener('focus', function() {
+            if (this.value.trim().length >= 2) {
+                const resultsDiv = document.getElementById('patientResults');
+                if (resultsDiv && resultsDiv.innerHTML.trim() !== '') {
+                    resultsDiv.style.display = 'block';
+                    resultsDiv.style.visibility = 'visible';
+                    resultsDiv.style.opacity = '1';
+                }
+            }
+        });
+    }
+
+    if (drugSearchInput) {
+        drugSearchInput.addEventListener('focus', function() {
+            if (this.value.trim().length >= 2) {
+                const resultsDiv = document.getElementById('drugResults');
+                if (resultsDiv && resultsDiv.innerHTML.trim() !== '') {
+                    resultsDiv.style.display = 'block';
+                    resultsDiv.style.visibility = 'visible';
+                    resultsDiv.style.opacity = '1';
+                }
+            }
+        });
+    }
+
+    // Auto-fill from dispensing selection
+    const dispensingSelect = document.getElementById('dispensingSelect');
+    if (dispensingSelect) {
+        dispensingSelect.addEventListener('change', function() {
+            const option = this.options[this.selectedIndex];
+            if (option.value) {
+                const patientId = option.dataset.patient;
+                const patientText = option.text.split(' - ')[0];
+                selectPatient(patientId, patientText);
+                
+                const drugId = option.dataset.drug;
+                const drugText = option.text.split(' - ')[1].split(' (')[0];
+                selectDrug(drugId, drugText);
+                
+                document.getElementById('quantity').value = option.dataset.quantity;
+            }
+        });
+    }
+    
+    // Form validation
+    const form = document.querySelector('form');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            if (!document.getElementById('patientId').value) {
+                e.preventDefault();
+                alert('Please select a patient');
+                return false;
+            }
+            if (!document.getElementById('drugId').value) {
+                e.preventDefault();
+                alert('Please select a drug');
+                return false;
+            }
+        });
+    }
+});
+
+// Select patient (global function)
+function selectPatient(id, name) {
+    document.getElementById('patientId').value = id;
+    document.getElementById('patientSearch').value = name;
+    document.getElementById('patientResults').style.display = 'none';
+    document.getElementById('selectedPatientName').textContent = name;
+    document.getElementById('selectedPatient').style.display = 'block';
+}
+
+// Select drug (global function)
+function selectDrug(id, name) {
+    document.getElementById('drugId').value = id;
+    document.getElementById('drugSearch').value = name;
+    document.getElementById('drugResults').style.display = 'none';
+    document.getElementById('selectedDrugName').textContent = name;
+    document.getElementById('selectedDrug').style.display = 'block';
+}
+
+// Clear patient (global function)
+function clearPatient() {
+    document.getElementById('patientId').value = '';
+    document.getElementById('patientSearch').value = '';
+    document.getElementById('selectedPatient').style.display = 'none';
+}
+
+// Clear drug (global function)
+function clearDrug() {
+    document.getElementById('drugId').value = '';
+    document.getElementById('drugSearch').value = '';
+    document.getElementById('selectedDrug').style.display = 'none';
+}
+
+// Hide results when clicking outside
+document.addEventListener('click', function(e) {
+    const patientResults = document.getElementById('patientResults');
+    const drugResults = document.getElementById('drugResults');
+    
+    if (patientResults && !e.target.closest('#patientSearch') && !e.target.closest('#patientResults') && !e.target.closest('#selectedPatient')) {
+        patientResults.style.display = 'none';
+        patientResults.style.visibility = 'hidden';
+    }
+    if (drugResults && !e.target.closest('#drugSearch') && !e.target.closest('#drugResults') && !e.target.closest('#selectedDrug')) {
+        drugResults.style.display = 'none';
+        drugResults.style.visibility = 'hidden';
+    }
+});
+</script>
+{% endblock %}
+

@@ -1,0 +1,164 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Petty Cash Transactions{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-wallet2 me-2"></i>Petty Cash Transactions</h2>
+        <div>
+            {% if user_role == 'account_officer' or user_role == 'accountant' %}
+                <a href="{% url 'hospital:petty_cash_approval_list' %}" class="btn btn-warning me-2">
+                    <i class="bi bi-check-circle me-2"></i>Pending Approvals
+                    {% if stats.pending > 0 %}
+                        <span class="badge bg-danger">{{ stats.pending }}</span>
+                    {% endif %}
+                </a>
+            {% endif %}
+            <a href="{% url 'hospital:petty_cash_create' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle me-2"></i>Create Transaction
+            </a>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Total Transactions</h6>
+                    <h3 class="mb-0">{{ stats.total }}</h3>
+                    <small class="text-muted">GHS {{ stats.total_amount|floatformat:2 }}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm border-start border-warning border-3">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Pending Approval</h6>
+                    <h3 class="mb-0 text-warning">{{ stats.pending }}</h3>
+                    <small class="text-muted">GHS {{ stats.pending_amount|floatformat:2 }}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm border-start border-info border-3">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Approved</h6>
+                    <h3 class="mb-0 text-info">{{ stats.approved }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm border-start border-success border-3">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Paid</h6>
+                    <h3 class="mb-0 text-success">{{ stats.paid }}</h3>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Status</label>
+                    <select name="status" class="form-select" title="Select option" aria-label="Select option">
+                        <option value="">All Statuses</option>
+                        <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Draft</option>
+                        <option value="pending_approval" {% if status_filter == 'pending_approval' %}selected{% endif %}>Pending Approval</option>
+                        <option value="approved" {% if status_filter == 'approved' %}selected{% endif %}>Approved</option>
+                        <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid</option>
+                        <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rejected</option>
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Search</label>
+                    <input type="text" name="search" class="form-control" placeholder="Search by transaction number, payee, description..." value="{{ search }}" title="Enter text" placeholder="Enter text">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">&nbsp;</label>
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-search me-2"></i>Filter
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Transactions Table -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Transaction #</th>
+                            <th>Date</th>
+                            <th>Payee</th>
+                            <th>Description</th>
+                            <th>Amount</th>
+                            <th>Expense Account</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for txn in transactions %}
+                        <tr>
+                            <td><strong>{{ txn.transaction_number }}</strong></td>
+                            <td>{{ txn.transaction_date|date:"M d, Y" }}</td>
+                            <td>{{ txn.payee_name }}{% if txn.payee_type %} <small class="text-muted">({{ txn.payee_type }})</small>{% endif %}</td>
+                            <td>{{ txn.description|truncatewords:10 }}</td>
+                            <td>
+                                <strong class="{% if txn.amount > 500 %}text-danger{% else %}text-primary{% endif %}">
+                                    GHS {{ txn.amount|floatformat:2 }}
+                                </strong>
+                                {% if txn.amount > 500 %}
+                                    <br><small class="text-danger"><i class="bi bi-exclamation-triangle"></i> Requires Approval</small>
+                                {% endif %}
+                            </td>
+                            <td>{{ txn.expense_account.account_code }} - {{ txn.expense_account.account_name }}</td>
+                            <td>
+                                {% if txn.status == 'draft' %}
+                                    <span class="badge bg-secondary">Draft</span>
+                                {% elif txn.status == 'pending_approval' %}
+                                    <span class="badge bg-warning">Pending Approval</span>
+                                {% elif txn.status == 'approved' %}
+                                    <span class="badge bg-info">Approved</span>
+                                {% elif txn.status == 'paid' %}
+                                    <span class="badge bg-success">Paid</span>
+                                {% elif txn.status == 'rejected' %}
+                                    <span class="badge bg-danger">Rejected</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:petty_cash_detail' txn.id %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-eye"></i> View
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="8" class="text-center text-muted py-4">
+                                <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+                                No petty cash transactions found.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+

@@ -39,6 +39,13 @@ def can_access_bulk_sms(user):
 @login_required
 def send_sms(request):
     """SMS sending interface"""
+    # CRITICAL: Reject auto-save requests to prevent duplicate SMS
+    if request.method == 'POST':
+        is_auto_save = request.POST.get('auto_save') == 'true' or \
+                      request.META.get('HTTP_X_AUTO_SAVE') == 'true'
+        if is_auto_save:
+            return JsonResponse({'status': 'ignored', 'message': 'SMS sending cannot be auto-saved'})
+    
     recipient_type = request.GET.get('type', 'patient')  # patient, staff, custom
     recipient_id = request.GET.get('id')
     message_type = request.GET.get('message_type', 'custom')
@@ -71,6 +78,20 @@ def send_sms(request):
         message_type = 'appointment_reminder'
     
     if request.method == 'POST':
+        # Log SMS creation attempt
+        is_auto_save = request.POST.get('auto_save') == 'true' or \
+                      request.META.get('HTTP_X_AUTO_SAVE') == 'true'
+        import logging
+        logger = logging.getLogger('hospital.bulk_creation_monitor')
+        logger.info(
+            f"SMS creation attempt - "
+            f"User: {request.user.username}, "
+            f"Recipient: {recipient_name or 'Custom'}, "
+            f"Auto-save: {is_auto_save}, "
+            f"IP: {request.META.get('REMOTE_ADDR', 'Unknown')}, "
+            f"Timestamp: {timezone.now()}"
+        )
+        
         phone = request.POST.get('phone_number', '').strip()
         message_text = request.POST.get('message', '').strip()
         msg_type = request.POST.get('message_type', 'custom')
@@ -155,9 +176,8 @@ def send_sms(request):
         if invoice:
             default_message = (
                 f"Dear {recipient.first_name},\n\n"
-                f"You have an outstanding balance of GHS {invoice.balance:,.2f}\n"
-                f"on invoice {invoice.invoice_number}.\n"
-                f"Please settle at your earliest convenience.\n\n"
+                f"You have an outstanding balance on invoice {invoice.invoice_number}.\n"
+                f"Please go to the Cashier to settle your bill — the correct amount is available there.\n\n"
                 f"Thank you.\n"
                 f"PrimeCare Hospital"
             )
@@ -186,7 +206,15 @@ def send_sms(request):
 
 
 @login_required
+@login_required
 def send_lab_result_sms(request, lab_result_id):
+    """Send lab result via SMS"""
+    # CRITICAL: Reject auto-save requests to prevent duplicate SMS
+    if request.method == 'POST':
+        is_auto_save = request.POST.get('auto_save') == 'true' or \
+                      request.META.get('HTTP_X_AUTO_SAVE') == 'true'
+        if is_auto_save:
+            return JsonResponse({'status': 'ignored', 'message': 'Lab result SMS cannot be auto-saved'})
     """Send lab result notification via SMS"""
     from django.http import JsonResponse
     
@@ -355,7 +383,15 @@ def bulk_sms_dashboard(request):
 
 
 @login_required
+@login_required
 def send_bulk_sms(request):
+    """Send bulk SMS to multiple recipients"""
+    # CRITICAL: Reject auto-save requests to prevent duplicate bulk SMS
+    if request.method == 'POST':
+        is_auto_save = request.POST.get('auto_save') == 'true' or \
+                      request.META.get('HTTP_X_AUTO_SAVE') == 'true'
+        if is_auto_save:
+            return JsonResponse({'status': 'ignored', 'message': 'Bulk SMS sending cannot be auto-saved'})
     """Send SMS to multiple recipients including custom phone numbers"""
     # Check if user has access to bulk SMS
     if not can_access_bulk_sms(request.user):

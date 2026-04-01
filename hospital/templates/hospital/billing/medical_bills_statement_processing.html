@@ -1,0 +1,329 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Medical Bills Statement Processing - HMS{% endblock %}
+{% block page_title %}Medical Bills Statement Processing{% endblock %}
+
+{% block extra_css %}
+<style>
+@media print {
+    .no-print { display: none !important; }
+    body { background: #fff !important; }
+    .container-fluid { max-width: 100% !important; padding: 0 !important; }
+    .card { box-shadow: none !important; border: 1px solid #dee2e6 !important; break-inside: avoid; }
+    .table { font-size: 11px; }
+    a { color: #000 !important; text-decoration: none !important; }
+}
+.analytics-metric h3 { font-size: 1.35rem; }
+.statement-detail-table th { white-space: nowrap; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid" id="mbp-print-root">
+    <div class="card">
+        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <h5 class="mb-0">Process Medical Bills Statements</h5>
+            <div class="d-flex flex-wrap gap-2 no-print">
+                <button type="button" class="btn btn-sm btn-outline-dark" onclick="window.print();" title="Print this page">
+                    <i class="bi bi-printer"></i> Print
+                </button>
+                <a href="{{ export_csv_url }}" class="btn btn-sm btn-outline-success" title="Download analytics as CSV">
+                    <i class="bi bi-download"></i> Download CSV
+                </a>
+                <a href="{% url 'hospital:medical_bills_statement_report' %}" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-file-earmark-spreadsheet"></i> Full report
+                </a>
+                <a href="{% url 'hospital:claims_bills_hub' %}" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Claims Bills Hub
+                </a>
+            </div>
+        </div>
+        <div class="card-body">
+            <p class="text-muted small mb-4 d-none d-md-block no-print">
+                Analytics below use <strong>statement date</strong> within the selected range. Use <em>Print</em> for a clean hard copy;
+                <em>Download CSV</em> includes summary totals, status breakdown, and one row per statement with financial columns.
+            </p>
+
+            <!-- Analytics period -->
+            <form method="get" class="row g-3 align-items-end mb-4 no-print">
+                <div class="col-md-3">
+                    <label class="form-label">Analytics from</label>
+                    <input type="date" name="analytics_from" class="form-control" value="{{ analytics_from|date:'Y-m-d' }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Analytics to</label>
+                    <input type="date" name="analytics_to" class="form-control" value="{{ analytics_to|date:'Y-m-d' }}">
+                </div>
+                <div class="col-md-3">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-graph-up"></i> Apply range
+                    </button>
+                </div>
+                <div class="col-md-3">
+                    <a href="{% url 'hospital:medical_bills_statement_processing' %}" class="btn btn-outline-secondary w-100">Reset range</a>
+                </div>
+            </form>
+
+            <div class="small text-muted mb-3">
+                Showing statements with statement date
+                <strong>{{ analytics_from|date:"M j, Y" }}</strong> – <strong>{{ analytics_to|date:"M j, Y" }}</strong>
+            </div>
+
+            <!-- Queue / eligibility -->
+            <div class="row g-3 mb-4">
+                <div class="col-6 col-lg-3">
+                    <div class="card bg-warning text-dark analytics-metric h-100">
+                        <div class="card-body py-3">
+                            <h6 class="text-uppercase small mb-1">Corporate A/R &gt; 0</h6>
+                            <h3 class="mb-0">{{ pending_corporate|intcomma }}</h3>
+                            <small>Accounts with positive balance</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-lg-3">
+                    <div class="card bg-info text-white analytics-metric h-100">
+                        <div class="card-body py-3">
+                            <h6 class="text-uppercase small mb-1">Pending insurance lines</h6>
+                            <h3 class="mb-0">{{ pending_insurance|intcomma }}</h3>
+                            <small>Claim items awaiting action</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-lg-3">
+                    <div class="card bg-secondary text-white analytics-metric h-100">
+                        <div class="card-body py-3">
+                            <h6 class="text-uppercase small mb-1">Monthly billing accounts</h6>
+                            <h3 class="mb-0">{{ eligible_monthly_accounts|intcomma }}</h3>
+                            <small>Active corporate, cycle = monthly</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-lg-3">
+                    <div class="card bg-dark text-white analytics-metric h-100">
+                        <div class="card-body py-3">
+                            <h6 class="text-uppercase small mb-1">Outstanding closing (excl. paid / written off)</h6>
+                            <h3 class="mb-0">GHS {{ outstanding_due|floatformat:2|intcomma }}</h3>
+                            <small>Sum of closing balance in range</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Period financial summary -->
+            <div class="row g-3 mb-4">
+                <div class="col-6 col-md-4 col-xl-2">
+                    <div class="card border-primary h-100">
+                        <div class="card-body py-3">
+                            <h6 class="text-primary text-uppercase small">Statements</h6>
+                            <h4 class="mb-0">{{ statement_summary.total_statements|default:0|intcomma }}</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-4 col-xl-2">
+                    <div class="card border-success h-100">
+                        <div class="card-body py-3">
+                            <h6 class="text-success text-uppercase small">Total charges</h6>
+                            <h4 class="mb-0">GHS {{ statement_summary.total_charges|default:0|floatformat:2|intcomma }}</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-4 col-xl-2">
+                    <div class="card border-info h-100">
+                        <div class="card-body py-3">
+                            <h6 class="text-info text-uppercase small">Payments</h6>
+                            <h4 class="mb-0">GHS {{ statement_summary.total_payments|default:0|floatformat:2|intcomma }}</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-4 col-xl-2">
+                    <div class="card border-warning h-100">
+                        <div class="card-body py-3">
+                            <h6 class="text-warning text-uppercase small">Closing (sum)</h6>
+                            <h4 class="mb-0">GHS {{ statement_summary.total_closing_balance|default:0|floatformat:2|intcomma }}</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-4 col-xl-2">
+                    <div class="card h-100">
+                        <div class="card-body py-3">
+                            <h6 class="text-uppercase small text-muted">Line items</h6>
+                            <h4 class="mb-0">{{ statement_summary.total_line_items|default:0|intcomma }}</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-4 col-xl-2">
+                    <div class="card h-100">
+                        <div class="card-body py-3">
+                            <h6 class="text-uppercase small text-muted">Patients served</h6>
+                            <h4 class="mb-0">{{ statement_summary.total_patients_served|default:0|intcomma }}</h4>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4 mb-4">
+                <div class="col-lg-5">
+                    <div class="card h-100">
+                        <div class="card-header py-2">
+                            <h6 class="mb-0">Statements by status</h6>
+                        </div>
+                        <div class="card-body p-0">
+                            {% if statements_by_status %}
+                            <table class="table table-sm mb-0">
+                                <thead class="table-light">
+                                    <tr><th>Status</th><th class="text-end">Count</th></tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in statements_by_status %}
+                                    <tr>
+                                        <td>{{ row.label }}</td>
+                                        <td class="text-end">{{ row.count|intcomma }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                            {% else %}
+                            <p class="text-muted p-3 mb-0">No statements in this period.</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-7">
+                    <div class="card h-100">
+                        <div class="card-header py-2">
+                            <h6 class="mb-0">Pending insurance items by payer (top)</h6>
+                        </div>
+                        <div class="card-body p-0">
+                            {% if insurance_pending_by_payer %}
+                            <table class="table table-sm mb-0">
+                                <thead class="table-light">
+                                    <tr><th>Payer</th><th class="text-end">Pending lines</th></tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in insurance_pending_by_payer %}
+                                    <tr>
+                                        <td>{{ row.payer__name|default:"—" }}</td>
+                                        <td class="text-end">{{ row.n|intcomma }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                            {% else %}
+                            <p class="text-muted p-3 mb-0">No pending insurance claim lines.</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Detailed statements -->
+            <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center py-2">
+                    <h6 class="mb-0">Statement detail (up to 40 in range)</h6>
+                    <span class="small text-muted">Avg closing: GHS {{ statement_summary.avg_closing|default:0|floatformat:2|intcomma }}</span>
+                </div>
+                <div class="card-body p-0">
+                    {% if recent_statements %}
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm mb-0 statement-detail-table">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Statement #</th>
+                                    <th>Account</th>
+                                    <th>Period</th>
+                                    <th>Stmt date</th>
+                                    <th>Due</th>
+                                    <th class="text-end">Opening</th>
+                                    <th class="text-end">Charges</th>
+                                    <th class="text-end">Payments</th>
+                                    <th class="text-end">Adj.</th>
+                                    <th class="text-end">Closing</th>
+                                    <th class="text-end">Lines</th>
+                                    <th class="text-end">Patients</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for s in recent_statements %}
+                                <tr>
+                                    <td><strong>{{ s.statement_number }}</strong></td>
+                                    <td>
+                                        {% if s.corporate_account %}
+                                            {{ s.corporate_account.company_name }}
+                                        {% elif s.payer %}
+                                            {{ s.payer.name }}
+                                        {% else %}—{% endif %}
+                                    </td>
+                                    <td class="small">{{ s.period_start|date:"Y-m-d" }} → {{ s.period_end|date:"Y-m-d" }}</td>
+                                    <td class="small">{{ s.statement_date|date:"Y-m-d" }}</td>
+                                    <td class="small">{% if s.due_date %}{{ s.due_date|date:"Y-m-d" }}{% else %}—{% endif %}</td>
+                                    <td class="text-end small">GHS {{ s.opening_balance|floatformat:2|intcomma }}</td>
+                                    <td class="text-end small">GHS {{ s.total_charges|floatformat:2|intcomma }}</td>
+                                    <td class="text-end small">GHS {{ s.total_payments|floatformat:2|intcomma }}</td>
+                                    <td class="text-end small">GHS {{ s.total_adjustments|floatformat:2|intcomma }}</td>
+                                    <td class="text-end small"><strong>GHS {{ s.closing_balance|floatformat:2|intcomma }}</strong></td>
+                                    <td class="text-end">{{ s.total_line_items|intcomma }}</td>
+                                    <td class="text-end">{{ s.total_patients_served|intcomma }}</td>
+                                    <td>
+                                        <span class="badge bg-{% if s.status == 'paid' %}success{% elif s.status == 'overdue' %}danger{% elif s.status == 'sent' %}warning{% elif s.status == 'partially_paid' %}info{% else %}secondary{% endif %}">
+                                            {{ s.get_status_display }}
+                                        </span>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted p-4 mb-0 text-center">No statements in the selected date range.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Processing Form -->
+            <form method="post" class="mb-4 no-print">
+                {% csrf_token %}
+                <input type="hidden" name="analytics_from" value="{{ analytics_from|date:'Y-m-d' }}">
+                <input type="hidden" name="analytics_to" value="{{ analytics_to|date:'Y-m-d' }}">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0">Generate statements</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label>Billing period start</label>
+                                <input type="date" name="period_start" class="form-control" value="{{ default_start|date:'Y-m-d' }}" required>
+                            </div>
+                            <div class="col-md-4">
+                                <label>Billing period end</label>
+                                <input type="date" name="period_end" class="form-control" value="{{ default_end|date:'Y-m-d' }}" required>
+                            </div>
+                            <div class="col-md-4">
+                                <label>Account type</label>
+                                <select name="account_type" class="form-select" required>
+                                    <option value="all">All accounts (monthly corporate — calendar month of period end)</option>
+                                    <option value="corporate">Corporate only (uses period start/end below)</option>
+                                    <option value="insurance">Insurance only</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-gear"></i> Process statements
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </form>
+
+            <div class="alert alert-info no-print mb-0">
+                <i class="bi bi-info-circle"></i>
+                <strong>Note:</strong> “All accounts” runs the monthly billing job for the <strong>calendar month containing period end</strong> (first day of that month through period end). Corporate-only uses your exact start/end dates for every corporate account.
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

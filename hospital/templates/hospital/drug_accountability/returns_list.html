@@ -1,0 +1,213 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Drug Returns - HMS{% endblock %}
+{% block page_title %}Drug Returns Management{% endblock %}
+{% block page_subtitle %}Manage drug returns and accountability{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h4 class="mb-0">Drug Returns</h4>
+                <p class="text-muted mb-0">Track and manage drug returns to inventory</p>
+            </div>
+            <a href="{% url 'hospital:drug_return_create' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle me-2"></i>Create Return Request
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body text-center">
+                <div class="text-primary mb-2">
+                    <i class="bi bi-list-ul" style="font-size: 32px;"></i>
+                </div>
+                <h3 class="mb-0">{{ stats.total }}</h3>
+                <small class="text-muted">Total Returns</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm border-warning">
+            <div class="card-body text-center">
+                <div class="text-warning mb-2">
+                    <i class="bi bi-clock-history" style="font-size: 32px;"></i>
+                </div>
+                <h3 class="mb-0">{{ stats.pending }}</h3>
+                <small class="text-muted">Pending Approval</small>
+                {% if can_approve and stats.pending > 0 %}
+                <div class="mt-2">
+                    <form method="post" action="{% url 'hospital:drug_return_bulk_approve' %}" style="display: inline;" onsubmit="return confirm('Are you sure you want to approve all {{ stats.pending }} pending return(s)?');">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm btn-warning">
+                            <i class="bi bi-check-all me-1"></i>Approve All
+                        </button>
+                    </form>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm border-success">
+            <div class="card-body text-center">
+                <div class="text-success mb-2">
+                    <i class="bi bi-check-circle" style="font-size: 32px;"></i>
+                </div>
+                <h3 class="mb-0">{{ stats.completed }}</h3>
+                <small class="text-muted">Completed</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm border-danger">
+            <div class="card-body text-center">
+                <div class="text-danger mb-2">
+                    <i class="bi bi-x-circle" style="font-size: 32px;"></i>
+                </div>
+                <h3 class="mb-0">{{ stats.rejected }}</h3>
+                <small class="text-muted">Rejected</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <form method="get" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">Status</label>
+                <select name="status" class="form-select">
+                    <option value="">All Status</option>
+                    <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
+                    <option value="approved" {% if status_filter == 'approved' %}selected{% endif %}>Approved</option>
+                    <option value="completed" {% if status_filter == 'completed' %}selected{% endif %}>Completed</option>
+                    <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rejected</option>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Search</label>
+                <input type="text" name="search" class="form-control" placeholder="Return number, patient, or drug..." value="{{ search_query }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">&nbsp;</label>
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-search me-2"></i>Filter
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Returns Table -->
+<div class="card border-0 shadow-sm">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Return Number</th>
+                        <th>Date</th>
+                        <th>Patient</th>
+                        <th>Drug</th>
+                        <th>Quantity</th>
+                        <th>Reason</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for return in returns %}
+                    <tr>
+                        <td>
+                            <strong>{{ return.return_number }}</strong>
+                        </td>
+                        <td>{{ return.return_date|date:"M d, Y H:i" }}</td>
+                        <td>
+                            <a href="{% url 'hospital:patient_detail' return.patient.id %}">
+                                {{ return.patient.full_name }}
+                            </a>
+                        </td>
+                        <td>
+                            <strong>{{ return.drug.name }}</strong><br>
+                            <small class="text-muted">{{ return.drug.strength }} {{ return.drug.form }}</small>
+                        </td>
+                        <td>
+                            <span class="badge bg-info">{{ return.quantity_returned }}</span>
+                        </td>
+                        <td>
+                            <span class="badge bg-secondary">{{ return.get_return_reason_display }}</span>
+                            {% if return.reason_details %}
+                            <br><small class="text-muted">{{ return.reason_details|truncatewords:5 }}</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if return.status == 'pending' %}
+                                <span class="badge bg-warning">Pending</span>
+                            {% elif return.status == 'approved' %}
+                                <span class="badge bg-info">Approved</span>
+                            {% elif return.status == 'completed' %}
+                                <span class="badge bg-success">Completed</span>
+                            {% elif return.status == 'rejected' %}
+                                <span class="badge bg-danger">Rejected</span>
+                            {% else %}
+                                <span class="badge bg-secondary">{{ return.get_status_display }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{% url 'hospital:drug_return_detail' return.id %}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-eye"></i> View
+                            </a>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="8" class="text-center text-muted py-4">
+                            <i class="bi bi-inbox" style="font-size: 48px;"></i>
+                            <p class="mt-2">No drug returns found</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Pagination -->
+        {% if page_obj.has_other_pages %}
+        <nav aria-label="Page navigation" class="mt-4">
+            <ul class="pagination justify-content-center">
+                {% if page_obj.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?page=1{% if status_filter %}&status={{ status_filter }}{% endif %}{% if search_query %}&search={{ search_query }}{% endif %}">First</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if search_query %}&search={{ search_query }}{% endif %}">Previous</a>
+                </li>
+                {% endif %}
+                
+                <li class="page-item active">
+                    <span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+                </li>
+                
+                {% if page_obj.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if search_query %}&search={{ search_query }}{% endif %}">Next</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if search_query %}&search={{ search_query }}{% endif %}">Last</a>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+

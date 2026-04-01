@@ -1,128 +1,455 @@
 {% extends 'hospital/base.html' %}
 {% load static humanize %}
 
-{% block title %}Staff Detail - HMS{% endblock %}
-{% block page_title %}{{ staff.user.get_full_name|default:staff.user.username }}{% endblock %}
+{% block title %}Staff Profile - {{ staff.user.get_full_name|default:staff.user.username }} - HMS{% endblock %}
+{% block page_title %}
+    <div class="d-flex justify-content-between align-items-center">
+        <span>
+            <i class="bi bi-person-badge me-2"></i>
+            {{ staff.user.get_full_name|default:staff.user.username|default:"Staff" }} - Complete Profile
+        </span>
+        <a href="{% url 'hospital:staff_edit' staff.pk %}" class="btn btn-sm btn-primary">
+            <i class="bi bi-pencil"></i> Edit Profile
+        </a>
+    </div>
+{% endblock %}
 
 {% block content %}
-<div class="row">
-    <!-- Staff Info -->
-    <div class="col-md-4">
-        <div class="modern-card mb-4">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h6 style="font-weight: 600; margin: 0;">Staff Information</h6>
-                <a href="{% url 'hospital:staff_edit' staff.pk %}" class="btn btn-sm btn-outline-primary">Edit</a>
-            </div>
-            <p><strong>Name:</strong> {{ staff.user.get_full_name|default:staff.user.username }}</p>
-            <p><strong>Employee ID:</strong> {{ staff.employee_id|default:"-" }}</p>
-            <p><strong>Profession:</strong> {{ staff.get_profession_display|default:"-" }}</p>
-            <p><strong>Email:</strong> {{ staff.user.email|default:"-" }}</p>
-            <p><strong>Department:</strong> {{ staff.department.name|default:"-" }}</p>
-            {% if staff.date_of_birth %}
-            <p><strong>Date of Birth:</strong> {{ staff.date_of_birth|date:"M d, Y" }} (Age: {{ staff.age|default:"-" }})</p>
-            {% endif %}
-            {% if staff.date_of_joining %}
-            <p><strong>Date of Joining:</strong> {{ staff.date_of_joining|date:"M d, Y" }} ({{ staff.years_of_service|default:"0" }} years of service)</p>
-            {% endif %}
-            <p><strong>Role/Groups:</strong> 
-                {% for group in staff.user.groups.all %}
-                <span class="badge-modern badge-info">{{ group.name }}</span>
-                {% empty %}
-                No roles assigned
-                {% endfor %}
-            </p>
-            <p><strong>Phone:</strong> {{ staff.phone_number|default:"-" }}</p>
-            <p><strong>Status:</strong> 
-                {% if staff.is_active %}
-                <span class="badge-modern badge-success">Active</span>
-                {% else %}
-                <span class="badge-modern badge-secondary">Inactive</span>
+<style>
+    .staff-profile-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 12px;
+        margin-bottom: 2rem;
+    }
+    .stat-card {
+        background: white;
+        border-radius: 8px;
+        padding: 1rem;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: transform 0.2s;
+    }
+    .stat-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+    .stat-card .stat-value {
+        font-size: 2rem;
+        font-weight: bold;
+        color: #667eea;
+    }
+    .stat-card .stat-label {
+        font-size: 0.9rem;
+        color: #666;
+        margin-top: 0.5rem;
+    }
+    .nav-tabs .nav-link {
+        color: #667eea;
+        font-weight: 500;
+    }
+    .nav-tabs .nav-link.active {
+        background: #667eea;
+        color: white;
+        border-color: #667eea;
+    }
+    .tab-content {
+        padding: 1.5rem 0;
+    }
+    .info-row {
+        padding: 0.75rem 0;
+        border-bottom: 1px solid #eee;
+    }
+    .info-row:last-child {
+        border-bottom: none;
+    }
+    .info-label {
+        font-weight: 600;
+        color: #555;
+        min-width: 150px;
+    }
+    .performance-score {
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: #28a745;
+    }
+    .leave-badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        margin: 0.25rem;
+    }
+    .timeline-item {
+        position: relative;
+        padding-left: 2rem;
+        padding-bottom: 1.5rem;
+        border-left: 2px solid #e0e0e0;
+    }
+    .timeline-item:last-child {
+        border-left: none;
+    }
+    .timeline-item::before {
+        content: '';
+        position: absolute;
+        left: -6px;
+        top: 0;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #667eea;
+    }
+</style>
+
+<!-- Staff Profile Header with Statistics -->
+<div class="staff-profile-header">
+    <div class="row align-items-center">
+        <div class="col-md-8">
+            <h2 class="mb-2">
+                <i class="bi bi-person-circle me-2"></i>
+                {{ staff.user.get_full_name|default:staff.user.username }}
+            </h2>
+            <p class="mb-0">
+                <i class="bi bi-briefcase me-2"></i>{{ staff.get_profession_display }}
+                <span class="mx-2">|</span>
+                <i class="bi bi-building me-2"></i>{{ staff.department.name|default:"No Department" }}
+                <span class="mx-2">|</span>
+                <i class="bi bi-id-card me-2"></i>{{ staff.employee_id|default:"No ID" }}
+                {% if is_currently_on_leave and current_leave %}
+                <span class="mx-2">|</span>
+                <span class="badge bg-warning">
+                    <i class="bi bi-calendar-x me-1"></i>On Leave: {{ current_leave.start_date|date:"M d" }} - {{ current_leave.end_date|date:"M d, Y" }}
+                </span>
                 {% endif %}
             </p>
         </div>
-        
-        <!-- Contract Info -->
-        {% if contract %}
-        <div class="modern-card mb-4">
-            <h6 style="font-weight: 600; margin-bottom: 16px;">Contract</h6>
-            <p><strong>Type:</strong> {{ contract.get_contract_type_display }}</p>
-            <p><strong>Job Title:</strong> {{ contract.job_title }}</p>
-            <p><strong>Basic Salary:</strong> GHS {{ contract.basic_salary|floatformat:2|intcomma }}</p>
-            <p><strong>Allowances:</strong> GHS {{ contract.allowances|floatformat:2|intcomma }}</p>
-            <p><strong>Total Monthly:</strong> <strong style="color: var(--success);">GHS {{ contract.total_monthly_salary|floatformat:2|intcomma }}</strong></p>
-            <p><strong>Start Date:</strong> {{ contract.start_date|date:"M d, Y" }}</p>
-            {% if contract.end_date %}
-            <p><strong>End Date:</strong> {{ contract.end_date|date:"M d, Y" }}</p>
+        <div class="col-md-4 text-end">
+            {% if staff.is_active %}
+            <span class="badge bg-success fs-6 px-3 py-2">
+                <i class="bi bi-check-circle"></i> Active
+            </span>
+            {% else %}
+            <span class="badge bg-secondary fs-6 px-3 py-2">
+                <i class="bi bi-x-circle"></i> Inactive
+            </span>
             {% endif %}
-        </div>
-        {% endif %}
-        
-        <!-- Leave Balance -->
-        {% if leave_balance %}
-        <div class="modern-card mb-4">
-            <h6 style="font-weight: 600; margin-bottom: 16px;">Leave Balance</h6>
-            <p><strong>Annual:</strong> {{ leave_balance.annual_leave }} days</p>
-            <p><strong>Sick:</strong> {{ leave_balance.sick_leave }} days</p>
-            <p><strong>Casual:</strong> {{ leave_balance.casual_leave }} days</p>
-            <p><strong>Comp-Off:</strong> {{ leave_balance.comp_off }} days</p>
-        </div>
-        {% endif %}
-        
-        <!-- Quick Actions -->
-        <div class="modern-card">
-            <h6 style="font-weight: 600; margin-bottom: 16px;">Quick Actions</h6>
-            <div class="d-grid gap-2">
-                {% if not contract %}
-                <a href="{% url 'hospital:staff_contract_create' staff.pk %}" class="btn btn-sm btn-outline-primary">
-                    <i class="bi bi-file-earmark-text"></i> Create Contract
-                </a>
-                {% endif %}
-                <a href="{% url 'hospital:staff_document_upload' staff.pk %}" class="btn btn-sm btn-outline-primary">
-                    <i class="bi bi-upload"></i> Upload Document
-                </a>
-                <a href="{% url 'hospital:performance_review_create' staff.pk %}" class="btn btn-sm btn-outline-primary">
-                    <i class="bi bi-star"></i> Performance Review
-                </a>
-                <a href="{% url 'hospital:training_record_create' staff.pk %}" class="btn btn-sm btn-outline-primary">
-                    <i class="bi bi-mortarboard"></i> Add Training
-                </a>
-            </div>
         </div>
     </div>
-    
-    <!-- Payroll History -->
-    <div class="col-md-8">
-        <div class="modern-card mb-4">
-            <h6 style="font-weight: 600; margin-bottom: 16px;">Payroll History</h6>
-            {% if payrolls %}
+</div>
+
+<!-- Statistics Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-value">{{ total_leave_days|floatformat:0 }}</div>
+            <div class="stat-label">Total Leave Days</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-value">{{ avg_performance_score|default:0|floatformat:1 }}</div>
+            <div class="stat-label">Avg Performance Score</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-value">{{ total_chits|default:0 }}</div>
+            <div class="stat-label">Medical Chits</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-value">{{ performance_reviews_count|default:0 }}</div>
+            <div class="stat-label">Performance Reviews</div>
+        </div>
+    </div>
+</div>
+
+<!-- Main Content with Tabs -->
+<div class="modern-card">
+    <ul class="nav nav-tabs" id="staffProfileTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview" type="button" role="tab">
+                <i class="bi bi-info-circle me-1"></i> Overview
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="leave-tab" data-bs-toggle="tab" data-bs-target="#leave" type="button" role="tab">
+                <i class="bi bi-calendar-check me-1"></i> Leave History
+                <span class="badge bg-primary ms-1">{{ all_leaves_count|default:0 }}</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="performance-tab" data-bs-toggle="tab" data-bs-target="#performance" type="button" role="tab">
+                <i class="bi bi-graph-up me-1"></i> Performance
+                <span class="badge bg-success ms-1">{{ performance_reviews_count|default:0 }}</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="medical-tab" data-bs-toggle="tab" data-bs-target="#medical" type="button" role="tab">
+                <i class="bi bi-heart-pulse me-1"></i> Medical History
+                <span class="badge bg-danger ms-1">{{ total_chits|default:0 }}</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="training-tab" data-bs-toggle="tab" data-bs-target="#training" type="button" role="tab">
+                <i class="bi bi-mortarboard me-1"></i> Training
+                <span class="badge bg-info ms-1">{{ training_records_count|default:0 }}</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="documents-tab" data-bs-toggle="tab" data-bs-target="#documents" type="button" role="tab">
+                <i class="bi bi-folder me-1"></i> Documents
+                <span class="badge bg-warning ms-1">{{ documents_count|default:0 }}</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="payroll-tab" data-bs-toggle="tab" data-bs-target="#payroll" type="button" role="tab">
+                <i class="bi bi-cash-coin me-1"></i> Payroll
+            </button>
+        </li>
+    </ul>
+
+    <div class="tab-content" id="staffProfileTabContent">
+        <!-- Overview Tab -->
+        <div class="tab-pane fade show active" id="overview" role="tabpanel">
+            <div class="row mt-3">
+                <div class="col-md-6">
+                    <h5 class="mb-3"><i class="bi bi-person me-2"></i>Personal Information</h5>
+                    <div class="info-row">
+                        <div class="info-label">Full Name:</div>
+                        <div>{{ staff.user.get_full_name|default:"N/A" }}</div>
+                    </div>
+                    <div class="info-row">
+                        <div class="info-label">Employee ID:</div>
+                        <div><strong>{{ staff.employee_id|default:"-" }}</strong></div>
+                    </div>
+                    <div class="info-row">
+                        <div class="info-label">Email:</div>
+                        <div>{{ staff.user.email|default:"-" }}</div>
+                    </div>
+                    <div class="info-row">
+                        <div class="info-label">Phone:</div>
+                        <div>{{ staff.phone_number|default:"-" }}</div>
+                    </div>
+                    {% if staff.date_of_birth %}
+                    <div class="info-row">
+                        <div class="info-label">Date of Birth:</div>
+                        <div>{{ staff.date_of_birth|date:"M d, Y" }}</div>
+                    </div>
+                    {% endif %}
+                    <div class="info-row">
+                        <div class="info-label">Gender:</div>
+                        <div>{{ staff.get_gender_display|default:"-" }}</div>
+                    </div>
+                    <div class="info-row">
+                        <div class="info-label">Blood Group:</div>
+                        <div>{{ staff.blood_group|default:"-" }}</div>
+                    </div>
+                    <div class="info-row">
+                        <div class="info-label">Marital Status:</div>
+                        <div>{{ staff.get_marital_status_display|default:"-" }}</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <h5 class="mb-3"><i class="bi bi-briefcase me-2"></i>Employment Information</h5>
+                    <div class="info-row">
+                        <div class="info-label">Profession:</div>
+                        <div><span class="badge bg-primary">{{ staff.get_profession_display }}</span></div>
+                    </div>
+                    <div class="info-row">
+                        <div class="info-label">Department:</div>
+                        <div>{{ staff.department.name|default:"-" }}</div>
+                    </div>
+                    {% if staff.date_of_joining %}
+                    <div class="info-row">
+                        <div class="info-label">Date of Joining:</div>
+                        <div>{{ staff.date_of_joining|date:"M d, Y" }}</div>
+                    </div>
+                    {% endif %}
+                    <div class="info-row">
+                        <div class="info-label">Employment Status:</div>
+                        <div>
+                            <span class="badge bg-{% if staff.employment_status == 'active' %}success{% elif staff.employment_status == 'on_leave' %}warning{% else %}secondary{% endif %}">
+                                {{ staff.get_employment_status_display }}
+                            </span>
+                            {% if is_currently_on_leave and current_leave %}
+                            <span class="badge bg-warning ms-2">
+                                <i class="bi bi-calendar-x me-1"></i>Currently on Leave
+                            </span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% if is_currently_on_leave and current_leave %}
+                    <div class="info-row">
+                        <div class="info-label">Current Leave:</div>
+                        <div>
+                            <strong>{{ current_leave.get_leave_type_display }}</strong>
+                            <br>
+                            <small class="text-muted">
+                                {{ current_leave.start_date|date:"M d, Y" }} - {{ current_leave.end_date|date:"M d, Y" }}
+                                ({{ current_leave.days_requested }} day{{ current_leave.days_requested|pluralize }})
+                            </small>
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% if contract %}
+                    <div class="info-row">
+                        <div class="info-label">Contract Type:</div>
+                        <div>{{ contract.get_contract_type_display }}</div>
+                    </div>
+                    <div class="info-row">
+                        <div class="info-label">Job Title:</div>
+                        <div>{{ contract.job_title }}</div>
+                    </div>
+                    <div class="info-row">
+                        <div class="info-label">Monthly Salary:</div>
+                        <div><strong class="text-success">GHS {{ contract.total_monthly_salary|floatformat:2|intcomma }}</strong></div>
+                    </div>
+                    {% endif %}
+                    <div class="info-row">
+                        <div class="info-label">User Groups:</div>
+                        <div>
+                            {% for group in staff.user.groups.all %}
+                            <span class="badge bg-info me-1">{{ group.name }}</span>
+                            {% empty %}
+                            <span class="text-muted">No groups assigned</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if leave_balance %}
+            <div class="row mt-4">
+                <div class="col-12">
+                    <h5 class="mb-3"><i class="bi bi-calendar3 me-2"></i>Leave Balance</h5>
+                    <div class="row">
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-value text-primary">{{ leave_balance.annual_leave|default:0|floatformat:0 }}</div>
+                                <div class="stat-label">Annual Leave</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-value text-danger">{{ leave_balance.sick_leave|default:0|floatformat:0 }}</div>
+                                <div class="stat-label">Sick Leave</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-value text-info">{{ leave_balance.casual_leave|default:0|floatformat:0 }}</div>
+                                <div class="stat-label">Casual Leave</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-value text-warning">{{ leave_balance.comp_off|default:0|floatformat:0 }}</div>
+                                <div class="stat-label">Comp-Off</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if attendance_stats %}
+            <div class="row mt-4">
+                <div class="col-12">
+                    <h5 class="mb-3"><i class="bi bi-clock-history me-2"></i>Attendance Statistics</h5>
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="stat-card">
+                                <div class="stat-value">{{ attendance_stats.present_days }}</div>
+                                <div class="stat-label">Days Present</div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="stat-card">
+                                <div class="stat-value">{{ attendance_stats.total_days }}</div>
+                                <div class="stat-label">Total Days Tracked</div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="stat-card">
+                                <div class="stat-value">{{ attendance_stats.attendance_rate|floatformat:1 }}%</div>
+                                <div class="stat-label">Attendance Rate</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Leave History Tab -->
+        <div class="tab-pane fade" id="leave" role="tabpanel">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5><i class="bi bi-calendar-check me-2"></i>Leave History</h5>
+                <div>
+                    <span class="badge bg-primary me-2">Total: {{ total_leave_days|floatformat:0 }} days</span>
+                    <span class="badge bg-info">This Year: {{ current_year_days|floatformat:0 }} days</span>
+                </div>
+            </div>
+
+            {% if leave_by_type %}
+            <div class="alert alert-info mb-3">
+                <strong>Leave Breakdown by Type:</strong><br>
+                {% for type_name, days in leave_by_type.items %}
+                <span class="leave-badge bg-primary">{{ type_name }}: {{ days|default:0|floatformat:0 }} days</span>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if all_leaves %}
             <div class="table-responsive">
-                <table class="table modern-table">
+                <table class="table table-hover">
                     <thead>
                         <tr>
-                            <th>Period</th>
-                            <th class="text-end">Earnings</th>
-                            <th class="text-end">Deductions</th>
-                            <th class="text-end">Net Pay</th>
+                            <th>Request #</th>
+                            <th>Leave Type</th>
+                            <th>Start Date</th>
+                            <th>End Date</th>
+                            <th>Days</th>
                             <th>Status</th>
+                            <th>Approved By</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for payroll in payrolls %}
+                        {% for leave in all_leaves %}
                         <tr>
+                            <td><strong>{{ leave.request_number|default:"DRAFT" }}</strong></td>
                             <td>
-                                <a href="{% url 'hospital:payroll_detail' payroll.pk %}">{{ payroll.period.period_name }}</a>
+                                <span class="badge bg-secondary">{{ leave.get_leave_type_display }}</span>
                             </td>
-                            <td class="text-end">GHS {{ payroll.total_earnings|floatformat:2 }}</td>
-                            <td class="text-end">GHS {{ payroll.total_deductions|floatformat:2 }}</td>
-                            <td class="text-end"><strong>GHS {{ payroll.net_pay|floatformat:2|intcomma }}</strong></td>
+                            <td>{{ leave.start_date|date:"M d, Y" }}</td>
+                            <td>{{ leave.end_date|date:"M d, Y" }}</td>
+                            <td><strong>{{ leave.days_requested }}</strong></td>
                             <td>
-                                {% if payroll.payment_status == 'paid' %}
-                                <span class="badge-modern badge-success">Paid</span>
-                                {% elif payroll.payment_status == 'processed' %}
-                                <span class="badge-modern badge-info">Processed</span>
+                                {% if leave.status == 'approved' %}
+                                <span class="badge bg-success">Approved</span>
+                                {% elif leave.status == 'pending' %}
+                                <span class="badge bg-warning">Pending</span>
+                                {% elif leave.status == 'rejected' %}
+                                <span class="badge bg-danger">Rejected</span>
                                 {% else %}
-                                <span class="badge-modern badge-warning">Pending</span>
+                                <span class="badge bg-secondary">{{ leave.get_status_display }}</span>
                                 {% endif %}
+                            </td>
+                            <td>
+                                {% if leave.approved_by %}
+                                {{ leave.approved_by.user.get_full_name|default:leave.approved_by.user.username }}
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:leave_print' leave.pk %}" class="btn btn-sm btn-outline-primary" title="Print">
+                                    <i class="bi bi-printer"></i>
+                                </a>
                             </td>
                         </tr>
                         {% endfor %}
@@ -130,38 +457,517 @@
                 </table>
             </div>
             {% else %}
-            <p class="text-muted text-center py-4">No payroll records</p>
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>No leave records found.
+            </div>
             {% endif %}
         </div>
-        
-        <!-- Performance Reviews -->
-        {% if performance_reviews %}
-        <div class="modern-card mb-4">
-            <h6 style="font-weight: 600; margin-bottom: 16px;">Performance Reviews</h6>
-            {% for review in performance_reviews %}
-            <div style="padding: 12px; background: var(--light); border-radius: 8px; margin-bottom: 8px;">
-                <strong>{{ review.review_date|date:"M d, Y" }}</strong> - 
-                <span class="badge-modern badge-primary">{{ review.get_overall_rating_display }}</span>
-                <p style="margin: 8px 0 0 0; font-size: 13px;">{{ review.description|truncatewords:20 }}</p>
+
+        <!-- Performance Tab -->
+        <div class="tab-pane fade" id="performance" role="tabpanel">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5><i class="bi bi-graph-up me-2"></i>Performance Reviews</h5>
+                <a href="{% url 'hospital:performance_review_create' staff.pk %}" class="btn btn-sm btn-primary">
+                    <i class="bi bi-plus-circle"></i> New Review
+                </a>
             </div>
-            {% endfor %}
-        </div>
-        {% endif %}
-        
-        <!-- Training Records -->
-        {% if training_records %}
-        <div class="modern-card">
-            <h6 style="font-weight: 600; margin-bottom: 16px;">Training Records</h6>
-            {% for training in training_records %}
-            <div style="padding: 12px; background: var(--light); border-radius: 8px; margin-bottom: 8px;">
-                <strong>{{ training.training_title }}</strong><br>
-                <small>{{ training.start_date|date:"M d, Y" }} - {{ training.end_date|date:"M d, Y" }}</small>
-                <span class="badge-modern badge-info">{{ training.get_status_display }}</span>
+
+            {% if latest_review %}
+            <div class="alert alert-success mb-4">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="mb-1">Latest Performance Review</h6>
+                        <p class="mb-0">
+                            <strong>Date:</strong> {{ latest_review.review_date|date:"M d, Y" }} |
+                            <strong>Period:</strong> {{ latest_review.review_period_start|date:"M d, Y" }} - {{ latest_review.review_period_end|date:"M d, Y" }} |
+                            <strong>Type:</strong> {{ latest_review.get_review_type_display }}
+                        </p>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <div class="performance-score">{{ latest_review.overall_score|default:0|floatformat:1 }}</div>
+                        <div class="text-muted">{{ latest_review.get_overall_rating_display }}</div>
+                    </div>
+                </div>
             </div>
-            {% endfor %}
+            {% endif %}
+
+            <!-- Real-Time Performance Snapshot -->
+            {% if latest_performance_snapshot %}
+            <div class="alert alert-info mb-4">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="mb-0">
+                        <i class="bi bi-speedometer2 me-2"></i>Real-Time Performance (Last 14 Days)
+                        <small class="text-muted">Auto-updated as work is performed</small>
+                    </h6>
+                    <span class="badge bg-primary">Last Updated: {{ latest_performance_snapshot.synced_at|date:"M d, Y H:i" }}</span>
+                </div>
+                <div class="row mt-3">
+                    <div class="col-md-3 text-center">
+                        <div class="stat-card">
+                            <div class="stat-value text-success">{{ latest_performance_snapshot.productivity_score|floatformat:1 }}</div>
+                            <div class="stat-label">Productivity</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 text-center">
+                        <div class="stat-card">
+                            <div class="stat-value text-info">{{ latest_performance_snapshot.quality_score|floatformat:1 }}</div>
+                            <div class="stat-label">Quality</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 text-center">
+                        <div class="stat-card">
+                            <div class="stat-value text-warning">{{ latest_performance_snapshot.engagement_score|floatformat:1 }}</div>
+                            <div class="stat-label">Engagement</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 text-center">
+                        <div class="stat-card">
+                            <div class="stat-value text-primary">{{ latest_performance_snapshot.overall_index|floatformat:1 }}</div>
+                            <div class="stat-label">Overall Index</div>
+                        </div>
+                    </div>
+                </div>
+                {% if latest_performance_snapshot.metrics %}
+                <div class="mt-3">
+                    <h6>Performance Metrics:</h6>
+                    <div class="row">
+                        {% if latest_performance_snapshot.metrics.counts %}
+                        <div class="col-md-6">
+                            <strong>Activity Counts:</strong>
+                            <ul class="mb-0">
+                                {% for key, value in latest_performance_snapshot.metrics.counts.items %}
+                                <li>{{ key|title }}: <strong>{{ value }}</strong></li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                        {% if latest_performance_snapshot.metrics.quality %}
+                        <div class="col-md-6">
+                            <strong>Quality Metrics:</strong>
+                            <ul class="mb-0">
+                                {% for key, value in latest_performance_snapshot.metrics.quality.items %}
+                                <li>{{ key|title }}: <strong>{{ value }}</strong></li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% if latest_performance_snapshot.metrics.highlights %}
+                    <div class="mt-2">
+                        <strong>Highlights:</strong>
+                        <ul class="mb-0">
+                            {% for highlight in latest_performance_snapshot.metrics.highlights %}
+                            <li>{{ highlight }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            {% if performance_reviews %}
+            <div class="row">
+                {% for review in performance_reviews %}
+                <div class="col-md-6 mb-3">
+                    <div class="modern-card">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div>
+                                <h6>{{ review.review_date|date:"M d, Y" }}</h6>
+                                <small class="text-muted">{{ review.get_review_type_display }}</small>
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-4 fw-bold text-success">{{ review.overall_score|default:0|floatformat:1 }}</div>
+                                <small class="text-muted">{{ review.get_overall_rating_display }}</small>
+                            </div>
+                        </div>
+                        <div class="mb-2">
+                            <strong>Period:</strong> {{ review.review_period_start|date:"M d, Y" }} - {{ review.review_period_end|date:"M d, Y" }}
+                        </div>
+                        {% if review.strengths %}
+                        <div class="mb-2">
+                            <strong>Strengths:</strong>
+                            <p class="mb-0 small">{{ review.strengths|truncatewords:15 }}</p>
+                        </div>
+                        {% endif %}
+                        {% if review.achievements %}
+                        <div class="mb-2">
+                            <strong>Achievements:</strong>
+                            <p class="mb-0 small">{{ review.achievements|truncatewords:15 }}</p>
+                        </div>
+                        {% endif %}
+                        {% if review.kpi_ratings.all %}
+                        <div class="mt-2">
+                            <small><strong>KPI Ratings:</strong></small>
+                            <div class="mt-1">
+                                {% for kpi_rating in review.kpi_ratings.all|slice:":3" %}
+                                <span class="badge bg-info me-1">
+                                    {{ kpi_rating.kpi.kpi_name }}: {{ kpi_rating.score }}
+                                </span>
+                                {% endfor %}
+                                {% if review.kpi_ratings.count > 3 %}
+                                <span class="badge bg-secondary">+{{ review.kpi_ratings.count|add:"-3" }} more</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% endif %}
+                        <div class="mt-2">
+                            {% if review.promotion_recommended %}
+                            <span class="badge bg-success">Promotion Recommended</span>
+                            {% endif %}
+                            {% if review.salary_increase_recommended %}
+                            <span class="badge bg-warning">Salary Increase Recommended</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>No performance reviews found.
+            </div>
+            {% endif %}
         </div>
-        {% endif %}
+
+        <!-- Medical History Tab -->
+        <div class="tab-pane fade" id="medical" role="tabpanel">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5><i class="bi bi-heart-pulse me-2"></i>Medical History (Medical Chits)</h5>
+                <div>
+                    <span class="badge bg-success me-2">Approved: {{ approved_chits }}</span>
+                    <span class="badge bg-info">Used: {{ used_chits }}</span>
+                </div>
+            </div>
+
+            {% if medical_chits %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Chit Number</th>
+                            <th>Application Date</th>
+                            <th>Reason</th>
+                            <th>Status</th>
+                            <th>Approved By</th>
+                            <th>Valid Until</th>
+                            <th>Visit Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for chit in medical_chits %}
+                        <tr>
+                            <td><strong>{{ chit.chit_number }}</strong></td>
+                            <td>{{ chit.application_date|date:"M d, Y" }}</td>
+                            <td>{{ chit.reason|truncatewords:10 }}</td>
+                            <td>
+                                {% if chit.status == 'approved' %}
+                                <span class="badge bg-success">Approved</span>
+                                {% elif chit.status == 'pending' %}
+                                <span class="badge bg-warning">Pending</span>
+                                {% elif chit.status == 'used' %}
+                                <span class="badge bg-info">Used</span>
+                                {% elif chit.status == 'rejected' %}
+                                <span class="badge bg-danger">Rejected</span>
+                                {% else %}
+                                <span class="badge bg-secondary">{{ chit.get_status_display }}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if chit.hr_approved_by %}
+                                {{ chit.hr_approved_by.get_full_name|default:chit.hr_approved_by.username }}
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if chit.valid_until %}
+                                {{ chit.valid_until|date:"M d, Y" }}
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if chit.encounter %}
+                                <span class="badge bg-success">Yes</span>
+                                {% else %}
+                                <span class="badge bg-secondary">No</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if chit.symptoms %}
+                                <button class="btn btn-sm btn-outline-info" data-bs-toggle="modal" data-bs-target="#chitModal{{ chit.pk }}" title="View Details">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Modals for chit details -->
+            {% for chit in medical_chits %}
+            {% if chit.symptoms %}
+            <div class="modal fade" id="chitModal{{ chit.pk }}" tabindex="-1">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Medical Chit Details - {{ chit.chit_number }}</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <p><strong>Reason:</strong> {{ chit.reason }}</p>
+                            <p><strong>Symptoms:</strong> {{ chit.symptoms }}</p>
+                            {% if chit.hr_approval_notes %}
+                            <p><strong>HR Notes:</strong> {{ chit.hr_approval_notes }}</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+            {% endfor %}
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>No medical chits found.
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Training Tab -->
+        <div class="tab-pane fade" id="training" role="tabpanel">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5><i class="bi bi-mortarboard me-2"></i>Training Records</h5>
+                <a href="{% url 'hospital:training_record_create' staff.pk %}" class="btn btn-sm btn-primary">
+                    <i class="bi bi-plus-circle"></i> Add Training
+                </a>
+            </div>
+
+            {% if training_records %}
+            <div class="row">
+                {% for training in training_records %}
+                <div class="col-md-6 mb-3">
+                    <div class="modern-card">
+                        <h6>{{ training.training_title }}</h6>
+                        <p class="text-muted small mb-2">
+                            <i class="bi bi-calendar me-1"></i>
+                            {{ training.start_date|date:"M d, Y" }} - {{ training.end_date|date:"M d, Y" }}
+                        </p>
+                        <p class="mb-2">
+                            <strong>Provider:</strong> {{ training.provider }}<br>
+                            <strong>Duration:</strong> {{ training.duration_hours }} hours<br>
+                            <strong>Status:</strong> 
+                            <span class="badge bg-{% if training.status == 'completed' %}success{% elif training.status == 'in_progress' %}warning{% else %}secondary{% endif %}">
+                                {{ training.get_status_display }}
+                            </span>
+                        </p>
+                        {% if training.assessment_score %}
+                        <p class="mb-0">
+                            <strong>Score:</strong> {{ training.assessment_score }}/100
+                            {% if training.passed %}
+                            <span class="badge bg-success ms-2">Passed</span>
+                            {% else %}
+                            <span class="badge bg-danger ms-2">Failed</span>
+                            {% endif %}
+                        </p>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>No training records found.
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Documents Tab -->
+        <div class="tab-pane fade" id="documents" role="tabpanel">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5><i class="bi bi-folder me-2"></i>Documents</h5>
+                <a href="{% url 'hospital:staff_document_upload' staff.pk %}" class="btn btn-sm btn-primary">
+                    <i class="bi bi-upload"></i> Upload Document
+                </a>
+            </div>
+
+            {% if documents %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Document Type</th>
+                            <th>Title</th>
+                            <th>Uploaded</th>
+                            <th>Expiry Date</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for doc in documents %}
+                        <tr>
+                            <td><span class="badge bg-secondary">{{ doc.get_document_type_display }}</span></td>
+                            <td>{{ doc.title }}</td>
+                            <td>{{ doc.created|date:"M d, Y" }}</td>
+                            <td>
+                                {% if doc.expiry_date %}
+                                {{ doc.expiry_date|date:"M d, Y" }}
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{{ doc.file.url }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-download"></i> Download
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>No documents found.
+            </div>
+            {% endif %}
+
+            {% if notes %}
+            <div class="mt-4">
+                <h5 class="mb-3"><i class="bi bi-sticky me-2"></i>Notes</h5>
+                {% for note in notes %}
+                <div class="modern-card mb-2">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6>{{ note.title }}</h6>
+                            <p class="mb-0 small">{{ note.content|truncatewords:30 }}</p>
+                            <small class="text-muted">
+                                <i class="bi bi-person me-1"></i>{{ note.created_by.get_full_name|default:note.created_by.username|default:"System" }}
+                                <span class="ms-2"><i class="bi bi-calendar me-1"></i>{{ note.created|date:"M d, Y" }}</span>
+                            </small>
+                        </div>
+                        <span class="badge bg-{% if note.note_type == 'warning' %}danger{% elif note.note_type == 'commendation' %}success{% else %}secondary{% endif %}">
+                            {{ note.get_note_type_display }}
+                        </span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if qualifications %}
+            <div class="mt-4">
+                <h5 class="mb-3"><i class="bi bi-award me-2"></i>Qualifications</h5>
+                <div class="row">
+                    {% for qual in qualifications %}
+                    <div class="col-md-6 mb-3">
+                        <div class="modern-card">
+                            <h6>{{ qual.title }}</h6>
+                            <p class="mb-1"><strong>Type:</strong> {{ qual.get_qualification_type_display }}</p>
+                            <p class="mb-1"><strong>Institution:</strong> {{ qual.institution }}</p>
+                            <p class="mb-1"><strong>Issue Date:</strong> {{ qual.issue_date|date:"M d, Y" }}</p>
+                            {% if qual.expiry_date %}
+                            <p class="mb-0"><strong>Expiry Date:</strong> {{ qual.expiry_date|date:"M d, Y" }}</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Payroll Tab -->
+        <div class="tab-pane fade" id="payroll" role="tabpanel">
+            <h5 class="mb-3"><i class="bi bi-cash-coin me-2"></i>Payroll History</h5>
+            {% if payrolls %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Period</th>
+                            <th class="text-end">Basic Salary</th>
+                            <th class="text-end">Allowances</th>
+                            <th class="text-end">Total Earnings</th>
+                            <th class="text-end">Deductions</th>
+                            <th class="text-end">Net Pay</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for payroll in payrolls %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'hospital:payroll_detail' payroll.pk %}">
+                                    {{ payroll.period.period_name }}
+                                </a>
+                                <br>
+                                <small class="text-muted">{{ payroll.period.start_date|date:"M d" }} - {{ payroll.period.end_date|date:"M d, Y" }}</small>
+                            </td>
+                            <td class="text-end">GHS {{ payroll.basic_salary|floatformat:2|intcomma }}</td>
+                            <td class="text-end">GHS {{ payroll.allowances|floatformat:2|intcomma }}</td>
+                            <td class="text-end"><strong>GHS {{ payroll.total_earnings|floatformat:2|intcomma }}</strong></td>
+                            <td class="text-end">GHS {{ payroll.total_deductions|floatformat:2|intcomma }}</td>
+                            <td class="text-end">
+                                <strong class="text-success">GHS {{ payroll.net_pay|floatformat:2|intcomma }}</strong>
+                            </td>
+                            <td>
+                                {% if payroll.payment_status == 'paid' %}
+                                <span class="badge bg-success">Paid</span>
+                                {% elif payroll.payment_status == 'processed' %}
+                                <span class="badge bg-info">Processed</span>
+                                {% else %}
+                                <span class="badge bg-warning">Pending</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:payroll_detail' payroll.pk %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-eye"></i> View
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>No payroll records found.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions Card -->
+<div class="modern-card mt-4">
+    <h6 class="mb-3"><i class="bi bi-lightning-charge me-2"></i>Quick Actions</h6>
+    <div class="row">
+        <div class="col-md-3 mb-2">
+            <a href="{% url 'hospital:create_leave_for_staff' %}?staff={{ staff.pk }}" class="btn btn-outline-primary w-100">
+                <i class="bi bi-calendar-plus"></i> Create Leave
+            </a>
+        </div>
+        <div class="col-md-3 mb-2">
+            <a href="{% url 'hospital:performance_review_create' staff.pk %}" class="btn btn-outline-success w-100">
+                <i class="bi bi-star"></i> Performance Review
+            </a>
+        </div>
+        <div class="col-md-3 mb-2">
+            <a href="{% url 'hospital:training_record_create' staff.pk %}" class="btn btn-outline-info w-100">
+                <i class="bi bi-mortarboard"></i> Add Training
+            </a>
+        </div>
+        <div class="col-md-3 mb-2">
+            <a href="{% url 'hospital:staff_document_upload' staff.pk %}" class="btn btn-outline-warning w-100">
+                <i class="bi bi-upload"></i> Upload Document
+            </a>
+        </div>
     </div>
 </div>
 {% endblock %}
-

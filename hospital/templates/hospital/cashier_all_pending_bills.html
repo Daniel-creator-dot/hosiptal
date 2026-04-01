@@ -5,15 +5,18 @@
 <div class="container-fluid">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
-            <h2>{{ title }}</h2>
-            <p class="text-muted">All services awaiting payment - Process payment to generate receipt</p>
+            <h2>📋 {{ title|default:"All Pending Bills" }}</h2>
+            <p class="text-muted mb-0">Lab • Pharmacy (prescriptions) • Walk-in Pharmacy • Imaging • Bed • Consultation — Process payment to generate receipt</p>
         </div>
         <div>
             <a href="{% url 'hospital:cashier_patient_bills' %}" class="btn btn-success me-2">
-                <i class="bi bi-people"></i> View Patient Bills (Combined)
+                <i class="bi bi-people"></i> Patient Bills (Combined)
+            </a>
+            <a href="{% url 'hospital:cashier_dashboard' %}{% if filter_today_pending %}?today_pending=1{% endif %}" class="btn btn-outline-primary me-2">
+                <i class="bi bi-house"></i> Cashier Dashboard
             </a>
             <a href="{% url 'hospital:centralized_cashier_dashboard' %}" class="btn btn-secondary">
-                <i class="bi bi-arrow-left"></i> Back to Dashboard
+                <i class="bi bi-arrow-left"></i> Central Dashboard
             </a>
         </div>
     </div>
@@ -21,23 +24,38 @@
     <!-- Search & Filter -->
     <div class="row mb-4">
         <div class="col-md-8">
-            <form method="GET" class="input-group">
+            <form method="GET" class="input-group flex-wrap">
                 <input type="text" 
                        name="search" 
                        class="form-control form-control-lg" 
                        placeholder="Search by patient name, MRN, or service..."
-                       value="{{ search }}">
+                       value="{{ search }}" title="Enter text">
                 <select name="service_type" class="form-select" style="max-width: 200px;" title="Filter by service type" aria-label="Filter by service type">
                     <option value="all" {% if service_filter == 'all' %}selected{% endif %}>All Services</option>
+                    <option value="invoice" {% if service_filter == 'invoice' %}selected{% endif %}>Invoices / Manual Charges</option>
                     <option value="lab" {% if service_filter == 'lab' %}selected{% endif %}>Lab Only</option>
                     <option value="pharmacy" {% if service_filter == 'pharmacy' %}selected{% endif %}>Pharmacy Only</option>
                     <option value="pharmacy_walkin" {% if service_filter == 'pharmacy_walkin' %}selected{% endif %}>Walk-in Pharmacy</option>
                     <option value="imaging" {% if service_filter == 'imaging' %}selected{% endif %}>Imaging Only</option>
+                    <option value="consultation" {% if service_filter == 'consultation' %}selected{% endif %}>Consultation / Special Consultation</option>
                 </select>
+                <div class="input-group-text">
+                    <div class="form-check mb-0">
+                        <input type="checkbox" name="today_pending" value="1" id="id_today_pending" class="form-check-input" {% if filter_today_pending %}checked{% endif %}
+                               onchange="this.form.submit()">
+                        <label for="id_today_pending" class="form-check-label small">Today only</label>
+                    </div>
+                </div>
                 <button class="btn btn-primary" type="submit">
                     <i class="bi bi-search"></i> Search
                 </button>
             </form>
+            {% if filter_today_pending %}
+            <p class="small text-muted mt-2 mb-0">
+                <span class="badge bg-warning text-dark">Showing today's pending only</span>
+                <a href="?search={{ search|urlencode }}&service_type={{ service_filter }}" class="ms-2">Show all dates</a>
+            </p>
+            {% endif %}
         </div>
         <div class="col-md-4 text-end">
             <div class="alert alert-info mb-0">
@@ -73,7 +91,7 @@
                             <td>
                                 {% if item.type == 'lab' %}
                                     <span class="badge bg-info">🧪 Lab</span>
-                                {% elif item.type == 'pharmacy' %}
+                                {% elif item.type == 'pharmacy' or item.type == 'pharmacy_encounter' %}
                                     <span class="badge bg-success">💊 Pharmacy</span>
                                 {% elif item.type == 'pharmacy_walkin' %}
                                     <span class="badge bg-success">🛒 Walk-in</span>
@@ -83,6 +101,8 @@
                                     <span class="badge bg-warning text-dark">🛏️ Bed</span>
                                 {% elif item.type == 'consultation' %}
                                     <span class="badge bg-primary">👨‍⚕️ Consultation</span>
+                                {% elif item.type == 'invoice' %}
+                                    <span class="badge" style="background: #0d6efd;">📄 Invoice</span>
                                 {% else %}
                                     <span class="badge bg-secondary">{{ item.type|title }}</span>
                                 {% endif %}
@@ -93,10 +113,17 @@
                             <td><h5 class="mb-0 text-primary">GHS {{ item.price }}</h5></td>
                             <td>{{ item.date|date:"M d, Y" }}</td>
                             <td>
+                                {% if item.type == 'pharmacy_encounter' %}
+                                <a href="{% url 'hospital:cashier_process_pharmacy_encounter' item.encounter_id %}" 
+                                   class="btn btn-primary">
+                                    <i class="bi bi-credit-card"></i> Process Payment
+                                </a>
+                                {% else %}
                                 <a href="{% url 'hospital:cashier_process_service_payment' item.type item.id %}" 
                                    class="btn btn-primary">
                                     <i class="bi bi-credit-card"></i> Process Payment
                                 </a>
+                                {% endif %}
                             </td>
                         </tr>
                         {% endfor %}

@@ -1,0 +1,313 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'hospital/css/pharmacy_ui.css' %}">
+{% endblock %}
+
+{% block title %}Add Pharmacy Stock - HMS{% endblock %}
+{% block page_title %}Add Pharmacy Stock{% endblock %}
+{% block page_subtitle %}Add new drug batch to pharmacy inventory{% endblock %}
+
+{% block content %}
+<div class="container-fluid pharmacy-ui rx-form-page pb-4">
+    <div class="row justify-content-center" style="overflow: visible;">
+        <div class="col-lg-10 col-xl-8 rx-form-shell" style="overflow: visible;">
+            <div class="rx-form-section" style="overflow: visible;">
+                <div class="rx-form-section-title"><span class="badge rounded-pill bg-success">1</span> Drug &amp; batch</div>
+                <form method="post" id="pharmacyStockForm">
+                    {% csrf_token %}
+                    
+                    <!-- Drug Search -->
+                    <div class="mb-4 pb-2 border-bottom border-light" style="overflow: visible;">
+                        <label class="form-label fw-semibold">Drug <span class="text-danger">*</span></label>
+                        <div class="position-relative" style="overflow: visible;">
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-capsule"></i></span>
+                                <input type="text" class="form-control form-control-modern" id="drugSearchInput"
+                                       placeholder="Type drug name (e.g. paracetamol) to search..."
+                                       autocomplete="off" required>
+                                <input type="hidden" name="drug_id" id="drugIdHidden" value="">
+                            </div>
+                            <div id="drugSearchDropdown" class="list-group position-absolute start-0 end-0 mt-1 rx-drug-dropdown" 
+                                 style="display: none; min-width: 100%;"></div>
+                        </div>
+                        <div id="drugSelectedInfo" class="mt-2 p-2 rounded border" style="display: none; background: #e8f5e9;">
+                            <small><i class="bi bi-check-circle text-success"></i> Selected: <strong id="drugSelectedName">-</strong>
+                                <span id="drugSelectedDetails" class="text-muted"></span>
+                                <a href="#" id="clearDrugSelection" class="ms-2">Change</a></small>
+                        </div>
+                        <small class="form-text text-muted">Type at least 2 characters to see search results. Click a drug to select.</small>
+                    </div>
+                    
+                    <div class="rx-form-section-title mt-4"><span class="badge rounded-pill bg-secondary">2</span> Batch, location &amp; quantity</div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Batch number</label>
+                            <input type="text" name="batch_number" class="form-control form-control-modern" 
+                                   placeholder="Leave blank to auto-generate">
+                            <small class="form-text text-muted">Auto: BATCH-YYYYMMDD-0001</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Expiry date <span class="text-danger">*</span></label>
+                            <input type="date" name="expiry_date" class="form-control form-control-modern" required>
+                        </div>
+                    </div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Location</label>
+                            <input type="text" name="location" class="form-control form-control-modern" 
+                                   value="Main Pharmacy">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Quantity on hand</label>
+                            <input type="number" name="quantity_on_hand" id="quantityInput" class="form-control form-control-modern" 
+                                   value="0" min="0">
+                        </div>
+                    </div>
+                    
+                    <div class="rx-form-section-title mt-4"><span class="badge rounded-pill bg-secondary">3</span> Supplier cost &amp; pricing</div>
+                    <div class="row mb-3">
+                        <div class="col-12">
+                            <label class="form-label">Supplier cost</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="stock_cost_mode" id="costModeManual" value="manual" checked>
+                                <label class="form-check-label" for="costModeManual">Enter <strong>unit cost</strong> manually (below)</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="stock_cost_mode" id="costModeFromTotal" value="from_total">
+                                <label class="form-check-label" for="costModeFromTotal">Enter <strong>total</strong> for this batch — unit cost = total ÷ quantity</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Reorder level</label>
+                            <input type="number" name="reorder_level" class="form-control form-control-modern" 
+                                   value="10" min="0">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Total cost for batch (GHS)</label>
+                            <input type="number" name="total_cost" id="totalCostInput" class="form-control form-control-modern" 
+                                   value="" min="0" step="0.01" placeholder="Select batch-total mode above first">
+                            <small class="form-text text-muted" id="totalCostHint">Available when you choose total-for-batch. Disabled fields are not saved.</small>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Cost price per unit (GHS)</label>
+                            <input type="number" name="unit_cost" id="costPriceInput" class="form-control form-control-modern" 
+                                   value="0" min="0" step="0.01" placeholder="Type unit cost here">
+                            <small class="form-text text-muted">Use this when “unit cost manually” is selected, or as the result when using total ÷ quantity.</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Unit price (GHS)</label>
+                            <input type="number" name="unit_price" id="unitPriceDisplay" class="form-control form-control-modern" 
+                                   value="0" min="0" step="0.01" placeholder="Selling price (from drug or override here)">
+                        </div>
+                    </div>
+                    
+                    <div class="d-flex gap-2 mt-4">
+                        <button type="submit" class="btn btn-primary-modern">
+                            <i class="bi bi-plus-circle"></i> Add Stock
+                        </button>
+                        <a href="{% url 'hospital:pharmacy_stock_list' %}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const drugSearchInput = document.getElementById('drugSearchInput');
+    const drugSearchDropdown = document.getElementById('drugSearchDropdown');
+    const drugIdHidden = document.getElementById('drugIdHidden');
+    const drugSelectedInfo = document.getElementById('drugSelectedInfo');
+    const drugSelectedName = document.getElementById('drugSelectedName');
+    const drugSelectedDetails = document.getElementById('drugSelectedDetails');
+    const clearDrugSelection = document.getElementById('clearDrugSelection');
+    const form = document.getElementById('pharmacyStockForm');
+    
+    let drugSearchTimeout;
+    
+    drugSearchInput.addEventListener('input', function() {
+        clearTimeout(drugSearchTimeout);
+        const query = this.value.trim();
+        if (query.length < 2) {
+            drugSearchDropdown.innerHTML = '';
+            drugSearchDropdown.style.display = 'none';
+            return;
+        }
+        drugSearchTimeout = setTimeout(() => runDrugSearch(query), 300);
+    });
+    
+    drugSearchInput.addEventListener('focus', function() {
+        const query = this.value.trim();
+        if (query.length >= 2 && drugIdHidden.value === '') {
+            runDrugSearch(query);
+        }
+    });
+    
+    function runDrugSearch(query) {
+        if (!query || query.length < 2) {
+            drugSearchDropdown.innerHTML = '<div class="list-group-item text-muted">Type at least 2 characters</div>';
+            drugSearchDropdown.style.display = 'block';
+            return;
+        }
+        drugSearchDropdown.innerHTML = '<div class="list-group-item text-muted">Searching...</div>';
+        drugSearchDropdown.style.display = 'block';
+        
+        fetch(`{% url 'hospital:api_autocomplete_drugs' %}?q=${encodeURIComponent(query)}`, { credentials: 'same-origin' })
+            .then(r => {
+                if (!r.ok) throw new Error('Search failed');
+                return r.json();
+            })
+            .then(data => {
+                const drugs = data.results || data.drugs || [];
+                if (drugs.length === 0) {
+                    drugSearchDropdown.innerHTML = '<div class="list-group-item text-muted">No drugs found. Try a different search term.</div>';
+                } else {
+                    drugSearchDropdown.innerHTML = drugs.map(d => `
+                        <div class="list-group-item list-group-item-action drug-option py-3" 
+                             data-id="${d.id}" data-name="${d.name || d.text}" 
+                             data-details="${[d.strength, d.form, d.generic_name].filter(Boolean).join(' ')}"
+                             data-unit-price="${(d.unit_price != null ? d.unit_price : d.price) || '0'}"
+                             data-cost-price="${d.cost_price != null ? d.cost_price : '0'}">
+                            <strong>${d.name || d.text}</strong>
+                            ${(d.generic_name && d.generic_name !== 'N/A') ? `<br><small class="text-muted">${d.generic_name}</small>` : ''}
+                            ${(d.strength || d.form) ? `<br><small>${d.strength || ''} ${d.form || ''}</small>` : ''}
+                        </div>
+                    `).join('');
+                }
+                drugSearchDropdown.style.display = 'block';
+            })
+            .catch((err) => {
+                drugSearchDropdown.innerHTML = '<div class="list-group-item text-danger">Error searching. Check your connection.</div>';
+                drugSearchDropdown.style.display = 'block';
+            });
+    }
+    
+    const unitPriceDisplay = document.getElementById('unitPriceDisplay');
+    const costPriceInput = document.getElementById('costPriceInput');
+    const quantityInput = document.getElementById('quantityInput');
+    const totalCostInput = document.getElementById('totalCostInput');
+    const costModeManual = document.getElementById('costModeManual');
+    const costModeFromTotal = document.getElementById('costModeFromTotal');
+
+    function isFromTotalMode() {
+        return costModeFromTotal && costModeFromTotal.checked;
+    }
+
+    function syncCostModeUi() {
+        if (!totalCostInput) return;
+        const fromTotal = isFromTotalMode();
+        totalCostInput.disabled = !fromTotal;
+        if (!fromTotal) {
+            totalCostInput.value = '';
+        } else {
+            totalCostInput.placeholder = 'e.g. invoice line total';
+        }
+        if (costPriceInput) {
+            costPriceInput.readOnly = fromTotal;
+            costPriceInput.classList.toggle('bg-light', fromTotal);
+        }
+    }
+
+    function recalcUnitCostFromTotal() {
+        if (!isFromTotalMode() || !quantityInput || !totalCostInput || !costPriceInput) return;
+        const q = parseFloat(quantityInput.value, 10);
+        const t = parseFloat(totalCostInput.value, 10);
+        if (!isNaN(t) && t > 0 && !isNaN(q) && q > 0) {
+            costPriceInput.value = (Math.round((t / q) * 100) / 100).toFixed(2);
+        }
+    }
+
+    function onCostModeChange() {
+        syncCostModeUi();
+        if (isFromTotalMode()) {
+            recalcUnitCostFromTotal();
+        }
+    }
+
+    if (costModeManual) costModeManual.addEventListener('change', onCostModeChange);
+    if (costModeFromTotal) costModeFromTotal.addEventListener('change', onCostModeChange);
+    syncCostModeUi();
+
+    if (totalCostInput) {
+        totalCostInput.addEventListener('input', recalcUnitCostFromTotal);
+        totalCostInput.addEventListener('blur', recalcUnitCostFromTotal);
+    }
+    if (quantityInput) {
+        quantityInput.addEventListener('input', recalcUnitCostFromTotal);
+        quantityInput.addEventListener('blur', recalcUnitCostFromTotal);
+    }
+    drugSearchDropdown.addEventListener('click', function(e) {
+        const option = e.target.closest('.drug-option');
+        if (option && option.dataset.id) {
+            e.preventDefault();
+            e.stopPropagation();
+            drugIdHidden.value = option.dataset.id;
+            drugSelectedName.textContent = option.dataset.name;
+            drugSelectedDetails.textContent = option.dataset.details ? ' - ' + option.dataset.details : '';
+            drugSelectedInfo.style.display = 'block';
+            var unitPrice = option.dataset.unitPrice || '0';
+            var costPrice = option.dataset.costPrice || '0';
+            if (unitPriceDisplay) {
+                unitPriceDisplay.value = parseFloat(unitPrice).toFixed(2);
+            }
+            if (costPriceInput) {
+                costPriceInput.value = parseFloat(costPrice).toFixed(2);
+            }
+            if (costModeManual) costModeManual.checked = true;
+            if (costModeFromTotal) costModeFromTotal.checked = false;
+            syncCostModeUi();
+            drugSearchInput.value = '';
+            drugSearchInput.required = false;
+            drugSearchDropdown.innerHTML = '';
+            drugSearchDropdown.style.display = 'none';
+        }
+    });
+    
+    if (clearDrugSelection) {
+        clearDrugSelection.addEventListener('click', function(e) {
+            e.preventDefault();
+            drugIdHidden.value = '';
+            drugSelectedInfo.style.display = 'none';
+            if (unitPriceDisplay) unitPriceDisplay.value = '';
+            if (costPriceInput) {
+                costPriceInput.value = '0';
+                costPriceInput.readOnly = false;
+                costPriceInput.classList.remove('bg-light');
+            }
+            if (totalCostInput) totalCostInput.value = '';
+            if (costModeManual) costModeManual.checked = true;
+            if (costModeFromTotal) costModeFromTotal.checked = false;
+            syncCostModeUi();
+            drugSearchInput.required = true;
+            drugSearchInput.focus();
+        });
+    }
+    
+    document.addEventListener('click', function(e) {
+        if (drugSearchInput && drugSearchDropdown && 
+            !drugSearchInput.closest('.position-relative').contains(e.target)) {
+            drugSearchDropdown.style.display = 'none';
+        }
+    });
+    
+    form.addEventListener('submit', function(e) {
+        if (!drugIdHidden.value) {
+            e.preventDefault();
+            drugSearchInput.focus();
+            drugSearchInput.required = true;
+            alert('Please select a drug from the search.');
+            return false;
+        }
+        recalcUnitCostFromTotal();
+    });
+})();
+</script>
+{% endblock %}

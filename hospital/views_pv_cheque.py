@@ -22,15 +22,12 @@ from .models import BaseModel
 from .utils_pv_account_setup import (
     setup_pv_cheque_accounts, get_pv_expense_accounts, get_pv_payment_accounts
 )
-
-
-def is_accountant(user):
-    """Check if user has accounting permissions"""
-    return user.is_superuser or user.is_staff or user.groups.filter(name__in=['Accountant', 'Finance']).exists()
+from .decorators import role_required
+from .utils_roles import get_user_role
 
 
 @login_required
-@user_passes_test(is_accountant)
+@role_required('accountant', 'senior_account_officer', 'admin')
 def pv_account_setup(request):
     """Setup default accounts for PV and cheque operations"""
     if request.method == 'POST':
@@ -72,7 +69,7 @@ def pv_account_setup(request):
 
 
 @login_required
-@user_passes_test(is_accountant)
+@role_required('accountant', 'senior_account_officer', 'admin')
 def pv_list(request):
     """List all payment vouchers"""
     status_filter = request.GET.get('status', '')
@@ -113,7 +110,7 @@ def pv_list(request):
 
 
 @login_required
-@user_passes_test(is_accountant)
+@role_required('accountant', 'senior_account_officer', 'admin')
 def pv_create(request):
     """Create a new payment voucher"""
     from django import forms
@@ -138,13 +135,31 @@ def pv_create(request):
                 'bank_account': forms.Select(attrs={'class': 'form-select', 'onchange': 'updateBankBalance()'}),
                 'bank_name': forms.TextInput(attrs={'class': 'form-control'}),
                 'account_number': forms.TextInput(attrs={'class': 'form-control'}),
-                'expense_account': forms.Select(attrs={'class': 'form-select'}),
-                'payment_account': forms.Select(attrs={'class': 'form-select'}),
+                'expense_account': forms.Select(attrs={
+                    'class': 'form-select account-select',
+                    'data-live-search': 'true',
+                    'title': 'Select expense account (will be debited)'
+                }),
+                'payment_account': forms.Select(attrs={
+                    'class': 'form-select account-select',
+                    'data-live-search': 'true',
+                    'title': 'Select payment account (cash/bank - will be credited)'
+                }),
                 'invoice_number': forms.TextInput(attrs={'class': 'form-control'}),
                 'po_number': forms.TextInput(attrs={'class': 'form-control'}),
                 'memo': forms.Textarea(attrs={'class': 'form-control', 'rows': 2, 'placeholder': 'Enter payment details/memo'}),
                 'notes': forms.Textarea(attrs={'class': 'form-control', 'rows': 2}),
             }
+        
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            # Set querysets for account fields
+            self.fields['expense_account'].queryset = get_pv_expense_accounts()
+            self.fields['payment_account'].queryset = get_pv_payment_accounts()
+            
+            # Add help text
+            self.fields['expense_account'].help_text = 'Account to debit (expense category)'
+            self.fields['payment_account'].help_text = 'Account to credit (cash/bank account)'
     
     if request.method == 'POST':
         form = PaymentVoucherForm(request.POST)
@@ -237,7 +252,7 @@ def pv_create(request):
 
 
 @login_required
-@user_passes_test(is_accountant)
+@role_required('accountant', 'senior_account_officer', 'admin')
 def pv_detail(request, voucher_id):
     """View payment voucher details"""
     voucher = get_object_or_404(PaymentVoucher, id=voucher_id, is_deleted=False)
@@ -250,7 +265,7 @@ def pv_detail(request, voucher_id):
 
 
 @login_required
-@user_passes_test(is_accountant)
+@role_required('accountant', 'senior_account_officer', 'admin')
 def pv_approve(request, voucher_id):
     """Approve a payment voucher"""
     voucher = get_object_or_404(PaymentVoucher, id=voucher_id, is_deleted=False)
@@ -274,7 +289,7 @@ def pv_approve(request, voucher_id):
 
 
 @login_required
-@user_passes_test(is_accountant)
+@role_required('accountant', 'senior_account_officer', 'admin')
 def pv_mark_paid(request, voucher_id):
     """Mark payment voucher as paid"""
     voucher = get_object_or_404(PaymentVoucher, id=voucher_id, is_deleted=False)
@@ -297,42 +312,62 @@ def pv_mark_paid(request, voucher_id):
 
 
 @login_required
-@user_passes_test(is_accountant)
+@role_required('accountant', 'senior_account_officer', 'admin')
 def cheque_list(request):
     """List all cheques"""
     status_filter = request.GET.get('status', '')
     bank_filter = request.GET.get('bank', '')
     search = request.GET.get('search', '')
     
-    cheques = Cheque.objects.filter(is_deleted=False)
-    
-    if status_filter:
-        cheques = cheques.filter(status=status_filter)
-    
-    if bank_filter:
-        cheques = cheques.filter(bank_account_id=bank_filter)
-    
-    if search:
-        cheques = cheques.filter(
-            Q(cheque_number__icontains=search) |
-            Q(payee_name__icontains=search) |
-            Q(description__icontains=search)
-        )
-    
-    cheques = cheques.select_related('bank_account', 'payment_voucher', 'issued_by', 'cleared_by').order_by('-issue_date', '-cheque_number')
+    try:
+        cheques = Cheque.objects.filter(is_deleted=False)
+        
+        if status_filter:
+            cheques = cheques.filter(status=status_filter)
+        
+        if bank_filter:
+            cheques = cheques.filter(bank_account_id=bank_filter)
+        
+        if search:
+            cheques = cheques.filter(
+                Q(cheque_number__icontains=search) |
+                Q(payee_name__icontains=search) |
+                Q(description__icontains=search)
+            )
+        
+        cheques = cheques.select_related('bank_account', 'payment_voucher', 'issued_by', 'cleared_by').order_by('-issue_date', '-cheque_number')
+    except Exception as e:
+        messages.error(request, f'Error loading cheques: {str(e)}')
+        cheques = Cheque.objects.none()
     
     # Statistics
-    stats = {
-        'total': cheques.count(),
-        'issued': cheques.filter(status='issued').count(),
-        'cleared': cheques.filter(status='cleared').count(),
-        'bounced': cheques.filter(status='bounced').count(),
-        'void': cheques.filter(status='void').count(),
-        'total_amount': cheques.aggregate(total=Sum('amount'))['total'] or Decimal('0.00'),
-        'outstanding_amount': cheques.filter(status='issued').aggregate(total=Sum('amount'))['total'] or Decimal('0.00'),
-    }
+    try:
+        stats = {
+            'total': cheques.count(),
+            'issued': cheques.filter(status='issued').count(),
+            'cleared': cheques.filter(status='cleared').count(),
+            'bounced': cheques.filter(status='bounced').count(),
+            'void': cheques.filter(status='void').count(),
+            'total_amount': cheques.aggregate(total=Sum('amount'))['total'] or Decimal('0.00'),
+            'outstanding_amount': cheques.filter(status='issued').aggregate(total=Sum('amount'))['total'] or Decimal('0.00'),
+        }
+    except Exception as e:
+        stats = {
+            'total': 0,
+            'issued': 0,
+            'cleared': 0,
+            'bounced': 0,
+            'void': 0,
+            'total_amount': Decimal('0.00'),
+            'outstanding_amount': Decimal('0.00'),
+        }
+        messages.warning(request, f'Error calculating statistics: {str(e)}')
     
-    bank_accounts = BankAccount.objects.filter(is_active=True).order_by('account_name')
+    try:
+        bank_accounts = BankAccount.objects.filter(is_active=True).order_by('account_name')
+    except Exception as e:
+        bank_accounts = BankAccount.objects.none()
+        messages.warning(request, f'Error loading bank accounts: {str(e)}')
     
     context = {
         'cheques': cheques,
@@ -347,12 +382,55 @@ def cheque_list(request):
 
 
 @login_required
-@user_passes_test(is_accountant)
+@role_required('accountant', 'senior_account_officer', 'admin')
 def cheque_create(request):
     """Create a new cheque"""
     from django import forms
     
     class ChequeForm(forms.ModelForm):
+        # Add account fields for proper accounting
+        expense_account = forms.ModelChoiceField(
+            queryset=Account.objects.none(),
+            required=False,
+            widget=forms.Select(attrs={
+                'class': 'form-select account-select',
+                'data-live-search': 'true',
+                'title': 'Select expense account (for debit entry)'
+            }),
+            help_text="Expense account to debit when cheque is cleared"
+        )
+        payment_account = forms.ModelChoiceField(
+            queryset=Account.objects.none(),
+            required=False,
+            widget=forms.Select(attrs={
+                'class': 'form-select account-select',
+                'data-live-search': 'true',
+                'title': 'Select payment account (for credit entry)'
+            }),
+            help_text="Bank/cash account to credit (usually matches bank_account's GL account)"
+        )
+        
+        # Override bank_account field to handle new instances safely
+        # Define it explicitly to prevent Django from accessing instance.bank_account
+        # Use a custom field that doesn't access the instance
+        class SafeBankAccountField(forms.ModelChoiceField):
+            def __init__(self, *args, **kwargs):
+                # Ensure queryset is set
+                if 'queryset' not in kwargs:
+                    kwargs['queryset'] = BankAccount.objects.filter(is_active=True)
+                super().__init__(*args, **kwargs)
+            
+            def widget_attrs(self, widget):
+                attrs = super().widget_attrs(widget)
+                attrs.update({'class': 'form-select', 'onchange': 'updatePaymentAccount()'})
+                return attrs
+        
+        bank_account = SafeBankAccountField(
+            queryset=BankAccount.objects.filter(is_active=True),
+            required=True,
+            help_text="Bank account to issue cheque from"
+        )
+        
         class Meta:
             model = Cheque
             fields = [
@@ -361,7 +439,6 @@ def cheque_create(request):
             ]
             widgets = {
                 'cheque_number': forms.TextInput(attrs={'class': 'form-control'}),
-                'bank_account': forms.Select(attrs={'class': 'form-select'}),
                 'payee_name': forms.TextInput(attrs={'class': 'form-control'}),
                 'amount': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01'}),
                 'cheque_date': forms.DateInput(attrs={'type': 'date', 'class': 'form-control'}),
@@ -369,6 +446,92 @@ def cheque_create(request):
                 'memo': forms.TextInput(attrs={'class': 'form-control'}),
                 'notes': forms.Textarea(attrs={'class': 'form-control', 'rows': 2}),
             }
+        
+        def _get_initial_for_field(self, field, field_name):
+            """Override to safely get initial value for bank_account field"""
+            if field_name == 'bank_account':
+                # Always return None for bank_account to prevent Django from accessing it
+                # This prevents RelatedObjectDoesNotExist errors on new instances
+                # The form field will handle the initial value from user input
+                return None
+            # For other fields, use default behavior
+            return super()._get_initial_for_field(field, field_name)
+        
+        def __init__(self, *args, **kwargs):
+            # For new instances, explicitly set instance=None to avoid Django creating a new Cheque instance
+            # that would try to access bank_account
+            if 'instance' not in kwargs or kwargs.get('instance') is None:
+                kwargs['instance'] = None
+                # Remove bank_account from initial to prevent any access
+                if 'initial' in kwargs:
+                    kwargs['initial'] = kwargs.get('initial', {}).copy()
+                    kwargs['initial'].pop('bank_account', None)
+            
+            # Call super().__init__ but catch any RelatedObjectDoesNotExist errors
+            # RelatedObjectDoesNotExist is dynamically created, so we catch by checking the exception type name
+            try:
+                super().__init__(*args, **kwargs)
+            except Exception as e:
+                # Check if this is a RelatedObjectDoesNotExist error for bank_account
+                error_type = type(e).__name__
+                error_str = str(e)
+                error_repr = repr(e)
+                
+                # Check if it's a RelatedObjectDoesNotExist or if it mentions bank_account
+                is_related_error = (
+                    'RelatedObjectDoesNotExist' in error_type or
+                    'has no bank_account' in error_str or
+                    'has no bank_account' in error_repr or
+                    ('bank_account' in error_str and 'RelatedObjectDoesNotExist' in str(type(e)))
+                )
+                
+                if is_related_error and 'bank_account' in error_str:
+                    # Force instance=None and clear any cached instance, then retry
+                    kwargs['instance'] = None
+                    if 'initial' in kwargs:
+                        kwargs['initial'] = kwargs.get('initial', {}).copy()
+                        kwargs['initial'].pop('bank_account', None)
+                    
+                    # Clear any cached instance that might have been created
+                    if hasattr(self, 'instance'):
+                        try:
+                            delattr(self, 'instance')
+                        except:
+                            pass
+                    
+                    # Retry with None instance
+                    try:
+                        super().__init__(*args, **kwargs)
+                    except Exception as retry_error:
+                        # If retry also fails, log and raise
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"ChequeForm initialization failed even after retry: {retry_error}")
+                        raise
+                else:
+                    # Re-raise if it's not a bank_account related error
+                    raise
+            
+            from .utils_pv_account_setup import get_pv_expense_accounts, get_pv_payment_accounts
+            
+            # Set querysets for account fields
+            self.fields['expense_account'].queryset = get_pv_expense_accounts()
+            self.fields['payment_account'].queryset = get_pv_payment_accounts()
+            
+            # If editing existing cheque, set initial values
+            # Only access related objects if instance is saved and has pk
+            if self.instance and hasattr(self.instance, 'pk') and self.instance.pk:
+                # Try to get accounts from linked payment voucher
+                try:
+                    # Refresh from DB with select_related to safely access related objects
+                    saved_instance = Cheque.objects.select_related('payment_voucher', 'bank_account__gl_account').get(pk=self.instance.pk)
+                    if saved_instance.payment_voucher:
+                        self.fields['expense_account'].initial = saved_instance.payment_voucher.expense_account
+                        self.fields['payment_account'].initial = saved_instance.payment_voucher.payment_account
+                    elif saved_instance.bank_account and hasattr(saved_instance.bank_account, 'gl_account') and saved_instance.bank_account.gl_account:
+                        self.fields['payment_account'].initial = saved_instance.bank_account.gl_account
+                except (Cheque.DoesNotExist, AttributeError, Exception):
+                    pass
     
     if request.method == 'POST':
         form = ChequeForm(request.POST)
@@ -377,6 +540,10 @@ def cheque_create(request):
             cheque.issue_date = timezone.now().date()
             cheque.issued_by = request.user
             cheque.status = 'issued'
+            
+            # Get account selections (for use when clearing cheque)
+            expense_account = form.cleaned_data.get('expense_account')
+            payment_account = form.cleaned_data.get('payment_account')
             
             # Link to PV if provided
             pv_id = request.POST.get('payment_voucher_id')
@@ -387,31 +554,56 @@ def cheque_create(request):
                     pv.cheque = cheque
                     pv.cheque_number = cheque.cheque_number
                     pv.save()
+                    # Use PV accounts if not specified
+                    if not expense_account:
+                        expense_account = pv.expense_account
+                    if not payment_account:
+                        payment_account = pv.payment_account
                 except PaymentVoucher.DoesNotExist:
                     pass
+            
+            # Store accounts in notes for later use (until we add model fields)
+            if expense_account or payment_account:
+                account_info = []
+                if expense_account:
+                    account_info.append(f"Expense Account: {expense_account.account_code} - {expense_account.account_name}")
+                if payment_account:
+                    account_info.append(f"Payment Account: {payment_account.account_code} - {payment_account.account_name}")
+                if account_info:
+                    existing_notes = cheque.notes or ""
+                    cheque.notes = f"{existing_notes}\n[ACCOUNTS]\n" + "\n".join(account_info) if existing_notes else "\n".join(account_info)
             
             cheque.save()
             messages.success(request, f'Cheque #{cheque.cheque_number} created successfully')
             return redirect('hospital:cheque_detail', cheque_id=cheque.id)
     else:
-        form = ChequeForm()
+        # Create form with instance=None and initial={} to prevent Django from accessing bank_account
+        form = ChequeForm(instance=None, initial={})
         pv_id = request.GET.get('pv_id')
         if pv_id:
             try:
                 pv = PaymentVoucher.objects.get(id=pv_id, is_deleted=False)
-                form.initial = {
+                # Update initial after form creation to avoid triggering field access
+                form.initial.update({
                     'payee_name': pv.payee_name,
                     'amount': pv.amount,
                     'description': pv.description,
-                }
+                })
             except PaymentVoucher.DoesNotExist:
                 pass
     
     bank_accounts = BankAccount.objects.filter(is_active=True).order_by('account_name')
     
+    # Get accounts for context (for auto-fill from bank account)
+    from .utils_pv_account_setup import get_pv_expense_accounts, get_pv_payment_accounts
+    expense_accounts = get_pv_expense_accounts()
+    payment_accounts = get_pv_payment_accounts()
+    
     context = {
         'form': form,
         'bank_accounts': bank_accounts,
+        'expense_accounts': expense_accounts,
+        'payment_accounts': payment_accounts,
         'pv_id': request.GET.get('pv_id'),
     }
     
@@ -419,10 +611,14 @@ def cheque_create(request):
 
 
 @login_required
-@user_passes_test(is_accountant)
+@role_required('accountant', 'senior_account_officer', 'admin')
 def cheque_detail(request, cheque_id):
     """View cheque details"""
-    cheque = get_object_or_404(Cheque, id=cheque_id, is_deleted=False)
+    try:
+        cheque = get_object_or_404(Cheque, id=cheque_id, is_deleted=False)
+    except Exception as e:
+        messages.error(request, f'Error loading cheque: {str(e)}')
+        return redirect('hospital:cheque_list')
     
     context = {
         'cheque': cheque,
@@ -432,23 +628,29 @@ def cheque_detail(request, cheque_id):
 
 
 @login_required
-@user_passes_test(is_accountant)
+@role_required('accountant', 'senior_account_officer', 'admin')
 def cheque_clear(request, cheque_id):
     """Mark cheque as cleared"""
-    cheque = get_object_or_404(Cheque, id=cheque_id, is_deleted=False)
+    try:
+        cheque = get_object_or_404(Cheque, id=cheque_id, is_deleted=False)
+    except Exception as e:
+        messages.error(request, f'Error loading cheque: {str(e)}')
+        return redirect('hospital:cheque_list')
     
     if request.method == 'POST':
         clear_date = request.POST.get('clear_date')
         bank_reference = request.POST.get('bank_reference', '')
         
-        if clear_date:
-            clear_date = datetime.strptime(clear_date, '%Y-%m-%d').date()
-        else:
-            clear_date = timezone.now().date()
-        
         try:
+            if clear_date:
+                clear_date = datetime.strptime(clear_date, '%Y-%m-%d').date()
+            else:
+                clear_date = timezone.now().date()
+            
             cheque.clear(request.user, clear_date, bank_reference)
             messages.success(request, f'Cheque #{cheque.cheque_number} marked as cleared')
+        except ValueError as e:
+            messages.error(request, f'Cannot clear cheque: {str(e)}')
         except Exception as e:
             messages.error(request, f'Error clearing cheque: {str(e)}')
         
@@ -458,16 +660,22 @@ def cheque_clear(request, cheque_id):
 
 
 @login_required
-@user_passes_test(is_accountant)
+@role_required('accountant', 'senior_account_officer', 'admin')
 def cheque_bounce(request, cheque_id):
     """Mark cheque as bounced"""
-    cheque = get_object_or_404(Cheque, id=cheque_id, is_deleted=False)
+    try:
+        cheque = get_object_or_404(Cheque, id=cheque_id, is_deleted=False)
+    except Exception as e:
+        messages.error(request, f'Error loading cheque: {str(e)}')
+        return redirect('hospital:cheque_list')
     
     if request.method == 'POST':
         notes = request.POST.get('notes', '')
         try:
             cheque.bounce(request.user, notes)
             messages.success(request, f'Cheque #{cheque.cheque_number} marked as bounced')
+        except ValueError as e:
+            messages.error(request, f'Cannot bounce cheque: {str(e)}')
         except Exception as e:
             messages.error(request, f'Error bouncing cheque: {str(e)}')
         
@@ -477,16 +685,22 @@ def cheque_bounce(request, cheque_id):
 
 
 @login_required
-@user_passes_test(is_accountant)
+@role_required('accountant', 'senior_account_officer', 'admin')
 def cheque_void(request, cheque_id):
     """Void a cheque"""
-    cheque = get_object_or_404(Cheque, id=cheque_id, is_deleted=False)
+    try:
+        cheque = get_object_or_404(Cheque, id=cheque_id, is_deleted=False)
+    except Exception as e:
+        messages.error(request, f'Error loading cheque: {str(e)}')
+        return redirect('hospital:cheque_list')
     
     if request.method == 'POST':
         reason = request.POST.get('reason', '')
         try:
             cheque.void_cheque(request.user, reason)
             messages.success(request, f'Cheque #{cheque.cheque_number} voided')
+        except ValueError as e:
+            messages.error(request, f'Cannot void cheque: {str(e)}')
         except Exception as e:
             messages.error(request, f'Error voiding cheque: {str(e)}')
         
@@ -496,10 +710,14 @@ def cheque_void(request, cheque_id):
 
 
 @login_required
-@user_passes_test(is_accountant)
+@role_required('accountant', 'senior_account_officer', 'admin')
 def cheque_print(request, cheque_id):
     """Print cheque"""
-    cheque = get_object_or_404(Cheque, id=cheque_id, is_deleted=False)
+    try:
+        cheque = get_object_or_404(Cheque, id=cheque_id, is_deleted=False)
+    except Exception as e:
+        messages.error(request, f'Error loading cheque: {str(e)}')
+        return redirect('hospital:cheque_list')
     
     context = {
         'cheque': cheque,

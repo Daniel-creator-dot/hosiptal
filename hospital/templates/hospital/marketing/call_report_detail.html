@@ -1,0 +1,211 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize hospital_extras %}
+
+{% block title %}Call Report: {{ call_report.contact_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4" style="max-width: 1000px;">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2><i class="bi bi-telephone me-2"></i>Call Report Details</h2>
+            <p class="text-muted">{{ call_report.contact_name }} • {{ call_report.call_date|date:"M d, Y H:i" }}</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:edit_call_report' call_report.id %}" class="btn btn-primary">
+                <i class="bi bi-pencil me-1"></i>Edit
+            </a>
+            <a href="{% url 'hospital:call_reports_list' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i>Back to List
+            </a>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i>Call Information</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <strong>Call Date & Time:</strong><br>
+                            {{ call_report.call_date|date:"F d, Y" }} at {{ call_report.call_date|date:"H:i" }}
+                        </div>
+                        <div class="col-md-6">
+                            <strong>Call Type:</strong><br>
+                            <span class="badge bg-info">{{ call_report.get_call_type_display }}</span>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <strong>Call Duration:</strong><br>
+                            {{ call_report.call_duration_minutes }} minutes
+                        </div>
+                        <div class="col-md-6">
+                            <strong>Call Outcome:</strong><br>
+                            <span class="badge bg-{{ call_report.call_outcome }}">{{ call_report.get_call_outcome_display }}</span>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <strong>Call Summary:</strong><br>
+                        <p class="mt-2">{{ call_report.call_summary|linebreaks }}</p>
+                    </div>
+                    {% if call_report.key_points %}
+                    <div class="mb-3">
+                        <strong>Key Points:</strong><br>
+                        <p class="mt-2">{{ call_report.key_points|linebreaks }}</p>
+                    </div>
+                    {% endif %}
+                    {% if call_report.objections_raised %}
+                    <div class="mb-3">
+                        <strong>Objections Raised:</strong><br>
+                        <p class="mt-2 text-warning">{{ call_report.objections_raised|linebreaks }}</p>
+                    </div>
+                    {% endif %}
+                    {% if call_report.next_steps %}
+                    <div class="mb-3">
+                        <strong>Next Steps:</strong><br>
+                        <p class="mt-2">{{ call_report.next_steps|linebreaks }}</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <div class="card mb-4">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="bi bi-person me-2"></i>Contact Information</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <strong>Name:</strong><br>
+                            {{ call_report.contact_name }}
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <strong>Phone:</strong><br>
+                            {{ call_report.contact_phone }}
+                        </div>
+                        {% if call_report.contact_email %}
+                        <div class="col-md-6 mb-3">
+                            <strong>Email:</strong><br>
+                            <a href="mailto:{{ call_report.contact_email }}">{{ call_report.contact_email }}</a>
+                        </div>
+                        {% endif %}
+                        {% if call_report.company_name %}
+                        <div class="col-md-6 mb-3">
+                            <strong>Company:</strong><br>
+                            {{ call_report.company_name }}
+                        </div>
+                        {% endif %}
+                        {% if call_report.contact_title %}
+                        <div class="col-md-6 mb-3">
+                            <strong>Title:</strong><br>
+                            {{ call_report.contact_title }}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card mb-4">
+                <div class="card-header bg-warning text-white">
+                    <h5 class="mb-0"><i class="bi bi-calendar-check me-2"></i>Follow-up</h5>
+                </div>
+                <div class="card-body">
+                    {% if call_report.follow_up_required %}
+                    <p><strong>Status:</strong> <span class="badge bg-warning">Required</span></p>
+                    {% if call_report.follow_up_date %}
+                    <p><strong>Follow-up Date:</strong><br>
+                    {{ call_report.follow_up_date|date:"F d, Y" }} at {{ call_report.follow_up_date|date:"H:i" }}</p>
+                    {% if call_report.is_follow_up_due %}
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle me-1"></i>Follow-up is due!
+                    </div>
+                    {% endif %}
+                    {% else %}
+                    <p class="text-muted">Not scheduled</p>
+                    {% endif %}
+                    {% if call_report.follow_up_notes %}
+                    <p><strong>Notes:</strong><br>
+                    {{ call_report.follow_up_notes|linebreaks }}</p>
+                    {% endif %}
+                    {% else %}
+                    <p class="text-muted">No follow-up required</p>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <div class="card mb-4">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0"><i class="bi bi-cash-coin me-2"></i>Value Information</h5>
+                </div>
+                <div class="card-body">
+                    {% if call_report.potential_value %}
+                    <p><strong>Potential Value:</strong><br>
+                    <span class="h5 text-success">GHS {{ call_report.potential_value|floatformat:2|intcomma }}</span></p>
+                    {% endif %}
+                    {% if call_report.actual_value %}
+                    <p><strong>Actual Value:</strong><br>
+                    <span class="h5 text-primary">GHS {{ call_report.actual_value|floatformat:2|intcomma }}</span></p>
+                    {% endif %}
+                    {% if call_report.service_interest %}
+                    <p><strong>Service Interest:</strong><br>
+                    {{ call_report.service_interest }}</p>
+                    {% endif %}
+                    <p><strong>Relationship Stage:</strong><br>
+                    <span class="badge bg-secondary">{{ call_report.get_relationship_stage_display }}</span></p>
+                    <p><strong>Priority:</strong><br>
+                    <span class="badge bg-{{ call_report.priority }}">{{ call_report.get_priority_display }}</span></p>
+                </div>
+            </div>
+            
+            <div class="card mb-4">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0"><i class="bi bi-info-square me-2"></i>Additional Info</h5>
+                </div>
+                <div class="card-body">
+                    <p><strong>Reported By:</strong><br>
+                    {{ call_report.reported_by.get_full_name|default:call_report.reported_by.username }}</p>
+                    {% if call_report.assigned_to %}
+                    <p><strong>Assigned To:</strong><br>
+                    {{ call_report.assigned_to.get_full_name|default:call_report.assigned_to.username }}</p>
+                    {% endif %}
+                    {% if call_report.campaign %}
+                    <p><strong>Campaign:</strong><br>
+                    {{ call_report.campaign.title }}</p>
+                    {% endif %}
+                    {% if call_report.objective %}
+                    <p><strong>Objective:</strong><br>
+                    {{ call_report.objective.title }}</p>
+                    {% endif %}
+                    {% if call_report.partnership %}
+                    <p><strong>Partnership:</strong><br>
+                    {{ call_report.partnership.company_name }}</p>
+                    {% endif %}
+                    {% if call_report.tags %}
+                    <p><strong>Tags:</strong><br>
+                    {% for tag in call_report.tags|split:"," %}
+                    <span class="badge bg-light text-dark">{{ tag }}</span>
+                    {% endfor %}
+                    </p>
+                    {% endif %}
+                </div>
+            </div>
+            
+            {% if call_report.internal_notes %}
+            <div class="card">
+                <div class="card-header bg-dark text-white">
+                    <h5 class="mb-0"><i class="bi bi-lock me-2"></i>Internal Notes</h5>
+                </div>
+                <div class="card-body">
+                    <p class="small">{{ call_report.internal_notes|linebreaks }}</p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

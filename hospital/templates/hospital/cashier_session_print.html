@@ -1,0 +1,639 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Session Closure Report - {{ session.session_number }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    @media print {
+        .no-print {
+            display: none !important;
+        }
+        body {
+            background: white !important;
+        }
+        .report-container {
+            box-shadow: none !important;
+            margin: 0 !important;
+            padding: 20px !important;
+        }
+        @page {
+            margin: 1cm;
+            size: A4;
+        }
+    }
+    
+    .report-container {
+        max-width: 900px;
+        margin: 20px auto;
+        background: white;
+        padding: 40px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        border-radius: 8px;
+    }
+    
+    .report-header {
+        text-align: center;
+        border-bottom: 4px solid #0d6efd;
+        padding-bottom: 20px;
+        margin-bottom: 30px;
+    }
+    
+    .report-header h1 {
+        color: #0d6efd;
+        margin-bottom: 5px;
+        font-size: 2em;
+        font-weight: bold;
+    }
+    
+    .report-header .hospital-name {
+        font-size: 1.3em;
+        font-weight: bold;
+        color: #333;
+        margin: 5px 0;
+    }
+    
+    .report-header .hospital-info {
+        font-size: 0.95em;
+        color: #666;
+        margin: 3px 0;
+    }
+    
+    .session-number {
+        text-align: center;
+        font-size: 1.6em;
+        font-weight: bold;
+        color: #0d6efd;
+        margin: 30px 0;
+        padding: 15px;
+        background: linear-gradient(135deg, #e7f3ff 0%, #cfe7ff 100%);
+        border-radius: 10px;
+        border: 2px solid #0d6efd;
+    }
+    
+    .report-section {
+        margin: 30px 0;
+        padding: 20px;
+        background: #f8f9fa;
+        border-radius: 10px;
+        border-left: 4px solid #0d6efd;
+    }
+    
+    .report-section h3 {
+        color: #0d6efd;
+        margin-bottom: 15px;
+        font-size: 1.3em;
+        border-bottom: 2px solid #0d6efd;
+        padding-bottom: 10px;
+    }
+    
+    .info-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px solid #dee2e6;
+    }
+    
+    .info-row:last-child {
+        border-bottom: none;
+    }
+    
+    .info-label {
+        font-weight: 600;
+        color: #666;
+        min-width: 250px;
+    }
+    
+    .info-value {
+        color: #333;
+        text-align: right;
+        font-weight: 500;
+    }
+    
+    .amount-box {
+        background: linear-gradient(135deg, #0d6efd 0%, #0056b3 100%);
+        color: white;
+        border-radius: 15px;
+        padding: 30px;
+        text-align: center;
+        margin: 30px 0;
+        box-shadow: 0 4px 15px rgba(13, 110, 253, 0.3);
+    }
+    
+    .amount-box .label {
+        font-size: 1em;
+        opacity: 0.9;
+        margin-bottom: 10px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    
+    .amount-box .amount {
+        font-size: 3em;
+        font-weight: bold;
+    }
+    
+    .cash-breakdown {
+        background: white;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 20px 0;
+        border: 2px solid #dee2e6;
+    }
+    
+    .cash-breakdown table {
+        width: 100%;
+        margin-top: 10px;
+    }
+    
+    .cash-breakdown th {
+        background: #0d6efd;
+        color: white;
+        padding: 12px;
+        text-align: left;
+        font-weight: 600;
+    }
+    
+    .cash-breakdown td {
+        padding: 10px 12px;
+        border-bottom: 1px solid #dee2e6;
+    }
+    
+    .cash-breakdown tr:last-child td {
+        border-bottom: none;
+        font-weight: bold;
+        background: #f8f9fa;
+    }
+    
+    .notes-section {
+        background: #fff9e6;
+        border: 2px solid #ffc107;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 30px 0;
+    }
+    
+    .notes-section h4 {
+        color: #856404;
+        margin-bottom: 15px;
+    }
+    
+    .notes-section .notes-content {
+        color: #333;
+        white-space: pre-wrap;
+        line-height: 1.8;
+        font-family: 'Courier New', monospace;
+        font-size: 0.9em;
+    }
+    
+    .variance-box {
+        padding: 20px;
+        border-radius: 10px;
+        margin: 20px 0;
+        text-align: center;
+    }
+    
+    .variance-box.exact {
+        background: #d4edda;
+        border: 3px solid #28a745;
+        color: #155724;
+    }
+    
+    .variance-box.over {
+        background: #fff3cd;
+        border: 3px solid #ffc107;
+        color: #856404;
+    }
+    
+    .variance-box.short {
+        background: #f8d7da;
+        border: 3px solid #dc3545;
+        color: #721c24;
+    }
+    
+    .variance-box h4 {
+        margin-bottom: 10px;
+        font-size: 1.5em;
+    }
+    
+    .signature-section {
+        margin-top: 50px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 40px;
+        padding-top: 30px;
+        border-top: 2px dashed #ccc;
+    }
+    
+    .signature-box {
+        text-align: center;
+    }
+    
+    .signature-line {
+        border-top: 2px solid #333;
+        margin-top: 60px;
+        padding-top: 5px;
+        font-size: 0.95em;
+        color: #666;
+        font-weight: 600;
+    }
+    
+    .report-footer {
+        margin-top: 40px;
+        padding-top: 20px;
+        border-top: 3px solid #eee;
+        text-align: center;
+        color: #666;
+    }
+    
+    .report-footer p {
+        margin: 8px 0;
+    }
+    
+    .print-actions {
+        text-align: center;
+        margin: 30px 0;
+        padding: 20px;
+        background: #f8f9fa;
+        border-radius: 10px;
+    }
+    
+    .transaction-item {
+        padding: 10px;
+        background: white;
+        border-left: 3px solid #0d6efd;
+        margin-bottom: 8px;
+        border-radius: 5px;
+    }
+    
+    .receipt-item {
+        padding: 10px;
+        background: #e7f3ff;
+        border-left: 3px solid #28a745;
+        margin-bottom: 8px;
+        border-radius: 5px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="report-container">
+        <!-- Header -->
+        <div class="report-header">
+            <h1>💰 CASHIER SESSION CLOSURE REPORT</h1>
+            <div class="hospital-name">{{ hospital_name }}</div>
+            <div class="hospital-info">Official Session Closure Report for Account Office</div>
+        </div>
+        
+        <!-- Session Number -->
+        <div class="session-number">
+            Session No: {{ session.session_number }}
+        </div>
+        
+        <!-- Session Information -->
+        <div class="report-section">
+            <h3><i class="bi bi-calendar-event"></i> Session Information</h3>
+            <div class="info-row">
+                <span class="info-label">Cashier Name:</span>
+                <span class="info-value"><strong>{{ session.cashier.get_full_name|default:session.cashier.username }}</strong></span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Session Opened:</span>
+                <span class="info-value">{{ session.opened_at|date:"F d, Y - h:i A" }}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Session Closed:</span>
+                <span class="info-value">
+                    {% if session.closed_at %}
+                        {{ session.closed_at|date:"F d, Y - h:i A" }}
+                    {% else %}
+                        <span class="text-muted">Not closed</span>
+                    {% endif %}
+                </span>
+            </div>
+            {% if session.closed_at %}
+            <div class="info-row">
+                <span class="info-label">Session Duration:</span>
+                <span class="info-value">
+                    {% if session.closed_at %}
+                        {% with duration=session.closed_at|timesince:session.opened_at %}
+                            {{ duration }}
+                        {% endwith %}
+                    {% else %}
+                        Ongoing
+                    {% endif %}
+                </span>
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- Financial Summary -->
+        <div class="report-section">
+            <h3><i class="bi bi-cash-stack"></i> Financial Summary</h3>
+            <div class="info-row">
+                <span class="info-label">Opening Cash:</span>
+                <span class="info-value">GHS {{ session.opening_cash|floatformat:2|intcomma }}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Total Payments Received:</span>
+                <span class="info-value text-success"><strong>GHS {{ session.total_payments|floatformat:2|intcomma }}</strong></span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Total Refunds Issued:</span>
+                <span class="info-value text-danger">GHS {{ session.total_refunds|floatformat:2|intcomma }}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Expected Cash:</span>
+                <span class="info-value text-primary"><strong>GHS {{ session.expected_cash|floatformat:2|intcomma }}</strong></span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Total Transactions:</span>
+                <span class="info-value"><strong>{{ session.total_transactions|intcomma }}</strong></span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Actual Cash Counted:</span>
+                <span class="info-value">
+                    {% if session.actual_cash is not None %}
+                        <strong>GHS {{ session.actual_cash|floatformat:2|intcomma }}</strong>
+                    {% else %}
+                        <span class="text-muted">Not counted</span>
+                    {% endif %}
+                </span>
+            </div>
+        </div>
+        
+        <!-- Payment Method Breakdown -->
+        {% if payment_method_summary %}
+        <div class="report-section">
+            <h3><i class="bi bi-credit-card-2-front"></i> Payment Method Breakdown</h3>
+            <p style="color: #666; margin-bottom: 15px; font-size: 0.95em;">Summary of all payment methods used during this session</p>
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
+                    <thead>
+                        <tr style="background: #0d6efd; color: white;">
+                            <th style="padding: 12px; text-align: left; border: 1px solid #0a58ca;">Payment Method</th>
+                            <th style="padding: 12px; text-align: center; border: 1px solid #0a58ca;">Count</th>
+                            <th style="padding: 12px; text-align: right; border: 1px solid #0a58ca;">Total Amount</th>
+                            <th style="padding: 12px; text-align: right; border: 1px solid #0a58ca;">Percentage</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for method in payment_method_summary %}
+                        <tr style="border-bottom: 1px solid #dee2e6;">
+                            <td style="padding: 10px; border: 1px solid #dee2e6;">
+                                {% if method.method == 'cash' %}
+                                    <i class="bi bi-cash-coin" style="color: #28a745; font-size: 18px;"></i>
+                                {% elif method.method == 'mobile_money' %}
+                                    <i class="bi bi-phone" style="color: #6366f1; font-size: 18px;"></i>
+                                {% elif method.method == 'card' %}
+                                    <i class="bi bi-credit-card" style="color: #f59e0b; font-size: 18px;"></i>
+                                {% elif method.method == 'bank_transfer' %}
+                                    <i class="bi bi-bank" style="color: #3b82f6; font-size: 18px;"></i>
+                                {% elif method.method == 'cheque' %}
+                                    <i class="bi bi-file-earmark-text" style="color: #8b5cf6; font-size: 18px;"></i>
+                                {% else %}
+                                    <i class="bi bi-wallet2" style="font-size: 18px;"></i>
+                                {% endif %}
+                                <strong style="margin-left: 8px;">{{ method.label }}</strong>
+                            </td>
+                            <td style="padding: 10px; text-align: center; border: 1px solid #dee2e6; font-weight: 600;">
+                                {{ method.count|intcomma }}
+                            </td>
+                            <td style="padding: 10px; text-align: right; border: 1px solid #dee2e6; font-weight: 600; font-size: 1.05em;">
+                                GHS {{ method.total|floatformat:2|intcomma }}
+                            </td>
+                            <td style="padding: 10px; text-align: right; border: 1px solid #dee2e6;">
+                                {% if session.total_payments > 0 %}
+                                    {% widthratio method.total session.total_payments 100 %}%
+                                {% else %}
+                                    0%
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        <tr style="background: #f8f9fa; font-weight: bold; border-top: 2px solid #0d6efd;">
+                            <td style="padding: 12px; border: 1px solid #dee2e6; font-size: 1.05em;">TOTAL</td>
+                            <td style="padding: 12px; text-align: center; border: 1px solid #dee2e6; font-size: 1.05em;">
+                                {{ session.total_transactions|intcomma }}
+                            </td>
+                            <td style="padding: 12px; text-align: right; border: 1px solid #dee2e6; font-size: 1.15em; color: #0d6efd;">
+                                GHS {{ session.total_payments|floatformat:2|intcomma }}
+                            </td>
+                            <td style="padding: 12px; text-align: right; border: 1px solid #dee2e6; font-size: 1.05em;">100%</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Detailed Breakdown by Payment Method -->
+            <div style="margin-top: 30px;">
+                <h4 style="color: #0d6efd; margin-bottom: 20px; font-size: 1.2em; border-bottom: 2px solid #0d6efd; padding-bottom: 10px;">
+                    <i class="bi bi-list-ul"></i> Detailed Transaction Breakdown
+                </h4>
+                
+                {% for method in payment_method_summary %}
+                <div style="margin-bottom: 30px; page-break-inside: avoid;">
+                    <div style="background: linear-gradient(135deg, #e7f3ff 0%, #cfe7ff 100%); padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #0d6efd;">
+                        <h5 style="margin: 0; color: #0d6efd; font-weight: 600;">
+                            {% if method.method == 'cash' %}
+                                <i class="bi bi-cash-coin" style="color: #28a745;"></i>
+                            {% elif method.method == 'mobile_money' %}
+                                <i class="bi bi-phone" style="color: #6366f1;"></i>
+                            {% elif method.method == 'card' %}
+                                <i class="bi bi-credit-card" style="color: #f59e0b;"></i>
+                            {% elif method.method == 'bank_transfer' %}
+                                <i class="bi bi-bank" style="color: #3b82f6;"></i>
+                            {% elif method.method == 'cheque' %}
+                                <i class="bi bi-file-earmark-text" style="color: #8b5cf6;"></i>
+                            {% else %}
+                                <i class="bi bi-wallet2"></i>
+                            {% endif %}
+                            {{ method.label }} - {{ method.count }} transaction{{ method.count|pluralize }} | Total: GHS {{ method.total|floatformat:2|intcomma }}
+                        </h5>
+                    </div>
+                    
+                    <div style="overflow-x: auto;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                            <thead>
+                                <tr style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;">
+                                    <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">Date/Time</th>
+                                    <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">Transaction #</th>
+                                    <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">Patient Name</th>
+                                    <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">MRN</th>
+                                    <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">Services</th>
+                                    <th style="padding: 10px; text-align: right; border: 1px solid #dee2e6; font-weight: 600;">Amount</th>
+                                    <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">Reference</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for txn in method.transactions %}
+                                <tr style="border-bottom: 1px solid #e9ecef;">
+                                    <td style="padding: 8px; border: 1px solid #dee2e6;">
+                                        {{ txn.transaction_date|date:"M d, Y H:i" }}
+                                    </td>
+                                    <td style="padding: 8px; border: 1px solid #dee2e6; font-family: monospace; font-size: 0.85em;">
+                                        {{ txn.transaction_number|truncatechars:12 }}
+                                    </td>
+                                    <td style="padding: 8px; border: 1px solid #dee2e6; font-weight: 600;">
+                                        {{ txn.patient_name }}
+                                    </td>
+                                    <td style="padding: 8px; border: 1px solid #dee2e6; font-family: monospace; font-size: 0.85em;">
+                                        {{ txn.patient_mrn|default:"-" }}
+                                    </td>
+                                    <td style="padding: 8px; border: 1px solid #dee2e6;">
+                                        {% if txn.services %}
+                                            <div style="max-width: 300px;">
+                                                {% for service in txn.services %}
+                                                <div style="margin-bottom: 4px; font-size: 0.9em;">
+                                                    <strong>{{ service.description|truncatechars:50 }}</strong>
+                                                    {% if service.quantity > 1 %}
+                                                        <span style="color: #666;">(Qty: {{ service.quantity }})</span>
+                                                    {% endif %}
+                                                    <span style="color: #28a745; font-weight: 600;">- GHS {{ service.line_total|floatformat:2 }}</span>
+                                                </div>
+                                                {% endfor %}
+                                                {% if txn.invoice_number %}
+                                                <small style="color: #666; font-style: italic;">Invoice: {{ txn.invoice_number }}</small>
+                                                {% endif %}
+                                            </div>
+                                        {% else %}
+                                            <span style="color: #666;">Payment</span>
+                                        {% endif %}
+                                    </td>
+                                    <td style="padding: 8px; border: 1px solid #dee2e6; text-align: right; font-weight: 600; color: #28a745;">
+                                        GHS {{ txn.amount|floatformat:2|intcomma }}
+                                    </td>
+                                    <td style="padding: 8px; border: 1px solid #dee2e6; font-family: monospace; font-size: 0.85em;">
+                                        {{ txn.reference_number|default:"-"|truncatechars:15 }}
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="7" style="padding: 15px; text-align: center; color: #666; font-style: italic;">
+                                        No transactions found
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                                <tr style="background: #f8f9fa; font-weight: bold; border-top: 2px solid #0d6efd;">
+                                    <td colspan="5" style="padding: 10px; border: 1px solid #dee2e6; text-align: right;">
+                                        {{ method.label }} Subtotal:
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #dee2e6; text-align: right; font-size: 1.05em; color: #0d6efd;">
+                                        GHS {{ method.total|floatformat:2|intcomma }}
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #dee2e6;"></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Variance Analysis -->
+        {% if session.actual_cash is not None and variance is not None %}
+        <div class="variance-box {% if variance == 0 or variance|floatformat:2 == '0.00' %}exact{% elif variance > 0 %}over{% else %}short{% endif %}">
+            {% if variance == 0 or variance|floatformat:2 == '0.00' %}
+                <h4>✓ EXACT MATCH - NO DISCREPANCY</h4>
+                <p style="font-size: 1.2em; margin: 0;">Variance: GHS 0.00</p>
+            {% elif variance > 0 %}
+                <h4>⚠ OVER COUNT</h4>
+                <p style="font-size: 1.2em; margin: 0;">Variance: +GHS {{ variance|floatformat:2|intcomma }}</p>
+            {% else %}
+                <h4>⚠ SHORT COUNT</h4>
+                <p style="font-size: 1.2em; margin: 0;">Variance: GHS {{ variance|floatformat:2|intcomma }}</p>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Cash Count Breakdown - shown in notes section -->
+        
+        <!-- Daily Cash Sales Notes -->
+        {% if session.daily_cash_notes %}
+        <div class="notes-section">
+            <h4><i class="bi bi-journal-text"></i> Daily Cash Sales Notes</h4>
+            <div class="notes-content">{{ session.daily_cash_notes }}</div>
+        </div>
+        {% endif %}
+        
+        <!-- Session Notes (Audit Trail) -->
+        {% if session.notes %}
+        <div class="notes-section">
+            <h4><i class="bi bi-file-text"></i> Session Closure Notes & Audit Trail</h4>
+            <div class="notes-content">{{ session.notes }}</div>
+        </div>
+        {% endif %}
+        
+        <!-- Recent Transactions (if any) -->
+        {% if transactions %}
+        <div class="report-section">
+            <h3><i class="bi bi-list-check"></i> Recent Transactions (Sample)</h3>
+            {% for transaction in transactions|slice:":10" %}
+            <div class="transaction-item">
+                <strong>{{ transaction.transaction_number }}</strong> - 
+                {{ transaction.get_transaction_type_display }} - 
+                GHS {{ transaction.amount|floatformat:2|intcomma }} - 
+                {{ transaction.get_payment_method_display }} - 
+                {{ transaction.transaction_date|date:"M d, Y H:i" }}
+            </div>
+            {% endfor %}
+            {% if transactions|length > 10 %}
+            <p class="text-muted"><em>... and {{ transactions|length|add:"-10" }} more transactions</em></p>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <!-- Signature Section -->
+        <div class="signature-section">
+            <div class="signature-box">
+                <div class="signature-line">
+                    Cashier Signature<br>
+                    <small style="color: #999;">{{ session.cashier.get_full_name|default:session.cashier.username }}</small>
+                </div>
+            </div>
+            <div class="signature-box">
+                <div class="signature-line">
+                    Account Office Signature<br>
+                    <small style="color: #999;">Received By</small>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <div class="report-footer">
+            <p><strong>This is an official cashier session closure report.</strong></p>
+            <p>Please attach this hard copy to the money/deposit when submitting to the account office.</p>
+            <p>This document serves as proof of cash reconciliation and must be kept for audit purposes.</p>
+            <p><small>Generated on {% now "F d, Y - h:i:s A" %}</small></p>
+            {% if session.modified != session.created %}
+            <p><small>Last updated: {{ session.modified|date:"F d, Y - h:i:s A" }}</small></p>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Print Actions -->
+    <div class="print-actions no-print" style="position: fixed; bottom: 20px; right: 20px; z-index: 1000; background: white; padding: 15px; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+        <button class="btn btn-success btn-lg" onclick="window.print()" style="margin: 5px; min-width: 150px;">
+            <i class="bi bi-printer-fill"></i> Print Report
+        </button>
+        <div style="margin-top: 10px;">
+            <a href="{% url 'hospital:cashier_sessions_list' %}" class="btn btn-outline-primary btn-sm" style="margin: 2px;">
+                <i class="bi bi-list"></i> All Sessions
+            </a>
+            <a href="{% url 'hospital:cashier_dashboard' %}" class="btn btn-outline-secondary btn-sm" style="margin: 2px;">
+                <i class="bi bi-arrow-left"></i> Dashboard
+            </a>
+        </div>
+    </div>
+    
+    <!-- Also add a prominent print button at the top -->
+    <div class="no-print" style="position: fixed; top: 80px; right: 20px; z-index: 1000;">
+        <button class="btn btn-success btn-lg" onclick="window.print()" style="box-shadow: 0 4px 15px rgba(0,0,0,0.3); padding: 15px 25px; border-radius: 50px;">
+            <i class="bi bi-printer-fill"></i> <strong>PRINT NOW</strong>
+        </button>
+    </div>
+</div>
+{% endblock %}

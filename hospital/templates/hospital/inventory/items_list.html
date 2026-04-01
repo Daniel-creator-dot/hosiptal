@@ -1,0 +1,601 @@
+{% extends "hospital/base.html" %}
+{% load humanize %}
+{% load static %}
+
+{% block title %}Inventory Items - World-Class Inventory Management{% endblock %}
+
+{% block extra_css %}
+<style>
+    .filter-section {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .category-badge {
+        display: inline-block;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-size: 0.875rem;
+        font-weight: 600;
+        margin: 5px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        text-decoration: none;
+    }
+    
+    .category-badge.active {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+    
+    .category-badge:not(.active) {
+        background: #f3f4f6;
+        color: #6b7280;
+    }
+    
+    .category-badge:not(.active):hover {
+        background: #e5e7eb;
+        transform: translateY(-2px);
+    }
+    
+    .items-table {
+        background: white;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .table thead {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    
+    .table thead th {
+        border: none;
+        padding: 15px;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.875rem;
+        letter-spacing: 0.5px;
+    }
+    
+    .table tbody tr {
+        transition: all 0.3s ease;
+    }
+    
+    .table tbody tr:hover {
+        background: #f9fafb;
+    }
+    .table tbody td:last-child {
+        white-space: nowrap;
+    }
+    .table tbody td:last-child .btn {
+        margin-bottom: 2px;
+    }
+    
+    .status-badge {
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+    
+    .status-low { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+    .status-normal { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+    .status-out { background: rgba(107, 114, 128, 0.1); color: #6b7280; }
+    
+    /* Hide autocomplete popups for inventory search */
+    #inventoryItemSearch ~ .autocomplete-dropdown,
+    #inventoryItemSearch ~ [class*="autocomplete"],
+    #inventoryItemSearchDropdown,
+    .autocomplete-dropdown:has(~ #inventoryItemSearch),
+    [data-no-autocomplete="true"] ~ .autocomplete-dropdown {
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1 style="font-weight: 700; color: var(--dark);">
+                <i class="bi bi-box-seam"></i> Inventory Items
+            </h1>
+            <p class="text-muted mb-0">Browse and manage all inventory items by category</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:inventory:inventory_dashboard' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Dashboard
+            </a>
+            <a href="{% url 'hospital:inventory_item_create' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> Add New Item
+            </a>
+        </div>
+    </div>
+    
+    <!-- Category Filter Section -->
+    <div class="filter-section">
+        <h5 class="mb-3"><i class="bi bi-funnel"></i> Filter by Category</h5>
+        
+        <!-- Category Badges -->
+        <div class="mb-3">
+            <a href="{% url 'hospital:inventory:items_list' %}?group={{ group_mode }}{% if selected_store %}&store={{ selected_store }}{% endif %}{% if selected_status and selected_status != 'all' %}&status={{ selected_status }}{% endif %}{% if search_query %}&search={{ search_query }}{% endif %}" 
+               class="category-badge {% if not selected_category %}active{% endif %}">
+                <i class="bi bi-grid"></i> All Categories
+            </a>
+            {% for category in categories %}
+            <a href="{% url 'hospital:inventory:items_list' %}?group={{ group_mode }}&category={{ category.id }}{% if selected_store %}&store={{ selected_store }}{% endif %}{% if selected_status and selected_status != 'all' %}&status={{ selected_status }}{% endif %}{% if search_query %}&search={{ search_query }}{% endif %}" 
+               class="category-badge {% if selected_category == category.id|stringformat:'s' %}active{% endif %}">
+                <i class="bi bi-tag"></i> {{ category.name }}
+                {% if category.is_for_pharmacy %}
+                <span class="badge bg-info ms-1">Pharmacy</span>
+                {% endif %}
+            </a>
+            {% endfor %}
+        </div>
+        
+        <!-- Advanced Filters -->
+        <form method="get" class="row g-3">
+            <input type="hidden" name="category" value="{{ selected_category }}">
+            
+            <div class="col-md-3">
+                <label class="form-label">Search Items</label>
+                <div style="position: relative;">
+                    <input type="text" name="search" id="inventoryItemSearch" value="{{ search_query }}" class="form-control" 
+                           placeholder="Type to search items (filters automatically)..." autocomplete="off" 
+                           data-no-autocomplete="true" title="Enter text">
+                    <small class="text-muted d-block mt-1">Results update as you type</small>
+                    <!-- Hidden autocomplete dropdown container to prevent popup -->
+                    <div id="inventoryItemSearchDropdown" style="display: none !important;"></div>
+                </div>
+            </div>
+            
+            <div class="col-md-3">
+                <label class="form-label">Store</label>
+                <div class="d-flex gap-2">
+                    <select name="store" class="form-select" title="Select option" aria-label="Select option" id="storeSelect">
+                        <option value="">All Stores</option>
+                        {% for store in stores %}
+                        <option value="{{ store.id }}" {% if selected_store == store.id|stringformat:'s' %}selected{% endif %}
+                                {% if active_pharmacy_store and store.pk == active_pharmacy_store.pk %}data-dispensing-hub="true"{% endif %}>
+                            {{ store.name }}{% if active_pharmacy_store and store.pk == active_pharmacy_store.pk %} (Dispensing Hub){% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    {% if active_pharmacy_store %}
+                    <a href="?store={{ active_pharmacy_store.pk }}&group={{ group_mode }}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_status and selected_status != 'all' %}&status={{ selected_status }}{% endif %}{% if search_query %}&search={{ search_query }}{% endif %}" 
+                       class="btn btn-sm btn-info" title="View Dispensing Hub Inventory (Used for Prescriptions)">
+                        <i class="bi bi-capsule"></i> Dispensing Hub
+                    </a>
+                    {% endif %}
+                </div>
+                {% if active_pharmacy_store %}
+                <small class="text-muted d-block mt-1">
+                    <i class="bi bi-info-circle"></i> 
+                    Dispensing Hub: <strong>{{ active_pharmacy_store.name }}</strong> - This is the store used for prescription dispensing
+                </small>
+                {% endif %}
+            </div>
+            
+            <div class="col-md-3">
+                <label class="form-label">Status</label>
+                <select name="status" class="form-select" title="Select option" aria-label="Select option">
+                    <option value="all" {% if selected_status == 'all' %}selected{% endif %}>All Status</option>
+                    <option value="normal" {% if selected_status == 'normal' %}selected{% endif %}>Normal Stock</option>
+                    <option value="low_stock" {% if selected_status == 'low_stock' %}selected{% endif %}>Low Stock</option>
+                    <option value="out_of_stock" {% if selected_status == 'out_of_stock' %}selected{% endif %}>Out of Stock</option>
+                </select>
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label">View Mode</label>
+                <select name="group" class="form-select" title="Select option" aria-label="Select option">
+                    <option value="1" {% if group_mode == '1' %}selected{% endif %}>Grouped (no duplicates)</option>
+                    <option value="0" {% if group_mode == '0' %}selected{% endif %}>Per-store (detailed)</option>
+                </select>
+                <small class="text-muted d-block mt-1">Grouped combines the same item across stores.</small>
+            </div>
+            
+            <div class="col-md-3">
+                <label class="form-label">&nbsp;</label>
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-search"></i> Filter
+                    </button>
+                    <a href="{% url 'hospital:inventory:items_list' %}?group={{ group_mode }}" class="btn btn-outline-secondary">
+                        <i class="bi bi-x-circle"></i> Clear
+                    </a>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    {% if grouped %}
+    <div class="alert alert-info">
+        <i class="bi bi-info-circle"></i>
+        Items are grouped across stores to remove duplicates. Switch to <strong>Per-store</strong> if you want to edit/delete a specific store’s record.
+    </div>
+    {% endif %}
+    
+    {% if active_pharmacy_store and selected_store and selected_store != active_pharmacy_store.pk|stringformat:'s' %}
+    <div class="alert alert-warning">
+        <i class="bi bi-exclamation-triangle"></i>
+        <strong>Note:</strong> You are viewing a different store. 
+        The <strong>Dispensing Hub</strong> (used for prescriptions) is: <strong>{{ active_pharmacy_store.name }}</strong>.
+        <a href="?store={{ active_pharmacy_store.pk }}&group={{ group_mode }}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_status and selected_status != 'all' %}&status={{ selected_status }}{% endif %}{% if search_query %}&search={{ search_query }}{% endif %}" class="alert-link">
+            View Dispensing Hub Inventory →
+        </a>
+    </div>
+    {% elif active_pharmacy_store %}
+        {% if not selected_store %}
+    <div class="alert alert-success">
+        <i class="bi bi-check-circle"></i>
+        <strong>Dispensing Hub View:</strong> Showing inventory from <strong>{{ active_pharmacy_store.name }}</strong> - This is the store used for prescription dispensing.
+        {% if grouped %}
+        <a href="?store={{ active_pharmacy_store.pk }}&group=0{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_status and selected_status != 'all' %}&status={{ selected_status }}{% endif %}{% if search_query %}&search={{ search_query }}{% endif %}" class="alert-link">
+            Switch to Per-store view →
+        </a>
+        {% endif %}
+    </div>
+        {% elif selected_store == active_pharmacy_store.pk|stringformat:'s' %}
+    <div class="alert alert-success">
+        <i class="bi bi-check-circle"></i>
+        <strong>Dispensing Hub View:</strong> Showing inventory from <strong>{{ active_pharmacy_store.name }}</strong> - This is the store used for prescription dispensing.
+        {% if grouped %}
+        <a href="?store={{ active_pharmacy_store.pk }}&group=0{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_status and selected_status != 'all' %}&status={{ selected_status }}{% endif %}{% if search_query %}&search={{ search_query }}{% endif %}" class="alert-link">
+            Switch to Per-store view →
+        </a>
+        {% endif %}
+    </div>
+        {% endif %}
+    {% endif %}
+
+    {% if selected_status == 'low_stock' or selected_status == 'out_of_stock' %}
+    <div class="alert alert-light border mb-3 d-flex align-items-center" role="region">
+        <i class="bi bi-lightbulb text-warning me-2" style="font-size: 1.25rem;"></i>
+        <span>
+            {% if grouped %}
+            <strong>Select a store</strong> (e.g. Dispensing Hub) and use <strong>Per-store (detailed)</strong> view, then click Filter — <strong>Transfer in</strong> and <strong>Request</strong> will appear in the Actions column for low- and zero-stock items.
+            {% else %}
+            Use <strong>Transfer in</strong> to create a transfer to this store, or <strong>Request</strong> to create a requisition. Both appear in the Actions column for each low- or zero-stock row.
+            {% endif %}
+        </span>
+    </div>
+    {% endif %}
+    
+    <!-- Items Table -->
+    <div class="items-table">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Item Code</th>
+                        <th>Item Name</th>
+                        <th>Category</th>
+                        <th>{% if grouped %}Stores{% else %}Store{% endif %}</th>
+                        <th>Quantity</th>
+                        <th>Unit Cost</th>
+                        <th>Total Value</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in items %}
+                    <tr>
+                        <td><code>{{ item.item_code|default:"-" }}</code></td>
+                        <td>
+                            <strong>{{ item.item_name }}</strong>
+                            {% if item.description %}
+                            <br><small class="text-muted">{{ item.description|truncatewords:10 }}</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if grouped %}
+                                {% if item.category_name %}
+                                <span class="badge bg-info">
+                                    <i class="bi bi-tag"></i> {{ item.category_name }}
+                                </span>
+                                {% if item.category_is_for_pharmacy %}
+                                <span class="badge bg-success ms-1">Pharmacy</span>
+                                {% endif %}
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            {% else %}
+                                {% if item.category %}
+                                <span class="badge bg-info">
+                                    <i class="bi bi-tag"></i> {{ item.category.name }}
+                                </span>
+                                {% if item.category.is_for_pharmacy %}
+                                <span class="badge bg-success ms-1">Pharmacy</span>
+                                {% endif %}
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if grouped %}
+                                <span class="badge bg-secondary">{{ item.store_count }} store{{ item.store_count|pluralize }}</span>
+                                {% if item.store_names %}
+                                <div class="small text-muted mt-1">{{ item.store_names }}</div>
+                                {% endif %}
+                            {% else %}
+                                {{ item.store.name }}
+                            {% endif %}
+                        </td>
+                        <td>{{ item.quantity_on_hand|intcomma }} {{ item.unit_of_measure|default:"units" }}</td>
+                        <td>
+                            {% if grouped %}
+                                {% if item.unit_cost_min != item.unit_cost_max %}
+                                    GHS {{ item.unit_cost_min|floatformat:2|intcomma }} – {{ item.unit_cost_max|floatformat:2|intcomma }}
+                                {% else %}
+                                    GHS {{ item.unit_cost_min|floatformat:2|intcomma }}
+                                {% endif %}
+                            {% else %}
+                                GHS {{ item.unit_cost|floatformat:2|intcomma }}
+                            {% endif %}
+                        </td>
+                        <td><strong>GHS {{ item.total_value|floatformat:2|intcomma }}</strong></td>
+                        <td>
+                            {% if grouped %}
+                                {% if item.quantity_on_hand == 0 %}
+                                    <span class="status-badge status-out">Out of Stock</span>
+                                {% elif item.any_low_stock %}
+                                    <span class="status-badge status-low">Low Stock</span>
+                                {% else %}
+                                    <span class="status-badge status-normal">Normal</span>
+                                {% endif %}
+                            {% else %}
+                                {% if item.quantity_on_hand == 0 %}
+                                    <span class="status-badge status-out">Out of Stock</span>
+                                {% elif item.quantity_on_hand <= item.reorder_level and item.reorder_level > 0 %}
+                                    <span class="status-badge status-low">Low Stock</span>
+                                {% else %}
+                                    <span class="status-badge status-normal">Normal</span>
+                                {% endif %}
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if grouped and item.store_count|default:0 > 1 %}
+                                <a href="{% url 'hospital:inventory:items_list' %}?group=0&search={% if item.item_code %}{{ item.item_code|urlencode }}{% else %}{{ item.item_name|urlencode }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_status and selected_status != 'all' %}&status={{ selected_status }}{% endif %}"
+                                   class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-list-ul"></i> View Stores
+                                </a>
+                                {% if item.quantity_on_hand == 0 or item.any_low_stock %}
+                                {% if item.id %}
+                                <a href="{% url 'hospital:create_transfer_modern' %}?for_item={{ item.id }}" class="btn btn-sm btn-success" title="Replenish this item">
+                                    <i class="bi bi-box-arrow-in-down"></i> Transfer in
+                                </a>
+                                <a href="{% url 'hospital:inventory:create_requisition' %}" class="btn btn-sm btn-warning" title="Request stock">
+                                    <i class="bi bi-clipboard-plus"></i> Request
+                                </a>
+                                {% endif %}
+                                {% endif %}
+                            {% else %}
+                                {% with item_id_str=item.id|stringformat:"s" %}
+                                {% if item.id and item_id_str != "INVALID" and item_id_str != "None" and item_id_str|length >= 36 %}
+                                <a href="{% url 'hospital:inventory:item_detail' item_id=item.id %}" 
+                                   class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-eye"></i> View
+                                </a>
+                                {% if perms.hospital.change_inventoryitem %}
+                                <a href="{% url 'hospital:inventory_item_edit' item.id %}" 
+                                   class="btn btn-sm btn-outline-secondary">
+                                    <i class="bi bi-pencil"></i> Edit
+                                </a>
+                                {% endif %}
+                                {% if item.quantity_on_hand == 0 or item.any_low_stock or item.reorder_level and item.quantity_on_hand <= item.reorder_level %}
+                                {% if not grouped and item.store_id %}
+                                <a href="{% url 'hospital:create_transfer_modern' %}?to_store={{ item.store_id }}&for_item={{ item.id }}" 
+                                   class="btn btn-sm btn-success" title="Create a transfer to this store to replenish this item">
+                                    <i class="bi bi-box-arrow-in-down"></i> Transfer in
+                                </a>
+                                {% elif item.id %}
+                                <a href="{% url 'hospital:create_transfer_modern' %}?for_item={{ item.id }}" 
+                                   class="btn btn-sm btn-success" title="Replenish this item (select source store on next page)">
+                                    <i class="bi bi-box-arrow-in-down"></i> Transfer in
+                                </a>
+                                {% endif %}
+                                <a href="{% url 'hospital:inventory:create_requisition' %}" 
+                                   class="btn btn-sm btn-warning" title="Create a requisition to request stock">
+                                    <i class="bi bi-clipboard-plus"></i> Request
+                                </a>
+                                {% endif %}
+                                {% if perms.hospital.delete_inventoryitem %}
+                                <a href="{% url 'hospital:inventory_item_delete' item.id %}" 
+                                   class="btn btn-sm btn-outline-danger"
+                                   onclick="return confirm('Are you sure you want to delete {{ item.item_name }}? This action cannot be undone.');">
+                                    <i class="bi bi-trash"></i> Delete
+                                </a>
+                                {% endif %}
+                                {% else %}
+                                <span class="text-muted small">No actions available</span>
+                                {% endif %}
+                                {% endwith %}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="9" class="text-center py-5 text-muted">
+                            <i class="bi bi-inbox" style="font-size: 3rem;"></i>
+                            <p class="mt-3 mb-0">No inventory items found.</p>
+                            {% if selected_category or selected_store or search_query or selected_status != 'all' %}
+                            <p class="small">Try adjusting your filters or <a href="{% url 'hospital:inventory:items_list' %}">clear all filters</a></p>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- Summary Stats -->
+    {% if items %}
+    <div class="mt-3 text-muted small">
+        <i class="bi bi-info-circle"></i> Showing {{ items|length }} item{{ items|length|pluralize }}
+        {% if selected_category %}
+        in category: <strong>{{ categories|first }}</strong>
+        {% endif %}
+        {% if is_paginated %}
+        (Page {{ items_page.number }} of {{ items_page.paginator.num_pages }})
+        {% endif %}
+    </div>
+    {% endif %}
+    
+    <!-- Pagination: full HTML from view (includes 1 page); fallback if empty -->
+    {% if pagination_html %}
+        {{ pagination_html|safe }}
+    {% elif is_paginated %}
+        <nav aria-label="Items pagination" class="mt-3">
+            <ul class="pagination justify-content-center flex-wrap align-items-center gap-1 mb-0">
+                {% if items_page.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ items_page.previous_page_number }}{% if selected_store %}&store={{ selected_store }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_status and selected_status != 'all' %}&status={{ selected_status }}{% endif %}{% if search_query %}&search={{ search_query }}{% endif %}{% if group_mode %}&group={{ group_mode }}{% endif %}">Previous</a>
+                </li>
+                {% else %}
+                <li class="page-item disabled"><span class="page-link">Previous</span></li>
+                {% endif %}
+                <li class="page-item active">
+                    <span class="page-link" style="border-radius: 8px;">Page {{ items_page.number }} of {{ items_page.paginator.num_pages }}</span>
+                </li>
+                {% if items_page.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ items_page.next_page_number }}{% if selected_store %}&store={{ selected_store }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_status and selected_status != 'all' %}&status={{ selected_status }}{% endif %}{% if search_query %}&search={{ search_query }}{% endif %}{% if group_mode %}&group={{ group_mode }}{% endif %}">Next</a>
+                </li>
+                {% else %}
+                <li class="page-item disabled"><span class="page-link">Next</span></li>
+                {% endif %}
+            </ul>
+        </nav>
+    {% endif %}
+</div>
+
+<script>
+// Live search - filter table as you type (no popup)
+document.addEventListener('DOMContentLoaded', function() {
+    const inventoryItemSearch = document.getElementById('inventoryItemSearch');
+    const searchForm = inventoryItemSearch ? inventoryItemSearch.closest('form') : null;
+    let searchTimeout = null;
+    
+    if (inventoryItemSearch && searchForm) {
+        // Prevent autocomplete from initializing on this field
+        inventoryItemSearch.setAttribute('data-no-autocomplete', 'true');
+        
+        // Remove the hidden item_id field if it exists (not needed for live search)
+        const itemIdField = document.getElementById('selectedInventoryItemId');
+        if (itemIdField) {
+            itemIdField.remove();
+        }
+        
+        // Hide any autocomplete dropdowns that might appear
+        function hideAutocompleteDropdowns() {
+            // Hide any autocomplete dropdowns near this input
+            const dropdowns = document.querySelectorAll('.autocomplete-dropdown, .autocomplete-results, [class*="autocomplete"]');
+            dropdowns.forEach(function(dropdown) {
+                if (dropdown && dropdown.closest('form') === searchForm) {
+                    dropdown.style.display = 'none';
+                    dropdown.remove();
+                }
+            });
+        }
+        
+        // Hide dropdowns immediately
+        hideAutocompleteDropdowns();
+        
+        // Watch for any autocomplete dropdowns being created and hide them
+        const observer = new MutationObserver(function(mutations) {
+            hideAutocompleteDropdowns();
+        });
+        
+        // Observe the form and input container for new elements
+        if (inventoryItemSearch.parentElement) {
+            observer.observe(inventoryItemSearch.parentElement, { childList: true, subtree: true });
+        }
+        if (searchForm) {
+            observer.observe(searchForm, { childList: true, subtree: true });
+        }
+        
+        // Live search on input - debounced to avoid too many requests
+        inventoryItemSearch.addEventListener('input', function() {
+            // Hide any popups immediately
+            hideAutocompleteDropdowns();
+            
+            // Clear previous timeout
+            if (searchTimeout) {
+                clearTimeout(searchTimeout);
+            }
+            
+            // Debounce: wait 500ms after user stops typing before submitting
+            searchTimeout = setTimeout(function() {
+                // Auto-submit form to filter results
+                searchForm.submit();
+            }, 500);
+        });
+        
+        // Also submit on Enter key (immediate)
+        inventoryItemSearch.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                hideAutocompleteDropdowns();
+                if (searchTimeout) {
+                    clearTimeout(searchTimeout);
+                }
+                searchForm.submit();
+            }
+        });
+        
+        // Prevent autocomplete from being initialized (if AutocompleteSearch exists)
+        if (typeof AutocompleteSearch !== 'undefined') {
+            // Override or prevent initialization
+            const originalInit = window.initAutocomplete;
+            if (originalInit) {
+                // Don't initialize for this field
+            }
+        }
+        
+        // Auto-submit when other filters change
+        const storeSelect = document.querySelector('select[name="store"]');
+        const statusSelect = document.querySelector('select[name="status"]');
+        const groupSelect = document.querySelector('select[name="group"]');
+        
+        if (storeSelect) {
+            storeSelect.addEventListener('change', function() {
+                searchForm.submit();
+            });
+        }
+        
+        if (statusSelect) {
+            statusSelect.addEventListener('change', function() {
+                searchForm.submit();
+            });
+        }
+        
+        if (groupSelect) {
+            groupSelect.addEventListener('change', function() {
+                searchForm.submit();
+            });
+        }
+        
+        // Periodically check and hide any autocomplete dropdowns (safety net)
+        setInterval(hideAutocompleteDropdowns, 100);
+    }
+});
+</script>
+{% endblock %}
+
+
+
+

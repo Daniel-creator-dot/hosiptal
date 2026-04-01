@@ -1,0 +1,235 @@
+{% extends "hospital/base.html" %}
+{% load static %}
+
+{% block title %}Shift Attendance Report - {{ department.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .compliance-badge {
+        padding: 0.5rem 1rem;
+        border-radius: 0.5rem;
+        font-weight: 600;
+    }
+    .compliance-excellent { background-color: #d1fae5; color: #065f46; }
+    .compliance-good { background-color: #dbeafe; color: #1e40af; }
+    .compliance-fair { background-color: #fef3c7; color: #92400e; }
+    .compliance-poor { background-color: #fee2e2; color: #991b1b; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2><i class="fas fa-chart-line text-primary"></i> Shift Attendance Report</h2>
+            <p class="text-muted mb-0">{{ department.name }} - Compliance Analysis</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:hod_shift_monitoring_dashboard' %}" class="btn btn-outline-secondary">
+                <i class="fas fa-arrow-left"></i> Back to Monitoring
+            </a>
+        </div>
+    </div>
+
+    <!-- Date Range Selector -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label for="start_date" class="form-label">Start Date</label>
+                    <input type="date" class="form-control" id="start_date" name="start_date" 
+                           value="{{ start_date|date:'Y-m-d' }}">
+                </div>
+                <div class="col-md-4">
+                    <label for="end_date" class="form-label">End Date</label>
+                    <input type="date" class="form-control" id="end_date" name="end_date" 
+                           value="{{ end_date|date:'Y-m-d' }}">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">&nbsp;</label>
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="fas fa-search"></i> Generate Report
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Summary Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h3 class="mb-0">{{ total_shifts }}</h3>
+                    <p class="text-muted mb-0">Total Shifts</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h3 class="mb-0">{{ staff_stats|length }}</h3>
+                    <p class="text-muted mb-0">Staff Members</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h3 class="mb-0">{{ daily_summary|length }}</h3>
+                    <p class="text-muted mb-0">Days Covered</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    {% if staff_stats %}
+                    {% with avg_compliance=staff_stats|length|add:"0" %}
+                    <h3 class="mb-0">
+                        {% for stat in staff_stats %}
+                            {% if forloop.first %}
+                                {{ stat.compliance_rate|floatformat:1 }}%
+                            {% endif %}
+                        {% endfor %}
+                    </h3>
+                    {% endwith %}
+                    {% else %}
+                    <h3 class="mb-0">—</h3>
+                    {% endif %}
+                    <p class="text-muted mb-0">Avg Compliance</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Staff Compliance Table -->
+    <div class="card mb-4">
+        <div class="card-header bg-white">
+            <h5 class="mb-0"><i class="fas fa-users"></i> Staff Compliance Summary</h5>
+        </div>
+        <div class="card-body p-0">
+            {% if staff_stats %}
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Staff Member</th>
+                            <th>Total Shifts</th>
+                            <th>Present</th>
+                            <th>Absent</th>
+                            <th>Late</th>
+                            <th>On Leave</th>
+                            <th>Compliance Rate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stat in staff_stats %}
+                        <tr>
+                            <td>
+                                <div class="fw-semibold">
+                                    {{ stat.staff.user.get_full_name|default:stat.staff.user.username }}
+                                </div>
+                                <small class="text-muted">{{ stat.staff.get_profession_display }}</small>
+                            </td>
+                            <td>{{ stat.total_shifts }}</td>
+                            <td>
+                                <span class="badge bg-success">{{ stat.present }}</span>
+                            </td>
+                            <td>
+                                <span class="badge bg-danger">{{ stat.absent }}</span>
+                            </td>
+                            <td>
+                                <span class="badge bg-warning">{{ stat.late }}</span>
+                            </td>
+                            <td>
+                                <span class="badge bg-info">{{ stat.on_leave }}</span>
+                            </td>
+                            <td>
+                                {% if stat.compliance_rate >= 95 %}
+                                    <span class="compliance-badge compliance-excellent">{{ stat.compliance_rate }}%</span>
+                                {% elif stat.compliance_rate >= 85 %}
+                                    <span class="compliance-badge compliance-good">{{ stat.compliance_rate }}%</span>
+                                {% elif stat.compliance_rate >= 70 %}
+                                    <span class="compliance-badge compliance-fair">{{ stat.compliance_rate }}%</span>
+                                {% else %}
+                                    <span class="compliance-badge compliance-poor">{{ stat.compliance_rate }}%</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <p class="text-muted">No data available for the selected date range.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Daily Summary -->
+    <div class="card">
+        <div class="card-header bg-white">
+            <h5 class="mb-0"><i class="fas fa-calendar-alt"></i> Daily Summary</h5>
+        </div>
+        <div class="card-body p-0">
+            {% if daily_summary %}
+            <div class="table-responsive">
+                <table class="table table-sm mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Date</th>
+                            <th>Total Shifts</th>
+                            <th>Present</th>
+                            <th>Absent</th>
+                            <th>Late</th>
+                            <th>Compliance</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for day in daily_summary %}
+                        <tr>
+                            <td>{{ day.date|date:"M d, Y" }}</td>
+                            <td>{{ day.total_shifts }}</td>
+                            <td>
+                                <span class="badge bg-success">{{ day.present }}</span>
+                            </td>
+                            <td>
+                                <span class="badge bg-danger">{{ day.absent }}</span>
+                            </td>
+                            <td>
+                                <span class="badge bg-warning">{{ day.late }}</span>
+                            </td>
+                            <td>
+                                {% with compliance=day.present|add:day.late|add:0 %}
+                                {% with total=day.total_shifts|add:0 %}
+                                {% if total > 0 %}
+                                    {% widthratio compliance total 100 as compliance_pct %}
+                                    {{ compliance_pct }}%
+                                {% else %}
+                                    —
+                                {% endif %}
+                                {% endwith %}
+                                {% endwith %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <p class="text-muted">No daily summary available.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+

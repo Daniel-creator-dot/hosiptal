@@ -13,9 +13,9 @@ from .models_hr import (
     PayrollAllowance, PayrollDeduction
 )
 try:
-    from .models_hr import StaffShift, ShiftTemplate, StaffQualification
+    from .models_hr import StaffShift, ShiftTemplate, StaffQualification, StaffMedicalChit
 except ImportError:
-    pass
+    StaffMedicalChit = None
 
 
 @admin.register(PayGrade)
@@ -436,4 +436,68 @@ class TrainingProgramAdmin(admin.ModelAdmin):
     list_filter = ['program_type', 'category', 'is_active']
     search_fields = ['program_code', 'program_name']
     ordering = ['program_name']
+
+
+if StaffMedicalChit:
+    @admin.register(StaffMedicalChit)
+    class StaffMedicalChitAdmin(admin.ModelAdmin):
+        list_display = ['chit_number', 'staff_link', 'application_date', 'status_badge', 'hr_approved_by', 'hr_approval_date', 'valid_until', 'encounter_link']
+        list_filter = ['status', 'application_date', 'hr_approval_date']
+        search_fields = ['chit_number', 'staff__user__first_name', 'staff__user__last_name', 'staff__employee_id', 'reason']
+        readonly_fields = ['chit_number']
+        ordering = ['-application_date', '-created']
+        
+        fieldsets = (
+            ('Chit Information', {
+                'fields': ('chit_number', 'staff', 'application_date', 'status')
+            }),
+            ('Application Details', {
+                'fields': ('reason', 'symptoms')
+            }),
+            ('HR Approval', {
+                'fields': ('hr_approved_by', 'hr_approval_date', 'hr_approval_notes', 'hr_rejection_reason', 'authorized_by_name', 'authorized_by_signature')
+            }),
+            ('Visit Information', {
+                'fields': ('encounter', 'visit_created_at', 'visit_created_by')
+            }),
+            ('Validity', {
+                'fields': ('valid_until',)
+            }),
+            ('SMS Tracking', {
+                'fields': ('sms_sent_approval', 'sms_sent_visit_ready')
+            }),
+            ('Timestamps', {
+                'fields': ('created_at', 'updated_at')
+            }),
+        )
+        
+        def staff_link(self, obj):
+            if obj.staff:
+                url = reverse('admin:hospital_staff_change', args=[obj.staff.pk])
+                return format_html('<a href="{}">{}</a>', url, obj.staff.user.get_full_name())
+            return "-"
+        staff_link.short_description = 'Staff'
+        
+        def status_badge(self, obj):
+            colors = {
+                'pending': 'warning',
+                'approved': 'success',
+                'rejected': 'danger',
+                'used': 'info',
+                'expired': 'secondary',
+            }
+            color = colors.get(obj.status, 'secondary')
+            return format_html(
+                '<span class="badge bg-{}">{}</span>',
+                color,
+                obj.get_status_display()
+            )
+        status_badge.short_description = 'Status'
+        
+        def encounter_link(self, obj):
+            if obj.encounter:
+                url = reverse('admin:hospital_encounter_change', args=[obj.encounter.pk])
+                return format_html('<a href="{}">Visit #{}</a>', url, obj.encounter.id)
+            return "-"
+        encounter_link.short_description = 'Visit'
 

@@ -1,5 +1,6 @@
 {% extends 'hospital/base.html' %}
 {% load static humanize %}
+{% load hospital_extras %}
 
 {% block title %}Encounters - HMS{% endblock %}
 {% block page_title %}Encounters{% endblock %}
@@ -63,22 +64,30 @@
 <!-- Filters -->
 <div class="filter-card">
     <form method="get" class="row g-3">
-        <div class="col-md-6">
+        <div class="col-md-4">
             <label class="form-label" style="font-size: 13px; font-weight: 600; color: var(--gray);">Search</label>
-            <input type="text" class="form-control form-control-modern" name="q" placeholder="Search by patient name or MRN..." value="{{ request.GET.q }}">
+            <input type="text" class="form-control form-control-modern" name="q" placeholder="Patient name or MRN..." value="{{ request.GET.q }}" title="Enter text">
         </div>
-        <div class="col-md-3">
+        <div class="col-md-2">
+            <label class="form-label" style="font-size: 13px; font-weight: 600; color: var(--gray);">From Date</label>
+            <input type="date" class="form-control form-control-modern" name="date_from" value="{{ date_from }}" title="From date">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label" style="font-size: 13px; font-weight: 600; color: var(--gray);">To Date</label>
+            <input type="date" class="form-control form-control-modern" name="date_to" value="{{ date_to }}" title="To date">
+        </div>
+        <div class="col-md-2">
             <label class="form-label" style="font-size: 13px; font-weight: 600; color: var(--gray);">Status</label>
-            <select name="status" class="form-select form-control-modern">
+            <select name="status" class="form-select form-control-modern" title="Select option" aria-label="Select option">
                 <option value="">All Statuses</option>
                 <option value="active" {% if request.GET.status == 'active' %}selected{% endif %}>Active</option>
                 <option value="completed" {% if request.GET.status == 'completed' %}selected{% endif %}>Completed</option>
                 <option value="cancelled" {% if request.GET.status == 'cancelled' %}selected{% endif %}>Cancelled</option>
             </select>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-2">
             <label class="form-label" style="font-size: 13px; font-weight: 600; color: var(--gray);">Type</label>
-            <select name="type" class="form-select form-control-modern">
+            <select name="type" class="form-select form-control-modern" title="Select option" aria-label="Select option">
                 <option value="">All Types</option>
                 <option value="outpatient" {% if request.GET.type == 'outpatient' %}selected{% endif %}>Outpatient</option>
                 <option value="inpatient" {% if request.GET.type == 'inpatient' %}selected{% endif %}>Inpatient</option>
@@ -88,7 +97,7 @@
         </div>
         <div class="col-md-12">
             <button type="submit" class="btn btn-primary-modern btn-modern me-2">
-                <i class="bi bi-search"></i> Search
+                <i class="bi bi-search"></i> Apply
             </button>
             <a href="{% url 'hospital:encounter_list' %}" class="btn btn-outline-secondary btn-modern">
                 <i class="bi bi-arrow-clockwise"></i> Reset
@@ -105,28 +114,38 @@
             <div class="col-md-5">
                 <h6 style="font-weight: 600; color: var(--dark); margin: 0 0 4px 0;">
                     <a href="{% url 'hospital:encounter_detail' encounter.pk %}" style="color: inherit; text-decoration: none;">
-                        {{ encounter.patient.full_name }}
+                        {% if encounter.patient %}
+                            {% if encounter.patient.full_name %}
+                                {{ encounter.patient.full_name }}
+                            {% elif encounter.patient.first_name or encounter.patient.last_name %}
+                                {{ encounter.patient.first_name|default:"" }} {{ encounter.patient.last_name|default:"" }}
+                            {% else %}
+                                {{ encounter.patient.mrn|default:"Unknown Patient" }}
+                            {% endif %}
+                        {% else %}
+                            Unknown Patient
+                        {% endif %}
                     </a>
                 </h6>
                 <div style="font-size: 12px; color: var(--primary); font-weight: 600; margin-bottom: 8px;">
-                    MRN: {{ encounter.patient.mrn }}
+                    MRN: {% if encounter.patient %}{{ encounter.patient.mrn|default:"-" }}{% else %}-{% endif %}
                 </div>
                 <div style="font-size: 13px; color: var(--gray);">
-                    <i class="bi bi-hospital"></i> {{ encounter.get_encounter_type_display }}
-                    {% if encounter.provider and encounter.provider.department %}
+                    <i class="bi bi-hospital"></i> {% if encounter.encounter_type %}{{ encounter.get_encounter_type_display|default:encounter.encounter_type }}{% else %}-{% endif %}
+                    {% if encounter.provider and encounter.provider.department and encounter.provider.department.name %}
                     | <i class="bi bi-building"></i> {{ encounter.provider.department.name }}
                     {% endif %}
                 </div>
             </div>
             <div class="col-md-4">
                 <div style="font-size: 13px; color: var(--gray); margin-bottom: 4px;">
-                    <i class="bi bi-calendar-event"></i> {{ encounter.started_at|date:"M d, Y H:i" }}
+                    <i class="bi bi-calendar-event"></i> {% if encounter.started_at %}{{ encounter.started_at|date:"M d, Y H:i" }}{% else %}-{% endif %}
                 </div>
                 {% if encounter.ended_at %}
                 <div style="font-size: 13px; color: var(--gray);">
                     <i class="bi bi-calendar-check"></i> {{ encounter.ended_at|date:"M d, Y H:i" }}
                 </div>
-                {% else %}
+                {% elif encounter.started_at %}
                 <span class="badge-modern badge-info">
                     <i class="bi bi-clock"></i> {{ encounter.started_at|timesince }} ago
                 </span>
@@ -134,7 +153,7 @@
             </div>
             <div class="col-md-2 text-center">
                 <span class="badge-modern badge-{% if encounter.status == 'active' %}success{% elif encounter.status == 'completed' %}info{% else %}danger{% endif %}">
-                    {{ encounter.get_status_display }}
+                    {% if encounter.status %}{{ encounter.get_status_display|default:encounter.status }}{% else %}-{% endif %}
                 </span>
             </div>
             <div class="col-md-1 text-end">
@@ -151,7 +170,7 @@
             <div class="col-12">
                 <div style="background: var(--light); padding: 12px; border-radius: 10px; border-left: 3px solid var(--primary);">
                     <strong style="font-size: 13px; color: var(--dark);">Diagnosis:</strong>
-                    <span style="font-size: 13px; color: var(--gray);">{{ encounter.diagnosis|truncatewords:20 }}</span>
+                    <span style="font-size: 13px; color: var(--gray);">{{ encounter.diagnosis|default:""|truncatewords:20 }}</span>
                 </div>
             </div>
         </div>
@@ -159,42 +178,8 @@
     </div>
     {% endfor %}
     
-    <!-- Pagination -->
-    {% if encounters.has_other_pages %}
-    <nav aria-label="Page navigation" class="mt-4">
-        <ul class="pagination justify-content-center">
-            {% if encounters.has_previous %}
-                <li class="page-item">
-                    <a class="page-link" href="?page=1{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}{% if request.GET.type %}&type={{ request.GET.type }}{% endif %}" style="border-radius: 10px 0 0 10px; border-color: var(--border);">
-                        First
-                    </a>
-                </li>
-                <li class="page-item">
-                    <a class="page-link" href="?page={{ encounters.previous_page_number }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}{% if request.GET.type %}&type={{ request.GET.type }}{% endif %}" style="border-color: var(--border);">
-                        Previous
-                    </a>
-                </li>
-            {% endif %}
-            <li class="page-item active">
-                <span class="page-link" style="background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); border: none; border-radius: 10px; margin: 0 5px;">
-                    Page {{ encounters.number }} of {{ encounters.paginator.num_pages }}
-                </span>
-            </li>
-            {% if encounters.has_next %}
-                <li class="page-item">
-                    <a class="page-link" href="?page={{ encounters.next_page_number }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}{% if request.GET.type %}&type={{ request.GET.type }}{% endif %}" style="border-color: var(--border);">
-                        Next
-                    </a>
-                </li>
-                <li class="page-item">
-                    <a class="page-link" href="?page={{ encounters.paginator.num_pages }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}{% if request.GET.type %}&type={{ request.GET.type }}{% endif %}" style="border-radius: 0 10px 10px 0; border-color: var(--border);">
-                        Last
-                    </a>
-                </li>
-            {% endif %}
-        </ul>
-    </nav>
-    {% endif %}
+    <!-- Pagination: Page X of Y, up to 25 page numbers, Next, Last -->
+    {% pagination_enhanced encounters 25 %}
 {% else %}
     <div class="modern-card text-center" style="padding: 60px 20px;">
         <div style="font-size: 64px; margin-bottom: 20px; opacity: 0.3;">🏥</div>

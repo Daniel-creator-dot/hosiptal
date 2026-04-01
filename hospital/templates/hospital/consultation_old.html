@@ -105,60 +105,58 @@
                 <input type="hidden" name="action" value="prescribe_drug">
                 
                 <div class="mb-3">
-                    <label class="form-label">Select Drug</label>
-                    <select name="drug_id" id="drugSelect" class="form-select form-control-modern" required>
-                        <option value="">-- Select Drug --</option>
-                        {% for drug in available_drugs %}
-                        <option value="{{ drug.pk }}" 
-                                data-strength="{{ drug.strength }}" 
-                                data-form="{{ drug.form }}">
-                            {{ drug.name }} {{ drug.strength|default:"" }} {{ drug.form|default:"" }}
-                        </option>
-                        {% empty %}
-                        <option value="" disabled>No drugs available. Please add drugs in the admin panel.</option>
-                        {% endfor %}
-                    </select>
-                    {% if not available_drugs %}
-                    <small class="text-warning">
-                        <i class="bi bi-exclamation-triangle"></i> No drugs available. 
-                        <a href="/admin/hospital/drug/add/" target="_blank">Add drugs here</a>
-                    </small>
-                    {% endif %}
+                    <label class="form-label">Search Drug</label>
+                    <div class="position-relative">
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input type="text" id="drugSearchInput" class="form-control form-control-modern" placeholder="Type to search all pharmacy drugs..." autocomplete="off">
+                        </div>
+                        <div id="drugSearchResults" class="list-group position-absolute w-100 mt-1 shadow" style="display: none; max-height: 280px; overflow-y: auto; z-index: 1050;"></div>
+                        <div id="drugSelectedDisplay" class="mt-2 p-2 rounded border bg-light" style="display: none;">
+                            <small><i class="bi bi-check-circle text-success"></i> Selected: <strong id="drugSelectedName"></strong>
+                                <button type="button" class="btn btn-sm btn-outline-secondary ms-2" onclick="clearDrugSelection()">Change</button></small>
+                        </div>
+                        <input type="hidden" name="drug_id" id="selectedDrugId" value="" required>
+                    </div>
+                    <small class="text-muted">Type 2+ characters to search. All pharmacy drugs are searchable.</small>
                 </div>
                 
-                <div class="row mb-3">
-                    <div class="col-md-4">
-                        <label class="form-label">Quantity</label>
-                        <input type="number" name="quantity" class="form-control form-control-modern" value="1" min="1" required>
-                    </div>
-                    <div class="col-md-8">
-                        <label class="form-label">Dose</label>
-                        <input type="text" name="dose" class="form-control form-control-modern" placeholder="e.g., 500mg" required>
-                    </div>
-                </div>
-                
+                <!-- Order: Name, Route, Dose, Frequency, Duration, Quantity -->
                 <div class="row mb-3">
                     <div class="col-md-6">
                         <label class="form-label">Route</label>
-                        <select name="route" class="form-select form-control-modern" required>
+                        <select name="route" class="form-select form-control-modern" required title="Select option" aria-label="Select option">
                             <option value="oral">Oral</option>
                             <option value="IV">IV</option>
                             <option value="IM">IM</option>
                             <option value="subcutaneous">Subcutaneous</option>
+                            <option value="intra-articular">Intra-articular</option>
+                            <option value="intrathecal">Intrathecal</option>
                             <option value="topical">Topical</option>
                             <option value="inhalation">Inhalation</option>
+                            <option value="rectally">Rectally</option>
+                            <option value="nasal">Nasal</option>
+                            <option value="per_vaginum">Per vaginum (PV)</option>
                         </select>
                     </div>
                     <div class="col-md-6">
-                        <label class="form-label">Frequency</label>
-                        <input type="text" name="frequency" class="form-control form-control-modern" placeholder="e.g., Twice daily" required>
+                        <label class="form-label">Dose</label>
+                        <input type="text" name="dose" class="form-control form-control-modern" placeholder="e.g., 500mg" required title="Enter text" placeholder="Enter text">
                     </div>
                 </div>
                 
-                <div class="mb-3">
-                    <label class="form-label">Duration</label>
-                    <input type="text" name="duration" class="form-control form-control-modern" placeholder="e.g., 7 days" required>
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Frequency</label>
+                        <input type="text" name="frequency" class="form-control form-control-modern" placeholder="e.g., Twice daily" required title="Enter text" placeholder="Enter text">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Duration</label>
+                        <input type="text" name="duration" class="form-control form-control-modern" placeholder="e.g., 7 days" required title="Enter text" placeholder="Enter text">
+                    </div>
                 </div>
+                
+                <input type="hidden" name="quantity" value="1">
                 
                 <div class="mb-3">
                     <label class="form-label">Instructions</label>
@@ -208,7 +206,7 @@
                 <div class="row mb-3">
                     <div class="col-md-6">
                         <label class="form-label">Priority</label>
-                        <select name="priority" class="form-select form-control-modern">
+                        <select name="priority" class="form-select form-control-modern" title="Select option" aria-label="Select option">
                             <option value="routine">Routine</option>
                             <option value="urgent">Urgent</option>
                             <option value="stat">STAT</option>
@@ -265,7 +263,7 @@
                                                 </div>
                                                 <div class="col-md-6">
                                                     <label class="form-label">Status</label>
-                                                    <select name="status" class="form-select form-select-sm">
+                                                    <select name="status" class="form-select form-select-sm" title="Select option" aria-label="Select option">
                                                         <option value="pending" {% if result.status == 'pending' %}selected{% endif %}>Pending</option>
                                                         <option value="in_progress" {% if result.status == 'in_progress' %}selected{% endif %}>In Progress</option>
                                                         <option value="completed" {% if result.status == 'completed' %}selected{% endif %}>Completed</option>
@@ -277,19 +275,19 @@
                                             <div class="row mb-2">
                                                 <div class="col-md-3">
                                                     <label class="form-label">Value</label>
-                                                    <input type="text" name="value" class="form-control form-control-sm" value="{{ result.value|default:'' }}" placeholder="e.g., 7.2">
+                                                    <input type="text" name="value" class="form-control form-control-sm" value="{{ result.value|default:'' }}" placeholder="e.g., 7.2" title="Enter text" placeholder="Enter text">
                                                 </div>
                                                 <div class="col-md-3">
                                                     <label class="form-label">Units</label>
-                                                    <input type="text" name="units" class="form-control form-control-sm" value="{{ result.units|default:'' }}" placeholder="e.g., mg/dL">
+                                                    <input type="text" name="units" class="form-control form-control-sm" value="{{ result.units|default:'' }}" placeholder="e.g., mg/dL" title="Enter text" placeholder="Enter text">
                                                 </div>
                                                 <div class="col-md-3">
                                                     <label class="form-label">Range Low</label>
-                                                    <input type="text" name="range_low" class="form-control form-control-sm" value="{{ result.range_low|default:'' }}" placeholder="e.g., 3.5">
+                                                    <input type="text" name="range_low" class="form-control form-control-sm" value="{{ result.range_low|default:'' }}" placeholder="e.g., 3.5" title="Enter text" placeholder="Enter text">
                                                 </div>
                                                 <div class="col-md-3">
                                                     <label class="form-label">Range High</label>
-                                                    <input type="text" name="range_high" class="form-control form-control-sm" value="{{ result.range_high|default:'' }}" placeholder="e.g., 7.0">
+                                                    <input type="text" name="range_high" class="form-control form-control-sm" value="{{ result.range_high|default:'' }}" placeholder="e.g., 7.0" title="Enter text" placeholder="Enter text">
                                                 </div>
                                             </div>
                                             
@@ -302,7 +300,7 @@
                                                 </div>
                                                 <div class="col-md-6">
                                                     <label class="form-label">Qualitative Result</label>
-                                                    <select name="qualitative_result" class="form-select form-select-sm">
+                                                    <select name="qualitative_result" class="form-select form-select-sm" title="Select option" aria-label="Select option">
                                                         <option value="">-- Select --</option>
                                                         <option value="reactive" {% if result.qualitative_result == 'reactive' %}selected{% endif %}>Reactive</option>
                                                         <option value="non-reactive" {% if result.qualitative_result == 'non-reactive' %}selected{% endif %}>Non-reactive</option>
@@ -343,23 +341,23 @@
                     <div class="row mb-3">
                         <div class="col-md-4">
                             <label class="form-label">Test Name</label>
-                            <input type="text" name="test_name" class="form-control form-control-modern" placeholder="e.g., Blood Glucose" required>
+                            <input type="text" name="test_name" class="form-control form-control-modern" placeholder="e.g., Blood Glucose" required title="Enter text" placeholder="Enter text">
                         </div>
                         <div class="col-md-2">
                             <label class="form-label">Value</label>
-                            <input type="text" name="value" class="form-control form-control-modern" placeholder="7.2" required>
+                            <input type="text" name="value" class="form-control form-control-modern" placeholder="7.2" required title="Enter text" placeholder="Enter text">
                         </div>
                         <div class="col-md-2">
                             <label class="form-label">Units</label>
-                            <input type="text" name="units" class="form-control form-control-modern" placeholder="mg/dL">
+                            <input type="text" name="units" class="form-control form-control-modern" placeholder="mg/dL" title="Enter text" placeholder="Enter text">
                         </div>
                         <div class="col-md-2">
                             <label class="form-label">Range</label>
-                            <input type="text" name="range" class="form-control form-control-modern" placeholder="3.5-7.0">
+                            <input type="text" name="range" class="form-control form-control-modern" placeholder="3.5-7.0" title="Enter text" placeholder="Enter text">
                         </div>
                         <div class="col-md-2">
                             <label class="form-label">Status</label>
-                            <select name="status" class="form-select form-control-modern">
+                            <select name="status" class="form-select form-control-modern" title="Select option" aria-label="Select option">
                                 <option value="completed">Completed</option>
                                 <option value="pending">Pending</option>
                                 <option value="in_progress">In Progress</option>
@@ -376,7 +374,7 @@
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">Qualitative Result</label>
-                            <select name="qualitative_result" class="form-select form-control-modern">
+                            <select name="qualitative_result" class="form-select form-control-modern" title="Select option" aria-label="Select option">
                                 <option value="">-- Select --</option>
                                 <option value="reactive">Reactive</option>
                                 <option value="non-reactive">Non-reactive</option>
@@ -414,7 +412,7 @@
                 
                 <div class="mb-3">
                     <label class="form-label">Imaging Type</label>
-                    <select name="imaging_type" class="form-select form-control-modern" required>
+                    <select name="imaging_type" class="form-select form-control-modern" required title="Select option" aria-label="Select option">
                         <option value="X-ray">X-ray</option>
                         <option value="CT Scan">CT Scan</option>
                         <option value="MRI">MRI</option>
@@ -429,7 +427,7 @@
                 <div class="row mb-3">
                     <div class="col-md-6">
                         <label class="form-label">Priority</label>
-                        <select name="priority" class="form-select form-control-modern">
+                        <select name="priority" class="form-select form-control-modern" title="Select option" aria-label="Select option">
                             <option value="routine">Routine</option>
                             <option value="urgent">Urgent</option>
                             <option value="stat">STAT</option>
@@ -462,12 +460,12 @@
                 
                 <div class="mb-3">
                     <label class="form-label">Procedure Name</label>
-                    <input type="text" name="procedure_name" class="form-control form-control-modern" placeholder="e.g., Dressing Change, Wound Care, IV Cannulation" required>
+                    <input type="text" name="procedure_name" class="form-control form-control-modern" placeholder="e.g., Dressing Change, Wound Care, IV Cannulation" required title="Enter text" placeholder="Enter text">
                 </div>
                 
                 <div class="mb-3">
                     <label class="form-label">Procedure Type</label>
-                    <select name="procedure_type" class="form-select form-control-modern">
+                    <select name="procedure_type" class="form-select form-control-modern" title="Select option" aria-label="Select option">
                         <option value="minor">Minor Procedure</option>
                         <option value="surgical">Surgical</option>
                         <option value="diagnostic">Diagnostic</option>
@@ -480,7 +478,7 @@
                 <div class="row mb-3">
                     <div class="col-md-6">
                         <label class="form-label">Priority</label>
-                        <select name="priority" class="form-select form-control-modern">
+                        <select name="priority" class="form-select form-control-modern" title="Select option" aria-label="Select option">
                             <option value="routine">Routine</option>
                             <option value="urgent">Urgent</option>
                             <option value="stat">STAT</option>
@@ -520,12 +518,12 @@
                 
                 <div class="mb-3">
                     <label class="form-label">ICD-10 Code (Optional)</label>
-                    <input type="text" name="icd10_code" class="form-control form-control-modern" placeholder="e.g., J11.1">
+                    <input type="text" name="icd10_code" class="form-control form-control-modern" placeholder="e.g., J11.1" title="Enter text" placeholder="Enter text">
                 </div>
                 
                 <div class="mb-3">
                     <label class="form-label">Problem/Diagnosis <span class="text-danger">*</span></label>
-                    <input type="text" name="problem" class="form-control form-control-modern" placeholder="e.g., Upper Respiratory Infection" required>
+                    <input type="text" name="problem" class="form-control form-control-modern" placeholder="e.g., Upper Respiratory Infection" required title="Enter text" placeholder="Enter text">
                 </div>
                 
                 <div class="mb-3">
@@ -628,11 +626,11 @@
                 <div class="row mb-3">
                     <div class="col-md-4">
                         <label class="form-label">Chief Complaint</label>
-                        <input type="text" name="chief_complaint" class="form-control form-control-modern" value="{{ encounter.chief_complaint|default:'' }}" placeholder="Main complaint">
+                        <input type="text" name="chief_complaint" class="form-control form-control-modern" value="{{ encounter.chief_complaint|default:'' }}" placeholder="Main complaint" title="Enter text" placeholder="Enter text">
                     </div>
                     <div class="col-md-8">
                         <label class="form-label">Diagnosis</label>
-                        <input type="text" name="diagnosis" class="form-control form-control-modern" value="{{ encounter.diagnosis|default:'' }}" placeholder="Primary diagnosis">
+                        <input type="text" name="diagnosis" class="form-control form-control-modern" value="{{ encounter.diagnosis|default:'' }}" placeholder="Primary diagnosis" title="Enter text" placeholder="Enter text">
                     </div>
                 </div>
                 
@@ -687,7 +685,14 @@
                                 {{ order.get_priority_display }}
                             </span>
                             <br>
-                            <small class="text-muted">Requested: {{ order.requested_at|date:"d/m/Y H:i" }} by {{ order.requested_by.user.get_full_name|default:order.requested_by }}</small>
+                            <small class="text-muted">
+                                Requested: {{ order.requested_at|date:"d/m/Y H:i" }} by 
+                                {% if order.requested_by and order.requested_by.user %}
+                                    {{ order.requested_by.user.get_full_name|default:order.requested_by.user.username|default:"Not assigned" }}
+                                {% else %}
+                                    Not assigned
+                                {% endif %}
+                            </small>
                             {% if order.notes %}
                             <br><small class="text-muted">{{ order.notes|truncatewords:15 }}</small>
                             {% endif %}
@@ -807,14 +812,77 @@ function toggleTest(testId) {
     }
 }
 
-// Auto-fill dose based on drug selection
-document.getElementById('drugSelect').addEventListener('change', function() {
-    const option = this.options[this.selectedIndex];
-    if (option.value) {
-        const doseField = document.querySelector('input[name="dose"]');
-        doseField.placeholder = option.dataset.strength || 'Enter dose';
+// Drug search (API-driven - all pharmacy drugs)
+(function() {
+    let drugSearchTimeout;
+    const searchInput = document.getElementById('drugSearchInput');
+    const resultsDiv = document.getElementById('drugSearchResults');
+    const selectedDiv = document.getElementById('drugSelectedDisplay');
+    const selectedNameSpan = document.getElementById('drugSelectedName');
+    const drugIdInput = document.getElementById('selectedDrugId');
+    const doseField = document.querySelector('input[name="dose"]');
+
+    window.clearDrugSelection = function() {
+        drugIdInput.value = '';
+        selectedDiv.style.display = 'none';
+        searchInput.value = '';
+        searchInput.disabled = false;
+        resultsDiv.style.display = 'none';
+        if (doseField) doseField.placeholder = 'e.g., 500mg';
+    };
+
+    if (searchInput) {
+        searchInput.addEventListener('input', function() {
+            const q = this.value.trim();
+            clearTimeout(drugSearchTimeout);
+            resultsDiv.style.display = 'none';
+            resultsDiv.innerHTML = '';
+            if (q.length < 2) return;
+            drugSearchTimeout = setTimeout(function() {
+                fetch('{% url "hospital:api_search_drugs" %}?q=' + encodeURIComponent(q), { credentials: 'same-origin' })
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        const drugs = data.drugs || [];
+                        if (drugs.length === 0) {
+                            resultsDiv.innerHTML = '<div class="list-group-item text-muted">No drugs found. Try a different search.</div>';
+                        } else {
+                            resultsDiv.innerHTML = drugs.map(function(d) {
+                                const disp = (d.name || '') + ' ' + (d.strength || '') + ' ' + (d.form || '');
+                                return '<a href="#" class="list-group-item list-group-item-action drug-result-item" data-id="' + d.id + '" data-name="' + (disp || d.name).replace(/"/g, '&quot;') + '" data-strength="' + (d.strength || '').replace(/"/g, '&quot;') + '">' +
+                                    '<strong>' + (d.name || '') + '</strong> ' + (d.strength || '') + ' (' + (d.form || '') + ')<br>' +
+                                    '<small class="text-muted">Stock: ' + (d.stock_available || 0) + '</small></a>';
+                            }).join('');
+                        }
+                        resultsDiv.style.display = 'block';
+                        resultsDiv.querySelectorAll('.drug-result-item').forEach(function(el) {
+                            el.addEventListener('click', function(e) {
+                                e.preventDefault();
+                                drugIdInput.value = this.dataset.id;
+                                selectedNameSpan.textContent = this.dataset.name.replace(/&quot;/g, '"');
+                                selectedDiv.style.display = 'block';
+                                searchInput.value = '';
+                                searchInput.disabled = true;
+                                resultsDiv.style.display = 'none';
+                                if (doseField && this.dataset.strength) doseField.placeholder = this.dataset.strength || 'Enter dose';
+                            });
+                        });
+                    })
+                    .catch(function() {
+                        resultsDiv.innerHTML = '<div class="list-group-item text-danger">Search failed. Please try again.</div>';
+                        resultsDiv.style.display = 'block';
+                    });
+            }, 300);
+        });
+        searchInput.addEventListener('focus', function() {
+            if (this.value.trim().length >= 2 && resultsDiv.innerHTML) resultsDiv.style.display = 'block';
+        });
     }
-});
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('#drugSearchInput') && !e.target.closest('#drugSearchResults')) {
+            document.getElementById('drugSearchResults').style.display = 'none';
+        }
+    });
+})();
 </script>
 {% endblock %}
 

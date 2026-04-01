@@ -1,0 +1,596 @@
+{% extends 'hospital/base.html' %}
+{% load humanize static %}
+
+{% block title %}Gynecology Specialist Dashboard - HMS{% endblock %}
+
+{% block page_title %}
+    <div class="d-flex align-items-center">
+        <div>
+            <h4 class="mb-0">Gynecology Specialist Dashboard</h4>
+            <p class="text-muted mb-0">
+                <i class="bi bi-gender-female"></i> 
+                {{ specialist_profile.staff.user.get_full_name }} - {{ specialist_profile.specialty.name }}
+            </p>
+        </div>
+    </div>
+{% endblock %}
+
+{% block content %}
+<div class="gynecology-dashboard">
+    <!-- Welcome Section -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="modern-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; border: none;">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h3 class="mb-2" style="color: white; font-weight: 700;">
+                            <i class="bi bi-gender-female"></i> Welcome, {{ specialist_profile.staff.user.get_full_name|default:"Gynecology Specialist" }}!
+                        </h3>
+                        <p class="mb-0" style="opacity: 0.9; font-size: 1.1rem;">
+                            {{ today|date:"l, F j, Y" }} • {{ specialist_profile.specialty.name }} Specialist
+                        </p>
+                        {% if specialist_profile.qualification %}
+                        <p class="mt-2 mb-0" style="opacity: 0.8; font-size: 0.95rem;">
+                            <i class="bi bi-award"></i> {{ specialist_profile.qualification }}
+                        </p>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <div class="d-flex flex-column align-items-end">
+                            <div style="font-size: 2.5rem; font-weight: 700; opacity: 0.9;">
+                                {{ stats.consultations_today }}
+                            </div>
+                            <div style="opacity: 0.8;">Consultations Today</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="row g-4 mb-4">
+        <div class="col-lg-3 col-md-6">
+            <div class="stat-card-modern" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                <div class="stat-icon">
+                    <i class="bi bi-calendar-check"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-number">{{ stats.consultations_today }}</div>
+                    <div class="stat-label">Today's Consultations</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6">
+            <div class="stat-card-modern" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+                <div class="stat-icon">
+                    <i class="bi bi-heart-pulse"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-number">{{ stats.pregnant_patients }}</div>
+                    <div class="stat-label">Pregnant Patients</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6">
+            <div class="stat-card-modern" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);">
+                <div class="stat-icon">
+                    <i class="bi bi-calendar-month"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-number">{{ stats.consultations_this_month }}</div>
+                    <div class="stat-label">This Month</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6">
+            <div class="stat-card-modern" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);">
+                <div class="stat-icon">
+                    <i class="bi bi-speedometer2"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-number">{{ stats.avg_bmi }}</div>
+                    <div class="stat-label">Average BMI</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="row g-4 mb-4">
+        <!-- Consultations Over Time -->
+        <div class="col-lg-6">
+            <div class="modern-card">
+                <h5 class="mb-3"><i class="bi bi-bar-chart"></i> Consultations Over Time (Last 30 Days)</h5>
+                <canvas id="consultationsChart" height="120"></canvas>
+            </div>
+        </div>
+        
+        <!-- BMI Trend -->
+        <div class="col-lg-6">
+            <div class="modern-card">
+                <h5 class="mb-3"><i class="bi bi-graph-up"></i> BMI Trend Analysis</h5>
+                <canvas id="bmiChart" height="120"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <!-- Pregnancy Status Distribution -->
+        <div class="col-lg-4">
+            <div class="modern-card">
+                <h5 class="mb-3"><i class="bi bi-pie-chart"></i> Pregnancy Status</h5>
+                <canvas id="pregnancyChart" height="150"></canvas>
+            </div>
+        </div>
+        
+        <!-- Gestational Age Distribution -->
+        <div class="col-lg-4">
+            <div class="modern-card">
+                <h5 class="mb-3"><i class="bi bi-calendar-heart"></i> Gestational Age Distribution</h5>
+                <canvas id="gestationalAgeChart" height="150"></canvas>
+            </div>
+        </div>
+        
+        <!-- HIV Status Distribution -->
+        <div class="col-lg-4">
+            <div class="modern-card">
+                <h5 class="mb-3"><i class="bi bi-shield-check"></i> HIV Status Distribution</h5>
+                <canvas id="hivChart" height="150"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <!-- Top Diagnoses -->
+        <div class="col-lg-6">
+            <div class="modern-card">
+                <h5 class="mb-3"><i class="bi bi-clipboard-data"></i> Top Diagnoses</h5>
+                <canvas id="diagnosisChart" height="120"></canvas>
+            </div>
+        </div>
+        
+        <!-- Pap Smear Results -->
+        <div class="col-lg-6">
+            <div class="modern-card">
+                <h5 class="mb-3"><i class="bi bi-clipboard-check"></i> Pap Smear Results</h5>
+                <canvas id="papSmearChart" height="120"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="modern-card">
+                <h5 class="mb-3"><i class="bi bi-lightning-charge"></i> Quick Actions</h5>
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="{% url 'hospital:specialist_patient_select' %}?specialty=gynecology" class="btn btn-primary">
+                        <i class="bi bi-plus-circle"></i> New Consultation
+                    </a>
+                    <a href="{% url 'hospital:referral_list' %}" class="btn btn-outline-primary">
+                        <i class="bi bi-inbox"></i> View Referrals
+                    </a>
+                    <a href="{% url 'hospital:gynecology_dashboard' %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh Dashboard
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Consultations -->
+    <div class="row mb-4">
+        <div class="col-lg-8">
+            <div class="modern-card">
+                <h5 class="mb-3"><i class="bi bi-clock-history"></i> Recent Consultations</h5>
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Patient</th>
+                                <th>Primary Diagnosis</th>
+                                <th>Pregnant</th>
+                                <th>GA (weeks)</th>
+                                <th>BMI</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for consultation in recent_consultations %}
+                            <tr>
+                                <td>{{ consultation.chart_date|date:"M d, Y" }}</td>
+                                <td>
+                                    <strong>{{ consultation.patient.full_name }}</strong><br>
+                                    <small class="text-muted">{{ consultation.patient.mrn }}</small>
+                                </td>
+                                <td>
+                                    <span class="badge bg-info">
+                                        {{ consultation.primary_diagnosis|default:"—"|truncatewords:3 }}
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if consultation.is_pregnant %}
+                                    <span class="badge bg-success">Yes</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">No</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if consultation.gestational_age_weeks %}
+                                    <span class="badge bg-primary">{{ consultation.gestational_age_weeks }}w</span>
+                                    {% else %}
+                                    <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if consultation.bmi %}
+                                    <span class="badge bg-{% if consultation.bmi >= 30 %}danger{% elif consultation.bmi >= 25 %}warning{% else %}success{% endif %}">
+                                        {{ consultation.bmi|floatformat:1 }}
+                                    </span>
+                                    {% else %}
+                                    <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if consultation.encounter %}
+                                    <a href="{% url 'hospital:gynecology_consultation_encounter' encounter_id=consultation.encounter.pk %}" 
+                                       class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-eye"></i> View
+                                    </a>
+                                    {% else %}
+                                    <a href="{% url 'hospital:gynecology_consultation' patient_id=consultation.patient.pk %}" 
+                                       class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-eye"></i> View
+                                    </a>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="7" class="text-center text-muted">No recent consultations</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pending Referrals & Pregnant Patients -->
+        <div class="col-lg-4">
+            <!-- Pending Referrals -->
+            <div class="modern-card mb-4">
+                <h5 class="mb-3"><i class="bi bi-hourglass-split"></i> Pending Referrals</h5>
+                {% if pending_referrals_list %}
+                <div class="list-group">
+                    {% for referral in pending_referrals_list %}
+                    <div class="list-group-item">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">{{ referral.patient.full_name }}</h6>
+                                <p class="mb-1 small">{{ referral.reason|truncatewords:10 }}</p>
+                                <small class="text-muted">
+                                    <span class="badge bg-{% if referral.priority == 'stat' %}danger{% elif referral.priority == 'urgent' %}warning{% else %}info{% endif %}">
+                                        {{ referral.get_priority_display }}
+                                    </span>
+                                    • {{ referral.referred_date|date:"M d" }}
+                                </small>
+                            </div>
+                        </div>
+                        <a href="{% url 'hospital:referral_detail' referral_id=referral.pk %}" 
+                           class="btn btn-sm btn-outline-primary mt-2">
+                            Review
+                        </a>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-muted text-center">No pending referrals</p>
+                {% endif %}
+            </div>
+
+            <!-- Pregnant Patients -->
+            <div class="modern-card">
+                <h5 class="mb-3 text-success"><i class="bi bi-heart-pulse"></i> Pregnant Patients</h5>
+                {% if pregnant_patients_list %}
+                <div class="list-group">
+                    {% for chart in pregnant_patients_list %}
+                    <div class="list-group-item border-success">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">{{ chart.patient.full_name }}</h6>
+                                <p class="mb-1 small">
+                                    {% if chart.gestational_age_weeks %}
+                                    <span class="badge bg-primary">GA: {{ chart.gestational_age_weeks }} weeks</span>
+                                    {% endif %}
+                                    {% if chart.edd %}
+                                    <span class="badge bg-info">EDD: {{ chart.edd|date:"M d, Y" }}</span>
+                                    {% endif %}
+                                </p>
+                                <small class="text-muted">{{ chart.chart_date|date:"M d, Y" }}</small>
+                            </div>
+                        </div>
+                        {% if chart.encounter %}
+                        <a href="{% url 'hospital:gynecology_consultation_encounter' encounter_id=chart.encounter.pk %}" 
+                           class="btn btn-sm btn-success mt-2">
+                            <i class="bi bi-eye"></i> Review
+                        </a>
+                        {% else %}
+                        <a href="{% url 'hospital:gynecology_consultation' patient_id=chart.patient.pk %}" 
+                           class="btn btn-sm btn-success mt-2">
+                            <i class="bi bi-eye"></i> Review
+                        </a>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-muted text-center">No pregnant patients</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<script>
+// Consultations Over Time Chart
+const consultationsData = JSON.parse('{{ chart_data.consultations_by_date|escapejs }}');
+const consultationsLabels = consultationsData.map(item => new Date(item.chart_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+const consultationsCounts = consultationsData.map(item => item.count);
+
+new Chart(document.getElementById('consultationsChart'), {
+    type: 'line',
+    data: {
+        labels: consultationsLabels,
+        datasets: [{
+            label: 'Consultations',
+            data: consultationsCounts,
+            borderColor: 'rgb(240, 147, 251)',
+            backgroundColor: 'rgba(240, 147, 251, 0.2)',
+            tension: 0.4,
+            fill: true
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false }
+        },
+        scales: {
+            y: { beginAtZero: true }
+        }
+    }
+});
+
+// BMI Trend Chart
+const bmiData = JSON.parse('{{ chart_data.bmi_data|escapejs }}');
+const bmiLabels = bmiData.map(item => new Date(item.chart_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+const bmiValues = bmiData.map(item => item.bmi);
+
+new Chart(document.getElementById('bmiChart'), {
+    type: 'line',
+    data: {
+        labels: bmiLabels,
+        datasets: [{
+            label: 'BMI',
+            data: bmiValues,
+            borderColor: 'rgb(79, 172, 254)',
+            backgroundColor: 'rgba(79, 172, 254, 0.2)',
+            tension: 0.4,
+            fill: true
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false }
+        },
+        scales: {
+            y: { beginAtZero: true }
+        }
+    }
+});
+
+// Pregnancy Status Distribution
+const pregnancyData = JSON.parse('{{ chart_data.pregnancy_dist|escapejs }}');
+const pregnancyLabels = pregnancyData.map(item => item.is_pregnant ? 'Pregnant' : 'Not Pregnant');
+const pregnancyCounts = pregnancyData.map(item => item.count);
+const pregnancyColors = pregnancyData.map(item => item.is_pregnant ? 'rgb(67, 233, 123)' : 'rgb(201, 203, 207)');
+
+new Chart(document.getElementById('pregnancyChart'), {
+    type: 'doughnut',
+    data: {
+        labels: pregnancyLabels,
+        datasets: [{
+            data: pregnancyCounts,
+            backgroundColor: pregnancyColors
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { position: 'bottom' }
+        }
+    }
+});
+
+// Gestational Age Distribution
+const gestationalData = JSON.parse('{{ chart_data.gestational_age_data|escapejs }}');
+const gestationalLabels = gestationalData.map(item => `${item.gestational_age_weeks} weeks`);
+const gestationalCounts = gestationalData.map(item => item.count);
+
+new Chart(document.getElementById('gestationalAgeChart'), {
+    type: 'bar',
+    data: {
+        labels: gestationalLabels,
+        datasets: [{
+            label: 'Patients',
+            data: gestationalCounts,
+            backgroundColor: 'rgba(250, 112, 154, 0.6)',
+            borderColor: 'rgb(250, 112, 154)',
+            borderWidth: 1
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false }
+        },
+        scales: {
+            y: { beginAtZero: true }
+        }
+    }
+});
+
+// HIV Status Distribution
+const hivData = JSON.parse('{{ chart_data.hiv_dist|escapejs }}');
+const hivLabels = hivData.map(item => {
+    const status = item.hiv_status;
+    return status.charAt(0).toUpperCase() + status.slice(1).replace('_', ' ');
+});
+const hivCounts = hivData.map(item => item.count);
+const hivColors = hivData.map(item => {
+    const status = item.hiv_status;
+    if (status === 'negative') return 'rgb(75, 192, 192)';
+    if (status === 'positive') return 'rgb(255, 99, 132)';
+    return 'rgb(201, 203, 207)';
+});
+
+new Chart(document.getElementById('hivChart'), {
+    type: 'pie',
+    data: {
+        labels: hivLabels,
+        datasets: [{
+            data: hivCounts,
+            backgroundColor: hivColors
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { position: 'bottom' }
+        }
+    }
+});
+
+// Diagnosis Distribution
+const diagnosisData = JSON.parse('{{ chart_data.diagnosis_dist|escapejs }}');
+const diagnosisLabels = diagnosisData.map(item => item.primary_diagnosis.length > 20 ? item.primary_diagnosis.substring(0, 20) + '...' : item.primary_diagnosis);
+const diagnosisCounts = diagnosisData.map(item => item.count);
+
+new Chart(document.getElementById('diagnosisChart'), {
+    type: 'bar',
+    data: {
+        labels: diagnosisLabels,
+        datasets: [{
+            label: 'Count',
+            data: diagnosisCounts,
+            backgroundColor: 'rgba(240, 147, 251, 0.6)',
+            borderColor: 'rgb(240, 147, 251)',
+            borderWidth: 1
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        indexAxis: 'y',
+        plugins: {
+            legend: { display: false }
+        },
+        scales: {
+            x: { beginAtZero: true }
+        }
+    }
+});
+
+// Pap Smear Results
+const papSmearData = JSON.parse('{{ chart_data.pap_smear_dist|escapejs }}');
+const papSmearLabels = papSmearData.map(item => item.pap_smear_result.length > 15 ? item.pap_smear_result.substring(0, 15) + '...' : item.pap_smear_result);
+const papSmearCounts = papSmearData.map(item => item.count);
+
+new Chart(document.getElementById('papSmearChart'), {
+    type: 'bar',
+    data: {
+        labels: papSmearLabels,
+        datasets: [{
+            label: 'Count',
+            data: papSmearCounts,
+            backgroundColor: 'rgba(67, 233, 123, 0.6)',
+            borderColor: 'rgb(67, 233, 123)',
+            borderWidth: 1
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false }
+        },
+        scales: {
+            y: { beginAtZero: true }
+        }
+    }
+});
+</script>
+
+<style>
+.gynecology-dashboard .modern-card {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    margin-bottom: 24px;
+}
+
+.stat-card-modern {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    color: white;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.stat-icon {
+    font-size: 2.5rem;
+    opacity: 0.9;
+}
+
+.stat-content {
+    flex: 1;
+}
+
+.stat-number {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.stat-label {
+    font-size: 0.9rem;
+    opacity: 0.9;
+    margin-top: 4px;
+}
+
+canvas {
+    max-height: 300px;
+}
+</style>
+{% endblock %}
+
+
+
+
+

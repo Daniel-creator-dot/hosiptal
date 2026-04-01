@@ -1,0 +1,227 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Inventory History - HMS{% endblock %}
+{% block page_title %}Inventory Transaction History{% endblock %}
+{% block page_subtitle %}Complete audit trail of all inventory movements{% endblock %}
+
+{% block content %}
+<!-- Statistics -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body text-center">
+                <div class="text-primary mb-2">
+                    <i class="bi bi-list-ul" style="font-size: 32px;"></i>
+                </div>
+                <h3 class="mb-0">{{ stats.total_transactions }}</h3>
+                <small class="text-muted">Total Transactions</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm border-success">
+            <div class="card-body text-center">
+                <div class="text-success mb-2">
+                    <i class="bi bi-box-arrow-in-down" style="font-size: 32px;"></i>
+                </div>
+                <h3 class="mb-0">{{ stats.total_receipts }}</h3>
+                <small class="text-muted">Receipts</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm border-warning">
+            <div class="card-body text-center">
+                <div class="text-warning mb-2">
+                    <i class="bi bi-box-arrow-up" style="font-size: 32px;"></i>
+                </div>
+                <h3 class="mb-0">{{ stats.total_issues }}</h3>
+                <small class="text-muted">Issues</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm border-info">
+            <div class="card-body text-center">
+                <div class="text-info mb-2">
+                    <i class="bi bi-arrow-left-right" style="font-size: 32px;"></i>
+                </div>
+                <h3 class="mb-0">{{ stats.total_transfers }}</h3>
+                <small class="text-muted">Transfers</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <form method="get" class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label">Store</label>
+                <select name="store" class="form-select">
+                    <option value="">All Stores</option>
+                    {% for store in stores %}
+                    <option value="{{ store.id }}" {% if store_filter == store.id|stringformat:"s" %}selected{% endif %}>
+                        {{ store.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Transaction Type</label>
+                <select name="transaction_type" class="form-select">
+                    <option value="">All Types</option>
+                    {% for code, name in transaction_types %}
+                    <option value="{{ code }}" {% if transaction_type_filter == code %}selected{% endif %}>
+                        {{ name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Date From</label>
+                <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Date To</label>
+                <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">&nbsp;</label>
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-search me-2"></i>Filter
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Transactions Table -->
+<div class="card border-0 shadow-sm">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Transaction #</th>
+                        <th>Date</th>
+                        <th>Type</th>
+                        <th>Item</th>
+                        <th>Store</th>
+                        <th>Quantity</th>
+                        <th>Unit Cost</th>
+                        <th>Total Value</th>
+                        <th>Performed By</th>
+                        <th>Reference</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for txn in transactions %}
+                    <tr>
+                        <td>
+                            <strong class="text-primary">{{ txn.transaction_number }}</strong>
+                        </td>
+                        <td>{{ txn.transaction_date|date:"M d, Y H:i" }}</td>
+                        <td>
+                            <span class="badge 
+                                {% if txn.transaction_type == 'receipt' %}bg-success
+                                {% elif txn.transaction_type == 'issue' %}bg-warning
+                                {% elif txn.transaction_type == 'transfer_in' %}bg-info
+                                {% elif txn.transaction_type == 'transfer_out' %}bg-secondary
+                                {% elif txn.transaction_type == 'return_from_dept' %}bg-primary
+                                {% else %}bg-dark{% endif %}">
+                                {{ txn.get_transaction_type_display }}
+                            </span>
+                        </td>
+                        <td>
+                            <strong>{{ txn.inventory_item.item_name }}</strong>
+                            {% if txn.batch_number %}
+                            <br><small class="text-muted">Batch: {{ txn.batch_number }}</small>
+                            {% endif %}
+                        </td>
+                        <td>{{ txn.store.name }}</td>
+                        <td>
+                            <span class="badge 
+                                {% if txn.quantity > 0 %}bg-success
+                                {% else %}bg-danger{% endif %}">
+                                {% if txn.quantity > 0 %}+{% endif %}{{ txn.quantity }}
+                            </span>
+                            <br>
+                            <small class="text-muted">
+                                Before: {{ txn.quantity_before }} → After: {{ txn.quantity_after }}
+                            </small>
+                        </td>
+                        <td>GHS {{ txn.unit_cost|floatformat:2 }}</td>
+                        <td>
+                            <strong>GHS {{ txn.total_value|floatformat:2 }}</strong>
+                        </td>
+                        <td>
+                            {{ txn.performed_by.full_name|default:"N/A" }}
+                        </td>
+                        <td>
+                            {% if txn.reference_number %}
+                            <small>{{ txn.reference_number }}</small>
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{% url 'hospital:inventory_item_history' txn.inventory_item.id %}" 
+                               class="btn btn-sm btn-outline-primary" title="View Item History">
+                                <i class="bi bi-clock-history"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="11" class="text-center text-muted py-4">
+                            <i class="bi bi-inbox" style="font-size: 48px;"></i>
+                            <p class="mt-2">No transactions found</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Pagination -->
+        {% if page_obj.has_other_pages %}
+        <nav aria-label="Page navigation" class="mt-4">
+            <ul class="pagination justify-content-center">
+                {% if page_obj.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?page=1{% if store_filter %}&store={{ store_filter }}{% endif %}{% if transaction_type_filter %}&transaction_type={{ transaction_type_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">First</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if store_filter %}&store={{ store_filter }}{% endif %}{% if transaction_type_filter %}&transaction_type={{ transaction_type_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Previous</a>
+                </li>
+                {% endif %}
+                
+                <li class="page-item active">
+                    <span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+                </li>
+                
+                {% if page_obj.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if store_filter %}&store={{ store_filter }}{% endif %}{% if transaction_type_filter %}&transaction_type={{ transaction_type_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Next</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}{% if store_filter %}&store={{ store_filter }}{% endif %}{% if transaction_type_filter %}&transaction_type={{ transaction_type_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Last</a>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+

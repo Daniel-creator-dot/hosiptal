@@ -1,0 +1,616 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Drug Audit Trail - {{ drug.name }}{% endblock %}
+{% block page_title %}📋 Drug Audit Trail & Ledger{% endblock %}
+{% block page_subtitle %}Complete movement history for {{ drug.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .audit-timeline {
+        position: relative;
+        padding-left: 40px;
+    }
+    
+    .audit-timeline::before {
+        content: '';
+        position: absolute;
+        left: 15px;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: linear-gradient(to bottom, #e0e0e0, #f0f0f0);
+    }
+    
+    .audit-entry {
+        position: relative;
+        margin-bottom: 24px;
+        padding: 20px;
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        border-left: 4px solid var(--primary);
+        transition: all 0.3s ease;
+    }
+    
+    .audit-entry:hover {
+        transform: translateX(5px);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    }
+    
+    .audit-entry::before {
+        content: '';
+        position: absolute;
+        left: -32px;
+        top: 24px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--primary);
+        border: 3px solid white;
+        box-shadow: 0 0 0 2px var(--primary);
+    }
+    
+    .audit-entry.transfer {
+        border-left-color: #3b82f6;
+    }
+    
+    .audit-entry.transfer::before {
+        background: #3b82f6;
+        box-shadow: 0 0 0 2px #3b82f6;
+    }
+    
+    .audit-entry.dispensing {
+        border-left-color: #10b981;
+    }
+    
+    .audit-entry.dispensing::before {
+        background: #10b981;
+        box-shadow: 0 0 0 2px #10b981;
+    }
+    
+    .audit-entry.walkin_sale {
+        border-left-color: #f59e0b;
+    }
+    
+    .audit-entry.walkin_sale::before {
+        background: #f59e0b;
+        box-shadow: 0 0 0 2px #f59e0b;
+    }
+    
+    .audit-entry.inventory_transaction {
+        border-left-color: #8b5cf6;
+    }
+    
+    .audit-entry.inventory_transaction::before {
+        background: #8b5cf6;
+        box-shadow: 0 0 0 2px #8b5cf6;
+    }
+    
+    .audit-entry.pharmacy_stock {
+        border-left-color: #0ea5e9;
+    }
+    
+    .audit-entry.pharmacy_stock::before {
+        background: #0ea5e9;
+        box-shadow: 0 0 0 2px #0ea5e9;
+    }
+    
+    .audit-entry.catalog_created {
+        border-left-color: #64748b;
+    }
+    
+    .audit-entry.catalog_created::before {
+        background: #64748b;
+        box-shadow: 0 0 0 2px #64748b;
+    }
+    
+    .entry-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        margin-bottom: 12px;
+    }
+    
+    .entry-type-badge {
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .entry-details {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 12px;
+        margin-top: 12px;
+    }
+    
+    .detail-item {
+        font-size: 13px;
+    }
+    
+    .detail-label {
+        color: #6b7280;
+        font-weight: 500;
+        margin-bottom: 4px;
+    }
+    
+    .detail-value {
+        color: #1f2937;
+        font-weight: 600;
+    }
+    
+    .quantity-badge {
+        display: inline-block;
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-weight: 700;
+        font-size: 14px;
+    }
+    
+    .quantity-in {
+        background: #d1fae5;
+        color: #065f46;
+    }
+    
+    .quantity-out {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+    
+    .stat-card-audit {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 24px;
+        text-align: center;
+    }
+    
+    .stat-card-audit.success {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    }
+    
+    .stat-card-audit.warning {
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    }
+    
+    .stat-card-audit.info {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Drug Header -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header bg-primary text-white">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h4 class="mb-0">
+                        <i class="bi bi-capsule-pill me-2"></i>{{ drug.name }}
+                        {% if drug.strength %}<small class="text-white-50">{{ drug.strength }}</small>{% endif %}
+                    </h4>
+                    <small class="text-white-50">
+                        {% if drug.generic_name %}{{ drug.generic_name }} · {% endif %}
+                        {{ drug.form|title }}
+                        {% if drug.atc_code %} · ATC: {{ drug.atc_code }}{% endif %}
+                    </small>
+                </div>
+                <a href="{% url 'hospital:drug_detail' drug.pk %}" class="btn btn-light btn-sm">
+                    <i class="bi bi-arrow-left me-1"></i>Back to Drug Details
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Statistics Cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="stat-card-audit info">
+                <div style="font-size: 2rem; font-weight: 800; margin-bottom: 8px;">
+                    {{ total_transferred|default:0|intcomma }}
+                </div>
+                <div style="font-size: 13px; opacity: 0.9;">Total Transferred</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card-audit success">
+                <div style="font-size: 2rem; font-weight: 800; margin-bottom: 8px;">
+                    {{ total_dispensed|default:0|intcomma }}
+                </div>
+                <div style="font-size: 13px; opacity: 0.9;">Total Dispensed</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card-audit warning">
+                <div style="font-size: 2rem; font-weight: 800; margin-bottom: 8px;">
+                    {{ total_adjusted|default:0|intcomma }}
+                </div>
+                <div style="font-size: 13px; opacity: 0.9;">Total Adjusted (Added)</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card-audit">
+                <div style="font-size: 2rem; font-weight: 800; margin-bottom: 8px;">
+                    {% for store, data in current_stock.items %}
+                        {{ data.quantity|intcomma }}{% if not forloop.last %} + {% endif %}
+                    {% empty %}
+                        0
+                    {% endfor %}
+                </div>
+                <div style="font-size: 13px; opacity: 0.9;">Current Stock</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Current Stock by Store -->
+    {% if current_stock %}
+    <div class="card shadow-sm mb-4">
+        <div class="card-header bg-info text-white">
+            <h5 class="mb-0"><i class="bi bi-box-seam me-2"></i>Current Stock Levels by Store</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                {% for store, data in current_stock.items %}
+                <div class="col-md-4 mb-3">
+                    <div class="card border-info">
+                        <div class="card-body">
+                            <h6 class="card-title">{{ store }}</h6>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <div style="font-size: 24px; font-weight: 700; color: var(--primary);">
+                                        {{ data.quantity|intcomma }}
+                                    </div>
+                                    <small class="text-muted">units</small>
+                                </div>
+                                <div class="text-end">
+                                    <div style="font-size: 18px; font-weight: 600; color: var(--success);">
+                                        GHS {{ data.value|floatformat:2|intcomma }}
+                                    </div>
+                                    <small class="text-muted">value</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Filters -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Date From</label>
+                    <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Date To</label>
+                    <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">&nbsp;</label>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="bi bi-filter me-1"></i>Filter
+                        </button>
+                        <a href="{% url 'hospital:drug_audit_trail' drug.pk %}" class="btn btn-outline-secondary">
+                            <i class="bi bi-x-circle"></i>Clear
+                        </a>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Audit Trail Timeline -->
+    <div class="card shadow-sm">
+        <div class="card-header bg-dark text-white">
+            <h5 class="mb-0"><i class="bi bi-clock-history me-2"></i>Complete Audit Trail</h5>
+        </div>
+        <div class="card-body">
+            {% if audit_entries %}
+            <div class="audit-timeline">
+                {% for entry in audit_entries %}
+                <div class="audit-entry {{ entry.type }}">
+                    <div class="entry-header">
+                        <div>
+                            <h6 class="mb-1" style="font-weight: 700;">
+                                {% if entry.type == 'transfer' %}
+                                    <i class="bi bi-arrow-left-right me-2" style="color: #3b82f6;"></i>Store Transfer
+                                {% elif entry.type == 'dispensing' %}
+                                    <i class="bi bi-capsule me-2" style="color: #10b981;"></i>Prescription Dispensing
+                                {% elif entry.type == 'walkin_sale' %}
+                                    <i class="bi bi-cart me-2" style="color: #f59e0b;"></i>Prescribe Sale
+                                {% elif entry.type == 'inventory_transaction' %}
+                                    <i class="bi bi-arrow-repeat me-2" style="color: #8b5cf6;"></i>Inventory Adjustment
+                                {% elif entry.type == 'pharmacy_stock' %}
+                                    <i class="bi bi-box-seam me-2" style="color: #0ea5e9;"></i>Pharmacy Stock Receipt
+                                {% elif entry.type == 'catalog_created' %}
+                                    <i class="bi bi-journal-plus me-2" style="color: #64748b;"></i>Formulary Entry
+                                {% endif %}
+                            </h6>
+                            <p class="mb-0" style="color: #6b7280; font-size: 14px;">{{ entry.description }}</p>
+                        </div>
+                        <div class="text-end">
+                            <span class="entry-type-badge 
+                                {% if entry.type == 'transfer' %}bg-info text-white
+                                {% elif entry.type == 'dispensing' %}bg-success text-white
+                                {% elif entry.type == 'walkin_sale' %}bg-warning text-dark
+                                {% elif entry.type == 'inventory_transaction' %}bg-purple text-white
+                                {% elif entry.type == 'pharmacy_stock' %}bg-info text-white
+                                {% elif entry.type == 'catalog_created' %}bg-secondary text-white
+                                {% endif %}">
+                                {% if entry.type == 'pharmacy_stock' %}Pharmacy stock{% elif entry.type == 'catalog_created' %}Catalog{% else %}{{ entry.type|title }}{% endif %}
+                            </span>
+                            <div class="mt-2">
+                                {% if entry.quantity_type == 'catalog' %}
+                                <span class="quantity-badge" style="background:#e5e7eb;color:#374151;">Formulary</span>
+                                {% else %}
+                                <span class="quantity-badge 
+                                    {% if entry.quantity_type == 'transferred' or entry.quantity_type == 'added' %}quantity-in
+                                    {% else %}quantity-out{% endif %}">
+                                    {% if entry.quantity_type == 'transferred' or entry.quantity_type == 'added' %}+{% else %}-{% endif %}
+                                    {{ entry.quantity|intcomma }}
+                                </span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="entry-details">
+                        <div class="detail-item">
+                            <div class="detail-label">Date & Time</div>
+                            <div class="detail-value">
+                                {{ entry.date|date:"M d, Y" }}<br>
+                                <small class="text-muted">{{ entry.datetime|date:"H:i" }}</small>
+                            </div>
+                        </div>
+                        
+                        <div class="detail-item">
+                            <div class="detail-label">Reference</div>
+                            <div class="detail-value"><code>{{ entry.reference }}</code></div>
+                        </div>
+                        
+                        {% if entry.type == 'transfer' %}
+                            <div class="detail-item">
+                                <div class="detail-label">From Store</div>
+                                <div class="detail-value">{{ entry.store_from }}</div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-label">To Store</div>
+                                <div class="detail-value">{{ entry.store_to }}</div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-label">Requested By</div>
+                                <div class="detail-value">{{ entry.requested_by }}</div>
+                            </div>
+                            {% if entry.approved_by %}
+                            <div class="detail-item">
+                                <div class="detail-label">Approved By</div>
+                                <div class="detail-value">{{ entry.approved_by }}</div>
+                            </div>
+                            {% endif %}
+                            {% if entry.received_by %}
+                            <div class="detail-item">
+                                <div class="detail-label">Received By</div>
+                                <div class="detail-value">{{ entry.received_by }}</div>
+                            </div>
+                            {% endif %}
+                            <div class="detail-item">
+                                <div class="detail-label">Status</div>
+                                <div class="detail-value">
+                                    <span class="badge bg-{% if entry.status == 'Completed' %}success{% elif entry.status == 'Pending' %}warning{% else %}secondary{% endif %}">
+                                        {{ entry.status }}
+                                    </span>
+                                </div>
+                            </div>
+                            {% if entry.unit_cost %}
+                            <div class="detail-item">
+                                <div class="detail-label">Unit Cost</div>
+                                <div class="detail-value">GHS {{ entry.unit_cost|floatformat:2 }}</div>
+                            </div>
+                            {% endif %}
+                        
+                        {% elif entry.type == 'dispensing' %}
+                            <div class="detail-item">
+                                <div class="detail-label">Patient</div>
+                                <div class="detail-value">
+                                    {{ entry.patient_name }}<br>
+                                    <small class="text-muted">MRN: {{ entry.patient_mrn }}</small>
+                                </div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-label">Prescribed By</div>
+                                <div class="detail-value">{{ entry.prescribed_by }}</div>
+                            </div>
+                            {% if entry.dispensed_by %}
+                            <div class="detail-item">
+                                <div class="detail-label">Dispensed By</div>
+                                <div class="detail-value">{{ entry.dispensed_by }}</div>
+                            </div>
+                            {% endif %}
+                            <div class="detail-item">
+                                <div class="detail-label">Status</div>
+                                <div class="detail-value">
+                                    <span class="badge bg-success">{{ entry.status }}</span>
+                                </div>
+                            </div>
+                            {% if entry.payment_receipt %}
+                            <div class="detail-item">
+                                <div class="detail-label">Receipt</div>
+                                <div class="detail-value"><code>{{ entry.payment_receipt }}</code></div>
+                            </div>
+                            {% endif %}
+                        
+                        {% elif entry.type == 'walkin_sale' %}
+                            <div class="detail-item">
+                                <div class="detail-label">Customer</div>
+                                <div class="detail-value">
+                                    {{ entry.customer_name }}<br>
+                                    {% if entry.customer_phone %}<small class="text-muted">{{ entry.customer_phone }}</small>{% endif %}
+                                </div>
+                            </div>
+                            {% if entry.patient_name %}
+                            <div class="detail-item">
+                                <div class="detail-label">Patient</div>
+                                <div class="detail-value">
+                                    {{ entry.patient_name }}<br>
+                                    <small class="text-muted">MRN: {{ entry.patient_mrn }}</small>
+                                </div>
+                            </div>
+                            {% endif %}
+                            {% if entry.served_by %}
+                            <div class="detail-item">
+                                <div class="detail-label">Served By</div>
+                                <div class="detail-value">{{ entry.served_by }}</div>
+                            </div>
+                            {% endif %}
+                            {% if entry.dispensed_by %}
+                            <div class="detail-item">
+                                <div class="detail-label">Dispensed By</div>
+                                <div class="detail-value">{{ entry.dispensed_by }}</div>
+                            </div>
+                            {% endif %}
+                            <div class="detail-item">
+                                <div class="detail-label">Payment Status</div>
+                                <div class="detail-value">
+                                    <span class="badge bg-{% if entry.payment_status == 'Paid' %}success{% else %}warning{% endif %}">
+                                        {{ entry.payment_status }}
+                                    </span>
+                                </div>
+                            </div>
+                            {% if entry.unit_price %}
+                            <div class="detail-item">
+                                <div class="detail-label">Unit Price</div>
+                                <div class="detail-value">GHS {{ entry.unit_price|floatformat:2 }}</div>
+                            </div>
+                            {% endif %}
+                            {% if entry.total_amount %}
+                            <div class="detail-item">
+                                <div class="detail-label">Total Amount</div>
+                                <div class="detail-value">GHS {{ entry.total_amount|floatformat:2 }}</div>
+                            </div>
+                            {% endif %}
+                        
+                        {% elif entry.type == 'inventory_transaction' %}
+                            <div class="detail-item">
+                                <div class="detail-label">Store</div>
+                                <div class="detail-value">{{ entry.store }}</div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-label">Transaction Type</div>
+                                <div class="detail-value">{{ entry.description|truncatewords:5 }}</div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-label">Stock Before</div>
+                                <div class="detail-value">{{ entry.quantity_before|intcomma }}</div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-label">Stock After</div>
+                                <div class="detail-value">{{ entry.quantity_after|intcomma }}</div>
+                            </div>
+                            {% if entry.created_by %}
+                            <div class="detail-item">
+                                <div class="detail-label">Created By</div>
+                                <div class="detail-value">{{ entry.created_by }}</div>
+                            </div>
+                            {% endif %}
+                            {% if entry.unit_cost %}
+                            <div class="detail-item">
+                                <div class="detail-label">Unit Cost</div>
+                                <div class="detail-value">GHS {{ entry.unit_cost|floatformat:2 }}</div>
+                            </div>
+                            {% endif %}
+                        
+                        {% elif entry.type == 'pharmacy_stock' %}
+                            <div class="detail-item">
+                                <div class="detail-label">Location</div>
+                                <div class="detail-value">{{ entry.location }}</div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-label">Batch</div>
+                                <div class="detail-value"><code>{{ entry.batch_number }}</code></div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-label">Expiry</div>
+                                <div class="detail-value">{{ entry.expiry_date|date:"M d, Y" }}</div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-label">Received By</div>
+                                <div class="detail-value">{{ entry.created_by }}</div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-label">Qty on hand (current)</div>
+                                <div class="detail-value">{{ entry.quantity_on_hand|intcomma }}</div>
+                            </div>
+                            {% if entry.initial_quantity %}
+                            <div class="detail-item">
+                                <div class="detail-label">Initial batch qty</div>
+                                <div class="detail-value">{{ entry.initial_quantity|intcomma }}</div>
+                            </div>
+                            {% endif %}
+                            {% if entry.unit_cost %}
+                            <div class="detail-item">
+                                <div class="detail-label">Unit Cost</div>
+                                <div class="detail-value">GHS {{ entry.unit_cost|floatformat:2 }}</div>
+                            </div>
+                            {% endif %}
+                        
+                        {% elif entry.type == 'catalog_created' %}
+                            <div class="detail-item">
+                                <div class="detail-label">Event</div>
+                                <div class="detail-value">New drug record created in the system formulary</div>
+                            </div>
+                        {% endif %}
+                        
+                        {% if entry.notes %}
+                        <div class="detail-item" style="grid-column: 1 / -1;">
+                            <div class="detail-label">Notes</div>
+                            <div class="detail-value" style="font-size: 12px; color: #6b7280;">{{ entry.notes }}</div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            
+            <!-- Pagination -->
+            {% if audit_entries.has_other_pages %}
+            <nav class="mt-4">
+                <ul class="pagination justify-content-center">
+                    {% if audit_entries.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ audit_entries.previous_page_number }}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Previous</a>
+                    </li>
+                    {% endif %}
+                    <li class="page-item disabled">
+                        <span class="page-link">Page {{ audit_entries.number }} of {{ audit_entries.paginator.num_pages }}</span>
+                    </li>
+                    {% if audit_entries.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ audit_entries.next_page_number }}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox" style="font-size: 64px; color: #d1d5db; opacity: 0.5;"></i>
+                <h5 class="mt-3 text-muted">No audit trail entries found</h5>
+                <p class="text-muted">This drug has no recorded movements yet.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

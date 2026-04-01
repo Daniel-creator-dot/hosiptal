@@ -9,6 +9,9 @@ from django.db.models import Q
 
 logger = logging.getLogger(__name__)
 
+# 30% markup for lab and imaging/scan when payer is insurance or corporate
+LAB_IMAGING_INSURANCE_CORPORATE_MARKUP = Decimal('0.30')
+
 
 class PricingEngineService:
     """
@@ -18,16 +21,35 @@ class PricingEngineService:
     
     def __init__(self):
         self.logger = logger
+
+    @staticmethod
+    def _apply_lab_imaging_markup(price, service_code, payer):
+        """Apply 30% markup for lab and imaging/scan when payer is insurance or corporate."""
+        if not price or price <= 0:
+            return price
+        if not payer or getattr(payer, 'payer_type', None) not in ('insurance', 'private', 'nhis', 'corporate'):
+            return price
+        if not service_code:
+            return price
+        code = (getattr(service_code, 'code', None) or '').strip().upper()
+        category = (getattr(service_code, 'category', None) or '').lower()
+        is_lab = code.startswith('LAB-') or 'laboratory' in category or 'lab' in category
+        is_imaging = code.startswith('IMG-') or 'imaging' in category or 'radiology' in category or 'scan' in category
+        if not (is_lab or is_imaging):
+            return price
+        return (price * (1 + LAB_IMAGING_INSURANCE_CORPORATE_MARKUP)).quantize(Decimal('0.01'))
     
     def get_service_price(self, service_code, patient, payer=None):
         """
         Get correct price for service based on patient's payer type
         
         Priority Order:
-        1. Payer-specific custom price (if corporate/insurance has special contract)
+        1. Insurance-specific pricing (if patient has insurance with specific company)
         2. Corporate pricing (if patient is corporate employee)
-        3. Insurance pricing (if patient has insurance)
+        3. General insurance pricing (if patient has insurance)
         4. Cash pricing (default)
+        
+        Uses the flexible pricing system (ServicePrice + PricingCategory)
         
         Args:
             service_code: ServiceCode object
@@ -38,88 +60,163 @@ class PricingEngineService:
             Decimal: Price to charge
         """
         try:
-            from hospital.models_enterprise_billing import ServicePricing, CorporateEmployee
+            from hospital.models_flexible_pricing import ServicePrice, PricingCategory
+            from hospital.models_insurance_companies import InsuranceCompany
+            from hospital.models_enterprise_billing import CorporateEmployee
             
             # Auto-detect payer if not provided
             if not payer:
                 payer = patient.primary_insurance
             
-            # Check if patient is corporate employee
-            corporate_enrollment = self._get_corporate_enrollment(patient)
-            
             # Get pricing record
             today = timezone.now().date()
             
-            # Priority 1: Payer-specific custom price
-            if payer:
-                custom_pricing = ServicePricing.objects.filter(
-                    service_code=service_code,
-                    payer=payer,
+            # Treat private and NHIS as insurance for pricing (see Payer.INSURANCE_PAYER_TYPES)
+            is_insurance_payer = payer and payer.payer_type in ('insurance', 'private', 'nhis')
+            
+            # Priority 1: Insurance-specific pricing (if patient has specific insurance company)
+            if is_insurance_payer:
+                # Find InsuranceCompany from Payer name
+                insurance_company = InsuranceCompany.objects.filter(
+                    name__iexact=payer.name,
                     is_active=True,
-                    effective_from__lte=today
-                ).filter(
-                    Q(effective_to__isnull=True) | Q(effective_to__gte=today)
+                    is_deleted=False
                 ).first()
                 
-                if custom_pricing and custom_pricing.custom_price:
-                    self.logger.info(
-                        f"Using custom price for {service_code.description}: "
-                        f"GHS {custom_pricing.custom_price} (Payer: {payer.name})"
-                    )
-                    return custom_pricing.custom_price
+                if insurance_company:
+                    # Find PricingCategory linked to this insurance company
+                    pricing_category = PricingCategory.objects.filter(
+                        insurance_company=insurance_company,
+                        category_type='insurance',
+                        is_active=True,
+                        is_deleted=False
+                    ).first()
+                    
+                    if pricing_category:
+                        # Get ServicePrice for this specific insurance
+                        service_price = ServicePrice.get_price(service_code, pricing_category, today)
+                        if service_price:
+                            final = self._apply_lab_imaging_markup(service_price, service_code, payer)
+                            self.logger.info(
+                                f"Using {insurance_company.name} price for {service_code.description}: "
+                                f"GHS {final}"
+                            )
+                            return final
             
-            # Get standard pricing tiers
-            standard_pricing = ServicePricing.objects.filter(
-                service_code=service_code,
-                payer__isnull=True,  # Standard pricing, not payer-specific
-                is_active=True,
-                effective_from__lte=today
-            ).filter(
-                Q(effective_to__isnull=True) | Q(effective_to__gte=today)
-            ).first()
-            
-            if not standard_pricing:
-                # Fallback to a default price
-                self.logger.warning(
-                    f"No pricing record found for {service_code.description}, "
-                    f"using default fallback price GHS 0.00"
-                )
-                return Decimal('0.00')
-            
-            # Priority 2: Corporate pricing (if enrolled)
+            # Priority 2: Corporate pricing (if patient is corporate employee)
+            corporate_enrollment = self._get_corporate_enrollment(patient)
             if corporate_enrollment and corporate_enrollment.is_active:
-                price = standard_pricing.corporate_price
+                # Find corporate pricing category
+                corporate_category = PricingCategory.objects.filter(
+                    category_type='corporate',
+                    is_active=True,
+                    is_deleted=False
+                ).order_by('priority').first()
                 
-                # Apply corporate-specific discount
-                corporate_account = corporate_enrollment.corporate_account
-                if corporate_account.global_discount_percentage > 0:
-                    discount = price * (corporate_account.global_discount_percentage / 100)
-                    price = price - discount
-                    self.logger.info(
-                        f"Applied {corporate_account.global_discount_percentage}% "
-                        f"corporate discount for {corporate_account.company_name}"
-                    )
-                
-                self.logger.info(
-                    f"Using corporate price for {service_code.description}: GHS {price} "
-                    f"(Company: {corporate_account.company_name})"
-                )
-                return price
+                if corporate_category:
+                    service_price = ServicePrice.get_price(service_code, corporate_category, today)
+                    if service_price:
+                        final = self._apply_lab_imaging_markup(service_price, service_code, payer)
+                        self.logger.info(
+                            f"Using corporate price for {service_code.description}: GHS {final} "
+                            f"(Company: {corporate_enrollment.corporate_account.company_name})"
+                        )
+                        return final
             
-            # Priority 3: Insurance pricing (if patient has insurance)
-            if payer and payer.payer_type == 'insurance':
-                price = standard_pricing.insurance_price
-                self.logger.info(
-                    f"Using insurance price for {service_code.description}: GHS {price}"
-                )
-                return price
+            # Priority 3: General insurance pricing (if patient has insurance but no specific company match)
+            if is_insurance_payer:
+                # Try general insurance category
+                insurance_category = PricingCategory.objects.filter(
+                    category_type='insurance',
+                    is_active=True,
+                    is_deleted=False
+                ).exclude(name__icontains='cash').exclude(name__icontains='other company').order_by('priority').first()
+                
+                if insurance_category:
+                    service_price = ServicePrice.get_price(service_code, insurance_category, today)
+                    if service_price:
+                        final = self._apply_lab_imaging_markup(service_price, service_code, payer)
+                        self.logger.info(
+                            f"Using general insurance price for {service_code.description}: GHS {final}"
+                        )
+                        return final
             
             # Priority 4: Cash pricing (default)
-            price = standard_pricing.cash_price
-            self.logger.info(
-                f"Using cash price for {service_code.description}: GHS {price}"
+            cash_category = PricingCategory.objects.filter(
+                category_type='cash',
+                is_active=True,
+                is_deleted=False
+            ).order_by('priority').first()
+            
+            if cash_category:
+                service_price = ServicePrice.get_price(service_code, cash_category, today)
+                if service_price:
+                    final = self._apply_lab_imaging_markup(service_price, service_code, payer)
+                    self.logger.info(
+                        f"Using cash price for {service_code.description}: GHS {final}"
+                    )
+                    return final
+            
+            # Priority 5: Fallback to ServicePricing (enterprise billing) so all insurance/cash/corporate prices sync
+            from hospital.models import ServiceCode
+            from hospital.models_enterprise_billing import ServicePricing
+            
+            # Build list of service codes to try (consultation CON001/CON002 and S00023 are interchangeable)
+            service_codes_to_try = []
+            if service_code:
+                service_codes_to_try.append(service_code)
+                if service_code.code in ('CON001', 'CON002'):
+                    alt = ServiceCode.objects.filter(code='S00023', is_deleted=False).first()
+                    if alt and alt not in service_codes_to_try:
+                        service_codes_to_try.append(alt)
+                elif service_code.code == 'S00023':
+                    alt = ServiceCode.objects.filter(code='CON001', is_deleted=False).first()
+                    if alt and alt not in service_codes_to_try:
+                        service_codes_to_try.append(alt)
+            
+            for sc in service_codes_to_try:
+                pricing_qs = ServicePricing.objects.filter(
+                    service_code=sc,
+                    is_active=True,
+                    effective_from__lte=today,
+                    is_deleted=False
+                ).filter(Q(effective_to__isnull=True) | Q(effective_to__gte=today))
+                pricing = None
+                if payer:
+                    pricing = pricing_qs.filter(payer=payer).first()
+                if not pricing:
+                    pricing = pricing_qs.filter(payer__isnull=True).first()
+                if not pricing:
+                    pricing = pricing_qs.first()
+                if pricing:
+                    if is_insurance_payer and getattr(pricing, 'insurance_price', None) and Decimal(str(pricing.insurance_price)) > 0:
+                        p = Decimal(str(pricing.insurance_price))
+                        final = self._apply_lab_imaging_markup(p, sc, payer)
+                        self.logger.info(f"Using ServicePricing insurance price for {sc.description}: GHS {final}")
+                        return final
+                    if payer and payer.payer_type == 'corporate' and getattr(pricing, 'corporate_price', None) and Decimal(str(pricing.corporate_price)) > 0:
+                        p = Decimal(str(pricing.corporate_price))
+                        final = self._apply_lab_imaging_markup(p, sc, payer)
+                        self.logger.info(f"Using ServicePricing corporate price for {sc.description}: GHS {final}")
+                        return final
+                    if (not payer or payer.payer_type == 'cash') and getattr(pricing, 'cash_price', None) and Decimal(str(pricing.cash_price)) > 0:
+                        p = Decimal(str(pricing.cash_price))
+                        final = self._apply_lab_imaging_markup(p, sc, payer)
+                        self.logger.info(f"Using ServicePricing cash price for {sc.description}: GHS {final}")
+                        return final
+                    if is_insurance_payer and getattr(pricing, 'insurance_price', None) and Decimal(str(pricing.insurance_price)) > 0:
+                        return self._apply_lab_imaging_markup(Decimal(str(pricing.insurance_price)), sc, payer)
+                    if getattr(pricing, 'corporate_price', None) and Decimal(str(pricing.corporate_price)) > 0:
+                        return self._apply_lab_imaging_markup(Decimal(str(pricing.corporate_price)), sc, payer)
+                    if getattr(pricing, 'cash_price', None) and Decimal(str(pricing.cash_price)) > 0:
+                        return self._apply_lab_imaging_markup(Decimal(str(pricing.cash_price)), sc, payer)
+            
+            # Final fallback
+            self.logger.warning(
+                f"No pricing record found for {service_code.description if service_code else 'service'}, "
+                f"using default fallback price GHS 0.00"
             )
-            return price
+            return self._apply_lab_imaging_markup(Decimal('0.00'), service_code, payer)
             
         except Exception as e:
             self.logger.error(f"Error getting service price: {str(e)}", exc_info=True)
@@ -295,12 +392,12 @@ class PricingEngineService:
                 }
             else:
                 return {
-                    'cash_price': service_code.default_price or Decimal('0.00'),
+                    'cash_price': Decimal('0.00'),
                     'corporate_price': None,
                     'insurance_price': None,
                     'effective_from': None,
                     'effective_to': None,
-                    'note': 'No pricing tiers configured, using default price'
+                    'note': 'No pricing tiers configured; run seed_general_prices'
                 }
                 
         except Exception as e:

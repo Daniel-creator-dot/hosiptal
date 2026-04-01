@@ -1,15 +1,23 @@
 {% extends 'hospital/base.html' %}
-{% load static humanize %}
+{% load static humanize hospital_extras %}
 
 {% block title %}{{ title }}{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
     <!-- Header -->
-    <div class="card shadow-sm mb-4" style="background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%); color: white;">
+    <div class="card shadow-sm mb-4 encounter-overview-gradient">
         <div class="card-body p-4">
             <h3 class="mb-2"><i class="bi bi-clipboard2-pulse me-2"></i>My Consultations</h3>
-            <p class="mb-0">Review all your consultation records and patient interactions</p>
+            <p class="mb-0">
+                {% if show_all_doctors %}
+                    Viewing <strong>all consultations</strong> from all doctors.
+                {% elif selected_provider %}
+                    Viewing consultations for <strong>{{ selected_provider.user.get_full_name|default:selected_provider.employee_id }}</strong>. You can consult their patients from the list below.
+                {% else %}
+                    Review all your consultation records and patient interactions
+                {% endif %}
+            </p>
         </div>
     </div>
 
@@ -81,35 +89,156 @@
     <div class="card shadow-sm mb-4">
         <div class="card-body">
             <form method="get" class="row g-3">
-                <div class="col-md-3">
+                <div class="col-md-2">
+                    <label class="form-label">Health Service Provider <span class="text-muted">({{ providers|length }})</span></label>
+                    <select name="provider" class="form-select" title="Select doctor" aria-label="Select doctor">
+                        <optgroup label="View">
+                            <option value="all" {% if show_all_doctors %}selected{% endif %}>All doctors</option>
+                            <option value="" {% if not show_all_doctors and not selected_provider_id %}selected{% endif %}>My consultations</option>
+                        </optgroup>
+                        <optgroup label="By doctor">
+                        {% for p in providers %}
+                            <option value="{{ p.id }}" {% if selected_provider_id == p.id %}selected{% endif %}>
+                                {{ p.user.get_full_name|default:p.employee_id|default:p.user.username }}
+                            </option>
+                        {% endfor %}
+                        </optgroup>
+                    </select>
+                </div>
+                <div class="col-md-2">
                     <label class="form-label">Status</label>
-                    <select name="status" class="form-select" onchange="this.form.submit()">
+                    <select name="status" class="form-select" title="Select option" aria-label="Select option">
                         <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All Status</option>
                         <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Active</option>
                         <option value="completed" {% if status_filter == 'completed' %}selected{% endif %}>Completed</option>
                         <option value="cancelled" {% if status_filter == 'cancelled' %}selected{% endif %}>Cancelled</option>
                     </select>
                 </div>
-                <div class="col-md-3">
-                    <label class="form-label">Date Range</label>
-                    <select name="date" class="form-select" onchange="this.form.submit()">
+                <div class="col-md-2">
+                    <label class="form-label">Date preset</label>
+                    <select name="date" class="form-select" title="Select option" aria-label="Select option">
                         <option value="all" {% if date_filter == 'all' %}selected{% endif %}>All Time</option>
                         <option value="today" {% if date_filter == 'today' %}selected{% endif %}>Today</option>
                         <option value="week" {% if date_filter == 'week' %}selected{% endif %}>Past Week</option>
                         <option value="month" {% if date_filter == 'month' %}selected{% endif %}>Past Month</option>
                     </select>
                 </div>
-                <div class="col-md-6">
+                <div class="col-md-2">
+                    <label class="form-label">From Date</label>
+                    <input type="date" name="date_from" class="form-control" value="{{ date_from }}" title="From date">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">To Date</label>
+                    <input type="date" name="date_to" class="form-control" value="{{ date_to }}" title="To date">
+                </div>
+                <div class="col-md-4">
                     <label class="form-label">Search Patient</label>
                     <div class="input-group">
                         <input type="text" name="search" class="form-control" placeholder="Name, MRN, complaint, diagnosis..."
-                               value="{{ search }}">
+                               value="{{ search }}" title="Enter text">
                         <button class="btn btn-primary" type="submit">
-                            <i class="bi bi-search"></i> Search
+                            <i class="bi bi-search"></i> Apply
                         </button>
                     </div>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Queue calling (replaces using the separate doctor queue console for calls) -->
+    <div class="card shadow-sm mb-4" id="consultations-queue-panel">
+        <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2 justify-content-between">
+            <div>
+                <h5 class="mb-0"><i class="bi bi-megaphone me-2 text-warning"></i>Call patients (queue)</h5>
+                <small class="text-muted">Call next or call a specific ticket; announcements use the same queue display as before. Set room # for voice and boards.</small>
+            </div>
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                {% if current_room_assignment %}
+                <span class="badge bg-success"><i class="bi bi-door-open me-1"></i>Room {{ current_room_assignment.room.room_number }}{% if current_room_assignment.room.room_name %} ({{ current_room_assignment.room.room_name }}){% endif %}</span>
+                {% endif %}
+                <a href="{% url 'hospital:doctor_room_selection' %}" class="btn btn-sm btn-outline-primary"><i class="bi bi-door-open me-1"></i>Room</a>
+                {% if queue_departments %}
+                <label class="visually-hidden" for="consultationsQueueDepartment">Department for call next</label>
+                <select id="consultationsQueueDepartment" class="form-select form-select-sm" style="max-width: 220px;" title="Department for call next">
+                    {% for dept in queue_departments %}
+                    <option value="{{ dept.id }}" {% if queue_department and dept.id == queue_department.id %}selected{% endif %}>{{ dept.name }}</option>
+                    {% endfor %}
+                </select>
+                {% endif %}
+                <label class="visually-hidden" for="consultationsRoomNumber">Room number</label>
+                <input type="text" id="consultationsRoomNumber" class="form-control form-control-sm" placeholder="Room #" style="width: 100px;" title="Announced on queue display" autocomplete="off">
+                <button type="button" id="consultationsCallNextBtn" class="btn btn-sm btn-primary"><i class="bi bi-telephone-forward me-1"></i>Call next</button>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="row g-4">
+                <div class="col-lg-7">
+                    <h6 class="text-muted text-uppercase small mb-3">Assigned to me today</h6>
+                    {% if queue_assigned_entries %}
+                        {% for entry in queue_assigned_entries %}
+                        <div class="border rounded p-3 mb-3">
+                            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+                                <div>
+                                    <strong>{{ entry.display_ticket_number }} · {{ entry.patient.full_name }}</strong>
+                                    <div class="small text-muted">{{ entry.get_priority_display }} · {{ entry.get_status_display }}{% if entry.room_number %} · <i class="bi bi-door-open"></i> Room {{ entry.room_number }}{% endif %}</div>
+                                </div>
+                                <div class="d-flex gap-1 flex-wrap">
+                                    {% if entry.encounter %}
+                                    <a href="{% url 'hospital:consultation_view' entry.encounter.pk %}" class="btn btn-success btn-sm"><i class="bi bi-stethoscope me-1"></i>Consultation</a>
+                                    {% endif %}
+                                    <button type="button"
+                                            class="btn btn-outline-warning btn-sm consultation-call-patient"
+                                            title="{% if entry.status == 'checked_in' or entry.status == 'called' %}Call patient via queue display{% else %}Announce on this device{% endif %}"
+                                            data-can-api="{% if entry.status == 'checked_in' or entry.status == 'called' %}1{% else %}0{% endif %}"
+                                            data-ticket="{{ entry.display_ticket_number }}"
+                                            data-name="{{ entry.patient.full_name }}"
+                                            data-doctor="{{ entry.get_display_clinician_name|default:'' }}"
+                                            {% if entry.status == 'checked_in' or entry.status == 'called' %}data-call-url="{% url 'hospital:queue_call_specific' queue_id=entry.pk %}"{% endif %}>
+                                        <i class="bi bi-megaphone" aria-hidden="true"></i> Call
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted mb-0 small">No queue entries assigned to you for today.</p>
+                    {% endif %}
+                </div>
+                <div class="col-lg-5">
+                    <h6 class="text-muted text-uppercase small mb-3">Waiting — checked in (all departments)</h6>
+                    <p class="small text-muted mb-2">Call next uses this list first for <strong>{% if queue_department %}{{ queue_department.name }}{% else %}your department{% endif %}</strong>, then other departments. Tickets under you that already say <strong>Called</strong> are not here — use the yellow <strong>Call</strong> button on that row to announce again.</p>
+                    {% if queue_unassigned_entries %}
+                        <ul class="list-group list-group-flush border rounded">
+                            {% for entry in queue_unassigned_entries %}
+                            <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
+                                <div>
+                                    <strong>{{ entry.display_ticket_number }}</strong>
+                                    {% if entry.department %}<span class="badge bg-secondary ms-1">{{ entry.department.name }}</span>{% else %}<span class="badge bg-light text-dark border ms-1">No dept</span>{% endif %}
+                                    <div class="small text-muted">{{ entry.patient.full_name }}</div>
+                                </div>
+                                <div class="d-flex gap-1">
+                                    {% if entry.encounter %}
+                                    <a href="{% url 'hospital:consultation_view' entry.encounter.pk %}" class="btn btn-sm btn-success">Consult</a>
+                                    {% endif %}
+                                    <button type="button"
+                                            class="btn btn-sm btn-outline-warning consultation-call-patient"
+                                            title="Call patient via queue display"
+                                            data-can-api="1"
+                                            data-ticket="{{ entry.display_ticket_number }}"
+                                            data-name="{{ entry.patient.full_name }}"
+                                            data-doctor="{{ entry.get_display_clinician_name|default:'' }}"
+                                            data-call-url="{% url 'hospital:queue_call_specific' queue_id=entry.pk %}">
+                                        <i class="bi bi-megaphone"></i> Call
+                                    </button>
+                                </div>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p class="text-muted mb-0 small">No unassigned patients waiting.</p>
+                    {% endif %}
+                </div>
+            </div>
         </div>
     </div>
 
@@ -163,22 +292,44 @@
                                     {% endif %}
                                 </td>
                                 <td>
-                                    <div class="btn-group btn-group-sm">
+                                    {% with call=call_patient_by_encounter|get_item:encounter.pk %}
+                                    <div class="btn-group btn-group-sm" role="group">
                                         <a href="{% url 'hospital:encounter_full_record' encounter.pk %}" 
                                            class="btn btn-outline-primary" title="View Record">
                                             <i class="bi bi-file-medical"></i>
                                         </a>
                                         {% if encounter.status == 'active' %}
-                                            <a href="{% url 'hospital:consultation_view' encounter.pk %}" 
-                                               class="btn btn-primary" title="Continue">
-                                                <i class="bi bi-arrow-right-circle"></i>
+                                            <a href="{% url 'hospital:consultation_view' encounter.pk %}" class="btn btn-primary btn-sm" title="Continue consultation">
+                                                <i class="bi bi-journal-medical" aria-hidden="true"></i>
                                             </a>
+                                        {% elif encounter.can_reopen_consultation %}
+                                            <a href="{% url 'hospital:consultation_view' encounter.pk %}" class="btn btn-info btn-sm" title="Re-open consultation">
+                                                <i class="bi bi-journal-medical" aria-hidden="true"></i>
+                                            </a>
+                                        {% else %}
+                                            <a href="{% url 'hospital:consultation_view' encounter.pk %}" class="btn btn-outline-info btn-sm" title="View consultation (read-only)">
+                                                <i class="bi bi-journal-medical" aria-hidden="true"></i>
+                                            </a>
+                                        {% endif %}
+                                        {% if encounter.status == 'active' or call and call.can_api_call %}
+                                        <button type="button"
+                                                class="btn btn-outline-warning btn-sm consultation-call-patient"
+                                                title="{% if call and call.can_api_call %}Call patient: announce on queue display{% else %}Announce ticket and name on this device{% endif %}"
+                                                data-queue-id="{% if call %}{{ call.queue_id }}{% endif %}"
+                                                data-can-api="{% if call and call.can_api_call %}1{% else %}0{% endif %}"
+                                                data-ticket="{% if call %}{{ call.display_ticket }}{% else %}{{ encounter.patient.mrn|default:'' }}{% endif %}"
+                                                data-name="{{ encounter.patient.full_name }}"
+                                                data-doctor="{% if encounter.provider and encounter.provider.user %}{{ encounter.provider.user.get_full_name }}{% endif %}"
+                                                {% if call and call.queue_id and call.can_api_call %}data-call-url="{% url 'hospital:queue_call_specific' queue_id=call.queue_id %}"{% endif %}>
+                                            <i class="bi bi-megaphone" aria-hidden="true"></i><span class="visually-hidden">Call patient</span>
+                                        </button>
                                         {% endif %}
                                         <a href="{% url 'hospital:patient_detail' encounter.patient.pk %}" 
                                            class="btn btn-outline-secondary" title="Patient Profile">
                                             <i class="bi bi-person"></i>
                                         </a>
                                     </div>
+                                    {% endwith %}
                                 </td>
                             </tr>
                             {% endfor %}
@@ -194,6 +345,196 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    var callNextUrl = "{% url 'hospital:queue_call_next' %}";
+
+    function getCookie(name) {
+        var cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            var cookies = document.cookie.split(';');
+            for (var i = 0; i < cookies.length; i++) {
+                var cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    function getCsrfToken() {
+        var meta = document.querySelector('meta[name="csrf-token"]');
+        if (meta && meta.getAttribute('content')) {
+            return meta.getAttribute('content');
+        }
+        return getCookie('csrftoken') || '';
+    }
+
+    function getQueueExtraPayload() {
+        var roomEl = document.getElementById('consultationsRoomNumber');
+        var deptEl = document.getElementById('consultationsQueueDepartment');
+        var o = {};
+        if (roomEl && roomEl.value.trim()) o.room_number = roomEl.value.trim();
+        if (deptEl && deptEl.value) o.department = deptEl.value;
+        return o;
+    }
+
+    function speakCallPatient(ticket, name, doctorName, roomOverride) {
+        if (!window.speechSynthesis) return;
+        var q = (ticket || '').toString().trim().replace(/-/g, ' ');
+        var n = (name || '').toString().trim();
+        var roomEl = document.getElementById('consultationsRoomNumber');
+        var room = (roomOverride || (roomEl && roomEl.value.trim()) || '').trim();
+        var doc = (doctorName || '').trim();
+        var msg = '';
+        if (n) {
+            msg = n + ', ticket number ' + (q || 'unknown') + ', please head towards ';
+        } else {
+            msg = 'Ticket number ' + (q || 'unknown') + ', please head towards ';
+        }
+        if (room) {
+            msg += 'consultation room ' + room + '.';
+        } else {
+            msg += 'the consultation room.';
+        }
+        if (doc) {
+            msg += /^dr\.?\s/i.test(doc) ? ' ' + doc + ' will see you now.' : ' Doctor ' + doc + ' will see you now.';
+        }
+        var u = new SpeechSynthesisUtterance(msg);
+        u.rate = 0.88;
+        u.lang = 'en-US';
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(u);
+    }
+
+    function speakCallPatientFromApiEntry(en) {
+        if (!en || typeof en !== 'object') return;
+        speakCallPatient(
+            en.queue_number || '',
+            en.patient || '',
+            en.assigned_doctor || '',
+            en.room_number || ''
+        );
+    }
+
+    document.addEventListener('click', function (e) {
+        var btn = e.target.closest('.consultation-call-patient');
+        if (!btn) return;
+        e.preventDefault();
+        var canApi = btn.getAttribute('data-can-api') === '1';
+        var callUrl = btn.getAttribute('data-call-url') || '';
+        var ticket = btn.getAttribute('data-ticket') || '';
+        var name = btn.getAttribute('data-name') || '';
+        var doctorName = btn.getAttribute('data-doctor') || '';
+        var payload = getQueueExtraPayload();
+        if (canApi && callUrl) {
+            fetch(callUrl, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCsrfToken(),
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            })
+                .then(function (res) {
+                    return res.text().then(function (text) {
+                        try {
+                            return { ok: res.ok, status: res.status, data: JSON.parse(text) };
+                        } catch (e) {
+                            return {
+                                ok: res.ok,
+                                status: res.status,
+                                data: { success: false, message: 'Server error (' + res.status + '). Refresh and try again.' }
+                            };
+                        }
+                    });
+                })
+                .then(function (result) {
+                    if (result.data && result.data.success) {
+                        var en = result.data.entry || {};
+                        speakCallPatientFromApiEntry(en);
+                        alert('Waiting-room display updated. Patients should hear the announcement on the queue screen (and it was played here as a check). Ticket ' + (en.queue_number || '') + (en.patient ? ' — ' + en.patient : '') + '.');
+                        return;
+                    }
+                    speakCallPatient(ticket, name, doctorName, '');
+                    var msg = (result.data && result.data.message) ? result.data.message : 'Queue call did not complete; played announcement on this device only.';
+                    alert(msg);
+                })
+                .catch(function () {
+                    speakCallPatient(ticket, name, doctorName, '');
+                    alert('Request failed; played announcement on this device only.');
+                });
+        } else {
+            speakCallPatient(ticket, name, doctorName, '');
+        }
+    });
+
+    document.addEventListener('DOMContentLoaded', function () {
+        var roomInput = document.getElementById('consultationsRoomNumber');
+        {% if current_room_assignment %}
+        if (roomInput) roomInput.value = '{{ current_room_assignment.room.room_number|escapejs }}';
+        {% endif %}
+        var callNextBtn = document.getElementById('consultationsCallNextBtn');
+        if (!callNextBtn || !callNextUrl) return;
+        callNextBtn.addEventListener('click', function () {
+            callNextBtn.disabled = true;
+            var body = getQueueExtraPayload();
+            fetch(callNextUrl, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCsrfToken(),
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify(body)
+            })
+                .then(function (res) {
+                    return res.text().then(function (text) {
+                        try {
+                            return { ok: res.ok, data: JSON.parse(text) };
+                        } catch (e) {
+                            return { ok: res.ok, data: { success: false, message: 'Invalid server response (' + res.status + '). Try refreshing the page.' } };
+                        }
+                    });
+                })
+                .then(function (result) {
+                    var d = result.data || {};
+                    if (d.success) {
+                        var en = d.entry || {};
+                        var line = (en.queue_number || en.patient)
+                            ? ('Called: ticket ' + (en.queue_number || '') + (en.patient ? ' — ' + en.patient : '') + '.')
+                            : ((d.message || 'Next patient called.') + '');
+                        speakCallPatientFromApiEntry(en);
+                        alert(line + ' Waiting-room display will update in a moment.');
+                        window.setTimeout(function () { window.location.reload(); }, 900);
+                    } else if (d.error === 'queue_empty') {
+                        alert(d.message || 'No checked-in patients left to call next.');
+                    } else if (d.error === 'department_required') {
+                        alert(d.message || 'Department is required.');
+                    } else {
+                        alert(d.message || 'Could not call next.');
+                    }
+                })
+                .catch(function () {
+                    alert('Unable to call next. Check your connection and try again.');
+                })
+                .finally(function () {
+                    callNextBtn.disabled = false;
+                });
+        });
+    });
+})();
+</script>
 {% endblock %}
 
 

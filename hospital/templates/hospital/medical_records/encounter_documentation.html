@@ -25,20 +25,25 @@
                 </div>
                 <div class="card-body">
                     {% if clinical_notes %}
+                        <p class="small text-muted mb-2">{{ clinical_notes|length }} note{{ clinical_notes|length|pluralize }} on record.</p>
                         {% for note in clinical_notes %}
-                        <div class="mb-3">
-                            <div class="d-flex justify-content-between">
-                                <strong>{{ note.get_note_type_display|default:"Note" }}</strong>
-                                <small class="text-muted">{{ note.created|naturaltime }}</small>
+                        <div class="mb-3 pb-3 {% if not forloop.last %}border-bottom{% endif %}">
+                            <div class="d-flex justify-content-between flex-wrap gap-1">
+                                <strong>
+                                    <span class="badge bg-secondary">{{ note.get_note_type_display|default:"Note" }}</span>
+                                    {% if note.created_by and note.created_by.user %}
+                                        <span class="text-muted fw-normal ms-1">· {{ note.created_by.user.get_full_name|default:note.created_by.user.username }}</span>
+                                    {% endif %}
+                                </strong>
+                                <small class="text-muted">{{ note.created|date:"M d, Y H:i" }}</small>
                             </div>
-                            <p class="mb-0">{{ note.notes|default:note.subjective|linebreaks }}</p>
+                            <p class="mb-0 mt-1">{{ note.notes|default:note.subjective|linebreaks }}</p>
+                            {% if note.assessment %}<p class="mb-0 small text-muted"><strong>Assessment:</strong> {{ note.assessment }}</p>{% endif %}
+                            {% if note.plan %}<p class="mb-0 small text-muted"><strong>Plan:</strong> {{ note.plan }}</p>{% endif %}
                         </div>
-                        {% if not forloop.last %}
-                        <hr>
-                        {% endif %}
                         {% endfor %}
                     {% else %}
-                        <em class="text-muted">No notes recorded yet.</em>
+                        <em class="text-muted">No notes recorded yet. Use <strong>Add note to record</strong> in the right column to add one.</em>
                     {% endif %}
                 </div>
             </div>
@@ -82,12 +87,23 @@
                     <ul class="list-group mb-3">
                         {% for lab in lab_tests %}
                         <li class="list-group-item">
-                            <div class="d-flex justify-content-between">
-                                <span>{{ lab.test.name }}</span>
-                                <small class="text-muted">{{ lab.created|date:"M d, Y H:i" }}</small>
+                            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                                <div class="flex-grow-1">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <strong>{{ lab.test.name }}</strong>
+                                        <small class="text-muted">{{ lab.created|date:"M d, Y H:i" }}</small>
+                                    </div>
+                                    <div class="mb-1" style="font-size: 1.1rem;">
+                                        Result: <strong class="{% if lab.is_abnormal %}text-danger{% endif %}">{{ lab.value|default:lab.qualitative_result|default:"Pending" }}</strong>
+                                        {% if lab.units %}{{ lab.units }}{% endif %}
+                                        {% if lab.is_abnormal %}<i class="bi bi-exclamation-triangle text-danger ms-1"></i>{% endif %}
+                                    </div>
+                                    <small>Status: {{ lab.get_status_display }}</small>
+                                </div>
+                                <a href="{% url 'hospital:print_lab_report' lab.id %}" target="_blank" class="btn btn-sm btn-outline-primary" title="View full lab report">
+                                    <i class="bi bi-file-earmark-medical"></i> View Report
+                                </a>
                             </div>
-                            <div>Result: <strong>{{ lab.value }}</strong> {{ lab.units }}</div>
-                            <small>Status: {{ lab.get_status_display }}</small>
                         </li>
                         {% empty %}
                         <li class="list-group-item text-muted">No lab results recorded.</li>
@@ -162,6 +178,41 @@
                     {% endif %}
                 </div>
             </div>
+
+            {% if encounter_documents %}
+            <div class="card mb-4">
+                <div class="card-header bg-light">
+                    <strong><i class="bi bi-person-plus me-1"></i> Documents & Images from Patient / This Visit</strong>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-3">Uploaded documents and images linked to this encounter. Doctors can view and download.</p>
+                    <div class="row g-3">
+                        {% for doc in encounter_documents %}
+                        <div class="col-md-6 col-lg-4">
+                            <div class="border rounded p-3 h-100">
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <strong class="text-break">{{ doc.title }}</strong>
+                                    <span class="badge bg-secondary">{{ doc.get_document_type_display }}</span>
+                                </div>
+                                <small class="text-muted d-block mb-2">
+                                    {% if doc.uploaded_by %}{{ doc.uploaded_by.user.get_full_name|default:doc.uploaded_by.user.username }}{% else %}Patient / Visit{% endif %} · {{ doc.created|date:"M d, Y" }}
+                                </small>
+                                {% if doc.file and doc.file_type and "image" in doc.file_type %}
+                                <div class="mb-2">
+                                    <img src="{{ doc.file.url }}" alt="{{ doc.title }}" class="img-fluid rounded" style="max-height: 160px; object-fit: contain;">
+                                </div>
+                                {% endif %}
+                                <div class="d-flex gap-2">
+                                    <a href="{{ doc.file.url }}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="bi bi-eye"></i> View</a>
+                                    <a href="{{ doc.file.url }}" download class="btn btn-sm btn-outline-primary"><i class="bi bi-download"></i> Download</a>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
         </div>
 
         <div class="col-lg-4">
@@ -195,14 +246,18 @@
                     <strong>Actions</strong>
                 </div>
                 <div class="card-body">
-                    <form method="post">
+                    <p class="small text-muted mb-3">Add a note to this encounter record. It will appear in Clinical Notes above and on the patient's profile and records.</p>
+                    <form method="post" action="">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="clinical_note">
+                        <input type="hidden" name="note_type" value="progress">
                         <div class="mb-3">
-                            <label class="form-label">Add Quick Note</label>
-                            <textarea class="form-control" name="notes" rows="3" placeholder="SOAP note..."></textarea>
+                            <label class="form-label">Add note to record</label>
+                            <textarea class="form-control" name="notes" rows="4" placeholder="Enter your note (e.g. SOAP, progress, observations)..." required></textarea>
                         </div>
-                        <button class="btn btn-primary w-100">Save Note</button>
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="bi bi-plus-circle me-1"></i>Save Note
+                        </button>
                     </form>
                 </div>
             </div>

@@ -1,0 +1,858 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Procedure & Consumables Billing{% endblock %}
+{% block page_title %}Procedure & Consumables Billing{% endblock %}
+{% block page_subtitle %}Select patient, add consumables (procedure optional), and bill to cash/insurance/corporate{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Step 1: Patient Selection -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0"><i class="bi bi-person-search me-2"></i>Step 1: Select Patient</h5>
+        </div>
+        <div class="card-body">
+            <form id="patient-search-form">
+                <div class="row">
+                    <div class="col-md-8">
+                        <input 
+                            type="text" 
+                            class="form-control form-control-lg" 
+                            id="patient-search" 
+                            placeholder="Search by name, MRN, or phone number..."
+                            autocomplete="off"
+                        >
+                        <div id="patient-search-results" class="list-group mt-2" style="display: none; max-height: 400px; overflow-y: auto; position: absolute; z-index: 1000; width: 100%; background: white; border: 1px solid #ddd; border-radius: 5px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);"></div>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="button" class="btn btn-primary btn-lg w-100" onclick="clearPatientSearch()">
+                            <i class="bi bi-x-circle me-2"></i>Clear
+                        </button>
+                    </div>
+                </div>
+                <input type="hidden" id="patient-id" name="patient_id">
+                <input type="hidden" id="encounter-id" name="encounter_id">
+            </form>
+            
+            <!-- Selected Patient Info -->
+            <div id="selected-patient" class="mt-3" style="display: none;">
+                <div class="alert alert-success">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong id="patient-name"></strong> <span class="text-muted">(MRN: <span id="patient-mrn"></span>)</span><br>
+                            <small id="patient-details"></small>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="clearPatientSearch()">
+                            <i class="bi bi-x"></i> Change
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Recent Patients -->
+            {% if recent_patients %}
+            <div class="mt-3">
+                <small class="text-muted"><strong>Recent Patients:</strong></small>
+                <div class="d-flex flex-wrap gap-2 mt-2">
+                    {% for patient in recent_patients %}
+                    <button 
+                        type="button" 
+                        class="btn btn-sm btn-outline-primary" 
+                        onclick="selectPatient('{{ patient.id }}', '{{ patient.full_name }}', '{{ patient.mrn }}', '{{ patient.phone_number|default:"N/A" }}', '{% if patient.primary_insurance %}{{ patient.primary_insurance.payer_type }}{% else %}cash{% endif %}')"
+                    >
+                        {{ patient.full_name }} ({{ patient.mrn }})
+                    </button>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Step 2: Procedure Selection (optional - shown after patient selected) -->
+    <div class="card shadow-sm mb-4" id="procedure-section" style="display: none;">
+        <div class="card-header bg-info text-white">
+            <h5 class="mb-0"><i class="bi bi-clipboard-pulse me-2"></i>Step 2: Select Procedure <span class="badge bg-light text-dark ms-2">Optional</span></h5>
+        </div>
+        <div class="card-body">
+            <div class="row mb-3">
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Procedure Category</label>
+                    <select class="form-control" id="procedure-category-filter">
+                        <option value="">All Categories</option>
+                        {% for cat_code, cat_name in procedure_categories %}
+                        <option value="{{ cat_code }}">{{ cat_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">Search Procedure</label>
+                    <input type="text" class="form-control" id="procedure-search" placeholder="Search by name or code...">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label fw-bold">&nbsp;</label>
+                    <button type="button" class="btn btn-info w-100" data-bs-toggle="modal" data-bs-target="#addProcedureModal">
+                        <i class="bi bi-plus-circle me-1"></i>Add Manual Procedure
+                    </button>
+                </div>
+            </div>
+            
+            <div id="procedure-results-area">
+                <div id="procedures-search-hint" class="text-center py-4 text-muted">
+                    <i class="bi bi-search" style="font-size: 2rem;"></i>
+                    <p class="mt-2 mb-0">Search by name or code to find procedures</p>
+                    <small>Type at least 2 characters or select a category</small>
+                </div>
+                <div class="row" id="procedures-list" style="display: none;">
+                {% for procedure in procedures %}
+                <div class="col-md-4 mb-3 procedure-item" data-category="{{ procedure.category }}" data-name="{{ procedure.name|lower }}" data-code="{{ procedure.code|lower }}" style="display: none;">
+                    <div class="card h-100 procedure-card" onclick="selectProcedure('{{ procedure.id }}', '{{ procedure.name }}', '{{ procedure.code }}', {{ procedure.price|default:0 }})">
+                        <div class="card-body">
+                            <h6 class="card-title">{{ procedure.name }}</h6>
+                            <p class="text-muted small mb-2"><code>{{ procedure.code }}</code> - {{ procedure.get_category_display }}</p>
+                            <p class="text-muted small mb-2">{{ procedure.description|truncatewords:15 }}</p>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="badge bg-primary">GHS {{ procedure.price|default:0|floatformat:2|intcomma }}</span>
+                                <small class="text-muted">{{ procedure.estimated_duration_minutes }} min</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="col-12">
+                    <div class="alert alert-warning">No procedures available. Please contact administrator.</div>
+                </div>
+                {% endfor %}
+                </div>
+            </div>
+            
+            <!-- Selected Procedure -->
+            <div id="selected-procedure" class="mt-3" style="display: none;">
+                <div class="alert alert-info">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong id="procedure-name"></strong> <span class="text-muted">(<code id="procedure-code"></code>)</span><br>
+                            <small>Price: <strong id="procedure-price"></strong></small>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="clearProcedure()">
+                            <i class="bi bi-x"></i> Change
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Step 3: Consumables Selection (shown after patient selected - procedure optional) -->
+    <div class="card shadow-sm" id="consumables-section" style="display: none;">
+        <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-box-seam me-2"></i>Step 3: Select Consumables</h5>
+            <button type="button" class="btn btn-light btn-sm" data-bs-toggle="modal" data-bs-target="#addConsumableModal">
+                <i class="bi bi-plus-circle me-1"></i>Add New Consumable
+            </button>
+        </div>
+        <div class="card-body">
+            <!-- Search Bar - brings items from pharmacy (drugs + consumables) -->
+            <div class="mb-3">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" id="consumable-search" placeholder="Search consumables by code or description...">
+                    <button type="button" class="btn btn-outline-secondary" onclick="clearConsumableSearch()">
+                        <i class="bi bi-x"></i> Clear
+                    </button>
+                </div>
+                <small class="text-muted">Type at least 2 characters to search drugs and consumables from pharmacy</small>
+            </div>
+            
+            <!-- Search results (pharmacy items) -->
+            <div id="consumables-search-hint" class="text-center py-4 text-muted">
+                <i class="bi bi-search" style="font-size: 2rem;"></i>
+                <p class="mt-2 mb-0">Search to find pharmacy items</p>
+                <small>Drugs and consumables from pharmacy inventory will appear here</small>
+            </div>
+            <div id="consumables-results" class="row g-2 mb-4" style="display: none;"></div>
+            
+            <form method="post" id="consumables-form">
+                {% csrf_token %}
+                <input type="hidden" name="patient_id" id="form-patient-id">
+                <input type="hidden" name="encounter_id" id="form-encounter-id">
+                <input type="hidden" name="procedure_id" id="form-procedure-id">
+                <input type="hidden" name="consumables" id="consumables-data">
+                
+                <!-- Selected items (from search) -->
+                <div id="selected-consumables-area" class="mb-4" style="display: none;">
+                    <h6 class="mb-2"><i class="bi bi-list-check me-2"></i>Selected Items</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Code</th>
+                                    <th>Description</th>
+                                    <th width="100">Qty</th>
+                                    <th width="100">Unit Price</th>
+                                    <th width="80"></th>
+                                </tr>
+                            </thead>
+                            <tbody id="selected-consumables-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- Nurses Notes Field -->
+                <div class="mt-4">
+                    <label class="form-label fw-bold"><i class="bi bi-journal-text me-2"></i>Nurse's Notes <span class="text-danger">*</span></label>
+                    <textarea name="nurses_notes" id="nurses-notes" class="form-control" rows="3" placeholder="Enter notes (optional - procedure and/or consumables used)"></textarea>
+                    <div class="form-text">Optional notes added to the patient's encounter record</div>
+                </div>
+                
+                <!-- Selected Items Summary -->
+                <div id="selected-summary" class="mt-4" style="display: none;">
+                    <div class="card bg-light">
+                        <div class="card-body">
+                            <h6 class="card-title"><i class="bi bi-list-check me-2"></i>Selected Items Summary</h6>
+                            <div id="selected-items-list"></div>
+                            <hr>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>Procedure: <span id="summary-procedure-name"></span></strong><br>
+                                    <strong>Total: <span id="selected-total" class="text-success">GHS 0.00</span></strong>
+                                </div>
+                                <button type="submit" class="btn btn-success btn-lg" id="submit-btn" disabled>
+                                    <i class="bi bi-check-circle me-2"></i>Add to Patient Bill
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Add Manual Procedure Modal -->
+<div class="modal fade" id="addProcedureModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form id="add-procedure-form">
+                <div class="modal-header bg-info text-white">
+                    <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>Add Manual Procedure</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label fw-bold">Code <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="new-procedure-code" required placeholder="e.g., PROC-001">
+                            <div class="form-text">Unique code for this procedure</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label fw-bold">Name <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="new-procedure-name" required placeholder="e.g., Wound Dressing">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label fw-bold">Category <span class="text-danger">*</span></label>
+                            <select class="form-control" id="new-procedure-category" required>
+                                {% for cat_code, cat_name in procedure_categories %}
+                                <option value="{{ cat_code }}">{{ cat_name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label fw-bold">Price (GHS) <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" id="new-procedure-price" required step="0.01" min="0" placeholder="0.00">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Description</label>
+                        <textarea class="form-control" id="new-procedure-description" rows="2" placeholder="Brief description of the procedure"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-info" onclick="addNewProcedure()">Add Procedure</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Add New Consumable Modal -->
+<div class="modal fade" id="addConsumableModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="add-consumable-form">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>Add New Consumable</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Code <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="new-consumable-code" required placeholder="e.g., SYR-5ML">
+                        <div class="form-text">Unique code for this consumable</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Description <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="new-consumable-description" required placeholder="e.g., Syringe 5ml">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Price (GHS) <span class="text-danger">*</span></label>
+                        <input type="number" class="form-control" id="new-consumable-price" required step="0.01" min="0" placeholder="0.00">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-success" onclick="addNewConsumable()">Add Consumable</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+// Global state
+let selectedPatientId = null;
+let selectedEncounterId = null;
+let selectedProcedureId = null;
+let selectedProcedureName = null;
+let selectedProcedureCode = null;
+let selectedProcedurePrice = 0;
+
+// Patient Search
+document.getElementById('patient-search').addEventListener('input', function(e) {
+    const query = e.target.value.trim();
+    if (query.length < 2) {
+        document.getElementById('patient-search-results').style.display = 'none';
+        return;
+    }
+    
+    fetch(`/hms/api/pharmacy/search-patients/?q=${encodeURIComponent(query)}`)
+        .then(response => response.json())
+        .then(data => {
+            const resultsDiv = document.getElementById('patient-search-results');
+            if (data.patients && data.patients.length > 0) {
+                resultsDiv.innerHTML = data.patients.map(patient => `
+                    <a href="#" class="list-group-item list-group-item-action" 
+                       onclick="selectPatient('${patient.id}', '${patient.name}', '${patient.mrn}', '${patient.phone || 'N/A'}', '${patient.payer_type || 'cash'}'); return false;">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h6 class="mb-1">${patient.name}</h6>
+                            <small><span class="badge bg-${(patient.payer_type || 'cash') === 'cash' ? 'secondary' : 'info'}">${(patient.payer_type || 'cash').toUpperCase()}</span></small>
+                        </div>
+                        <p class="mb-1"><small>${patient.phone || 'No phone'}</small></p>
+                        ${patient.deposit_balance ? `<small class="text-success">Deposit: GHS ${parseFloat(patient.deposit_balance).toFixed(2)}</small>` : ''}
+                    </a>
+                `).join('');
+                resultsDiv.style.display = 'block';
+            } else {
+                resultsDiv.innerHTML = '<div class="list-group-item text-muted">No patients found</div>';
+                resultsDiv.style.display = 'block';
+            }
+        })
+        .catch(error => {
+            console.error('Error searching patients:', error);
+        });
+});
+
+function selectPatient(patientId, name, mrn, phone, payerType) {
+    selectedPatientId = patientId;
+    document.getElementById('patient-id').value = patientId;
+    document.getElementById('form-patient-id').value = patientId;
+    document.getElementById('patient-name').textContent = name;
+    document.getElementById('patient-mrn').textContent = mrn;
+    const payerLabel = (payerType || 'cash').toUpperCase();
+    document.getElementById('patient-details').textContent = `Phone: ${phone} • Bill to: ${payerLabel}`;
+    document.getElementById('selected-patient').style.display = 'block';
+    document.getElementById('patient-search-results').style.display = 'none';
+    document.getElementById('patient-search').value = '';
+    
+    // Show procedure and consumables sections (consumables can be added without procedure)
+    document.getElementById('procedure-section').style.display = 'block';
+    document.getElementById('consumables-section').style.display = 'block';
+    updateFormState();
+}
+
+function clearPatientSearch() {
+    selectedPatientId = null;
+    selectedEncounterId = null;
+    selectedProcedureId = null;
+    selectedConsumables = [];
+    renderSelectedConsumables();
+    document.getElementById('patient-id').value = '';
+    document.getElementById('form-patient-id').value = '';
+    document.getElementById('encounter-id').value = '';
+    document.getElementById('form-encounter-id').value = '';
+    document.getElementById('selected-patient').style.display = 'none';
+    document.getElementById('patient-search').value = '';
+    document.getElementById('patient-search-results').style.display = 'none';
+    document.getElementById('procedure-section').style.display = 'none';
+    document.getElementById('consumables-section').style.display = 'none';
+    clearProcedure();
+    updateFormState();
+}
+
+// Procedure Selection
+function selectProcedure(procedureId, name, code, price) {
+    selectedProcedureId = procedureId;
+    selectedProcedureName = name;
+    selectedProcedureCode = code;
+    selectedProcedurePrice = price;
+    
+    document.getElementById('form-procedure-id').value = procedureId;
+    document.getElementById('procedure-name').textContent = name;
+    document.getElementById('procedure-code').textContent = code;
+    document.getElementById('procedure-price').textContent = `GHS ${parseFloat(price).toFixed(2)}`;
+    document.getElementById('selected-procedure').style.display = 'block';
+    document.getElementById('summary-procedure-name').textContent = name;
+    
+    // Load procedure-specific consumables if available
+    loadProcedureConsumables(procedureId);
+    
+    updateFormState();
+}
+
+function clearProcedure() {
+    selectedProcedureId = null;
+    selectedProcedureName = null;
+    selectedProcedureCode = null;
+    selectedProcedurePrice = 0;
+    document.getElementById('form-procedure-id').value = '';
+    document.getElementById('selected-procedure').style.display = 'none';
+    document.getElementById('summary-procedure-name').textContent = 'None (consumables only)';
+    // Keep consumables section visible - user can add consumables without procedure
+    updateFormState();
+}
+
+// Procedure Filtering
+document.getElementById('procedure-category-filter').addEventListener('change', filterProcedures);
+document.getElementById('procedure-search').addEventListener('input', filterProcedures);
+
+function filterProcedures() {
+    const category = document.getElementById('procedure-category-filter').value.toLowerCase();
+    const search = (document.getElementById('procedure-search').value || '').toLowerCase().trim();
+    const items = document.querySelectorAll('.procedure-item');
+    const hintEl = document.getElementById('procedures-search-hint');
+    const listEl = document.getElementById('procedures-list');
+    
+    const hasSearch = search.length >= 2;
+    const hasCategory = category && category !== 'all categories';
+    const shouldShowResults = hasSearch || hasCategory;
+    
+    if (hintEl) hintEl.style.display = shouldShowResults ? 'none' : 'block';
+    if (listEl) listEl.style.display = shouldShowResults ? 'flex' : 'none';
+    
+    items.forEach(item => {
+        const itemCategory = (item.dataset.category || '').toLowerCase();
+        const itemName = item.dataset.name || '';
+        const itemCode = item.dataset.code || '';
+        
+        const matchesCategory = !category || itemCategory === category;
+        const matchesSearch = !search || itemName.includes(search) || itemCode.includes(search);
+        
+        item.style.display = (matchesCategory && matchesSearch) ? 'block' : 'none';
+    });
+}
+
+// Consumable Search - fetches from pharmacy API
+let consumableSearchTimeout = null;
+let selectedConsumables = [];  // {code, description, quantity, unit_price, custom_price}
+
+var consumableSearchEl = document.getElementById('consumable-search');
+if (consumableSearchEl) {
+consumableSearchEl.addEventListener('input', function(e) {
+    const query = e.target.value.trim();
+    clearTimeout(consumableSearchTimeout);
+    
+    const hintEl = document.getElementById('consumables-search-hint');
+    const resultsEl = document.getElementById('consumables-results');
+    
+    if (query.length < 2) {
+        hintEl.style.display = 'block';
+        resultsEl.style.display = 'none';
+        resultsEl.innerHTML = '';
+        return;
+    }
+    
+    consumableSearchTimeout = setTimeout(() => {
+        fetch(`{% url 'hospital:api_pharmacy_consumables_search' %}?q=${encodeURIComponent(query)}`, {
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' }
+        })
+            .then(async r => {
+                let data = {};
+                try { data = await r.json(); } catch (_) { data = {}; }
+                if (!r.ok) throw new Error((data.error || 'Request failed') + ' (status ' + r.status + ')');
+                return data;
+            })
+            .then((data) => {
+                hintEl.style.display = 'none';
+                const results = data.results || [];
+                if (results.length === 0) {
+                    resultsEl.innerHTML = '<div class="col-12 text-center text-muted py-3">No pharmacy items found for "' + query + '". Try a different search.</div>';
+                } else {
+                    resultsEl.innerHTML = results.map((item, idx) => {
+                        const alreadyAdded = selectedConsumables.some(s => s.code === item.code);
+                        const safeCode = String(item.code).replace(/"/g, '&quot;');
+                        const safeDesc = String(item.description).replace(/"/g, '&quot;');
+                        return `
+                            <div class="col-md-6 col-lg-4">
+                                <div class="card border h-100 consumable-result-card ${alreadyAdded ? 'bg-light' : ''}" style="cursor: pointer;" 
+                                     data-code="${safeCode}" data-description="${safeDesc}" data-price="${item.unit_price}">
+                                    <div class="card-body py-2 d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <strong>${item.description}</strong><br>
+                                            <small class="text-muted">${item.code}</small> · GHS ${parseFloat(item.unit_price).toFixed(2)}
+                                        </div>
+                                        <button type="button" class="btn btn-sm btn-success add-consumable-btn ${alreadyAdded ? 'disabled' : ''}" 
+                                                data-code="${safeCode}" data-description="${safeDesc}" data-price="${item.unit_price}">
+                                            ${alreadyAdded ? 'Added' : '+ Add'}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                    resultsEl.querySelectorAll('.add-consumable-btn:not(.disabled)').forEach(btn => {
+                        btn.addEventListener('click', function(e) {
+                            e.stopPropagation();
+                            addConsumableFromSearch(this.dataset.code, this.dataset.description, parseFloat(this.dataset.price) || 0);
+                        });
+                    });
+                }
+                resultsEl.style.display = 'flex';
+            })
+            .catch(err => {
+                console.error('Consumables search error:', err);
+                const msg = (err && err.message) ? String(err.message).replace(/</g,'&lt;') : 'Please try again.';
+                resultsEl.innerHTML = '<div class="col-12 text-center text-danger py-3"><strong>Search failed.</strong><br><small>' + msg + '</small></div>';
+                resultsEl.style.display = 'flex';
+            });
+    }, 300);
+});
+}
+
+function clearConsumableSearch() {
+    document.getElementById('consumable-search').value = '';
+    document.getElementById('consumables-search-hint').style.display = 'block';
+    document.getElementById('consumables-results').style.display = 'none';
+    document.getElementById('consumables-results').innerHTML = '';
+}
+
+function addConsumableFromSearch(code, description, unitPrice) {
+    if (selectedConsumables.some(s => s.code === code)) return;
+    selectedConsumables.push({
+        code: code,
+        description: description,
+        quantity: 1,
+        unit_price: parseFloat(unitPrice) || 0,
+        custom_price: null
+    });
+    renderSelectedConsumables();
+    updateSelectedSummary();
+    // Refresh search results to show "Added" state
+    document.getElementById('consumable-search').dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function removeConsumable(code) {
+    selectedConsumables = selectedConsumables.filter(s => s.code !== code);
+    renderSelectedConsumables();
+    updateSelectedSummary();
+}
+
+function renderSelectedConsumables() {
+    const tbody = document.getElementById('selected-consumables-tbody');
+    const area = document.getElementById('selected-consumables-area');
+    if (selectedConsumables.length === 0) {
+        area.style.display = 'none';
+        tbody.innerHTML = '';
+        return;
+    }
+    area.style.display = 'block';
+    tbody.innerHTML = selectedConsumables.map(item => {
+        const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+        return `<tr>
+            <td><code>${esc(item.code)}</code></td>
+            <td>${esc(item.description)}</td>
+            <td>
+                <input type="number" class="form-control form-control-sm cons-qty" value="${item.quantity}" min="0.01" step="0.01" data-code="${esc(item.code)}">
+            </td>
+            <td>
+                <input type="number" class="form-control form-control-sm cons-price" value="${item.unit_price}" min="0" step="0.01" data-code="${esc(item.code)}" placeholder="Price">
+            </td>
+            <td>
+                <button type="button" class="btn btn-sm btn-outline-danger cons-remove" data-code="${esc(item.code)}">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </td>
+        </tr>`;
+    }).join('');
+    tbody.querySelectorAll('.cons-qty').forEach(inp => {
+        inp.addEventListener('change', function() { updateConsumableQty(this.dataset.code, this.value); });
+    });
+    tbody.querySelectorAll('.cons-price').forEach(inp => {
+        inp.addEventListener('change', function() { updateConsumablePrice(this.dataset.code, this.value); });
+    });
+    tbody.querySelectorAll('.cons-remove').forEach(btn => {
+        btn.addEventListener('click', function() { removeConsumable(this.dataset.code); });
+    });
+}
+
+function updateConsumableQty(code, val) {
+    const item = selectedConsumables.find(s => s.code === code);
+    if (item) { item.quantity = parseFloat(val) || 1; updateSelectedSummary(); }
+}
+
+function updateConsumablePrice(code, val) {
+    const item = selectedConsumables.find(s => s.code === code);
+    if (item) { item.unit_price = parseFloat(val) || 0; item.custom_price = val ? val : null; updateSelectedSummary(); }
+}
+
+function updateSelectedSummary() {
+    let total = selectedProcedurePrice || 0;
+    const selectedItems = selectedConsumables.map(item => {
+        const qty = parseFloat(item.quantity) || 1;
+        const unitPrice = parseFloat(item.unit_price) || 0;
+        const lineTotal = qty * unitPrice;
+        total += lineTotal;
+        return {
+            code: item.code,
+            description: item.description,
+            quantity: qty,
+            unit_price: unitPrice,
+            custom_price: unitPrice > 0 ? String(unitPrice) : null,  // Backend uses this for price
+            line_total: lineTotal
+        };
+    });
+    
+    // Update summary
+    if (selectedItems.length > 0 || selectedProcedurePrice > 0) {
+        document.getElementById('selected-summary').style.display = 'block';
+        document.getElementById('summary-procedure-name').textContent = selectedProcedurePrice > 0 ? (selectedProcedureName || '') : 'None (consumables only)';
+        let itemsHtml = '';
+        
+        if (selectedProcedurePrice > 0) {
+            itemsHtml += `
+                <div class="d-flex justify-content-between mb-2">
+                    <span><strong>${selectedProcedureName}</strong> (Procedure)</span>
+                    <strong>GHS ${selectedProcedurePrice.toFixed(2)}</strong>
+                </div>
+            `;
+        }
+        
+        itemsHtml += selectedItems.map(item => `
+            <div class="d-flex justify-content-between mb-2">
+                <span>${item.code} - ${item.description} x ${item.quantity}</span>
+                <strong>GHS ${item.line_total.toFixed(2)}</strong>
+            </div>
+        `).join('');
+        
+        document.getElementById('selected-items-list').innerHTML = itemsHtml;
+        document.getElementById('selected-total').textContent = `GHS ${total.toFixed(2)}`;
+        
+        // Store in hidden field
+        document.getElementById('consumables-data').value = JSON.stringify(selectedItems);
+    } else {
+        document.getElementById('selected-summary').style.display = 'none';
+        document.getElementById('consumables-data').value = '[]';
+    }
+    
+    updateFormState();
+}
+
+function updateFormState() {
+    const hasPatient = selectedPatientId !== null;
+    const hasConsumables = selectedConsumables.length > 0;
+    const hasProcedure = selectedProcedurePrice > 0;
+    const hasItems = hasConsumables || hasProcedure;
+    
+    // Allow submit with consumables only, or procedure only, or both
+    document.getElementById('submit-btn').disabled = !(hasPatient && hasItems);
+}
+
+// Add New Procedure
+function addNewProcedure() {
+    const code = document.getElementById('new-procedure-code').value.trim();
+    const name = document.getElementById('new-procedure-name').value.trim();
+    const category = document.getElementById('new-procedure-category').value;
+    const description = document.getElementById('new-procedure-description').value.trim();
+    const price = parseFloat(document.getElementById('new-procedure-price').value);
+    
+    if (!code || !name || !price || price < 0) {
+        alert('Please fill all required fields with valid values.');
+        return;
+    }
+    
+    // Create procedure via AJAX
+    const formData = new URLSearchParams();
+    formData.append('action', 'create_procedure');
+    formData.append('code', code);
+    formData.append('name', name);
+    formData.append('category', category);
+    formData.append('description', description);
+    formData.append('price', price);
+    formData.append('ajax', '1');
+    
+    fetch('/hms/pharmacy/add-consumables/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
+            'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: formData.toString()
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Add to procedures list
+            const proceduresList = document.getElementById('procedures-list');
+            const newCard = document.createElement('div');
+            newCard.className = 'col-md-4 mb-3 procedure-item';
+            newCard.dataset.category = category;
+            newCard.dataset.name = name.toLowerCase();
+            newCard.dataset.code = code.toLowerCase();
+            newCard.innerHTML = `
+                <div class="card h-100 procedure-card" onclick="selectProcedure('${data.id}', '${name}', '${code}', ${price})">
+                    <div class="card-body">
+                        <h6 class="card-title">${name}</h6>
+                        <p class="text-muted small mb-2"><code>${code}</code></p>
+                        <p class="text-muted small mb-2">${description || ''}</p>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="badge bg-primary">GHS ${price.toFixed(2)}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            proceduresList.appendChild(newCard);
+            
+            // Close modal and reset form
+            bootstrap.Modal.getInstance(document.getElementById('addProcedureModal')).hide();
+            document.getElementById('add-procedure-form').reset();
+            
+            alert('Procedure added successfully! You can now select it.');
+        } else {
+            alert('Error: ' + (data.error || 'Failed to add procedure'));
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error adding procedure. Please try again.');
+    });
+}
+
+// Add New Consumable
+function addNewConsumable() {
+    const code = document.getElementById('new-consumable-code').value.trim();
+    const description = document.getElementById('new-consumable-description').value.trim();
+    const price = parseFloat(document.getElementById('new-consumable-price').value);
+    
+    if (!code || !description || !price || price <= 0) {
+        alert('Please fill all fields with valid values.');
+        return;
+    }
+    
+    // Create consumable via AJAX
+    const formData = new URLSearchParams();
+    formData.append('action', 'create_consumable');
+    formData.append('code', code);
+    formData.append('description', description);
+    formData.append('price', price);
+    formData.append('ajax', '1');
+    
+    fetch('/hms/pharmacy/add-consumables/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
+            'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: formData.toString()
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Add to selected consumables
+            addConsumableFromSearch(code, description, parseFloat(price) || 0);
+            // Close modal and reset form
+            bootstrap.Modal.getInstance(document.getElementById('addConsumableModal')).hide();
+            document.getElementById('add-consumable-form').reset();
+            
+            alert('Consumable added successfully!');
+        } else {
+            alert('Error: ' + (data.error || 'Failed to add consumable'));
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error adding consumable. Please try again.');
+    });
+}
+
+// Load procedure consumables
+function loadProcedureConsumables(procedureId) {
+    // This would load procedure-specific consumables if they exist
+    // For now, we show all consumables
+}
+
+// Form Submission
+document.getElementById('consumables-form').addEventListener('submit', function(e) {
+    if (!selectedPatientId) {
+        e.preventDefault();
+        alert('Please select a patient first.');
+        return false;
+    }
+    
+    const selectedItems = JSON.parse(document.getElementById('consumables-data').value || '[]');
+    if (selectedItems.length === 0 && selectedProcedurePrice === 0) {
+        e.preventDefault();
+        alert('Please select at least one consumable or ensure procedure has a price.');
+        return false;
+    }
+    
+    return true;
+});
+
+// Close search results when clicking outside
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('#patient-search') && !e.target.closest('#patient-search-results')) {
+        document.getElementById('patient-search-results').style.display = 'none';
+    }
+});
+</script>
+
+<style>
+.procedure-card {
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border: 2px solid transparent;
+}
+
+.procedure-card:hover {
+    border-color: #0d6efd;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+}
+
+.procedure-card.selected {
+    border-color: #0d6efd;
+    background-color: #f0f8ff;
+}
+
+#patient-search-results {
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.list-group-item:hover {
+    background-color: #f8f9fa;
+    cursor: pointer;
+}
+
+.quantity-input:disabled,
+.custom-price-input:disabled {
+    background-color: #e9ecef;
+    cursor: not-allowed;
+}
+</style>
+{% endblock %}

@@ -22,8 +22,23 @@ class EmailService:
         self.hospital_logo_url = getattr(settings, 'HOSPITAL_LOGO_URL', '')
         self.site_url = getattr(settings, 'SITE_URL', 'http://localhost:8000')
     
+    def _normalize_recipients(self, recipients):
+        """
+        Normalize a string or iterable of recipients into a clean list.
+        """
+        if not recipients:
+            return []
+        
+        if isinstance(recipients, (list, tuple, set)):
+            iterable = recipients
+        else:
+            iterable = [recipients]
+        
+        return [r.strip() for r in iterable if isinstance(r, str) and r.strip()]
+    
     def send_email(self, recipient_email, subject, message_html, message_text=None,
-                   attachment_path=None, attachment_name=None, recipient_name=''):
+                   attachment_path=None, attachment_name=None, recipient_name='',
+                   cc=None, bcc=None, headers=None):
         """
         Send email with HTML content and optional attachment
         
@@ -35,6 +50,9 @@ class EmailService:
             attachment_path: Path to file attachment (e.g., PDF report)
             attachment_name: Name for the attachment file
             recipient_name: Name of recipient
+            cc: Optional CC recipients (str or list)
+            bcc: Optional BCC recipients (str or list)
+            headers: Optional email headers
             
         Returns:
             dict with status and details
@@ -49,10 +67,23 @@ class EmailService:
         }
         
         try:
-            # Validate email
-            if not recipient_email or not recipient_email.strip():
+            to_list = self._normalize_recipients(recipient_email)
+            cc_list = self._normalize_recipients(cc)
+            bcc_list = self._normalize_recipients(bcc)
+            
+            # Allow BCC-only sends for privacy; ensure at least one visible TO
+            if not to_list and bcc_list:
+                to_list = [self.from_email]
+            
+            if not to_list:
                 result['message'] = "Email address is required"
                 return result
+            
+            result['recipient_email'] = to_list
+            if cc_list:
+                result['cc'] = cc_list
+            if bcc_list:
+                result['bcc'] = bcc_list
             
             # Create email message
             if not message_text:
@@ -64,7 +95,10 @@ class EmailService:
                 subject=subject,
                 body=message_text,
                 from_email=self.from_email,
-                to=[recipient_email]
+                to=to_list,
+                cc=cc_list or None,
+                bcc=bcc_list or None,
+                headers=headers or {}
             )
             
             # Attach HTML version
@@ -90,6 +124,102 @@ class EmailService:
             result['message'] = f"Email error: {str(e)}"
         
         return result
+    
+    def send_otp_email(self, recipient_email, code, purpose='Verification Code',
+                       expires_in_minutes=10, recipient_name=''):
+        """
+        Send a simple OTP/verification code email.
+        """
+        otp_html = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; color: #333;">
+            <h2 style="color: #4a4a4a;">{purpose}</h2>
+            <p>Hi {recipient_name or 'there'},</p>
+            <p>Your one-time code is:</p>
+            <div style="font-size: 28px; font-weight: bold; letter-spacing: 4px; padding: 12px 16px; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 8px; text-align: center; margin: 12px 0;">
+                {code}
+            </div>
+            <p>This code expires in {expires_in_minutes} minutes.</p>
+            <p>If you did not request this code, please ignore this email.</p>
+            <p style="margin-top: 24px;">Regards,<br>{self.hospital_name} Team</p>
+        </div>
+        """
+        otp_text = (
+            f"{purpose}\n\n"
+            f"Code: {code}\n"
+            f"Expires in {expires_in_minutes} minutes.\n\n"
+            f"If you did not request this code, please ignore this email."
+        )
+        
+        return self.send_email(
+            recipient_email=recipient_email,
+            subject=purpose,
+            message_html=otp_html,
+            message_text=otp_text,
+            recipient_name=recipient_name
+        )
+    
+    def send_bulk_email(self, recipients, subject, message_html, message_text=None,
+                        batch_size=50, bcc_all=True, attachment_path=None, attachment_name=None):
+        """
+        Send bulk emails in batches. Uses BCC by default to protect recipient privacy.
+        
+        Args:
+            recipients: List/iterable of email addresses
+            subject: Email subject
+            message_html: HTML body
+            message_text: Optional plain text body
+            batch_size: Number of recipients per batch
+            bcc_all: If True, send with BCC to hide recipients
+            attachment_path: Optional attachment path
+            attachment_name: Optional attachment name
+        """
+        recipient_list = self._normalize_recipients(recipients)
+        summary = {
+            'requested': len(recipient_list),
+            'sent': 0,
+            'failed': [],
+            'batches': []
+        }
+        
+        if not recipient_list:
+            summary['message'] = 'No recipients supplied'
+            return summary
+        
+        for idx in range(0, len(recipient_list), batch_size):
+            batch = recipient_list[idx:idx + batch_size]
+            try:
+                send_result = self.send_email(
+                    recipient_email=self.from_email if bcc_all else batch,
+                    subject=subject,
+                    message_html=message_html,
+                    message_text=message_text,
+                    attachment_path=attachment_path,
+                    attachment_name=attachment_name,
+                    bcc=batch if bcc_all else None
+                )
+                
+                batch_info = {
+                    'recipients': batch,
+                    'success': send_result.get('success', False),
+                    'message': send_result.get('message', '')
+                }
+                summary['batches'].append(batch_info)
+                
+                if send_result.get('success'):
+                    summary['sent'] += len(batch)
+                else:
+                    summary['failed'].extend(batch)
+            except Exception as e:
+                logger.error(f"Bulk email batch failed: {str(e)}", exc_info=True)
+                summary['failed'].extend(batch)
+                summary['batches'].append({
+                    'recipients': batch,
+                    'success': False,
+                    'message': str(e)
+                })
+        
+        summary['status'] = 'completed' if summary['sent'] == summary['requested'] else 'partial'
+        return summary
     
     def send_lab_result_email(self, lab_result, patient, include_pdf=False, pdf_path=''):
         """Send lab result notification email with professional HTML template"""

@@ -15,6 +15,7 @@ import os
 import zipfile
 from datetime import datetime, timedelta
 import json
+from .utils_roles import get_user_role
 
 
 # Backup directory
@@ -23,8 +24,12 @@ BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def is_admin(user):
-    """Check if user is admin/superuser"""
-    return user.is_superuser or user.is_staff
+    """Strict admin check (no is_staff fallback)."""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    return get_user_role(user) == 'admin'
 
 
 @login_required
@@ -75,46 +80,87 @@ def create_backup(request):
     """Create a new database backup"""
     
     if request.method == 'POST':
+        # Check if this is an AJAX request
+        is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        
         try:
-            # Get backup name
-            backup_name = request.POST.get('backup_name', '').strip()
-            auto_name = request.POST.get('auto_name', 'true') == 'true'
+            from django.core.management import call_command
+            from io import StringIO
+            import sys
             
-            # Generate filename
-            timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
+            # Capture both stdout and stderr
+            output = StringIO()
+            error_output = StringIO()
             
-            if auto_name or not backup_name:
-                filename = f'db_backup_{timestamp}.sqlite3'
+            # Redirect stderr to capture errors
+            old_stderr = sys.stderr
+            sys.stderr = error_output
+            
+            try:
+                call_command('backup_database', stdout=output)
+                output_str = output.getvalue()
+                error_str = error_output.getvalue()
+            finally:
+                sys.stderr = old_stderr
+            
+            # Combine outputs
+            full_output = output_str + error_str
+            
+            # Check if backup was successful
+            if 'Backup created successfully' in full_output or 'backup created' in full_output.lower():
+                if is_ajax:
+                    return JsonResponse({
+                        'success': True,
+                        'message': 'Backup created successfully',
+                        'output': full_output
+                    })
+                else:
+                    messages.success(request, 'Backup created successfully!')
+                    return redirect('hospital:backup_dashboard')
             else:
-                # Sanitize backup name
-                backup_name = ''.join(c for c in backup_name if c.isalnum() or c in (' ', '-', '_'))
-                filename = f'db_backup_{backup_name}_{timestamp}.sqlite3'
-            
-            # Source database
-            source_db = Path(settings.BASE_DIR) / 'db.sqlite3'
-            
-            if not source_db.exists():
-                messages.error(request, 'Database file not found!')
-                return redirect('hospital:backup_dashboard')
-            
-            # Destination
-            dest_file = BACKUP_DIR / filename
-            
-            # Copy database file
-            shutil.copy2(source_db, dest_file)
-            
-            # Verify backup
-            if dest_file.exists():
-                size_mb = round(dest_file.stat().st_size / (1024 * 1024), 2)
-                messages.success(
-                    request,
-                    f'Backup created successfully! File: {filename} ({size_mb} MB)'
-                )
-            else:
-                messages.error(request, 'Backup creation failed!')
-                
+                # Check for errors
+                if 'failed' in full_output.lower() or 'error' in full_output.lower() or error_str:
+                    error_msg = error_str.strip() if error_str.strip() else 'Backup failed. Please check server logs.'
+                    if is_ajax:
+                        return JsonResponse({
+                            'success': False,
+                            'message': f'Error creating backup: {error_msg}'
+                        }, status=500)
+                    else:
+                        messages.error(request, f'Error creating backup: {error_msg}')
+                        return redirect('hospital:backup_dashboard')
+                else:
+                    # Assume success if no clear error
+                    if is_ajax:
+                        return JsonResponse({
+                            'success': True,
+                            'message': 'Backup created successfully',
+                            'output': full_output
+                        })
+                    else:
+                        messages.success(request, 'Backup created successfully!')
+                        return redirect('hospital:backup_dashboard')
+                        
         except Exception as e:
-            messages.error(request, f'Error creating backup: {str(e)}')
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f'Error creating backup: {e}', exc_info=True)
+            
+            if is_ajax:
+                return JsonResponse({
+                    'success': False,
+                    'message': f'Error creating backup: {str(e)}'
+                }, status=500)
+            else:
+                messages.error(request, f'Error creating backup: {str(e)}')
+                return redirect('hospital:backup_dashboard')
+    
+    # Handle non-POST requests
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return JsonResponse({
+            'success': False,
+            'message': 'Invalid request method'
+        }, status=400)
     
     return redirect('hospital:backup_dashboard')
 

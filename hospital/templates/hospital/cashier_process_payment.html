@@ -16,22 +16,68 @@
                 <div class="card-body">
                     <!-- Patient Information -->
                     <div class="alert alert-info">
-                        <h5><i class="bi bi-person"></i> Patient Information</h5>
-                        <p class="mb-1"><strong>Name:</strong> {{ patient.full_name }}</p>
-                        <p class="mb-1"><strong>MRN:</strong> {{ patient.mrn }}</p>
-                        {% if patient.phone_number %}
-                        <p class="mb-1"><strong>Phone:</strong> {{ patient.phone_number }} 📱</p>
-                        {% endif %}
-                        {% if patient.email %}
-                        <p class="mb-0"><strong>Email:</strong> {{ patient.email }} 📧</p>
-                        {% endif %}
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h5><i class="bi bi-person"></i> Patient Information</h5>
+                                <p class="mb-1"><strong>Name:</strong> {{ patient.full_name }}</p>
+                                <p class="mb-1"><strong>MRN:</strong> {{ patient.mrn }}</p>
+                                {% if patient.phone_number %}
+                                <p class="mb-1"><strong>Phone:</strong> {{ patient.phone_number }} 📱</p>
+                                {% endif %}
+                                {% if patient.email %}
+                                <p class="mb-1"><strong>Email:</strong> {{ patient.email }} 📧</p>
+                                {% endif %}
+                                {% if patient.primary_insurance and patient.primary_insurance.payer_type == 'cash' %}
+                                <div class="mt-2">
+                                    <span class="badge bg-warning text-dark">
+                                        <i class="bi bi-wallet2"></i> Cash Patient
+                                    </span>
+                                    {% if patient.deposit_balance > 0 %}
+                                    <span class="badge bg-success ms-2">
+                                        Deposit Balance: GHS {{ patient.deposit_balance|floatformat:2 }}
+                                    </span>
+                                    {% endif %}
+                                </div>
+                                {% endif %}
+                            </div>
+                            <div>
+                                {% if patient.primary_insurance and patient.primary_insurance.payer_type == 'cash' %}
+                                <a href="{% url 'hospital:record_patient_deposit' patient.pk %}" 
+                                   class="btn btn-warning btn-sm" 
+                                   title="Record deposit for this cash patient">
+                                    <i class="bi bi-wallet2"></i> Record Deposit
+                                </a>
+                                {% endif %}
+                            </div>
+                        </div>
                     </div>
                     
                     <!-- Service Details -->
                     <div class="alert alert-success">
                         <h5><i class="bi bi-clipboard-check"></i> Service Details</h5>
                         <p class="mb-1"><strong>Service:</strong> {{ service_name }}</p>
-                        <p class="mb-0"><strong>Price:</strong> GHS {{ service_price }}</p>
+                        {% if service_type == 'lab' %}
+                        <div class="row align-items-center mb-2">
+                            <div class="col-auto">
+                                <label class="form-label mb-0"><strong>Quantity:</strong></label>
+                            </div>
+                            <div class="col-auto">
+                                <input type="hidden" name="lab_quantity" value="1">
+                                <span class="form-control form-control-sm d-inline-block" style="max-width: 80px; background: #e9ecef;">1</span>
+                            </div>
+                            <div class="col-auto"><small class="text-muted">× GHS {{ unit_price|floatformat:2 }} = GHS <span id="labTotal">{{ service_price|floatformat:2 }}</span>{% if patient_deposit_balance > 0 and amount_due_after_deposit != service_price %} → <strong class="text-success">After deposit: GHS {{ amount_due_after_deposit|floatformat:2 }}</strong>{% endif %} <em class="text-muted">(Lab tests always billed as 1)</em></small></div>
+                        </div>
+                        {% elif pharmacy_items %}
+                        <p class="mb-1"><strong>Items:</strong></p>
+                        <ul class="mb-1 small">
+                            {% for rx in pharmacy_items %}
+                            <li>{{ rx.drug.name }} × {{ rx.quantity }} — GHS {{ rx.line_total|floatformat:2 }}</li>
+                            {% endfor %}
+                        </ul>
+                        <p class="mb-0"><strong>Total:</strong> GHS {{ service_price|floatformat:2 }}{% if patient_deposit_balance > 0 and amount_due_after_deposit != service_price %} → <strong class="text-success">After deposit: GHS {{ amount_due_after_deposit|floatformat:2 }}</strong>{% endif %}</p>
+                        {% else %}
+                        <p class="mb-0"><strong>Price:</strong> GHS {{ service_price|floatformat:2 }}{% if patient_deposit_balance > 0 and amount_due_after_deposit != service_price %} → <strong class="text-success">After deposit: GHS {{ amount_due_after_deposit|floatformat:2 }}</strong>{% endif %}</p>
+                        {% endif %}
                     </div>
                     
                     <!-- Payment Form -->
@@ -40,22 +86,24 @@
                         
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="form-label"><strong>Amount to Collect *</strong></label>
+                                <label class="form-label"><strong>Amount to collect (full or part payment) *</strong></label>
                                 <div class="input-group input-group-lg">
                                     <span class="input-group-text">GHS </span>
                                     <input type="number" 
                                            class="form-control" 
+                                           id="amountInput"
                                            name="amount" 
                                            step="0.01" 
-                                           min="0.01"
-                                           value="{{ service_price }}" 
-                                           required>
+                                           min="0"
+                                           value="{{ service_price|floatformat:2 }}" 
+                                           required title="Enter amount to collect" placeholder="0.00">
                                 </div>
+                                <small class="text-muted">You may enter a partial amount; balance will remain outstanding.</small>
                             </div>
                             
                             <div class="col-md-6 mb-3">
                                 <label class="form-label"><strong>Payment Method *</strong></label>
-                                <select class="form-select form-select-lg" name="payment_method" required>
+                                <select class="form-select form-select-lg" name="payment_method" id="paymentMethodSelect" required title="Select option" aria-label="Select option">
                                     {% for value, label in payment_methods %}
                                     <option value="{{ value }}">{{ label }}</option>
                                     {% endfor %}
@@ -63,9 +111,25 @@
                             </div>
                         </div>
                         
+                        <!-- Payment Method Display -->
+                        <div class="mb-3 p-3" style="background: #f8f9fa; border-radius: 8px; border-left: 4px solid #007bff;">
+                            <div class="d-flex align-items-center">
+                                <i class="bi bi-info-circle me-2" style="font-size: 20px; color: #007bff;"></i>
+                                <div>
+                                    <strong id="selectedMethodDisplay">Cash</strong>
+                                    <div class="small text-muted" id="methodDescription">Physical cash payment</div>
+                                </div>
+                            </div>
+                        </div>
+                        
                         <div class="mb-3">
-                            <label class="form-label"><strong>Reference Number</strong> <small>(for card/transfer/mobile money)</small></label>
-                            <input type="text" class="form-control" name="reference_number" placeholder="e.g., Transaction ID, Card last 4 digits">
+                            <label class="form-label"><strong>Transaction ID / Reference Number</strong> 
+                                <span id="refRequired" class="text-danger" style="display: none;">*</span>
+                            </label>
+                            <input type="text" class="form-control" name="reference_number" id="referenceNumberField"
+                                   placeholder="Enter transaction ID, card reference, or reference number" 
+                                   title="Enter text" placeholder="Enter text">
+                            <small class="text-muted" id="refHelpText">Optional - for tracking and reconciliation</small>
                         </div>
                         
                         <div class="mb-3">
@@ -103,6 +167,51 @@
         </div>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const paymentMethodSelect = document.getElementById('paymentMethodSelect');
+    const selectedMethodDisplay = document.getElementById('selectedMethodDisplay');
+    const methodDescription = document.getElementById('methodDescription');
+    const referenceNumberField = document.getElementById('referenceNumberField');
+    const refRequired = document.getElementById('refRequired');
+    const refHelpText = document.getElementById('refHelpText');
+    
+    const methodInfo = {
+        'cash': { name: 'Cash', desc: 'Physical cash payment', required: false, placeholder: 'Optional - Receipt number or reference' },
+        'mobile_money': { name: 'Mobile Money (MOMO)', desc: 'MTN Mobile Money, Vodafone Cash, etc.', required: true, placeholder: 'Enter MOMO Transaction ID (e.g., MTN123456789)' },
+        'card': { name: 'Card Payment', desc: 'Debit / Credit Card', required: true, placeholder: 'Enter Card Transaction ID or last 4 digits' },
+        'bank_transfer': { name: 'Bank Transfer', desc: 'Bank transfer / EFT', required: true, placeholder: 'Enter Bank Transfer Reference Number' },
+        'cheque': { name: 'Cheque', desc: 'Cheque payment', required: true, placeholder: 'Enter Cheque Number' },
+        'insurance': { name: 'Insurance', desc: 'Insurance payment', required: false, placeholder: 'Optional - Insurance reference number' }
+    };
+    
+    function updatePaymentMethodDisplay() {
+        const selectedValue = paymentMethodSelect.value;
+        const info = methodInfo[selectedValue] || methodInfo['cash'];
+        
+        selectedMethodDisplay.textContent = info.name;
+        methodDescription.textContent = info.desc;
+        
+        if (info.required) {
+            referenceNumberField.required = true;
+            refRequired.style.display = 'inline';
+            refHelpText.textContent = 'Required - Enter transaction/reference number';
+            refHelpText.className = 'text-danger';
+        } else {
+            referenceNumberField.required = false;
+            refRequired.style.display = 'none';
+            refHelpText.textContent = 'Optional - for tracking and reconciliation';
+            refHelpText.className = 'text-muted';
+        }
+        
+        referenceNumberField.placeholder = info.placeholder;
+    }
+    
+    paymentMethodSelect.addEventListener('change', updatePaymentMethodDisplay);
+    updatePaymentMethodDisplay(); // Initialize
+});
+</script>
 {% endblock %}
 
 

@@ -3,6 +3,18 @@
 
 {% block title %}Medical Records - HMS{% endblock %}
 
+{% block extra_css %}
+<style>
+    .records-filter-card .form-label { font-weight: 600; color: #495057; }
+    .records-date-row { background: #f8f9fa; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; position: relative; z-index: 5; }
+    .records-date-row .form-label { margin-bottom: 4px; }
+    input[type="date"].form-control { cursor: pointer; }
+    .records-date-wrap { position: relative; display: inline-block; }
+    .records-date-wrap .btn-calendar-open { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); z-index: 2; padding: 4px 10px; }
+    .records-date-wrap input[type="date"] { padding-right: 42px; }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid py-4">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
@@ -15,17 +27,41 @@
         </a>
     </div>
 
-    <div class="card mb-4">
+    <div class="card mb-4 records-filter-card shadow-sm">
+        <div class="card-header bg-white border-bottom py-3">
+            <h5 class="mb-0"><i class="bi bi-calendar3 me-2"></i> Filters &amp; date range</h5>
+        </div>
         <div class="card-body">
-            <form method="get" class="row g-3">
-                <div class="col-md-4">
-                    <label class="form-label">Search</label>
-                    <input type="text" class="form-control" name="q" placeholder="Patient, title, MRN"
-                           value="{{ search_query }}">
+            <form method="get" id="recordsFilterForm" class="row g-3">
+                <div class="col-12 records-date-row" onclick="event.stopPropagation();">
+                    <div class="row g-3 align-items-end">
+                        <div class="col-auto">
+                            <label class="form-label mb-0"><i class="bi bi-calendar-range me-1"></i> From date</label>
+                            <div class="records-date-wrap">
+                                <input type="date" class="form-control" name="date_from" id="recordsDateFrom" value="{{ date_from }}" title="From date" style="min-width: 180px;">
+                                <button type="button" class="btn btn-outline-secondary btn-sm btn-calendar-open" title="Open calendar" aria-label="Open calendar" onclick="event.stopPropagation(); var i=document.getElementById('recordsDateFrom'); if(i.showPicker)i.showPicker(); else i.focus();">📅</button>
+                            </div>
+                        </div>
+                        <div class="col-auto">
+                            <label class="form-label mb-0"><i class="bi bi-calendar-range me-1"></i> To date</label>
+                            <div class="records-date-wrap">
+                                <input type="date" class="form-control" name="date_to" id="recordsDateTo" value="{{ date_to }}" title="To date" style="min-width: 180px;">
+                                <button type="button" class="btn btn-outline-secondary btn-sm btn-calendar-open" title="Open calendar" aria-label="Open calendar" onclick="event.stopPropagation(); var i=document.getElementById('recordsDateTo'); if(i.showPicker)i.showPicker(); else i.focus();">📅</button>
+                            </div>
+                        </div>
+                        <div class="col-auto d-flex align-items-end">
+                            <small class="text-muted">Use the 📅 button to open calendar</small>
+                        </div>
+                    </div>
                 </div>
                 <div class="col-md-3">
+                    <label class="form-label">Search</label>
+                    <input type="text" class="form-control" name="q" placeholder="Patient, title, MRN"
+                           value="{{ search_query }}" title="Enter text">
+                </div>
+                <div class="col-md-2">
                     <label class="form-label">Record Type</label>
-                    <select class="form-select" name="type">
+                    <select class="form-select" name="type" title="Select option" aria-label="Select option">
                         <option value="">All Types</option>
                         <option value="note" {% if type_filter == 'note' %}selected{% endif %}>Progress Note</option>
                         <option value="lab" {% if type_filter == 'lab' %}selected{% endif %}>Lab Result</option>
@@ -34,14 +70,14 @@
                         <option value="other" {% if type_filter == 'other' %}selected{% endif %}>Other</option>
                     </select>
                 </div>
-                <div class="col-md-3">
+                <div class="col-md-2">
                     <label class="form-label">Patient ID</label>
                     <input type="text" class="form-control" name="patient" value="{{ patient_filter }}"
-                           placeholder="UUID">
+                           placeholder="UUID" title="Enter text">
                 </div>
                 <div class="col-md-2 d-flex align-items-end">
-                    <button type="submit" class="btn btn-secondary w-100">
-                        <i class="bi bi-filter"></i> Apply
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-funnel"></i> Apply
                     </button>
                 </div>
             </form>
@@ -114,7 +150,11 @@
                                     <td>{{ record.created|date:"M d, Y H:i" }}</td>
                                     <td>
                                         {% if record.created_by %}
-                                            {{ record.created_by.get_full_name|default:record.created_by.user.get_full_name }}
+                                            {% if record.created_by.user %}
+                                                {{ record.created_by.user.get_full_name|default:record.created_by.user.username|default:"Not assigned" }}
+                                            {% else %}
+                                                {{ record.created_by.get_full_name|default:"Not assigned" }}
+                                            {% endif %}
                                         {% else %}
                                             <em class="text-muted">System</em>
                                         {% endif %}
@@ -144,3 +184,16 @@
 </div>
 {% endblock %}
 
+{% block extra_js %}
+<script>
+(function() {
+    var form = document.getElementById('recordsFilterForm');
+    if (!form) return;
+    form.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && (e.target.id === 'recordsDateFrom' || e.target.id === 'recordsDateTo')) {
+            e.preventDefault();
+        }
+    });
+})();
+</script>
+{% endblock %}

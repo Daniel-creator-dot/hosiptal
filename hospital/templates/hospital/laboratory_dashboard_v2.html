@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load static humanize %}
+{% load static humanize hospital_extras %}
 
 {% block title %}Laboratory Dashboard - HMS{% endblock %}
 {% block page_title %}🔬 Laboratory Control Center{% endblock %}
@@ -479,6 +479,7 @@
                         <th>Test</th>
                         <th>Priority</th>
                         <th>Ordered</th>
+                        <th>Expected Completion</th>
                         <th>Status</th>
                         <th>Actions</th>
                     </tr>
@@ -506,12 +507,23 @@
                             <div class="text-muted small">{{ result.created|timesince }} ago</div>
                         </td>
                         <td>
+                            {% if result.get_expected_completion_display %}
+                                <div class="{% if result.expected_completion_datetime %}fw-bold text-primary{% else %}text-info{% endif %}">
+                                    <i class="bi bi-calendar-clock me-1"></i>{{ result.get_expected_completion_display }}
+                                </div>
+                            {% else %}
+                                <div class="text-muted small">
+                                    <i class="bi bi-hourglass-split me-1"></i>Not set
+                                </div>
+                            {% endif %}
+                        </td>
+                        <td>
                             <span class="status-indicator status-pending"></span>
                             Pending
                         </td>
                         <td>
                             <div class="action-btn-group">
-                                <a href="{% url 'hospital:tabular_lab_report' result.pk %}" class="action-btn success">
+                                <a href="{% lab_result_entry_url result %}" class="action-btn success">
                                     <i class="bi bi-table"></i> Enter Results
                                 </a>
                                 <a href="{% url 'hospital:edit_lab_result' result.pk %}" class="action-btn primary">
@@ -538,7 +550,7 @@
 </div>
 
 <!-- Tab Content: In Progress Results -->
-<div id="inprogressContent" class="tab-content" style="display: none;">
+<div id="inprogressContent" class="tab-content d-none">
     <div class="test-panel">
         <div class="test-panel-header">
             <div class="test-panel-title">
@@ -571,14 +583,20 @@
                         </td>
                         <td><strong>{{ result.test.name }}</strong></td>
                         <td>{{ result.created|timesince }} ago</td>
-                        <td>{{ result.verified_by.user.get_full_name|default:"Not assigned" }}</td>
+                        <td>
+                            {% if result.verified_by and result.verified_by.user %}
+                                {{ result.verified_by.user.get_full_name|default:result.verified_by.user.username|default:"Not assigned" }}
+                            {% else %}
+                                Not assigned
+                            {% endif %}
+                        </td>
                         <td>
                             <span class="status-indicator status-progress"></span>
                             In Progress
                         </td>
                         <td>
                             <div class="action-btn-group">
-                                <a href="{% url 'hospital:tabular_lab_report' result.pk %}" class="action-btn success">
+                                <a href="{% lab_result_entry_url result %}" class="action-btn success">
                                     <i class="bi bi-table"></i> Continue Entry
                                 </a>
                             </div>
@@ -599,7 +617,7 @@
 </div>
 
 <!-- Tab Content: Completed Today -->
-<div id="completedContent" class="tab-content" style="display: none;">
+<div id="completedContent" class="tab-content d-none">
     <div class="test-panel">
         <div class="test-panel-header">
             <div class="test-panel-title">
@@ -638,7 +656,13 @@
                                 {{ result.qualitative_result|default:"--" }}
                             {% endif %}
                         </td>
-                        <td>{{ result.verified_by.user.get_full_name|default:"--" }}</td>
+                        <td>
+                            {% if result.verified_by and result.verified_by.user %}
+                                {{ result.verified_by.user.get_full_name|default:result.verified_by.user.username|default:"--" }}
+                            {% else %}
+                                --
+                            {% endif %}
+                        </td>
                         <td>{{ result.verified_at|date:"h:i A" }}</td>
                         <td>
                             {% if result.is_abnormal %}
@@ -665,7 +689,7 @@
 </div>
 
 <!-- Tab Content: Pending Orders -->
-<div id="ordersContent" class="tab-content" style="display: none;">
+<div id="ordersContent" class="tab-content d-none">
     <div class="test-panel">
         <div class="test-panel-header">
             <div class="test-panel-title">
@@ -695,7 +719,13 @@
                                 {{ order.encounter.patient.full_name }}
                             </a>
                         </td>
-                        <td>{{ order.requested_by.user.get_full_name|default:order.requested_by.user.username }}</td>
+                        <td>
+                            {% if order.requested_by and order.requested_by.user %}
+                                {{ order.requested_by.user.get_full_name|default:order.requested_by.user.username|default:"Not assigned" }}
+                            {% else %}
+                                Not assigned
+                            {% endif %}
+                        </td>
                         <td>
                             <span class="priority-badge priority-{{ order.priority }}">
                                 {{ order.get_priority_display }}

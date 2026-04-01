@@ -1,0 +1,151 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}{% if title and title|lower != 'invalid' %}{{ title }}{% else %}Staff Dependency Bills{% endif %} - HMS{% endblock %}
+{% block page_title %}{% if title and title|lower != 'invalid' %}{{ title }}{% else %}Staff Dependency Bills{% endif %}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">{% if title and title|lower != 'invalid' %}{{ title }}{% else %}Staff Dependency Bills{% endif %}</h5>
+            <a href="{% url 'hospital:claims_bills_hub' %}" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Claims Bills Hub
+            </a>
+        </div>
+        <div class="card-body">
+            <!-- Filters -->
+            <form method="get" class="mb-3">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <input type="text" name="search" class="form-control" placeholder="Search bill/patient..." value="{% if search and search|lower != 'invalid' %}{{ search }}{% endif %}">
+                    </div>
+                    <div class="col-md-2">
+                        <select name="status" class="form-select">
+                            <option value="">All Status</option>
+                            <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Draft</option>
+                            <option value="issued" {% if status_filter == 'issued' %}selected{% endif %}>Issued</option>
+                            <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid</option>
+                            <option value="partially_paid" {% if status_filter == 'partially_paid' %}selected{% endif %}>Partially Paid</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <select name="bill_type" class="form-select">
+                            <option value="">All Types</option>
+                            <option value="cash" {% if bill_type_filter == 'cash' %}selected{% endif %}>Cash</option>
+                            <option value="insurance" {% if bill_type_filter == 'insurance' %}selected{% endif %}>Insurance</option>
+                            <option value="mixed" {% if bill_type_filter == 'mixed' %}selected{% endif %}>Mixed</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <input type="date" name="date_from" class="form-control" value="{% if date_from and date_from|lower != 'invalid' %}{{ date_from }}{% endif %}" placeholder="From">
+                    </div>
+                    <div class="col-md-2">
+                        <input type="date" name="date_to" class="form-control" value="{% if date_to and date_to|lower != 'invalid' %}{{ date_to }}{% endif %}" placeholder="To">
+                    </div>
+                    <div class="col-md-1">
+                        <button type="submit" class="btn btn-primary w-100">Filter</button>
+                    </div>
+                </div>
+            </form>
+
+            <!-- Summary -->
+            {% if summary %}
+            <div class="row mb-4">
+                <div class="col-md-4">
+                    <div class="card bg-primary text-white">
+                        <div class="card-body">
+                            <h6>Total Bills</h6>
+                            <h3>{{ summary.total_bills|default:0|intcomma }}</h3>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card bg-success text-white">
+                        <div class="card-body">
+                            <h6>Total Amount</h6>
+                            <h3>GHS {{ summary.total_amount|default:0|floatformat:2|intcomma }}</h3>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card bg-warning text-white">
+                        <div class="card-body">
+                            <h6>Outstanding</h6>
+                            <h3>GHS {{ summary.outstanding|default:0|floatformat:2|intcomma }}</h3>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Bills Table -->
+            {% if bills %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Bill #</th>
+                            <th>Patient (Staff Dependent)</th>
+                            <th>Type</th>
+                            <th>Total Amount</th>
+                            <th>Status</th>
+                            <th>Issued Date</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for bill in bills %}
+                        <tr>
+                            <td><strong>{% if bill.bill_number and bill.bill_number|lower != 'invalid' %}{{ bill.bill_number }}{% else %}—{% endif %}</strong></td>
+                            <td>{% if bill.patient %}{% if bill.patient.full_name and bill.patient.full_name|lower != 'invalid' %}{{ bill.patient.full_name }}{% else %}—{% endif %}{% else %}—{% endif %}</td>
+                            <td><span class="badge bg-info">{% if bill.bill_type|lower == "invalid" or bill.get_bill_type_display|lower == "invalid" %}Cash Bill{% else %}{{ bill.get_bill_type_display|default:"Cash Bill" }}{% endif %}</span></td>
+                            <td><strong>GHS {{ bill.total_amount|floatformat:2|intcomma }}</strong></td>
+                            <td>
+                                <span class="badge bg-{% if bill.status == 'paid' %}success{% elif bill.status == 'issued' %}warning{% elif bill.status == 'partially_paid' %}info{% else %}secondary{% endif %}">
+                                    {% if bill.status|lower == "invalid" or bill.get_status_display|lower == "invalid" %}Issued{% else %}{{ bill.get_status_display|default:"Issued" }}{% endif %}
+                                </span>
+                            </td>
+                            <td>{{ bill.issued_at|date:"Y-m-d" }}</td>
+                            <td>
+                                {% if bill.invoice %}
+                                <a href="{% url 'hospital:invoice_detail' bill.invoice.id %}" class="btn btn-sm btn-outline-primary">View</a>
+                                {% else %}
+                                <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination (use context vars so INVALID is never re-appended to URL) -->
+            {% if bills.has_other_pages %}
+            <nav aria-label="Page navigation">
+                <ul class="pagination justify-content-center">
+                    {% if bills.has_previous %}
+                    <li class="page-item"><a class="page-link" href="?page={{ bills.previous_page_number }}{% if search %}&search={{ search }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if bill_type_filter %}&bill_type={{ bill_type_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Previous</a></li>
+                    {% endif %}
+                    <li class="page-item active"><span class="page-link">Page {{ bills.number }} of {{ bills.paginator.num_pages }}</span></li>
+                    {% if bills.has_next %}
+                    <li class="page-item"><a class="page-link" href="?page={{ bills.next_page_number }}{% if search %}&search={{ search }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if bill_type_filter %}&bill_type={{ bill_type_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Next</a></li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox" style="font-size: 48px; color: #ccc;"></i>
+                <p class="text-muted mt-3">No staff dependency bills found</p>
+                <p class="text-muted small">Clear filters above or try <a href="{% url 'hospital:claims_bills_hub' %}">Claims Bills Hub</a>.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+

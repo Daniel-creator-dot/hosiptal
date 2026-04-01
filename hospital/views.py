@@ -2,9 +2,10 @@
 Views for Hospital Management System frontend
 """
 from django.shortcuts import render, get_object_or_404, redirect
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth import logout as auth_logout
 from django.contrib import messages
+from django.core.cache import cache
 from django.core.paginator import Paginator
 from django.core.exceptions import ValidationError
 from django.db.models import Q, Sum, F
@@ -14,8 +15,9 @@ from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.urls import reverse
-from datetime import timedelta
+from datetime import date, timedelta
 from hospital.utils_pagination import get_pagination_html
+from hospital.decorators import block_pharmacy_from_invoice_and_payment
 from uuid import UUID
 import csv
 from collections import OrderedDict, Counter
@@ -89,9 +91,44 @@ from .models import (
 # Note: In patient_create function, we import Patient as PatientModel to avoid variable shadowing
 from .models_settings import HospitalSettings
 from .forms import PatientForm, EncounterForm, TabularLabReportForm
-from .utils import get_dashboard_stats, get_patient_demographics, get_encounter_statistics
-from .utils_roles import get_user_role, get_user_dashboard_url, user_has_role_access
-from .utils_lab_templates import get_lab_result_template_type
+from .utils import get_dashboard_stats, get_patient_demographics, get_encounter_statistics, get_dashboard_extra_stats
+from .utils_roles import get_user_role, get_user_dashboard_url, user_has_role_access, is_account_or_finance
+from .views_procurement import is_admin_user, is_procurement_staff
+from .utils_lab_templates import (
+    get_lab_result_template_type,
+    is_single_value_template,
+    get_allowed_detail_keys_for_save,
+    get_param_display_name,
+    get_param_ref_range,
+    get_param_units,
+    get_qualitative_flag,
+    compute_value_flag,
+    infer_units_from_result,
+    TEMPLATE_URINE,
+    TEMPLATE_STOOL,
+    TEMPLATE_FBC,
+    TEMPLATE_RFT,
+    TEMPLATE_LFT,
+    TEMPLATE_MALARIA,
+    TEMPLATE_BLOOD_GROUP,
+    TEMPLATE_SICKLE,
+    TEMPLATE_COAGULATION,
+    TEMPLATE_SEROLOGY,
+    TEMPLATE_SEMEN,
+    TEMPLATE_AFB,
+    URINE_ORDERED_KEYS,
+    STOOL_ORDERED_KEYS,
+    FBC_ORDERED_KEYS,
+    RFT_ORDERED_KEYS,
+    LFT_ORDERED_KEYS,
+    MALARIA_ORDERED_KEYS,
+    BLOOD_GROUP_ORDERED_KEYS,
+    SICKLE_ORDERED_KEYS,
+    COAGULATION_ORDERED_KEYS,
+    SEROLOGY_ORDERED_KEYS,
+    SEMEN_ORDERED_KEYS,
+    AFB_ORDERED_KEYS,
+)
 from .views_hod_shift_monitoring import is_hod
 try:
     from .models_advanced import Queue
@@ -182,7 +219,7 @@ def dashboard(request):
                 'nurse': 'hospital:nurse_dashboard',
                 'midwife': 'hospital:midwife_dashboard',  # Midwives have their own dashboard
                 'pharmacist': 'hospital:pharmacy_dashboard',
-                'lab_technician': 'hospital:lab_technician_dashboard',
+                'lab_technician': 'hospital:laboratory_dashboard',
                 'radiologist': 'hospital:radiologist_dashboard',  # Radiologists have their own dashboard
                 'receptionist': 'hospital:reception_dashboard',
                 'cashier': 'hospital:cashier_dashboard',
@@ -352,106 +389,24 @@ def dashboard(request):
         appointment_date__gte=timezone.now(),
         status__in=['scheduled', 'confirmed'],
         is_deleted=False
-    ).select_related('patient', 'provider__user', 'department').order_by('appointment_date')[:5]
+    ).select_related('patient', 'provider', 'provider__user', 'department').order_by('appointment_date')[:5]
     
-    # Additional stats for empty cards
-    # Today's prescriptions
-    prescriptions_today = Prescription.objects.filter(
-        created__date=timezone.now().date(),
-        is_deleted=False
-    ).count()
-    
-    # Active orders
-    active_orders = Order.objects.filter(
-        status__in=['pending', 'in_progress'],
-        is_deleted=False
-    ).count()
-    
-    # Discharges today
-    discharges_today = Admission.objects.filter(
-        discharge_date__date=timezone.now().date(),
-        status='discharged',
-        is_deleted=False
-    ).count()
-    
-    # Staff on duty (simplified)
-    staff_on_duty = Staff.objects.filter(
-        is_active=True,
-        is_deleted=False
-    ).count()
-    
-    # ========== FINANCIAL STATISTICS (World-Class) ==========
-    # Today's revenue from payments
-    today_payments = PaymentReceipt.objects.filter(
-        receipt_date__date=today_date,
-        is_deleted=False
-    )
-    today_revenue = today_payments.aggregate(Sum('amount_paid'))['amount_paid__sum'] or Decimal('0')
-    today_payment_count = today_payments.count()
-    
-    # This month's revenue
-    month_start = today_date.replace(day=1)
-    month_payments = PaymentReceipt.objects.filter(
-        receipt_date__date__gte=month_start,
-        receipt_date__date__lte=today_date,
-        is_deleted=False
-    )
-    month_revenue = month_payments.aggregate(Sum('amount_paid'))['amount_paid__sum'] or Decimal('0')
-    
-    # Pending bills (unpaid services)
-    pending_bills_count = 0
-    try:
-        from .models_advanced import ImagingStudy
-        pending_lab = LabResult.objects.filter(status='completed', is_deleted=False).count()
-        pending_pharmacy = Prescription.objects.filter(is_deleted=False).count()
-        pending_imaging = ImagingStudy.objects.filter(status='completed', is_deleted=False).count()
-        pending_bills_count = pending_lab + pending_pharmacy + pending_imaging
-    except:
-        pending_bills_count = 0
-    
-    # ========== DEPARTMENT STATISTICS (World-Class) ==========
-    # Lab pending
-    lab_pending = LabResult.objects.filter(
-        status__in=['pending', 'in_progress'],
-        is_deleted=False
-    ).count()
-    lab_completed_today = LabResult.objects.filter(
-        status='completed',
-        created__date=today_date,
-        is_deleted=False
-    ).count()
-    
-    # Pharmacy pending (prescriptions not yet dispensed)
-    pharmacy_pending = Prescription.objects.filter(
-        is_deleted=False
-    ).exclude(
-        id__in=PharmacyDispensing.objects.values_list('prescription_id', flat=True) if 'PharmacyDispensing' in dir() else []
-    ).count() if 'PharmacyDispensing' in dir() else Prescription.objects.filter(is_deleted=False).count()
-    pharmacy_dispensed_today = 0
-    try:
-        from .models_advanced import PharmacyDispensing
-        pharmacy_dispensed_today = PharmacyDispensing.objects.filter(
-            dispensed_at__date=today_date,
-            is_deleted=False
-        ).count()
-    except:
-        pass
-    
-    # Imaging pending and completed
-    imaging_pending = 0
-    imaging_completed_today = 0
-    try:
-        imaging_pending = ImagingStudy.objects.filter(
-            status__in=['pending', 'in_progress'],
-            is_deleted=False
-        ).count()
-        imaging_completed_today = ImagingStudy.objects.filter(
-            status='completed',
-            created_at__date=today_date,
-            is_deleted=False
-        ).count()
-    except:
-        pass
+    # Cached dashboard extra stats (financial, department, alert counts) - 5 min TTL
+    extra = get_dashboard_extra_stats(today_date)
+    prescriptions_today = extra['prescriptions_today']
+    active_orders = extra['active_orders']
+    discharges_today = extra['discharges_today']
+    staff_on_duty = extra['staff_on_duty']
+    today_revenue = extra['today_revenue']
+    today_payment_count = extra['today_payment_count']
+    month_revenue = extra['month_revenue']
+    pending_bills_count = extra['pending_bills_count']
+    lab_pending = extra['lab_pending']
+    lab_completed_today = extra['lab_completed_today']
+    pharmacy_pending = extra['pharmacy_pending']
+    pharmacy_dispensed_today = extra['pharmacy_dispensed_today']
+    imaging_pending = extra['imaging_pending']
+    imaging_completed_today = extra['imaging_completed_today']
     
     # ========== ALERTS & NOTIFICATIONS (World-Class) ==========
     alerts = []
@@ -467,45 +422,27 @@ def dashboard(request):
             'action_text': 'View Patients'
         })
     
-    # Expiring contracts alert
-    try:
-        from .models_contracts import Contract
-        expiring_contracts = Contract.objects.filter(
-            end_date__gte=today_date,
-            end_date__lte=today_date + timedelta(days=30),
-            is_deleted=False
-        ).count()
-        if expiring_contracts > 0:
-            alerts.append({
-                'type': 'warning',
-                'icon': 'file-earmark-text-fill',
-                'title': 'Contracts Expiring',
-                'message': f'{expiring_contracts} contract(s) expiring in the next 30 days',
-                'action_url': '/hms/contracts/',
-                'action_text': 'View Contracts'
-            })
-    except:
-        pass
-    
-    # Expiring certificates alert
-    try:
-        from .models_contracts import Certificate
-        expiring_certs = Certificate.objects.filter(
-            expiry_date__gte=today_date,
-            expiry_date__lte=today_date + timedelta(days=60),
-            is_deleted=False
-        ).count()
-        if expiring_certs > 0:
-            alerts.append({
-                'type': 'warning',
-                'icon': 'award-fill',
-                'title': 'Certificates Expiring',
-                'message': f'{expiring_certs} certificate(s) expiring in the next 60 days',
-                'action_url': '/hms/certificates/list/',
-                'action_text': 'View Certificates'
-            })
-    except:
-        pass
+    # Expiring contracts/certificates alerts (counts from cached extra stats)
+    expiring_contracts = extra.get('expiring_contracts', 0)
+    expiring_certs = extra.get('expiring_certs', 0)
+    if expiring_contracts > 0:
+        alerts.append({
+            'type': 'warning',
+            'icon': 'file-earmark-text-fill',
+            'title': 'Contracts Expiring',
+            'message': f'{expiring_contracts} contract(s) expiring in the next 30 days',
+            'action_url': '/hms/contracts/',
+            'action_text': 'View Contracts'
+        })
+    if expiring_certs > 0:
+        alerts.append({
+            'type': 'warning',
+            'icon': 'award-fill',
+            'title': 'Certificates Expiring',
+            'message': f'{expiring_certs} certificate(s) expiring in the next 60 days',
+            'action_url': '/hms/certificates/list/',
+            'action_text': 'View Certificates'
+        })
     
     # Low stock items
     if low_stock_items > 0:
@@ -688,9 +625,10 @@ def patient_list(request):
             is_deleted=False
         ).exclude(
             id__isnull=True
-        ).only(
+        ).select_related('primary_insurance').only(
             'id', 'first_name', 'last_name', 'middle_name', 'mrn', 'date_of_birth',
-            'gender', 'phone_number', 'created'
+            'gender', 'phone_number', 'created', 'primary_insurance_id',
+            'insurance_company',
         ).order_by('-created')
     except Exception as e:
         logger.error(f"Error loading patient list: {e}")
@@ -764,6 +702,7 @@ def patient_list(request):
                 'view_url': f"/hms/patients/{p.id}/",
                 'edit_url': f"/hms/patients/{p.id}/edit/",
                 'quick_visit_url': f"/hms/patients/{p.id}/quick-visit/",
+                'django_patient': p,
             })
         
         # Use the paginator from database query
@@ -943,6 +882,7 @@ def patient_list(request):
                 'view_url': f"/hms/patients/{p.id}/",
                 'edit_url': f"/hms/patients/{p.id}/edit/",
                 'quick_visit_url': f"/hms/patients/{p.id}/quick-visit/",
+                'django_patient': p,
             })
         
         # If no new patients found and we have legacy patients, show legacy instead
@@ -1026,9 +966,13 @@ def patient_list(request):
 @login_required
 def patient_create(request):
     """Create a new patient with insurance enrollment
-    Uses transaction to prevent duplicate creation in concurrent environments (Docker)
+    Uses transaction to prevent duplicate creation in concurrent environments (Docker).
+    Supports ?next=/path for redirect after success (e.g. cashier patient list).
     """
     from django.db import transaction, IntegrityError
+
+    next_url = (request.GET.get('next') or '').strip()
+    use_next_redirect = bool(next_url and next_url.startswith('/') and not next_url.startswith('//'))
     
     # CRITICAL FIX: Access Patient through module import to avoid local variable shadowing
     # Do NOT import Patient locally - any local import makes Python treat it as local
@@ -1412,167 +1356,9 @@ def patient_create(request):
                 except Exception as qr_error:
                     logger.warning(f"Failed to provision patient QR card: {qr_error}", exc_info=True)
                 
-                # Handle payer type selection (Insurance/Corporate/Cash)
-                payer_type = form.cleaned_data.get('payer_type')
-                from .models import Payer
-                
-                # Handle payer type selection (Insurance/Corporate/Cash)
-                payer_type = form.cleaned_data.get('payer_type')
-                from .models import Payer
-                
-                if payer_type == 'insurance':
-                    # Handle insurance enrollment
-                    selected_insurance_company = form.cleaned_data.get('selected_insurance_company')
-                    selected_insurance_plan = form.cleaned_data.get('selected_insurance_plan')
-                    insurance_id = form.cleaned_data.get('insurance_id')
-                    insurance_member_id = form.cleaned_data.get('insurance_member_id')
-                    
-                    if selected_insurance_company and (insurance_id or insurance_member_id):
-                        try:
-                            from django.utils import timezone as tz
-                            from .models_insurance_companies import PatientInsurance
-                            
-                            # Create patient insurance enrollment
-                            # Check for existing enrollment to prevent duplicates
-                            existing_enrollment = PatientInsurance.objects.filter(
-                                patient=patient,
-                                insurance_company=selected_insurance_company,
-                                is_deleted=False
-                            ).first()
-                            
-                            if existing_enrollment:
-                                # Update existing enrollment instead of creating duplicate
-                                existing_enrollment.insurance_plan = selected_insurance_plan
-                                existing_enrollment.policy_number = insurance_id or ''
-                                existing_enrollment.member_id = insurance_member_id or insurance_id or ''
-                                existing_enrollment.is_primary = True
-                                existing_enrollment.status = 'active'
-                                existing_enrollment.save()
-                                enrollment = existing_enrollment
-                            else:
-                                enrollment = PatientInsurance.objects.create(
-                                    patient=patient,
-                                    insurance_company=selected_insurance_company,
-                                    insurance_plan=selected_insurance_plan,
-                                    policy_number=insurance_id or '',
-                                    member_id=insurance_member_id or insurance_id or '',
-                                    is_primary_subscriber=True,
-                                    relationship_to_subscriber='self',
-                                    effective_date=tz.now().date(),
-                                    is_primary=True,
-                                    status='active',
-                                )
-                            
-                            # Update patient's primary insurance in Payer table
-                            # THIS IS WHERE THE BILL GOES - patient.primary_insurance determines billing
-                            payer, _ = Payer.objects.get_or_create(
-                                name=selected_insurance_company.name,
-                                defaults={
-                                    'payer_type': 'private',
-                                    'is_active': True,
-                                }
-                            )
-                            # CRITICAL: Set primary_insurance - this is what the invoice will use for billing
-                            patient.primary_insurance = payer
-                            patient.insurance_company = selected_insurance_company.name
-                            patient.insurance_member_id = insurance_member_id
-                            patient.insurance_id = insurance_id
-                            patient.save(update_fields=['primary_insurance', 'insurance_company', 
-                                                      'insurance_member_id', 'insurance_id'])
-                            
-                            logger.info(f"✅ Patient {patient.mrn} primary_insurance set to {payer.name} (payer_type: {payer.payer_type}) - BILLS WILL GO TO THIS PAYER")
-                            
-                            messages.success(request, f'✅ Patient enrolled in {selected_insurance_company.name}!')
-                        except Exception as e:
-                            messages.warning(request, f'Patient registered, but insurance enrollment failed: {str(e)}')
-                
-                elif payer_type == 'corporate':
-                    # Handle corporate enrollment
-                    selected_corporate_company = form.cleaned_data.get('selected_corporate_company')
-                    employee_id = form.cleaned_data.get('employee_id')
-                    
-                    if selected_corporate_company:
-                        try:
-                            # selected_corporate_company is now a Payer object (not CorporateAccount)
-                            # Get the payer directly
-                            payer = selected_corporate_company
-                            
-                            # Ensure it's corporate type
-                            if payer.payer_type != 'corporate':
-                                payer.payer_type = 'corporate'
-                                payer.save(update_fields=['payer_type'])
-                            
-                            # Try to create CorporateEmployee if CorporateAccount exists
-                            try:
-                                from .models_enterprise_billing import CorporateEmployee, CorporateAccount
-                                
-                                # Try to find matching CorporateAccount by name
-                                corporate_account = CorporateAccount.objects.filter(
-                                    company_name=payer.name,
-                                    is_active=True,
-                                    is_deleted=False
-                                ).first()
-                                
-                                if corporate_account:
-                                    # Create corporate employee enrollment
-                                    corporate_employee, created = CorporateEmployee.objects.get_or_create(
-                                        corporate_account=corporate_account,
-                                        patient=patient,
-                                        defaults={
-                                            'employee_id': employee_id or f'EMP{patient.mrn}',
-                                            'enrollment_date': timezone.now().date(),
-                                            'is_active': True,
-                                        }
-                                    )
-                                    
-                                    if not created and employee_id:
-                                        corporate_employee.employee_id = employee_id
-                                        corporate_employee.save(update_fields=['employee_id'])
-                            except ImportError:
-                                # CorporateAccount model not available, skip enrollment
-                                pass
-                            except Exception as e:
-                                logger.warning(f"Could not create CorporateEmployee: {str(e)}")
-                            
-                            # CRITICAL: Set primary_insurance - this is what the invoice will use for billing
-                            # THIS IS WHERE THE BILL GOES - patient.primary_insurance determines billing
-                            patient.primary_insurance = payer
-                            patient.save(update_fields=['primary_insurance'])
-                            
-                            logger.info(f"✅ Patient {patient.mrn} primary_insurance set to {payer.name} (payer_type: {payer.payer_type}) - BILLS WILL GO TO THIS PAYER")
-                            
-                            messages.success(request, f'✅ Patient enrolled with corporate account: {payer.name}!')
-                        except Exception as e:
-                            logger.error(f"Error in corporate enrollment: {str(e)}", exc_info=True)
-                            messages.warning(request, f'Patient registered, but corporate enrollment failed: {str(e)}')
-                
-                elif payer_type == 'cash':
-                    # Handle cash payment - set receiving point
-                    receiving_point = form.cleaned_data.get('receiving_point')
-                    
-                    # Get or create Cash payer
-                    payer, _ = Payer.objects.get_or_create(
-                        name='Cash',
-                        defaults={
-                            'payer_type': 'cash',
-                            'is_active': True,
-                        }
-                    )
-                    
-                    # CRITICAL: Set primary_insurance - this is what the invoice will use for billing
-                    # THIS IS WHERE THE BILL GOES - patient.primary_insurance determines billing
-                    patient.primary_insurance = payer
-                    # Store receiving point in patient notes or a custom field if available
-                    if receiving_point:
-                        # Add receiving point to patient notes if not already set
-                        if not patient.notes:
-                            patient.notes = f'Cash receiving point: {receiving_point}'
-                        elif 'receiving point' not in patient.notes.lower():
-                            patient.notes += f'\nCash receiving point: {receiving_point}'
-                        patient.save(update_fields=['primary_insurance', 'notes'])
-                    
-                    messages.info(request, f'✅ Patient registered as Cash payer. Receiving point: {receiving_point or "Not specified"}')
-                
+                from .patient_payer import apply_patient_payer_from_form
+                apply_patient_payer_from_form(request, patient, form)
+
                 # Auto-create encounter (wrap in try-except to not break patient registration)
                 # timezone is already imported at module level - do not re-import (would shadow and break insurance block above)
                 from django.db import transaction
@@ -1648,13 +1434,8 @@ def patient_create(request):
             messages.error(request, f'Error creating patient: {str(transaction_error)}. Please try again.')
             return render(request, 'hospital/patient_form.html', {'form': form, 'title': 'Register New Patient'})
         
-        # CRITICAL: Clear submission token AFTER successful save to prevent resubmission
-        if submission_token:
-            try:
-                del request.session[session_key]
-                request.session.save()
-            except:
-                pass
+        # Do NOT clear submission token here - clear it only when we actually redirect (below).
+        # That way if redirect fails, next submit will be blocked and user goes to patient list.
         
         # Operations outside transaction (non-critical, can fail without rolling back patient creation)
         # CRITICAL SAFETY CHECK: Verify patient was actually created (not a duplicate that slipped through)
@@ -1668,342 +1449,228 @@ def patient_create(request):
             messages.error(request, 'Error: Patient was not created properly. Please try again.')
             return redirect('hospital:patient_list')
         
+        # Wrap all post-save steps in try so we ALWAYS redirect on success (never re-show form)
         try:
-            patient.refresh_from_db()
-        except PatientModel.DoesNotExist:
-            logger.error(f"Patient {patient.id if patient else 'None'} does not exist after transaction - this should not happen!")
-            messages.error(request, 'Error: Patient was not created properly. Please try again.')
-            return redirect('hospital:patient_list')
-        except Exception as refresh_error:
-            logger.warning(f"Error refreshing patient from database: {refresh_error}")
-            # Continue anyway - patient might still exist
-        
-        # Send welcome SMS to new patient - CHECK FOR DUPLICATE FIRST
-        logger.info(f"🔔 SMS CHECK: Patient {patient.mrn} - Phone: {patient.phone_number}")
-        phone_number = (patient.phone_number or '').strip() if patient.phone_number else None
-        logger.info(f"🔔 SMS CHECK: phone_number after strip: {phone_number}")
-        if phone_number:
-            logger.info(f"🔔 SMS CHECK: Phone number exists, attempting to send SMS to {phone_number}")
             try:
-                from .services.sms_service import sms_service
-                # timezone already imported at module level
-                from datetime import timedelta
-                
-                # ADDITIONAL SAFETY: Check if duplicate patient with same MRN exists (should never happen)
-                duplicate_check = PatientModel.objects.filter(
-                    mrn=patient.mrn,
-                    is_deleted=False
-                ).exclude(id=patient.id).first()
-                if duplicate_check:
-                    logger.error(f"CRITICAL: Duplicate patient found with same MRN {patient.mrn}! Existing ID: {duplicate_check.id}, New ID: {patient.id}")
-                    messages.warning(request, f'Warning: Another patient with MRN {patient.mrn} exists. Please verify patient list.')
-                
-                # CRITICAL: Check if SMS was already sent to this patient within the last hour
-                # This prevents duplicate SMS if patient creation is somehow triggered twice
-                recent_cutoff = timezone.now() - timedelta(hours=1)
-                
-                # Normalize phone for checking
-                def normalize_phone_for_sms(phone):
-                    if not phone:
-                        return ''
-                    phone = phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '').replace('+', '')
-                    if phone.startswith('0') and len(phone) == 10:
-                        phone = '233' + phone[1:]
-                    return phone
-                
-                normalized_sms_phone = normalize_phone_for_sms(phone_number)
-                
-                # Check by patient ID first (most specific)
-                existing_sms_by_patient = SMSLog.objects.filter(
-                    related_object_id=patient.id,
-                    related_object_type='Patient',
-                    message_type='patient_registration',
-                    created__gte=recent_cutoff
-                ).exclude(status='failed').first()
-                
-                # Also check by phone number (in case same phone used for duplicate patient)
-                existing_sms_by_phone = None
-                if normalized_sms_phone:
-                    existing_sms_by_phone = SMSLog.objects.filter(
-                        recipient_phone__icontains=normalized_sms_phone[-9:],  # Last 9 digits to handle different formats
+                patient.refresh_from_db()
+            except PatientModel.DoesNotExist:
+                logger.error(f"Patient {patient.id if patient else 'None'} does not exist after transaction")
+                messages.error(request, 'Error: Patient was not created properly. Please try again.')
+                return redirect('hospital:patient_list')
+            except Exception as refresh_error:
+                logger.warning(f"Error refreshing patient from database: {refresh_error}")
+                # Continue anyway - patient might still exist
+            
+            # Send welcome SMS to new patient - CHECK FOR DUPLICATE FIRST
+            logger.info(f"🔔 SMS CHECK: Patient {patient.mrn} - Phone: {patient.phone_number}")
+            phone_number = (patient.phone_number or '').strip() if patient.phone_number else None
+            logger.info(f"🔔 SMS CHECK: phone_number after strip: {phone_number}")
+            if phone_number:
+                logger.info(f"🔔 SMS CHECK: Phone number exists, attempting to send SMS to {phone_number}")
+                try:
+                    from .services.sms_service import sms_service
+                    # timezone already imported at module level
+                    from datetime import timedelta
+                    
+                    # ADDITIONAL SAFETY: Check if duplicate patient with same MRN exists (should never happen)
+                    duplicate_check = PatientModel.objects.filter(
+                        mrn=patient.mrn,
+                        is_deleted=False
+                    ).exclude(id=patient.id).first()
+                    if duplicate_check:
+                        logger.error(f"CRITICAL: Duplicate patient found with same MRN {patient.mrn}! Existing ID: {duplicate_check.id}, New ID: {patient.id}")
+                        messages.warning(request, f'Warning: Another patient with MRN {patient.mrn} exists. Please verify patient list.')
+                    
+                    # CRITICAL: Check if SMS was already sent to this patient within the last hour
+                    recent_cutoff = timezone.now() - timedelta(hours=1)
+                    
+                    def normalize_phone_for_sms(phone):
+                        if not phone:
+                            return ''
+                        phone = phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '').replace('+', '')
+                        if phone.startswith('0') and len(phone) == 10:
+                            phone = '233' + phone[1:]
+                        return phone
+                    
+                    normalized_sms_phone = normalize_phone_for_sms(phone_number)
+                    
+                    existing_sms_by_patient = SMSLog.objects.filter(
+                        related_object_id=patient.id,
+                        related_object_type='Patient',
                         message_type='patient_registration',
                         created__gte=recent_cutoff
                     ).exclude(status='failed').first()
-                
-                if existing_sms_by_patient or existing_sms_by_phone:
-                    existing_sms = existing_sms_by_patient or existing_sms_by_phone
-                    logger.info(f"Registration SMS already sent to {phone_number} for patient {patient.mrn} at {existing_sms.created}. Skipping duplicate SMS.")
-                    messages.success(request, f'Patient registered successfully! (SMS was already sent previously)')
-                else:
-                    logger.info(f"🔔 Attempting to send registration SMS to {phone_number} for patient {patient.mrn}")
-                    message = (
-                        f"Welcome to PrimeCare Hospital, {patient.first_name}!\n\n"
-                        f"Your Medical Record Number (MRN): {patient.mrn}\n"
-                        f"Please keep this number for future visits.\n\n"
-                        f"Thank you for choosing us for your healthcare needs.\n\n"
-                        f"PrimeCare Hospital\n"
-                        f"Call us: [Hospital Contact]"
-                    )
-                    sms_log = sms_service.send_sms(
-                        phone_number=phone_number,
-                        message=message,
-                        message_type='patient_registration',
-                        recipient_name=patient.full_name,
-                        related_object_id=patient.id,
-                        related_object_type='Patient'
-                    )
-                    # Check if SMS was actually sent successfully
-                    if sms_log:
-                        logger.info(f"SMS log created: status={sms_log.status}, phone={sms_log.recipient_phone}")
-                        if sms_log.status == 'sent':
-                            messages.success(request, f'Patient registered successfully! Welcome SMS sent to {phone_number}.')
-                        elif sms_log.status == 'failed':
-                            error_msg = sms_log.error_message or 'Unknown error'
-                            logger.warning(f"Registration SMS failed for {phone_number}: {error_msg}")
-                            if sms_log.provider_response:
-                                logger.warning(f"SMS provider response: {sms_log.provider_response}")
-                            messages.warning(request, f'Patient registered successfully, but SMS failed: {error_msg}')
-                        else:
-                            logger.warning(f"SMS status is {sms_log.status} for {phone_number}")
-                            messages.warning(request, f'Patient registered successfully, but SMS status is {sms_log.status}. Check SMS logs.')
+                    
+                    existing_sms_by_phone = None
+                    if normalized_sms_phone:
+                        existing_sms_by_phone = SMSLog.objects.filter(
+                            recipient_phone__icontains=normalized_sms_phone[-9:],
+                            message_type='patient_registration',
+                            created__gte=recent_cutoff
+                        ).exclude(status='failed').first()
+                    
+                    if existing_sms_by_patient or existing_sms_by_phone:
+                        existing_sms = existing_sms_by_patient or existing_sms_by_phone
+                        logger.info(f"Registration SMS already sent to {phone_number} for patient {patient.mrn} at {existing_sms.created}. Skipping duplicate SMS.")
+                        messages.success(request, f'Patient registered successfully! (SMS was already sent previously)')
                     else:
-                        logger.error(f"SMS service returned None for {phone_number}")
-                        messages.warning(request, 'Patient registered successfully, but SMS service returned no result.')
-            except Exception as e:
-                # Use patient.phone_number as fallback if phone_number variable not accessible
-                phone_display = phone_number if 'phone_number' in locals() else (patient.phone_number if patient and patient.phone_number else 'N/A')
-                logger.error(f"Exception sending registration SMS to {phone_display}: {str(e)}", exc_info=True)
-                messages.warning(request, f'Patient registered successfully, but SMS could not be sent: {str(e)}')
-        else:
-            logger.warning(f"🔔 NO PHONE NUMBER: Patient {patient.mrn} has no phone number - skipping SMS")
-            messages.success(request, 'Patient registered successfully! No phone number provided for SMS.')
-        
-        # 🎫 QUEUE SYSTEM: Assign queue number and send SMS (runs regardless of SMS status)
-        try:
-            from .services.queue_service import queue_service
-            from .services.queue_notification_service import queue_notification_service
-            
-            # Only create queue entry if encounter exists
-            if encounter and default_dept:
-                # Create queue entry (priority: 1=Emergency, 2=Urgent, 3=Normal, 4=Follow-up)
-                queue_entry = queue_service.create_queue_entry(
-                    patient=patient,
-                    encounter=encounter,
-                    department=default_dept,
-                    assigned_doctor=None,
-                    priority=3,  # 3 = Normal priority
-                    notes='New patient registration'
-                )
-                
-                # Send queue SMS notification
-                queue_notification_service.send_check_in_notification(queue_entry)
-                
-                logger.info(f"✅ Queue entry created: {queue_entry.queue_number} for {patient.full_name}")
+                        logger.info(f"🔔 Attempting to send registration SMS to {phone_number} for patient {patient.mrn}")
+                        message = (
+                            f"Welcome to PrimeCare Hospital, {patient.first_name}!\n\n"
+                            f"Your Medical Record Number (MRN): {patient.mrn}\n"
+                            f"Please keep this number for future visits.\n\n"
+                            f"Thank you for choosing us for your healthcare needs.\n\n"
+                            f"PrimeCare Hospital\n"
+                            f"Call us: [Hospital Contact]"
+                        )
+                        sms_log = sms_service.send_sms(
+                            phone_number=phone_number,
+                            message=message,
+                            message_type='patient_registration',
+                            recipient_name=patient.full_name,
+                            related_object_id=patient.id,
+                            related_object_type='Patient'
+                        )
+                        if sms_log:
+                            logger.info(f"SMS log created: status={sms_log.status}, phone={sms_log.recipient_phone}")
+                            if sms_log.status == 'sent':
+                                messages.success(request, f'Patient registered successfully! Welcome SMS sent to {phone_number}.')
+                            elif sms_log.status == 'failed':
+                                error_msg = sms_log.error_message or 'Unknown error'
+                                logger.warning(f"Registration SMS failed for {phone_number}: {error_msg}")
+                                if sms_log.provider_response:
+                                    logger.warning(f"SMS provider response: {sms_log.provider_response}")
+                                messages.warning(request, f'Patient registered successfully, but SMS failed: {error_msg}')
+                            else:
+                                logger.warning(f"SMS status is {sms_log.status} for {phone_number}")
+                                messages.warning(request, f'Patient registered successfully, but SMS status is {sms_log.status}. Check SMS logs.')
+                        else:
+                            logger.error(f"SMS service returned None for {phone_number}")
+                            messages.warning(request, 'Patient registered successfully, but SMS service returned no result.')
+                except Exception as e:
+                    # Use patient.phone_number as fallback if phone_number variable not accessible
+                    phone_display = phone_number if 'phone_number' in locals() else (patient.phone_number if patient and patient.phone_number else 'N/A')
+                    logger.error(f"Exception sending registration SMS to {phone_display}: {str(e)}", exc_info=True)
+                    messages.warning(request, f'Patient registered successfully, but SMS could not be sent: {str(e)}')
             else:
-                logger.warning(f"Queue entry not created - encounter or department missing for {patient.full_name}")
+                logger.warning(f"🔔 NO PHONE NUMBER: Patient {patient.mrn} has no phone number - skipping SMS")
+                messages.success(request, 'Patient registered successfully! No phone number provided for SMS.')
             
-        except Exception as e:
-            logger.error(f"Error creating queue entry: {str(e)}", exc_info=True)
-            # Don't fail patient creation if queue fails
-        
-        # Auto-create invoice with registration fee using flexible pricing
-        try:
-            from .models import Invoice, InvoiceLine, ServiceCode, Payer
-            from .models_flexible_pricing import ServicePrice, PricingCategory
-            from .models_accounting_advanced import RegistrationFee, Account
-            from .models_insurance_companies import InsuranceCompany
-            from decimal import Decimal
-            
-            # Get patient's payer (default to Cash if not set)
-            payer = patient.primary_insurance
-            payer_type = 'cash'
-            insurance_company = None
-            
-            if payer:
-                payer_type = payer.payer_type or 'cash'
-                # If insurance (private/NHIS), find InsuranceCompany for display
-                if payer_type in ('insurance', 'private', 'nhis'):
-                    insurance_company = InsuranceCompany.objects.filter(
-                        name__iexact=payer.name,
-                        is_active=True,
-                        is_deleted=False
-                    ).first()
-            else:
-                # Try to get Cash payer
-                payer = Payer.objects.filter(payer_type='cash', is_active=True, is_deleted=False).first()
-                if not payer:
-                    # Create a default Cash payer if none exists
-                    # Use get_or_create to prevent duplicates
-                    payer, _ = Payer.objects.get_or_create(
-                        name='Cash',
-                        defaults={
-                            'payer_type': 'cash',
-                            'is_active': True
-                        }
-                    )
-            
-            # Get registration service code (use REG if exists, otherwise REG-FEE)
-            reg_service = ServiceCode.objects.filter(
-                code='REG',
-                is_deleted=False
-            ).first()
-            
-            if not reg_service:
-                reg_service = ServiceCode.objects.filter(
-                    code='REG-FEE',
-                    is_deleted=False
-                ).first()
-            
-            if not reg_service:
-                # Create if doesn't exist
-                reg_service, _ = ServiceCode.objects.get_or_create(
-                    code='REG',
-                    defaults={
-                        'description': 'Patient Registration Fee',
-                        'category': 'Registration',
-                        'is_active': True,
-                    }
-                )
-            
-            # Get registration price using flexible pricing system
-            registration_price = None
-            
-            if reg_service:
-                # Try to get price based on payer type and insurance company
-                registration_price = ServicePrice.get_price_by_payer_type(
-                    service_code=reg_service,
-                    payer_type=payer_type,
-                    insurance_company=insurance_company
-                )
-            
-            # Fallback to default if no price found
-            if not registration_price or registration_price == 0:
-                registration_price = Decimal('60.00')  # Default registration fee
-            
-            # Only create invoice and registration fee if payer exists
-            if payer and registration_price:
-                # Set invoice due date (30 days from now)
-                from datetime import timedelta
-                due_date = timezone.now() + timedelta(days=30)
+            # 🎫 QUEUE SYSTEM: Assign queue number and send SMS (runs regardless of SMS status)
+            try:
+                from .services.queue_service import queue_service
+                from .services.queue_notification_service import queue_notification_service
                 
-                # Create invoice (encounter may be None if encounter creation failed)
-                invoice = Invoice.objects.create(
-                    patient=patient,
-                    encounter=encounter,  # May be None if encounter creation failed
-                    payer=payer,
-                    status='draft',
-                    due_at=due_date
-                )
-                
-                # Add registration fee line
-                InvoiceLine.objects.create(
-                    invoice=invoice,
-                    service_code=reg_service,
-                    description='Patient Registration Fee',
-                    quantity=1,
-                    unit_price=registration_price,
-                    line_total=registration_price
-                )
-                
-                # Update invoice totals
-                invoice.update_totals()
-                
-                # Auto-create RegistrationFee object
-                try:
-                    # Get or create revenue account
-                    revenue_account, _ = Account.objects.get_or_create(
-                        account_code='4100',
-                        defaults={
-                            'account_name': 'Registration Fees Revenue',
-                            'account_type': 'revenue',
-                            'is_active': True,
-                        }
-                    )
-                    
-                    # Create RegistrationFee
-                    registration_fee = RegistrationFee.objects.create(
+                if encounter and default_dept:
+                    queue_entry = queue_service.create_queue_entry(
                         patient=patient,
-                        registration_date=timezone.now().date(),
-                        fee_amount=registration_price,
-                        payment_method='cash',  # Will be updated when payment is received
-                        revenue_account=revenue_account,
-                        notes=f'Auto-created on patient registration - Invoice: {invoice.invoice_number}'
+                        encounter=encounter,
+                        department=default_dept,
+                        assigned_doctor=None,
+                        priority=3,  # 3 = Normal priority
+                        notes='New patient registration'
                     )
-                    
-                    logger.info(
-                        f"✅ Auto-created registration fee {registration_fee.fee_number} "
-                        f"for {patient.full_name} - GHS {registration_price}"
-                    )
-                except Exception as fee_error:
-                    logger.error(f"Error creating RegistrationFee: {fee_error}")
-                    # Don't fail patient registration if RegistrationFee creation fails
-                
-        except Exception as e:
-            # Log error but don't break patient registration
-            logger.error(f"Error creating registration invoice: {str(e)}", exc_info=True)
-        
-        # Success message - clear and prominent
-        if encounter:
-            messages.success(
-                request, 
-                f'✅ <strong>Patient Registration Successful!</strong><br>'
-                f'Patient: <strong>{patient.full_name}</strong><br>'
-                f'Patient ID (MRN): <strong>{patient.mrn}</strong><br>'
-                f'Please record vital signs.', 
-                extra_tags='html'
-            )
-        else:
-            messages.success(
-                request, 
-                f'✅ <strong>Patient Registration Successful!</strong><br>'
-                f'Patient: <strong>{patient.full_name}</strong><br>'
-                f'Patient ID (MRN): <strong>{patient.mrn}</strong>', 
-                extra_tags='html'
-            )
+                    queue_notification_service.send_check_in_notification(queue_entry)
+                    logger.info(f"✅ Queue entry created: {queue_entry.queue_number} for {patient.full_name}")
+                else:
+                    logger.warning(f"Queue entry not created - encounter or department missing for {patient.full_name}")
+            except Exception as e:
+                logger.error(f"Error creating queue entry: {str(e)}", exc_info=True)
+                # Don't fail patient creation if queue fails
             
-            # CRITICAL: Clear submission token to prevent reuse
+            # Registration fee is NOT auto-added. Cashier adds it via Add Services when the new patient pays.
+            # Success message - clear and prominent
+            if encounter:
+                messages.success(
+                    request,
+                    f'✅ <strong>Patient Registration Successful!</strong><br>'
+                    f'Patient: <strong>{patient.full_name}</strong><br>'
+                    f'Patient ID (MRN): <strong>{patient.mrn}</strong><br>'
+                    f'Please record vital signs.',
+                    extra_tags='html'
+                )
+            else:
+                messages.success(
+                    request,
+                    f'✅ <strong>Patient Registration Successful!</strong><br>'
+                    f'Patient: <strong>{patient.full_name}</strong><br>'
+                    f'Patient ID (MRN): <strong>{patient.mrn}</strong>',
+                    extra_tags='html'
+                )
+
+            # CRITICAL: Clear submission token to prevent reuse (run for both encounter and no-encounter)
             if submission_token:
                 try:
-                    session_key = f'patient_submission_{submission_token}'
-                    if session_key in request.session:
-                        del request.session[session_key]
+                    session_key_clear = f'patient_submission_{submission_token}'
+                    if session_key_clear in request.session:
+                        del request.session[session_key_clear]
                         request.session.save()
-                except:
+                except Exception:
                     pass
-            
-            # CRITICAL: Use HttpResponseRedirect to prevent POST resubmission on browser refresh
+
+            # CRITICAL: Always redirect after success to prevent POST resubmission and show success
             from django.http import HttpResponseRedirect
             from django.urls import reverse
             try:
-                # If encounter was created, redirect to vitals recording
+                if use_next_redirect:
+                    response = HttpResponseRedirect(next_url)
+                    response.status_code = 303
+                    return response
                 if encounter:
                     vitals_url = reverse('hospital:record_vitals', args=[encounter.pk])
-                    # Use 303 See Other status to prevent POST resubmission
                     response = HttpResponseRedirect(vitals_url)
                     response.status_code = 303
                     return response
-                else:
-                    # No encounter created, redirect to patient detail
-                    patient_url = reverse('hospital:patient_detail', args=[patient.pk])
-                    response = HttpResponseRedirect(patient_url)
-                    response.status_code = 303
-                    return response
+                patient_url = reverse('hospital:patient_detail', args=[patient.pk])
+                response = HttpResponseRedirect(patient_url)
+                response.status_code = 303
+                return response
             except Exception as redirect_error:
-                # If redirect fails, try to redirect to patient detail
                 logger.warning(f"Redirect error: {redirect_error}", exc_info=True)
                 try:
+                    if use_next_redirect:
+                        return redirect(next_url)
                     patient_url = reverse('hospital:patient_detail', args=[patient.pk])
-                    response = HttpResponseRedirect(patient_url)
-                    response.status_code = 303
-                    return response
-                except:
-                    # Last resort: redirect to patient list
+                    return HttpResponseRedirect(patient_url)
+                except Exception:
                     return redirect('hospital:patient_list')
+        except Exception as post_save_error:
+            # Any unexpected error after save: still redirect so user never sees form again
+            logger.exception("Post-registration step failed; redirecting to patient anyway")
+            messages.success(
+                request,
+                f'Patient <strong>{patient.full_name}</strong> registered (MRN: <strong>{patient.mrn}</strong>).',
+                extra_tags='html'
+            )
+            try:
+                if use_next_redirect:
+                    return redirect(next_url)
+                return redirect('hospital:patient_detail', pk=patient.pk)
+            except Exception:
+                return redirect('hospital:patient_list')
     else:
         form = PatientForm()
     
     context = {'form': form, 'title': 'Register New Patient'}
     return render(request, 'hospital/patient_form.html', context)
+
+
+@login_required
+def patient_outstanding_api(request, patient_id):
+    """
+    Single URL for patient outstanding across the app. Returns JSON.
+    Use this URL everywhere you need outstanding / amount_due_after_deposit so values are always the same.
+    """
+    from .models import Patient
+    from .services.patient_outstanding_service import get_patient_outstanding
+    patient = get_object_or_404(Patient, pk=patient_id, is_deleted=False)
+    from decimal import Decimal
+    data = get_patient_outstanding(patient, include_deposit_breakdown=True)
+    # Serialize Decimals as numbers for JSON
+    return JsonResponse({
+        k: float(v) if isinstance(v, Decimal) else v
+        for k, v in data.items()
+    })
 
 
 @login_required
@@ -2123,12 +1790,23 @@ def patient_detail(request, pk):
     except:
         all_prescriptions = []
     
-    # Get invoices (limited)
+    # Get invoices (limited for list display)
     all_invoices = Invoice.objects.filter(
         patient=patient,
         is_deleted=False
     ).order_by('-issued_at')[:INVOICES_LIMIT]
-    
+
+    # Refresh unpaid invoice totals so balance reflects deposit and payments (not stale "initial before deposit")
+    for inv in Invoice.objects.filter(
+        patient=patient,
+        is_deleted=False,
+        status__in=['issued', 'partially_paid', 'overdue'],
+    ):
+        try:
+            inv.update_totals()
+        except Exception:
+            pass
+
     # Cache expensive count queries for 2 minutes
     stats_cache_key = f'patient_stats_{pk}'
     stats = cache.get(stats_cache_key)
@@ -2147,11 +1825,17 @@ def patient_detail(request, pk):
     # Get latest vital signs
     latest_vitals = all_vitals.first()
     
-    # Calculate total billing
+    # Single source of truth for outstanding (same as patient_outstanding_api URL)
     from decimal import Decimal
-    total_billed = sum([invoice.total_amount or Decimal('0.00') for invoice in all_invoices])
-    total_paid = sum([invoice.amount_paid or Decimal('0.00') for invoice in all_invoices])
-    total_outstanding = total_billed - total_paid
+    from .services.patient_outstanding_service import get_patient_outstanding
+    outstanding_data = get_patient_outstanding(patient, include_deposit_breakdown=True)
+    total_billed = outstanding_data['total_billed']
+    total_paid = outstanding_data['total_paid']
+    deposit_balance = outstanding_data['deposit_balance']
+    total_outstanding = outstanding_data['total_outstanding']
+    amount_due_after_deposit = outstanding_data['amount_due_after_deposit']
+    total_deposited = outstanding_data.get('total_deposited', Decimal('0.00'))
+    deposit_used = outstanding_data.get('deposit_used', Decimal('0.00'))
     
     hospital_settings = HospitalSettings.get_settings()
     prepared_by = request.user.get_full_name() or request.user.username
@@ -2185,8 +1869,16 @@ def patient_detail(request, pk):
     # Front desk/receptionist cannot view vitals - only medical staff
     can_view_vitals = user_role not in {'receptionist', 'frontdesk'}
     
+    # Payer/company for billing (insurance or corporate) – same as pharmacy "Bill to" so profile shows company name
+    try:
+        from .utils_billing import get_patient_payer_info
+        payer_info = get_patient_payer_info(patient, None)
+    except Exception:
+        payer_info = {'name': 'Cash', 'is_insurance_or_corporate': False}
+    
     context = {
         'patient': patient,
+        'payer_info': payer_info,
         'encounters': encounters,
         'active_encounters': active_encounters,
         'completed_encounters': completed_encounters,
@@ -2204,6 +1896,10 @@ def patient_detail(request, pk):
         'total_billed': total_billed,
         'total_paid': total_paid,
         'total_outstanding': total_outstanding,
+        'deposit_balance': deposit_balance,
+        'total_deposited': total_deposited,
+        'deposit_used': deposit_used,
+        'amount_due_after_deposit': amount_due_after_deposit,
         'now': timezone.now(),
         'last_visit_date': last_visit_date,
         'hospital_settings': hospital_settings,
@@ -2542,7 +2238,7 @@ def patient_qr_checkin_api(request):
     active_queue = QueueEntry.objects.filter(
         patient=patient,
         queue_date=today,
-        status__in=['checked_in', 'called', 'in_progress'],
+        status__in=['checked_in', 'called', 'vitals_completed', 'in_progress'],
         is_deleted=False
     ).select_related('department', 'encounter').order_by('-created').first()
     
@@ -2557,13 +2253,13 @@ def patient_qr_checkin_api(request):
         return JsonResponse({
             'success': True,
             'already_checked_in': True,
-            'message': f'{patient.full_name} is already in queue {active_queue.queue_number}.',
+            'message': f'{patient.full_name} is already in queue (ticket {active_queue.display_ticket_number}).',
             'patient': {
                 'name': patient.full_name,
                 'mrn': patient.mrn,
             },
             'queue': {
-                'number': active_queue.queue_number,
+                'number': active_queue.display_ticket_number,
                 'status': active_queue.get_status_display(),
                 'position': queue_position,
                 'department': active_queue.department.name if active_queue.department else '',
@@ -2685,7 +2381,7 @@ def patient_qr_checkin_api(request):
             'started_at': timezone.localtime(encounter.started_at).strftime('%Y-%m-%d %H:%M'),
         },
         'queue': {
-            'number': queue_entry.queue_number,
+            'number': queue_entry.display_ticket_number,
             'position': queue_position,
             'status': queue_entry.get_status_display(),
             'estimated_wait': queue_entry.estimated_wait_minutes,
@@ -2695,10 +2391,13 @@ def patient_qr_checkin_api(request):
 
 
 @login_required
-@login_required
 def patient_edit(request, pk):
     """Edit patient"""
-    patient = get_object_or_404(Patient, pk=pk, is_deleted=False)
+    patient = get_object_or_404(
+        Patient.objects.select_related('primary_insurance'),
+        pk=pk,
+        is_deleted=False,
+    )
     
     if request.method == 'POST':
         # Check if user wants to proceed with duplicate (for family members, etc.)
@@ -2715,9 +2414,14 @@ def patient_edit(request, pk):
         
         if form.is_valid():
             try:
-                # Save the form
                 updated_patient = form.save()
-                messages.success(request, f'Patient {updated_patient.full_name} updated successfully.')
+                from .patient_payer import apply_patient_payer_from_form
+                apply_patient_payer_from_form(request, updated_patient, form)
+                updated_patient.refresh_from_db()
+                messages.success(
+                    request,
+                    f'Patient {updated_patient.full_name} updated successfully.',
+                )
                 return redirect('hospital:patient_detail', pk=updated_patient.pk)
             except Exception as e:
                 logger.error(f"Error saving patient {patient.mrn} during edit: {e}", exc_info=True)
@@ -2740,6 +2444,7 @@ def patient_edit(request, pk):
     context = {
         'form': form,
         'patient': patient,
+        'title': 'Edit Patient',
     }
     return render(request, 'hospital/patient_form.html', context)
 
@@ -2750,6 +2455,23 @@ def encounter_list(request):
     status_filter = request.GET.get('status', '')
     type_filter = request.GET.get('type', '')
     query = request.GET.get('q', '')
+    date_from = request.GET.get('date_from', '').strip()
+    date_to = request.GET.get('date_to', '').strip()
+    
+    # Parse date range (YYYY-MM-DD)
+    from datetime import datetime
+    date_from_obj = None
+    date_to_obj = None
+    if date_from:
+        try:
+            date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+        except ValueError:
+            date_from = ''
+    if date_to:
+        try:
+            date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+        except ValueError:
+            date_to = ''
     
     # CRITICAL: Deduplicate encounters - keep only most recent per patient per day
     # Use DISTINCT ON approach via raw SQL since UUID fields don't support MAX()
@@ -2767,6 +2489,14 @@ def encounter_list(request):
     if type_filter:
         where_clauses.append("e.encounter_type = %s")
         params.append(type_filter)
+    
+    if date_from_obj:
+        where_clauses.append("DATE(COALESCE(e.started_at, e.created)) >= %s")
+        params.append(date_from_obj)
+    
+    if date_to_obj:
+        where_clauses.append("DATE(COALESCE(e.started_at, e.created)) <= %s")
+        params.append(date_to_obj)
     
     if query:
         where_clauses.append("""
@@ -2853,6 +2583,16 @@ def encounter_list(request):
             encounters = encounters.filter(status=status_filter)
         if type_filter:
             encounters = encounters.filter(encounter_type=type_filter)
+        if date_from_obj or date_to_obj:
+            from django.db.models.functions import Coalesce, TruncDate
+            from django.db.models import F
+            encounters = encounters.annotate(
+                effective_date=TruncDate(Coalesce(F('started_at'), F('created')))
+            )
+            if date_from_obj:
+                encounters = encounters.filter(effective_date__gte=date_from_obj)
+            if date_to_obj:
+                encounters = encounters.filter(effective_date__lte=date_to_obj)
         
         encounters = encounters.order_by('-started_at', '-id')
     
@@ -2865,6 +2605,8 @@ def encounter_list(request):
         'encounters': page_obj,
         'status_filter': status_filter,
         'type_filter': type_filter,
+        'date_from': date_from,
+        'date_to': date_to,
     }
     return render(request, 'hospital/encounter_list.html', context)
 
@@ -2909,6 +2651,48 @@ def encounter_create(request):
     
     context = {'form': form}
     return render(request, 'hospital/encounter_form.html', context)
+
+
+def _expand_antenatal_doctor_cards_for_quick_visit(doctors_with_pricing):
+    """
+    Doctors with anc_visit (e.g. Dr. Ali Samba) get a second card for ANC pricing.
+    Antenatal duplicate rows are placed FIRST so the Antenatal group appears at the top
+    of the page (easy to see without scrolling the specialty list).
+    """
+    if not doctors_with_pricing:
+        return doctors_with_pricing
+    from decimal import Decimal, InvalidOperation
+    antenatal_front = []
+    rest = []
+    for entry in doctors_with_pricing:
+        pi = entry.get('pricing_info') or {}
+        amt = pi.get('anc_visit')
+        if amt is not None:
+            try:
+                if not isinstance(amt, Decimal):
+                    amt = Decimal(str(amt))
+            except (ValueError, TypeError, InvalidOperation):
+                amt = None
+        if amt is not None:
+            anc_pi = dict(pi)
+            for k in (
+                'first_visit', 'subsequent_visit', 'cash_first_visit', 'cash_subsequent_visit',
+                'insurance_first_visit', 'insurance_subsequent_visit',
+                'corporate_first_visit', 'corporate_subsequent_visit',
+            ):
+                if k in anc_pi:
+                    anc_pi[k] = amt
+            anc_display = dict(entry.get('display_info') or {})
+            anc_display['specialty'] = 'Antenatal / ANC — 235 GHS'
+            antenatal_front.append({
+                'doctor': entry['doctor'],
+                'pricing_info': anc_pi,
+                'display_info': anc_display,
+                'is_first_visit': True,
+                'radio_id_suffix': '_antenatal',
+            })
+        rest.append(entry)
+    return antenatal_front + rest
 
 
 @login_required
@@ -3230,17 +3014,21 @@ def patient_quick_visit_create(request, patient_pk):
             except Exception as notif_error:
                 logger.warning(f"Failed to send notification to doctor: {notif_error}")
         
-        # Sync payer type (verify and set based on selection or patient's current payer)
+        # Sync payer type and create encounter invoice so cashier sees cash payment immediately
         consultation_amount = None
         try:
             from .services.visit_payer_sync_service import visit_payer_sync_service
             payer_type = request.POST.get('payer_type', '').strip()
-            if payer_type:
-                sync_result = visit_payer_sync_service.verify_and_set_payer_type(
-                    encounter=encounter,
-                    payer_type=payer_type
-                )
-                if sync_result['success']:
+            if not payer_type and patient.primary_insurance:
+                payer_type = getattr(patient.primary_insurance, 'payer_type', None) or 'cash'
+            if not payer_type:
+                payer_type = 'cash'
+            sync_result = visit_payer_sync_service.verify_and_set_payer_type(
+                encounter=encounter,
+                payer_type=payer_type
+            )
+            if sync_result['success']:
+                if request.POST.get('payer_type', '').strip():
                     messages.info(
                         request,
                         f"Payer type set to {sync_result['payer_type']} ({sync_result['payer'].name}). "
@@ -3254,7 +3042,7 @@ def patient_quick_visit_create(request, patient_pk):
         # Use doctor-specific pricing with insurance/corporate pricing if applicable
         if visit_reason == 'new':
             try:
-                from .utils_billing import add_consultation_charge
+                from .utils_billing import CONSULTATION_LINE_SERVICE_CODES, add_consultation_charge
                 from .utils_doctor_pricing import DoctorPricingService
                 from .services.pricing_engine_service import pricing_engine
                 from .models import ServiceCode, InvoiceLine
@@ -3271,9 +3059,13 @@ def patient_quick_visit_create(request, patient_pk):
                     except (ValueError, InvalidOperation):
                         manual_price = None
                 
-                # Determine consultation type based on doctor pricing
+                # Determine consultation type: Antenatal (235), Gynae/Special (260) so cashier sees price immediately
                 consultation_type = 'general'
-                if assigned_doctor_staff:
+                if encounter_type == 'specialist' or encounter_type == 'gynae':
+                    consultation_type = 'specialist'
+                elif encounter_type == 'antenatal':
+                    pass  # add_consultation_charge uses encounter.encounter_type and bills MAT-ANC 235 GHC
+                elif assigned_doctor_staff:
                     pricing_info = DoctorPricingService.get_doctor_pricing_info(assigned_doctor_staff)
                     if pricing_info['is_specialist']:
                         consultation_type = 'specialist'
@@ -3320,25 +3112,22 @@ def patient_quick_visit_create(request, patient_pk):
                     doctor_staff=assigned_doctor_staff
                 )
                 
-                # Override price if manual price or payer-specific price was determined
+                # Override price if manual price or payer-specific price was determined (include MAT-ANC for antenatal)
                 if invoice and consultation_price:
-                    consultation_line = invoice.invoice_lines.filter(
-                        service_code__code__in=['CON001', 'CON002'],
+                    consultation_line = InvoiceLine.objects.filter(
+                        invoice_id=invoice.pk,
+                        service_code__code__in=CONSULTATION_LINE_SERVICE_CODES,
                         is_deleted=False
-                    ).first()
+                    ).order_by('-modified', '-created').first()
                     
                     if consultation_line:
                         # Update the price if it's different
                         if consultation_line.unit_price != consultation_price:
                             consultation_line.unit_price = consultation_price
-                            consultation_line.total_price = consultation_price * Decimal(consultation_line.quantity)
+                            consultation_line.line_total = consultation_price * Decimal(consultation_line.quantity)
                             consultation_line.save()
-                            
-                            # Recalculate invoice total
-                            invoice.total_amount = sum(
-                                line.total_price for line in invoice.invoice_lines.filter(is_deleted=False)
-                            )
-                            invoice.save()
+                            invoice.refresh_from_db()
+                            invoice.update_totals()
                         
                         consultation_amount = consultation_line.unit_price
                         logger.info(
@@ -3405,14 +3194,14 @@ def patient_quick_visit_create(request, patient_pk):
                 notes=f'Visit: {chief_complaint}'
             )
             
-            queue_number = queue_entry.queue_number
+            patient_ticket = queue_entry.display_ticket_number
             queue_position = queue_service.get_position_in_queue(queue_entry)
             
-            # Send queue SMS notification (professional queue message) with payment amount
+            # Send queue SMS (Cashier reminder when applicable; no amounts in message)
             sms_sent = queue_notification_service.send_check_in_notification(queue_entry, consultation_amount=consultation_amount)
             
             logger.info(
-                f"✅ Queue entry created: {queue_number} for {patient.full_name} "
+                f"✅ Queue entry created: {patient_ticket} ({queue_entry.queue_number}) for {patient.full_name} "
                 f"(Position: {queue_position}, Priority: {priority}, SMS sent: {sms_sent})"
             )
             
@@ -3423,12 +3212,11 @@ def patient_quick_visit_create(request, patient_pk):
                     from .services.sms_service import sms_service
                     visit_date = encounter.started_at.strftime('%d/%m/%Y at %I:%M %p')
                     
-                    # Build message with payment amount if bill was created
                     payment_info = ""
                     if consultation_amount:
                         payment_info = (
-                            f"\n💰 Payment Required: GHS {consultation_amount:.2f}\n"
-                            f"Please proceed to CASHIER to make payment before consultation.\n"
+                            "\nPlease proceed to the Cashier to make payment before consultation.\n"
+                            "Your correct bill is available at the desk.\n"
                         )
                     
                     message = (
@@ -3437,7 +3225,7 @@ def patient_quick_visit_create(request, patient_pk):
                         f"Visit Type: {encounter.get_encounter_type_display()}\n"
                         f"Date/Time: {visit_date}\n"
                         f"MRN: {patient.mrn}\n"
-                        f"Queue Number: {queue_number}\n"
+                        f"Queue Number: {patient_ticket}\n"
                         f"{payment_info}"
                         f"Please proceed to the waiting area.\n\n"
                         f"Thank you,\nPrimeCare Hospital"
@@ -3462,12 +3250,12 @@ def patient_quick_visit_create(request, patient_pk):
             if sms_sent:
                 messages.success(
                     request,
-                    f"✅ Visit created! Queue Number: {queue_number}, Position: {queue_position}. SMS sent. Please record vital signs."
+                    f"✅ Visit created! Ticket: {patient_ticket}, Position: {queue_position}. SMS sent. Please record vital signs."
                 )
             else:
                 messages.warning(
                     request,
-                    f"✅ Visit created! Queue Number: {queue_number}, Position: {queue_position}. SMS could not be sent - check patient phone number. Please record vital signs."
+                    f"✅ Visit created! Ticket: {patient_ticket}, Position: {queue_position}. SMS could not be sent - check patient phone number. Please record vital signs."
                 )
             
         except Exception as e:
@@ -3478,12 +3266,11 @@ def patient_quick_visit_create(request, patient_pk):
                     from .services.sms_service import sms_service
                     visit_date = encounter.started_at.strftime('%d/%m/%Y at %I:%M %p')
                     
-                    # Build message with payment amount if bill was created
                     payment_info = ""
                     if consultation_amount:
                         payment_info = (
-                            f"\n💰 Payment Required: GHS {consultation_amount:.2f}\n"
-                            f"Please proceed to CASHIER to make payment before consultation.\n"
+                            "\nPlease proceed to the Cashier to make payment before consultation.\n"
+                            "Your correct bill is available at the desk.\n"
                         )
                     
                     message = (
@@ -3618,6 +3405,8 @@ def patient_quick_visit_create(request, patient_pk):
         patient=patient,
         is_deleted=False
     ).exclude(status='cancelled').exists()
+
+    doctors_with_pricing = _expand_antenatal_doctor_cards_for_quick_visit(doctors_with_pricing)
     
     context = {
         'patient': patient,
@@ -3939,29 +3728,35 @@ def encounter_detail(request, pk):
     except:
         pass
     
-    # Get clinical notes with plan field (doctor's plans)
+    # Get clinical notes with plan field (doctor's plans) – no limit so all notes visible
     clinical_notes_with_plan = []
+    nurse_notes = []
+    doctor_notes = []
+    other_notes = []
     try:
         from .models_advanced import ClinicalNote
         clinical_notes_with_plan = ClinicalNote.objects.filter(
             encounter=encounter,
             is_deleted=False
-        ).exclude(plan='').select_related('created_by__user').order_by('-created')[:10]
-    except:
-        pass
-    
-    # Get nurse notes (all progress notes, not just by profession='nurse' since profession might not be set)
-    nurse_notes = []
-    try:
-        from .models_advanced import ClinicalNote
-        # Get all progress notes for this encounter (nurses typically use progress notes)
-        nurse_notes = ClinicalNote.objects.filter(
+        ).exclude(plan='').exclude(plan__isnull=True).select_related('created_by__user').order_by('-created')
+        # Progress notes split by author for dedicated Nurse / Doctor sections
+        _progress = ClinicalNote.objects.filter(
             encounter=encounter,
             is_deleted=False,
             note_type='progress'
         ).select_related('created_by__user').order_by('-created')
-    except:
-        pass
+        nurse_notes = [n for n in _progress if getattr(getattr(n, 'created_by', None), 'profession', None) == 'nurse']
+        doctor_notes = [n for n in _progress if getattr(getattr(n, 'created_by', None), 'profession', None) == 'doctor']
+        # All other notes (SOAP, consultation, discharge, progress by other roles) so every saved note shows
+        all_encounter_notes = ClinicalNote.objects.filter(
+            encounter=encounter,
+            is_deleted=False
+        ).select_related('created_by__user').order_by('-created')
+        nurse_ids = {n.id for n in nurse_notes}
+        doctor_ids = {n.id for n in doctor_notes}
+        other_notes = [n for n in all_encounter_notes if n.id not in nurse_ids and n.id not in doctor_ids]
+    except Exception:
+        other_notes = []
     
     user_role = get_user_role(request.user)
     # Front desk/receptionist cannot view vitals - only medical staff
@@ -3986,6 +3781,8 @@ def encounter_detail(request, pk):
         'care_plans': care_plans,
         'clinical_notes_with_plan': clinical_notes_with_plan,
         'nurse_notes': nurse_notes,
+        'doctor_notes': doctor_notes,
+        'other_notes': other_notes,
         'user_role': user_role,
         'can_view_vitals': can_view_vitals,
         'is_nurse': is_nurse,
@@ -4278,98 +4075,607 @@ def admission_list(request):
 
 
 @login_required
+@block_pharmacy_from_invoice_and_payment
 def invoice_list(request):
-    """List all invoices"""
+    """List invoices - supports combined by patient (accountant) or individual invoices"""
+    from decimal import Decimal
+    
     status_filter = request.GET.get('status', '')
     payer_type_filter = request.GET.get('payer_type', '')
     query = request.GET.get('q', '')
+    view_mode = request.GET.get('view', 'combined')  # 'combined' = by patient, 'invoices' = individual
     
-    invoices = Invoice.objects.filter(
+    # Ensure prescribe (pharmacy) sales have invoices so they all show on this page
+    try:
+        from hospital.models_pharmacy_walkin import WalkInPharmacySale
+        from hospital.services.pharmacy_walkin_service import WalkInPharmacyService
+        # Find prescribe sales that have items but no invoice yet (limit per request to avoid slow load)
+        sales_without_invoice = []
+        for sale in WalkInPharmacySale.objects.filter(
+            is_deleted=False,
+            items__is_deleted=False,
+        ).distinct().order_by('-sale_date')[:50]:
+            if not sale.items.filter(is_deleted=False).exists():
+                continue
+            if Invoice.all_objects.filter(
+                patient__isnull=False,
+                is_deleted=False,
+                lines__description__icontains=sale.sale_number,
+            ).exclude(status__in=['cancelled', 'paid']).exists():
+                continue
+            sales_without_invoice.append(sale)
+        for sale in sales_without_invoice:
+            try:
+                patient = WalkInPharmacyService.ensure_sale_patient(sale)
+                WalkInPharmacyService.ensure_sale_invoice(sale, patient)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    base_invoices = Invoice.objects.filter(
         is_deleted=False,
-        patient__isnull=False  # Only show invoices with patients
-    ).select_related(
-        'patient', 'payer', 'encounter'
-    ).order_by('-issued_at')
+        patient__isnull=False,
+        patient__is_deleted=False
+    ).select_related('patient', 'payer', 'encounter')
     
     if query:
-        invoices = invoices.filter(
-            Q(patient__first_name__icontains=query) |
-            Q(patient__last_name__icontains=query) |
-            Q(invoice_number__icontains=query)
+        query_clean = query.strip()
+        base_invoices = base_invoices.filter(
+            Q(patient__first_name__icontains=query_clean) |
+            Q(patient__last_name__icontains=query_clean) |
+            Q(patient__middle_name__icontains=query_clean) |
+            Q(patient__mrn__icontains=query_clean) |
+            Q(invoice_number__icontains=query_clean) |
+            Q(payer__name__icontains=query_clean)  # corporate: search by company (payer) name
         )
+        # Ensure prescribe (pharmacy) sales have an invoice so they appear when searching (e.g. "joe" / "Joe Anokye")
+        if query_clean:
+            try:
+                from hospital.models import Patient
+                from hospital.models_pharmacy_walkin import WalkInPharmacySale
+                from hospital.services.pharmacy_walkin_service import WalkInPharmacyService
+                matching_patients = Patient.objects.filter(
+                    is_deleted=False
+                ).filter(
+                    Q(first_name__icontains=query_clean) |
+                    Q(last_name__icontains=query_clean) |
+                    Q(middle_name__icontains=query_clean) |
+                    Q(mrn__icontains=query_clean)
+                )[:20]
+                for patient in matching_patients:
+                    for sale in WalkInPharmacySale.objects.filter(
+                        patient=patient, is_deleted=False,
+                        items__is_deleted=False,
+                    ).distinct():
+                        if not sale.items.filter(is_deleted=False).exists():
+                            continue
+                        if Invoice.all_objects.filter(
+                            patient=patient,
+                            is_deleted=False,
+                            lines__description__icontains=sale.sale_number,
+                        ).exclude(status__in=['cancelled', 'paid']).exists():
+                            continue
+                        try:
+                            p = WalkInPharmacyService.ensure_sale_patient(sale)
+                            WalkInPharmacyService.ensure_sale_invoice(sale, p)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
     if status_filter:
-        invoices = invoices.filter(status=status_filter)
-    # Filter by payer type so insurance/private bills show under billing
+        base_invoices = base_invoices.filter(status=status_filter)
     if payer_type_filter == 'insurance':
-        invoices = invoices.filter(payer__payer_type__in=['private', 'nhis'])
+        base_invoices = base_invoices.filter(payer__payer_type__in=['private', 'nhis'])
     elif payer_type_filter and payer_type_filter != 'all':
-        invoices = invoices.filter(payer__payer_type=payer_type_filter)
+        base_invoices = base_invoices.filter(payer__payer_type=payer_type_filter)
     
-    # Calculate statistics (all invoices, not just filtered)
-    all_invoices = Invoice.objects.filter(is_deleted=False)
-    
-    total_invoices = all_invoices.count()
-    
-    paid_invoices = all_invoices.filter(status='paid').count()
-    
-    total_revenue = all_invoices.filter(
-        status='paid'
-    ).aggregate(Sum('total_amount'))['total_amount__sum'] or 0
-    
-    outstanding_balance = all_invoices.filter(
-        status__in=['issued', 'partially_paid', 'overdue'],
-        balance__gt=0
-    ).aggregate(Sum('balance'))['balance__sum'] or 0
-    
-    paginator = Paginator(invoices, 20)
-    page_number = request.GET.get('page')
-    page_obj = paginator.get_page(page_number)
-    
-    # Create stats dictionary to match template expectations
+    # Stats: use filtered base_invoices so cards match the list (e.g. corporate + company search)
+    stats_invoices = base_invoices
     stats = {
-        'total_invoices': total_invoices,
-        'paid_invoices': paid_invoices,
-        'total_revenue': total_revenue,
-        'outstanding_balance': outstanding_balance,
+        'total_invoices': stats_invoices.count(),
+        'paid_invoices': stats_invoices.filter(status='paid').count(),
+        'total_revenue': stats_invoices.filter(status='paid').aggregate(
+            Sum('total_amount'))['total_amount__sum'] or 0,
+        'outstanding_balance': stats_invoices.filter(
+            status__in=['issued', 'partially_paid', 'overdue'],
+            balance__gt=0
+        ).aggregate(Sum('balance'))['balance__sum'] or 0,
     }
     
-    context = {
-        'invoices': page_obj,
-        'status_filter': status_filter,
-        'payer_type_filter': payer_type_filter,
-        'stats': stats,  # FIXED: Pass as stats dictionary
-    }
+    if view_mode == 'combined':
+        # Combined by patient: include ALL payers (insurance + corporate + cash) so we combine
+        # invoices of individuals who have both insurance and corporate into one row per patient.
+        outstanding_all_payers = Invoice.objects.filter(
+            is_deleted=False,
+            patient__isnull=False,
+            patient__is_deleted=False,
+            status__in=['issued', 'partially_paid', 'overdue'],
+            balance__gt=0,
+        ).select_related('patient', 'payer')
+        if query:
+            query_clean = query.strip()
+            outstanding_all_payers = outstanding_all_payers.filter(
+                Q(patient__first_name__icontains=query_clean) |
+                Q(patient__last_name__icontains=query_clean) |
+                Q(patient__middle_name__icontains=query_clean) |
+                Q(patient__mrn__icontains=query_clean) |
+                Q(invoice_number__icontains=query_clean) |
+                Q(payer__name__icontains=query_clean)
+            )
+        if status_filter:
+            outstanding_all_payers = outstanding_all_payers.filter(status=status_filter)
+        # Optional: restrict which patients appear by payer type (balance shown is still full combined)
+        if payer_type_filter == 'insurance':
+            patient_ids_with_payer = set(
+                base_invoices.filter(
+                    status__in=['issued', 'partially_paid', 'overdue'],
+                    balance__gt=0,
+                ).values_list('patient_id', flat=True).distinct()
+            )
+        elif payer_type_filter and payer_type_filter != 'all':
+            patient_ids_with_payer = set(
+                base_invoices.filter(
+                    status__in=['issued', 'partially_paid', 'overdue'],
+                    balance__gt=0,
+                ).values_list('patient_id', flat=True).distinct()
+            )
+        else:
+            patient_ids_with_payer = None  # show all patients with any outstanding
+        from django.db.models import Count
+        patient_aggs = outstanding_all_payers.values(
+            'patient', 'patient__first_name', 'patient__last_name', 'patient__mrn'
+        ).annotate(
+            invoice_count=Count('id'),
+            total_balance=Sum('balance'),
+            total_amount=Sum('total_amount'),
+        ).order_by('-total_balance')
+        # Build simple list for template
+        patient_rows = []
+        for agg in patient_aggs:
+            if patient_ids_with_payer is not None and agg['patient'] not in patient_ids_with_payer:
+                continue
+            from hospital.models import Patient
+            try:
+                p = Patient.objects.get(pk=agg['patient'], is_deleted=False)
+            except Patient.DoesNotExist:
+                continue
+            patient_rows.append({
+                'patient': p,
+                'invoice_count': agg['invoice_count'],
+                'total_balance': agg['total_balance'] or Decimal('0'),
+                'total_amount': agg['total_amount'] or Decimal('0'),
+            })
+        paginator = Paginator(patient_rows, 20)
+        page_obj = paginator.get_page(request.GET.get('page'))
+        context = {
+            'view_mode': 'combined',
+            'patient_rows': page_obj,
+            'page_obj': page_obj,
+            'status_filter': status_filter,
+            'payer_type_filter': payer_type_filter,
+            'stats': stats,
+        }
+    else:
+        invoices = base_invoices.order_by('-issued_at')
+        paginator = Paginator(invoices, 20)
+        page_obj = paginator.get_page(request.GET.get('page'))
+        context = {
+            'view_mode': 'invoices',
+            'invoices': page_obj,
+            'page_obj': page_obj,
+            'status_filter': status_filter,
+            'payer_type_filter': payer_type_filter,
+            'stats': stats,
+        }
     return render(request, 'hospital/invoice_list.html', context)
 
 
+def _group_invoice_lines_by_category(lines):
+    """Group invoice lines by service category for categorical display (Consultation, Lab, Pharmacy, etc.)"""
+    from itertools import groupby
+
+    from .utils_billing import invoice_line_display_category
+
+    sorted_lines = sorted(lines, key=invoice_line_display_category)
+    return [(cat, list(grp)) for cat, grp in groupby(sorted_lines, key=invoice_line_display_category)]
+
+
+def _line_visit_datetime(line, invoice):
+    """Best-effort datetime for when the charge was posted (for visit grouping)."""
+    return getattr(line, 'created', None) or getattr(invoice, 'issued_at', None)
+
+
+def _group_invoice_lines_by_visit_then_category(lines, invoice):
+    """
+    Group lines by calendar day of line.created (fallback: invoice.issued_at), then by category.
+    Shows date + time span when multiple times occur the same day.
+    """
+    from collections import defaultdict
+
+    buckets = defaultdict(list)
+    for line in lines:
+        dt = _line_visit_datetime(line, invoice)
+        d = dt.date() if dt else None
+        buckets[d].append(line)
+
+    visits_out = []
+    for d in sorted(buckets.keys(), key=lambda x: x or date.min, reverse=True):
+        vlines = buckets[d]
+        vlines.sort(key=lambda x: _line_visit_datetime(x, invoice) or timezone.now())
+        times = [
+            _line_visit_datetime(x, invoice)
+            for x in vlines
+            if _line_visit_datetime(x, invoice)
+        ]
+        time_part = ''
+        if times:
+            t_min = min(times).time()
+            t_max = max(times).time()
+            if t_min != t_max:
+                time_part = f' · {t_min.strftime("%H:%M")}–{t_max.strftime("%H:%M")}'
+            else:
+                time_part = f' · {t_min.strftime("%H:%M")}'
+        if d:
+            label = f'{d.strftime("%a %d %b %Y")}{time_part}'
+        else:
+            label = 'Charges'
+        visits_out.append(
+            {
+                'visit_date': d,
+                'visit_label': label,
+                'lines_by_category': _group_invoice_lines_by_category(vlines),
+            }
+        )
+    return visits_out
+
+
 @login_required
+@block_pharmacy_from_invoice_and_payment
 def invoice_detail(request, pk):
-    """Invoice detail view"""
+    """Invoice detail view. Uses all_objects so write-off period, zero-amount, and soft-deleted invoices can still be viewed by direct link."""
+    from .utils_roles import user_can_waive
+    # Use all_objects + no is_deleted filter so any invoice is viewable by direct URL (avoid 404 for write-off/deleted)
     invoice = get_object_or_404(
-        Invoice.objects.select_related('patient', 'payer', 'encounter'),
-        pk=pk,
-        is_deleted=False
+        Invoice.all_objects.select_related('patient', 'payer', 'encounter'),
+        pk=pk
     )
-    invoice_lines = invoice.lines.filter(is_deleted=False)
+    try:
+        from .utils_invoice_line import heal_invoice_zero_line_prices
+        heal_invoice_zero_line_prices(invoice)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('heal_invoice_zero_line_prices failed')
+    invoice.update_totals()
+    # Exclude waived lines - they contribute 0 to total and should not appear on invoice
+    invoice_lines = list(invoice.lines.filter(is_deleted=False).filter(waived_at__isnull=True).select_related('service_code'))
+    lines_by_category = _group_invoice_lines_by_category(invoice_lines)
+    invoice_visits = _group_invoice_lines_by_visit_then_category(invoice_lines, invoice)
     days_overdue = invoice.get_days_overdue() if hasattr(invoice, 'get_days_overdue') else 0
-    
+    can_waive = user_can_waive(request.user)
     context = {
         'invoice': invoice,
         'lines': invoice_lines,
+        'lines_by_category': lines_by_category,
+        'invoice_visits': invoice_visits,
         'days_overdue': days_overdue,
+        'can_waive': can_waive,
+        'invoice_removed': getattr(invoice, 'is_deleted', False),
     }
     return render(request, 'hospital/invoice_detail.html', context)
 
 
 @login_required
+@block_pharmacy_from_invoice_and_payment
+def invoice_combined_patient(request, patient_id):
+    """Combined bill for one patient - all unpaid invoices + pending pharmacy/prescription (especially pharmacy). Waive items (administrators only)."""
+    from decimal import Decimal
+    from itertools import groupby
+    from .models import Patient, InvoiceLine
+    from .utils_roles import user_can_waive
+
+    patient = get_object_or_404(Patient, pk=patient_id, is_deleted=False)
+    # Include draft + unpaid so all billable items show (drugs, ECG, lab, etc.).
+    # Also include invoices where DB balance > 0 even if status is "paid" (stale/corrupt);
+    # update_totals() then decides the real balance so lines do not disappear incorrectly.
+    unpaid_qs = Invoice.objects.filter(
+        patient=patient,
+        is_deleted=False,
+    ).filter(
+        Q(status__in=['draft', 'issued', 'partially_paid', 'overdue']) | Q(balance__gt=0)
+    ).exclude(status='cancelled').select_related('payer', 'encounter').order_by('-issued_at')
+
+    unpaid = []
+    for inv in unpaid_qs:
+        inv.update_totals()
+        # Paid in full or removed: no balance — do not list even if line rows still exist
+        if (inv.balance or Decimal('0.00')) <= 0:
+            continue
+        unpaid.append(inv)
+
+    from .utils_invoice_line import heal_invoice_zero_line_prices
+    all_lines = []
+    for inv in unpaid:
+        try:
+            heal_invoice_zero_line_prices(inv)
+        except Exception:
+            pass
+        for line in inv.lines.filter(is_deleted=False).filter(waived_at__isnull=True).select_related('service_code'):
+            all_lines.append({'invoice': inv, 'line': line})
+
+    get_cat = lambda x: (getattr(x['line'].service_code, 'category', None) or 'Other') if x['line'].service_code else 'Other'
+    sorted_items = sorted(all_lines, key=get_cat)
+    lines_by_category = [(cat, list(grp)) for cat, grp in groupby(sorted_items, key=get_cat)]
+    # Numbered items for invoice print (# column)
+    running = 0
+    numbered_by_category = []
+    for cat, grp in lines_by_category:
+        items = list(grp)
+        numbered = [(running + i + 1, items[i]) for i in range(len(items))]
+        running += len(items)
+        numbered_by_category.append((cat, numbered))
+
+    total_balance = sum((inv.balance or 0) for inv in unpaid)
+    # Initial (total from items): sum of displayed line items so it matches the itemized list exactly
+    if all_lines:
+        total_amount = sum(
+            (item['line'].display_line_total or Decimal('0.00')) for item in all_lines
+        )
+    else:
+        total_amount = sum((inv.total_amount or Decimal('0.00')) for inv in unpaid)
+
+    # Amount paid to date: receipts for this patient; fallback to invoice (total - balance) when no receipts
+    from .models_accounting import PaymentReceipt
+    from django.db.models import Sum
+    total_paid = (
+        PaymentReceipt.objects.filter(patient=patient, is_deleted=False).aggregate(s=Sum('amount_paid'))['s'] or Decimal('0.00')
+    )
+    if total_paid == 0:
+        inv_total = Invoice.objects.filter(patient=patient, is_deleted=False).exclude(status='cancelled').aggregate(s=Sum('total_amount'))['s'] or Decimal('0.00')
+        inv_balance = Invoice.objects.filter(patient=patient, is_deleted=False).exclude(status='cancelled').aggregate(s=Sum('balance'))['s'] or Decimal('0.00')
+        if (inv_total - inv_balance) > 0:
+            total_paid = inv_total - inv_balance
+
+    # Deposit applied (deduped: matches Invoice.calculate_totals — not receipt sum + DA sum)
+    deposit_applied_to_bill = Decimal('0.00')
+    if unpaid:
+        from .services.deposit_payment_service import deposit_amount_applied_to_invoices_for_display
+        deposit_applied_to_bill = deposit_amount_applied_to_invoices_for_display(unpaid)
+
+    # Pending pharmacy prescriptions (not yet on invoice or not paid) – show on combined bill
+    pending_pharmacy_prescriptions = []
+    try:
+        from .models_payment_verification import PharmacyDispensing
+        from .models_accounting import PaymentReceipt
+        from .utils_billing import get_drug_price_for_prescription
+        from .services.auto_billing_service import AutoBillingService
+        rx_query = Prescription.objects.filter(
+            order__encounter__patient=patient,
+            is_deleted=False
+        ).select_related(
+            'drug',
+            'order__encounter',
+            'order__encounter__patient',
+            'dispensing_record',
+            'dispensing_record__substitute_drug',
+        ).distinct()
+        for rx in rx_query:
+            rx_paid = False
+            try:
+                if hasattr(rx, 'dispensing_record'):
+                    disp = rx.dispensing_record
+                    if disp and getattr(disp, 'payment_receipt_id', None) is not None:
+                        rx_paid = True
+            except (PharmacyDispensing.DoesNotExist, AttributeError):
+                pass
+            if not rx_paid and InvoiceLine.objects.filter(
+                prescription_id=rx.id, invoice__patient=patient, invoice__status='paid',
+                invoice__is_deleted=False, is_deleted=False
+            ).exists():
+                rx_paid = True
+            if not rx_paid:
+                for rec in PaymentReceipt.objects.filter(
+                    patient=patient, is_deleted=False,
+                    service_type__in=('pharmacy', 'pharmacy_prescription')
+                )[:20]:
+                    d = getattr(rec, 'service_details', None) or {}
+                    if isinstance(d, dict) and d.get('prescription_id') == str(rx.id):
+                        rx_paid = True
+                        break
+            rx_on_unpaid = InvoiceLine.objects.filter(
+                prescription_id=rx.id, invoice__patient=patient, invoice__is_deleted=False,
+                invoice__status__in=('issued', 'draft', 'partially_paid'),
+                invoice__balance__gt=0, is_deleted=False
+            ).exists()
+            if rx_paid or rx_on_unpaid:
+                continue
+            encounter = getattr(getattr(rx, 'order', None), 'encounter', None)
+            payer = AutoBillingService._ensure_payer(patient, encounter)
+            price_drug = rx.drug
+            eff_qty = rx.quantity
+            try:
+                disp = getattr(rx, 'dispensing_record', None)
+                if disp and getattr(disp, 'drug_to_dispense', None):
+                    price_drug = disp.drug_to_dispense
+                if disp and (disp.quantity_ordered or 0) > 0:
+                    eff_qty = disp.quantity_ordered
+            except Exception:
+                pass
+            unit_price = get_drug_price_for_prescription(price_drug, payer=payer)
+            if not unit_price or unit_price == 0:
+                li = InvoiceLine.objects.filter(
+                    prescription_id=rx.id, invoice__patient=patient,
+                    invoice__is_deleted=False, is_deleted=False
+                ).first()
+                if li:
+                    li_up = getattr(li, 'unit_price', Decimal('0.00')) or Decimal('0.00')
+                    if li_up > 0:
+                        unit_price = li_up
+            qty = Decimal(str(eff_qty))
+            line_total = unit_price * qty
+            drug_display = getattr(rx.drug, 'name', '') or 'Drug'
+            if getattr(rx.drug, 'strength', None):
+                drug_display = f"{rx.drug.name} {rx.drug.strength}"
+            pending_pharmacy_prescriptions.append({
+                'description': drug_display,
+                'quantity': qty,
+                'unit_price': unit_price,
+                'amount': line_total,
+                'date': getattr(rx.order, 'created', None) if getattr(rx, 'order', None) else None,
+            })
+    except Exception:
+        pass
+
+    # Pending Prescribe Sales (pharmacy walk-in) with line-item breakdown
+    pending_prescribe_sales = []
+    try:
+        from .models_pharmacy_walkin import WalkInPharmacySale, WalkInPharmacySaleItem
+        walkin_sales = WalkInPharmacySale.objects.filter(
+            patient=patient,
+            is_deleted=False,
+            payment_status__in=['pending', 'partial'],
+            waived_at__isnull=True
+        ).filter(amount_due__gt=0)
+        for sale in walkin_sales:
+            if getattr(sale, 'amount_due', 0) <= 0:
+                continue
+            items = WalkInPharmacySaleItem.objects.filter(
+                sale=sale, is_deleted=False
+            ).select_related('drug').order_by('created')
+            breakdown = []
+            for item in items:
+                drug_display = item.drug.name
+                if getattr(item.drug, 'strength', None):
+                    drug_display = f"{item.drug.name} {item.drug.strength}"
+                breakdown.append({
+                    'description': drug_display,
+                    'quantity': item.quantity,
+                    'unit_price': item.unit_price,
+                    'amount': item.line_total,
+                })
+            if not breakdown:
+                breakdown = [{'description': f"Prescribe Sale {getattr(sale, 'sale_number', '')}", 'quantity': 1, 'unit_price': sale.amount_due, 'amount': sale.amount_due}]
+            pending_prescribe_sales.append({
+                'sale_id': sale.pk,
+                'sale_number': getattr(sale, 'sale_number', ''),
+                'total': getattr(sale, 'amount_due', sale.total_amount),
+                'date': getattr(sale, 'sale_date', None),
+                'breakdown': breakdown,
+            })
+    except Exception:
+        pass
+
+    # All deposits on this patient's account (for statement / combined bill)
+    patient_deposits = []
+    try:
+        from .models_patient_deposits import PatientDeposit
+        patient_deposits = list(
+            PatientDeposit.objects.filter(patient=patient, is_deleted=False).order_by('-deposit_date')
+        )
+    except Exception:
+        pass
+
+    can_waive = user_can_waive(request.user)
+    try:
+        from .models_settings import HospitalSettings
+        hospital_settings = HospitalSettings.get_settings()
+    except Exception:
+        hospital_settings = None
+    context = {
+        'patient': patient,
+        'unpaid_invoices': unpaid,
+        'all_lines': all_lines,
+        'lines_by_category': lines_by_category,
+        'numbered_by_category': numbered_by_category,
+        'total_balance': total_balance,
+        'total_amount': total_amount,
+        'total_paid': total_paid,
+        'deposit_applied_to_bill': deposit_applied_to_bill,
+        'patient_deposits': patient_deposits,
+        'can_waive': can_waive,
+        'pending_pharmacy_prescriptions': pending_pharmacy_prescriptions,
+        'pending_prescribe_sales': pending_prescribe_sales,
+        'hospital_settings': hospital_settings,
+    }
+    return render(request, 'hospital/invoice_combined_patient.html', context)
+
+
+@login_required
+@block_pharmacy_from_invoice_and_payment
+def update_invoice_line_quantity(request):
+    """Update quantity for an invoice line. Redirects back to referrer (invoice or cashier detail)."""
+    from decimal import Decimal
+    from .models import InvoiceLine
+
+    if request.method != 'POST':
+        return redirect('hospital:invoice_list')
+    
+    line_id = request.POST.get('line_id')
+    quantity = request.POST.get('quantity')
+    
+    if not line_id or quantity is None or quantity == '':
+        messages.error(request, 'Line and quantity are required.')
+        redirect_url = request.META.get('HTTP_REFERER') or reverse('hospital:invoice_list')
+        return redirect(redirect_url)
+    
+    try:
+        qty = Decimal(str(quantity))
+        if qty <= 0:
+            messages.error(request, 'Quantity must be greater than zero.')
+            redirect_url = request.META.get('HTTP_REFERER') or reverse('hospital:invoice_list')
+            return redirect(redirect_url)
+    except (ValueError, TypeError):
+        messages.error(request, 'Invalid quantity.')
+        redirect_url = request.META.get('HTTP_REFERER') or reverse('hospital:invoice_list')
+        return redirect(redirect_url)
+    
+    try:
+        line = InvoiceLine.objects.select_related('invoice', 'service_code').get(pk=line_id, is_deleted=False)
+    except (InvoiceLine.DoesNotExist, ValueError):
+        messages.error(request, 'Invoice line not found.')
+        redirect_url = request.META.get('HTTP_REFERER') or reverse('hospital:invoice_list')
+        return redirect(redirect_url)
+    
+    # Lab lines: quantity is fixed at 1, cannot be changed once billed (sent to cashier is final)
+    if line.service_code and getattr(line.service_code, 'code', '').startswith('LAB-'):
+        messages.error(
+            request,
+            'Lab test quantity cannot be changed. Each lab result is billed once (quantity 1). '
+            'Once sent to cashier from the lab, the invoice line is final.'
+        )
+        redirect_url = request.META.get('HTTP_REFERER') or reverse('hospital:invoice_detail', args=[line.invoice_id])
+        return redirect(redirect_url)
+    
+    if line.waived_at:
+        messages.error(request, 'Cannot edit quantity for a waived line.')
+        redirect_url = request.META.get('HTTP_REFERER') or reverse('hospital:invoice_list')
+        return redirect(redirect_url)
+    
+    line.quantity = qty
+    line.save()  # save() recalculates line_total; signal updates invoice totals
+    
+    messages.success(request, f'Quantity updated to {qty}')
+    redirect_url = request.META.get('HTTP_REFERER') or reverse('hospital:invoice_detail', args=[line.invoice_id])
+    return redirect(redirect_url)
+
+
+@login_required
+@block_pharmacy_from_invoice_and_payment
 def invoice_print(request, pk):
     """Printable invoice view with detailed services"""
     invoice = get_object_or_404(
-        Invoice.objects.select_related('patient', 'payer', 'encounter'),
+        Invoice.all_objects.select_related('patient', 'payer', 'encounter'),
         pk=pk,
-        is_deleted=False
+        is_deleted=False,
     )
-    
+    try:
+        from .utils_invoice_line import heal_invoice_zero_line_prices
+        heal_invoice_zero_line_prices(invoice)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('heal_invoice_zero_line_prices failed')
+    invoice.update_totals()
+
     # Get hospital settings for logo and name
     from .models_settings import HospitalSettings
     from django.conf import settings as django_settings
@@ -4400,9 +4706,39 @@ def invoice_print(request, pk):
                 self.phone = ''
                 self.email = ''
         hospital_settings = FallbackSettings()
-    
+
+    cover_page = (request.GET.get('cover_page') or '').lower() in ('1', 'true', 'yes')
+    if cover_page:
+        from .models_workflow import Bill as WorkflowBill
+        group_bills = list(
+            WorkflowBill.objects.filter(invoice=invoice, is_deleted=False)
+            .select_related('patient', 'encounter', 'issued_by')
+            .order_by('issued_at')
+        )
+        lines = list(
+            invoice.lines.filter(is_deleted=False, waived_at__isnull=True).select_related('service_code')
+        )
+        lines_by_category = _group_invoice_lines_by_category(lines)
+        context = {
+            'invoice': invoice,
+            'group_bills': group_bills,
+            'lines': lines,
+            'lines_by_category': lines_by_category,
+            'now': timezone.now(),
+            'hospital_settings': hospital_settings,
+        }
+        return render(request, 'hospital/billing/invoice_group_cover_print.html', context)
+
+    # Exclude waived lines - they contribute 0 to total and should not appear on printed invoice
+    lines = list(invoice.lines.filter(is_deleted=False).filter(waived_at__isnull=True).select_related('service_code'))
+    lines_by_category = _group_invoice_lines_by_category(lines)
+    as_statement = request.GET.get('as') == 'statement'
+
     context = {
         'invoice': invoice,
+        'lines': lines,
+        'lines_by_category': lines_by_category,
+        'as_statement': as_statement,
         'now': timezone.now(),
         'hospital_settings': hospital_settings,
     }
@@ -5515,55 +5851,171 @@ def global_search(request):
 
 @login_required
 def tabular_lab_report(request, result_id):
-    """Tabular lab report entry for structured tests (FBC, LFT, RFT, etc.)"""
-    lab_result = get_object_or_404(LabResult, pk=result_id, is_deleted=False)
-    
-    # Get patient and test details
-    patient = lab_result.order.encounter.patient
-    test = lab_result.test
-    
+    """Tabular lab report for structured tests (FBC, LFT, RFT). Uses result_id from URL only."""
+    lab_result = LabResult.objects.filter(pk=result_id).select_related(
+        'order', 'order__encounter', 'order__encounter__patient', 'test'
+    ).first()
+    if not lab_result:
+        return render(
+            request,
+            'hospital/errors/404.html',
+            {
+                'message': 'The requested lab result was not found. It may have been removed or the link may be outdated.',
+                'dashboard_url': reverse('hospital:laboratory_dashboard'),
+                'lab_results_url': reverse('hospital:lab_results_list'),
+            },
+            status=404,
+        )
+    if lab_result.is_deleted:
+        return render(
+            request,
+            'hospital/errors/404.html',
+            {
+                'message': 'This lab result has been removed and is no longer available.',
+                'dashboard_url': reverse('hospital:laboratory_dashboard'),
+                'lab_results_url': reverse('hospital:lab_results_list'),
+            },
+            status=404,
+        )
+
+    # Get patient and test details (ensure we have a valid order/encounter/patient)
+    try:
+        patient = lab_result.order.encounter.patient
+        test = lab_result.test
+    except Exception:
+        return render(
+            request,
+            'hospital/errors/404.html',
+            {
+                'message': 'This lab result is not linked to a valid patient or encounter.',
+                'dashboard_url': reverse('hospital:laboratory_dashboard'),
+                'lab_results_url': reverse('hospital:lab_results_list'),
+            },
+            status=404,
+        )
+
     # Use central mapping so the correct template is shown for this test (FBC, LFT, RFT, etc.)
     test_type = get_lab_result_template_type(test)
-    
-    if request.method == 'POST':
-        form = TabularLabReportForm(request.POST)
-        if form.is_valid():
-            # Extract test type from form
-            test_type = form.cleaned_data.get('test_type', test_type)
-            
-            # Get all parameter values as a dictionary
-            details = form.get_details_dict()
-            
-            # Update lab result
-            lab_result.details = details
-            lab_result.status = form.cleaned_data.get('status', 'completed')
-            lab_result.qualitative_result = form.cleaned_data.get('qualitative_result', '')
-            lab_result.notes = form.cleaned_data.get('notes', '')
-            
-            # Set verified by current user if they are staff
-            try:
-                staff = Staff.objects.get(user=request.user, is_deleted=False)
-                lab_result.verified_by = staff
-                lab_result.verified_at = timezone.now()
-            except Staff.DoesNotExist:
-                pass
-            
-            lab_result.save()
+    # Ensure Fasting Blood Sugar / FBS always uses glucose form, never LFT (even if test is mis-coded)
+    _name = (getattr(test, 'name', None) or '').lower()
+    _code = (getattr(test, 'code', None) or '').upper()
+    if _code == 'FBS' or 'fasting' in _name or 'blood sugar' in _name or 'fbs' in _name or 'glucose' in _name:
+        test_type = 'glucose'
 
-            # Also update the parent order status so it no longer shows as pending
-            try:
-                order = lab_result.order
-                if order and order.status != 'completed':
-                    order.status = 'completed'
-                    order.save(update_fields=['status', 'modified'])
-            except Exception:
-                # Don't break the flow if order update fails; result is still saved
-                pass
-            
-            messages.success(request, f'Lab result for {test.name} saved successfully.')
+    # Single-value tests: send GET to simple form. POST must stay here so saves are not dropped by redirect.
+    if request.method == 'GET' and is_single_value_template(test):
+        return redirect('hospital:edit_lab_result', result_id=result_id)
+
+    if request.method == 'POST':
+        post_data = request.POST
+        # Prevent mixing patients: only accept save for THIS result (URL result_id). Reject if form was from another tab/patient.
+        post_result_id = post_data.get('lab_result_id', '').strip()
+        if str(result_id) != post_result_id:
+            messages.error(
+                request,
+                'This form does not match the lab result you opened. To avoid mixing patients, please go back to the Lab list, '
+                'find the correct patient (check name and MRN), then click Enter on that result.',
+            )
+            return redirect('hospital:tabular_lab_report', result_id=result_id)
+        # Re-fetch by URL result_id only (never trust POST for which record to update)
+        lab_result = LabResult.objects.filter(pk=result_id, is_deleted=False).select_related(
+            'order', 'order__encounter', 'order__encounter__patient', 'test'
+        ).first()
+        if not lab_result:
+            messages.error(request, 'This lab result is no longer available. Please use the Lab list to open the correct result.')
             return redirect('hospital:laboratory_dashboard')
-        else:
-            messages.error(request, 'Please correct the errors below.')
+        patient = lab_result.order.encounter.patient
+        test = lab_result.test
+        test_type = get_lab_result_template_type(test)
+        _name = (getattr(test, 'name', None) or '').lower()
+        _code = (getattr(test, 'code', None) or '').upper()
+        if _code == 'FBS' or 'fasting' in _name or 'blood sugar' in _name or 'fbs' in _name or 'glucose' in _name:
+            test_type = 'glucose'
+        decimal_field_names = [
+            'wbc', 'lymph_count', 'mid_count', 'gran_count', 'lymph_perc', 'mid_perc', 'gran_perc',
+            'plt', 'mpv', 'pdw', 'pct', 'rbc', 'hgb', 'hct', 'mcv', 'mch', 'mchc', 'rdw_cv', 'rdw_sd',
+            'neut_perc', 'mono_perc', 'eos_perc', 'baso_perc',
+            'total_bili', 'direct_bili', 'indirect_bili', 'alt', 'ast', 'alp', 'ggt',
+            'total_protein', 'albumin', 'globulin', 'ag_ratio', 'ast_alt_ratio',
+            'urea', 'bun', 'creatinine', 'egfr', 'uric_acid',
+            'sodium', 'potassium', 'chloride', 'bicarbonate', 'calcium', 'magnesium', 'phosphorus',
+            'total_chol', 'triglycerides', 'hdl', 'ldl', 'vldl', 'chol_hdl_ratio', 'ldl_hdl_ratio', 'non_hdl',
+            'tsh', 'free_t4', 'total_t4', 'free_t3', 'total_t3',
+            'fbs', 'rbs', 'hba1c', 'ppbs',
+            'urine_ph', 'urine_sgravity',
+            'coag_pt', 'coag_inr', 'coag_aptt', 'coag_fibrinogen',
+            'semen_volume', 'semen_ph', 'semen_count', 'semen_motility', 'semen_morphology',
+        ]
+        # Bypass form validation - extract data directly from POST to avoid save failures
+        def _sanitize_decimal(val):
+            if val is None or val == '':
+                return None
+            s = str(val).strip()
+            if s in ('', '-', '.', 'N/A', 'n/a', '--', 'na', 'NA'):
+                return None
+            s = s.replace(',', '')
+            if s.endswith('.'):
+                try:
+                    part = s[:-1]
+                    if part and part not in ('-', '+'):
+                        float(part)
+                        return part if '.' in part else part + '.0'
+                except (ValueError, TypeError):
+                    return None
+            try:
+                float(s)
+                return s
+            except (ValueError, TypeError):
+                return None
+
+        excluded = {'test_type', 'status', 'qualitative_result', 'notes', 'csrfmiddlewaretoken',
+                    'lab_result_id', 'verified_by'}
+        details = {}
+        for key in post_data:
+            if key in excluded:
+                continue
+            val = post_data.get(key)
+            if key in decimal_field_names:
+                sanitized = _sanitize_decimal(val)
+                if sanitized is not None:
+                    details[key] = sanitized
+            else:
+                if val is not None and str(val).strip():
+                    details[key] = str(val).strip()
+
+        # Only keep detail keys that belong to THIS test type (stops FBC from storing uric_acid, etc.)
+        allowed_keys = get_allowed_detail_keys_for_save(test_type)
+        if allowed_keys:
+            details = {k: v for k, v in details.items() if k in allowed_keys}
+
+        uploaded_file = request.FILES.get('attachment')
+        if uploaded_file:
+            lab_result.attachment = uploaded_file
+
+        lab_result.details = details
+        lab_result.status = post_data.get('status', 'completed') or 'completed'
+        lab_result.qualitative_result = (post_data.get('qualitative_result') or '').strip()
+        lab_result.notes = (post_data.get('notes') or '').strip()
+
+        try:
+            staff = Staff.objects.get(user=request.user, is_deleted=False)
+            lab_result.verified_by = staff
+            lab_result.verified_at = timezone.now()
+        except Staff.DoesNotExist:
+            pass
+
+        lab_result.save()
+
+        try:
+            order = lab_result.order
+            if order and order.status != 'completed':
+                order.status = 'completed'
+                order.save(update_fields=['status', 'modified'])
+        except Exception:
+            pass
+
+        messages.success(request, f'Lab result for {test.name} saved successfully.')
+        return redirect('hospital:laboratory_dashboard')
     else:
         # Pre-populate form with existing data
         initial_data = {
@@ -5578,7 +6030,21 @@ def tabular_lab_report(request, result_id):
             initial_data.update(lab_result.details)
         
         form = TabularLabReportForm(initial=initial_data)
-    
+
+    # For glucose form: show only the matching row (RBS->rbs only, FBS->fbs only, etc.)
+    glucose_show_param = None
+    if test_type == 'glucose' and test:
+        code = (test.code or '').upper()
+        name = (test.name or '').upper()
+        if code == 'RBS' or 'RANDOM' in name or '(RBS)' in name:
+            glucose_show_param = 'rbs'
+        elif code == 'FBS' or 'FASTING' in name or '(FBS)' in name:
+            glucose_show_param = 'fbs'
+        elif code == 'HBA1C' or 'HBA1C' in name or 'GLYCATED' in name:
+            glucose_show_param = 'hba1c'
+        elif code == 'OGTT' or code == 'PPBS' or 'POST-PRANDIAL' in name or 'OGTT' in name:
+            glucose_show_param = 'ogtt'  # show both fbs and ppbs
+
     context = {
         'form': form,
         'lab_result': lab_result,
@@ -5588,10 +6054,11 @@ def tabular_lab_report(request, result_id):
         'test': test,
         'test_name': test.name,
         'test_type': test_type,
+        'glucose_show_param': glucose_show_param,
         'details': lab_result.details or {},
         'notes': lab_result.notes or '',
         'qualitative_result': lab_result.qualitative_result or '',
-        'qualitative_options': ['Negative', 'Positive', 'Reactive', 'Non-Reactive', 'Normal', 'Abnormal'],
+        'qualitative_options': ['Seen', 'Not seen', 'Negative', 'Positive', 'Reactive', 'Non-Reactive', 'Normal', 'Abnormal'],
         'current_user': request.user.get_full_name() or request.user.username,
     }
     
@@ -5603,6 +6070,9 @@ def print_lab_report(request, result_id):
     """Print-friendly lab report with logo and department info"""
     result = get_object_or_404(LabResult, pk=result_id, is_deleted=False)
     settings = HospitalSettings.get_settings()
+    patient_gender = None
+    if result.order and result.order.encounter and result.order.encounter.patient:
+        patient_gender = getattr(result.order.encounter.patient, 'gender', None)
 
     # Build display rows for TEST RESULTS so single-value tests (Typhidot, etc.) show test name, not WBC
     result_rows = []
@@ -5611,32 +6081,102 @@ def print_lab_report(request, result_id):
         result_value = details.get('result_value') or details.get('RESULT_VALUE')
         if result_value:
             # Single-value test: one row with test name and result
+            ref = '-'
+            if result.range_low and result.range_high:
+                ref = f'{result.range_low} - {result.range_high}'
+            elif result.range_low:
+                ref = result.range_low
+            elif result.range_high:
+                ref = result.range_high
+            units_val = (details.get('result_unit') or details.get('RESULT_UNIT') or result.units or
+                        infer_units_from_result(result_value) or 'N/A')
+            value_flag = compute_value_flag(result_value, ref, patient_gender)
+            flag_val = value_flag if value_flag else get_qualitative_flag(result_value, result.is_abnormal)
             result_rows.append({
                 'parameter': result.test.name if result.test else 'Result',
                 'result': result_value,
-                'units': details.get('result_unit') or details.get('RESULT_UNIT') or '-',
+                'units': units_val,
+                'ref_range': ref,
+                'flag': flag_val,
+                'value_flag': value_flag,
             })
         else:
-            # Panel test (FBC, LFT): one row per detail, skip result_value/result_unit
-            for key, value in details.items():
+            # Panel test (FBC, LFT, urine, stool): one row per detail, skip result_value/result_unit
+            test_type = get_lab_result_template_type(result.test) if result.test else None
+            ordered_keys = None
+            if test_type == TEMPLATE_FBC:
+                ordered_keys = FBC_ORDERED_KEYS
+            elif test_type == TEMPLATE_RFT:
+                ordered_keys = RFT_ORDERED_KEYS
+            elif test_type == TEMPLATE_LFT:
+                ordered_keys = LFT_ORDERED_KEYS
+            elif test_type == TEMPLATE_URINE:
+                ordered_keys = URINE_ORDERED_KEYS
+            elif test_type == TEMPLATE_STOOL:
+                ordered_keys = STOOL_ORDERED_KEYS
+            elif test_type == TEMPLATE_MALARIA:
+                ordered_keys = MALARIA_ORDERED_KEYS
+            elif test_type == TEMPLATE_BLOOD_GROUP:
+                ordered_keys = BLOOD_GROUP_ORDERED_KEYS
+            elif test_type == TEMPLATE_SICKLE:
+                ordered_keys = SICKLE_ORDERED_KEYS
+            elif test_type == TEMPLATE_COAGULATION:
+                ordered_keys = COAGULATION_ORDERED_KEYS
+            elif test_type == TEMPLATE_SEROLOGY:
+                ordered_keys = SEROLOGY_ORDERED_KEYS
+            elif test_type == TEMPLATE_SEMEN:
+                ordered_keys = SEMEN_ORDERED_KEYS
+            elif test_type == TEMPLATE_AFB:
+                ordered_keys = AFB_ORDERED_KEYS
+            keys_to_iterate = ordered_keys if ordered_keys else list(details.keys())
+            for key in keys_to_iterate:
                 if key.lower() in ('result_value', 'result_unit'):
                     continue
+                if key.endswith('_unit'):
+                    continue
+                value = details.get(key)
+                if value is None or str(value).strip() == '':
+                    continue
+                param_label = get_param_display_name(key)
+                ref_range = get_param_ref_range(key)
+                units_val = get_param_units(key, details)
+                value_flag = compute_value_flag(str(value), ref_range, patient_gender)
+                flag_val = value_flag if value_flag else get_qualitative_flag(str(value), result.is_abnormal)
                 result_rows.append({
-                    'parameter': key.upper(),
+                    'parameter': param_label,
                     'result': value,
-                    'units': '-',
+                    'units': units_val,
+                    'ref_range': ref_range,
+                    'flag': flag_val,
+                    'value_flag': value_flag,
                 })
     if not result_rows and result.value:
+        ref = '-'
+        if result.range_low and result.range_high:
+            ref = f'{result.range_low} - {result.range_high}'
+        elif result.range_low or result.range_high:
+            ref = (result.range_low or '') + (' - ' if result.range_low and result.range_high else '') + (result.range_high or '')
+        units_val = result.units or 'N/A'
+        value_flag = compute_value_flag(result.value, ref, patient_gender)
+        flag_val = value_flag if value_flag else ('ABNORMAL' if result.is_abnormal else 'NORMAL')
         result_rows.append({
             'parameter': result.test.name if result.test else 'Result',
             'result': result.value,
-            'units': result.units or '-',
+            'units': units_val,
+            'ref_range': ref,
+            'flag': flag_val,
+            'value_flag': value_flag,
         })
     if not result_rows and result.qualitative_result:
+        flag_val = get_qualitative_flag(result.qualitative_result, result.is_abnormal)
+        units_val = infer_units_from_result(result.qualitative_result) or 'Qualitative'
         result_rows.append({
             'parameter': result.test.name if result.test else 'Result',
             'result': result.qualitative_result,
-            'units': '-',
+            'units': units_val,
+            'ref_range': 'Reactive / Non-Reactive / Equivocal',
+            'flag': flag_val,
+            'value_flag': None,
         })
 
     context = {
@@ -5819,44 +6359,45 @@ def hospital_settings_view(request):
 
 # ==================== DRUG FORMULARY MANAGEMENT ====================
 
-@login_required
-def drug_formulary_list(request):
-    """List all drugs in formulary with search and filtering, organized by category"""
+def drug_formulary_filtered_queryset(request):
+    """Apply the same GET filters as the drug formulary list (for list, print, PDF)."""
     drugs = Drug.objects.filter(is_deleted=False).order_by('category', 'name')
-    
-    # Search
-    search_query = request.GET.get('q', '')
+    search_query = request.GET.get('q', '').strip()
     if search_query:
         drugs = drugs.filter(
             Q(name__icontains=search_query) |
             Q(generic_name__icontains=search_query) |
             Q(atc_code__icontains=search_query)
         )
-    
-    # Filter by category
     category_filter = request.GET.get('category', '')
     if category_filter:
         drugs = drugs.filter(category=category_filter)
-    
-    # Filter by form
     form_filter = request.GET.get('form', '')
     if form_filter:
         drugs = drugs.filter(form__icontains=form_filter)
-    
-    # Filter by active status
     status_filter = request.GET.get('status', '')
     if status_filter == 'active':
         drugs = drugs.filter(is_active=True)
     elif status_filter == 'inactive':
         drugs = drugs.filter(is_active=False)
-    
-    # Filter by controlled
     controlled_filter = request.GET.get('controlled', '')
     if controlled_filter == 'yes':
         drugs = drugs.filter(is_controlled=True)
     elif controlled_filter == 'no':
         drugs = drugs.filter(is_controlled=False)
-    
+    return drugs
+
+
+@login_required
+def drug_formulary_list(request):
+    """List all drugs in formulary with search and filtering, organized by category"""
+    drugs = drug_formulary_filtered_queryset(request)
+    search_query = request.GET.get('q', '').strip()
+    category_filter = request.GET.get('category', '')
+    form_filter = request.GET.get('form', '')
+    status_filter = request.GET.get('status', '')
+    controlled_filter = request.GET.get('controlled', '')
+
     # Organize drugs by category
     drugs_by_category = {}
     for drug in drugs:
@@ -5884,23 +6425,372 @@ def drug_formulary_list(request):
         'status_filter': status_filter,
         'controlled_filter': controlled_filter,
         'total_drugs': drugs.count(),
+        'can_edit_stock': is_admin_user(request.user),
     }
     return render(request, 'hospital/drug_formulary_list.html', context)
+
+
+@login_required
+def drug_formulary_print(request):
+    """Print-friendly full drug list (same filters as formulary list); use browser Print / Save as PDF."""
+    from .models_settings import HospitalSettings
+
+    drugs_qs = drug_formulary_filtered_queryset(request)
+    drugs_flat = list(drugs_qs.order_by('category', 'name'))
+
+    settings = HospitalSettings.get_settings()
+    category_filter_raw = request.GET.get('category', '')
+    category_filter_label = (
+        dict(Drug.CATEGORIES).get(category_filter_raw, category_filter_raw) if category_filter_raw else ''
+    )
+    context = {
+        'formulary_rows': drugs_flat,
+        'search_query': request.GET.get('q', '').strip(),
+        'category_filter': category_filter_raw,
+        'category_filter_label': category_filter_label,
+        'form_filter': request.GET.get('form', ''),
+        'status_filter': request.GET.get('status', ''),
+        'controlled_filter': request.GET.get('controlled', ''),
+        'total_drugs': len(drugs_flat),
+        'settings': settings,
+        'generated_at': timezone.now(),
+    }
+    return render(request, 'hospital/drug_formulary_print.html', context)
+
+
+@login_required
+def drug_formulary_pdf(request):
+    """Download full drug formulary as PDF (same filters as list). Uses wrapped text for long names/categories."""
+    try:
+        from xml.sax.saxutils import escape
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import landscape, A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    except ImportError:
+        return HttpResponse(
+            'ReportLab is required for PDF export. Please install it and try again.',
+            status=500,
+        )
+
+    def _cell_plain(val, max_len=48):
+        s = '' if val is None else str(val).replace('\r', ' ').replace('\n', ' ')
+        return s[:max_len] if len(s) > max_len else s
+
+    def _pcell(text, style):
+        safe = escape(str(text or '')).replace('\n', '<br/>')
+        return Paragraph(safe, style)
+
+    drugs_qs = drug_formulary_filtered_queryset(request)
+    drugs = list(drugs_qs.order_by('category', 'name'))
+    from django.db.models import Sum, Count
+
+    drug_ids_pdf = [d.pk for d in drugs]
+    stock_by_drug_pdf = {}
+    if drug_ids_pdf:
+        for row in (
+            PharmacyStock.objects.filter(is_deleted=False, drug_id__in=drug_ids_pdf)
+            .values('drug_id')
+            .annotate(total_qty=Sum('quantity_on_hand'), batch_lines=Count('id'))
+        ):
+            stock_by_drug_pdf[row['drug_id']] = (
+                int(row['total_qty'] or 0),
+                int(row['batch_lines'] or 0),
+            )
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        topMargin=0.4 * inch,
+        bottomMargin=0.4 * inch,
+        leftMargin=0.35 * inch,
+        rightMargin=0.35 * inch,
+    )
+    elements = []
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'Title',
+        parent=styles['Heading1'],
+        fontSize=14,
+        textColor=colors.HexColor('#7c3aed'),
+        spaceAfter=8,
+        alignment=TA_CENTER,
+    )
+    meta_style = ParagraphStyle('Meta', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
+    p_name = ParagraphStyle(
+        'CellName', parent=styles['Normal'], fontSize=7, leading=8.5, alignment=TA_LEFT, spaceAfter=0, spaceBefore=0,
+    )
+    p_cat = ParagraphStyle(
+        'CellCat', parent=styles['Normal'], fontSize=6.5, leading=7.8, alignment=TA_LEFT, spaceAfter=0, spaceBefore=0,
+    )
+    p_small = ParagraphStyle(
+        'CellSm', parent=styles['Normal'], fontSize=7, leading=8, alignment=TA_LEFT, spaceAfter=0, spaceBefore=0,
+    )
+
+    elements.append(Paragraph('<b>Drug Formulary</b>', title_style))
+    elements.append(Paragraph(f'Generated: {timezone.now().strftime("%Y-%m-%d %H:%M")}', meta_style))
+    elements.append(Paragraph(f'Total drugs: {len(drugs)}', meta_style))
+    fq = request.GET.get('q', '').strip()
+    if fq:
+        elements.append(Paragraph(f'Filter — search: {_cell_plain(fq, 120)}', meta_style))
+    elements.append(Spacer(1, 0.12 * inch))
+
+    header_row = [
+        'Name', 'Generic', 'Strength', 'Form', 'Pack', 'Therapeutic category',
+        'Active', 'Ctrl', 'Unit (GHS)', 'Cost (GHS)', 'Stock qty', 'Batches', 'ATC',
+    ]
+    table_data = [header_row]
+    for drug in drugs:
+        sq, nb = stock_by_drug_pdf.get(drug.pk, (0, 0))
+        table_data.append([
+            _pcell(drug.name, p_name),
+            _pcell(drug.generic_name, p_small),
+            _cell_plain(drug.strength, 20),
+            _cell_plain(drug.form, 22),
+            _cell_plain(drug.pack_size, 16),
+            _pcell(drug.get_category_display(), p_cat),
+            'Yes' if drug.is_active else 'No',
+            'Yes' if drug.is_controlled else 'No',
+            f'{drug.unit_price:.2f}',
+            f'{drug.cost_price:.2f}',
+            str(sq),
+            str(nb),
+            _cell_plain(drug.atc_code, 24),
+        ])
+
+    # ~10.0" usable width: prioritize category + name; keep narrow flags and money columns
+    col_widths = [
+        1.65 * inch, 0.88 * inch, 0.5 * inch, 0.58 * inch, 0.44 * inch,
+        2.85 * inch, 0.36 * inch, 0.32 * inch, 0.48 * inch, 0.48 * inch,
+        0.42 * inch, 0.4 * inch, 0.48 * inch,
+    ]
+    table = Table(table_data, repeatRows=1, colWidths=col_widths)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#7c3aed')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 7),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+        ('TOPPADDING', (0, 0), (-1, 0), 5),
+        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -1), 7),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('TOPPADDING', (0, 1), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 4),
+        ('ALIGN', (6, 1), (7, -1), 'CENTER'),
+        ('ALIGN', (8, 1), (9, -1), 'RIGHT'),
+        ('ALIGN', (10, 1), (11, -1), 'RIGHT'),
+        ('GRID', (0, 0), (-1, -1), 0.25, colors.grey),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
+    ]))
+    elements.append(table)
+    doc.build(elements)
+    buffer.seek(0)
+
+    response = HttpResponse(buffer.read(), content_type='application/pdf')
+    fname = f'drug_formulary_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf'
+    response['Content-Disposition'] = f'attachment; filename="{fname}"'
+    return response
+
+
+@login_required
+def drug_formulary_excel(request):
+    """Multi-sheet Excel: summary + full formulary with wrapped columns and GHS number formats."""
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+    from .models_settings import HospitalSettings
+
+    HEADER = '5B21B6'
+    HEADER_LIGHT = '7C3AED'
+    LABEL_BG = 'EDE9FE'
+    BORDER_HEX = 'D1D5DB'
+    ZEBRA = 'F9FAFB'
+    thin = Side(style='thin', color=BORDER_HEX)
+    grid = Border(left=thin, right=thin, top=thin, bottom=thin)
+    wrap_top = Alignment(wrap_text=True, vertical='top')
+    center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    drugs = list(drug_formulary_filtered_queryset(request).order_by('category', 'name'))
+    from django.db.models import Sum, Count
+
+    drug_ids = [d.pk for d in drugs]
+    stock_by_drug = {}
+    if drug_ids:
+        for row in (
+            PharmacyStock.objects.filter(is_deleted=False, drug_id__in=drug_ids)
+            .values('drug_id')
+            .annotate(total_qty=Sum('quantity_on_hand'), batch_lines=Count('id'))
+        ):
+            stock_by_drug[row['drug_id']] = (
+                int(row['total_qty'] or 0),
+                int(row['batch_lines'] or 0),
+            )
+
+    settings = HospitalSettings.get_settings()
+    search_query = request.GET.get('q', '').strip()
+    category_filter = request.GET.get('category', '')
+    form_filter = request.GET.get('form', '')
+    status_filter = request.GET.get('status', '')
+    controlled_filter = request.GET.get('controlled', '')
+    category_filter_label = (
+        dict(Drug.CATEGORIES).get(category_filter, category_filter) if category_filter else 'All categories'
+    )
+    now = timezone.now()
+    gen_str = now.strftime('%Y-%m-%d %H:%M:%S')
+
+    wb = Workbook()
+    ws_sum = wb.active
+    ws_sum.title = 'Summary'
+    ws_sum.sheet_properties.tabColor = HEADER_LIGHT
+    ws_sum.merge_cells('A1:F1')
+    t1 = ws_sum['A1']
+    t1.value = 'Drug formulary export'
+    t1.font = Font(bold=True, size=22, color=HEADER)
+    t1.alignment = Alignment(horizontal='center', vertical='center')
+    ws_sum.row_dimensions[1].height = 36
+    ws_sum.merge_cells('A2:F2')
+    ws_sum['A2'] = settings.hospital_name or 'Hospital'
+    ws_sum['A2'].font = Font(size=12, color='374151')
+    ws_sum['A2'].alignment = Alignment(horizontal='center')
+    start_meta = 4
+    if settings.address:
+        ws_sum.merge_cells('A3:F3')
+        ws_sum['A3'] = settings.address
+        ws_sum['A3'].alignment = Alignment(horizontal='center', wrap_text=True)
+        ws_sum['A3'].font = Font(size=10, color='6B7280')
+        start_meta = 5
+
+    meta = [
+        ('Generated', gen_str),
+        ('Total drugs', len(drugs)),
+        ('Search', search_query or '—'),
+        ('Category filter', category_filter_label),
+        ('Form filter', form_filter or '—'),
+        ('Status filter', status_filter or '—'),
+        ('Controlled filter', controlled_filter or '—'),
+    ]
+    for i, (label, value) in enumerate(meta):
+        r = start_meta + i
+        ws_sum.cell(r, 1, label).font = Font(bold=True, size=11)
+        ws_sum.cell(r, 1).fill = PatternFill(start_color=LABEL_BG, end_color=LABEL_BG, fill_type='solid')
+        ws_sum.cell(r, 1).border = grid
+        ws_sum.cell(r, 2, value).border = grid
+        ws_sum.cell(r, 2).alignment = Alignment(vertical='center', wrap_text=True)
+    ws_sum.column_dimensions['A'].width = 22
+    ws_sum.column_dimensions['B'].width = 70
+
+    tip_r = start_meta + len(meta) + 2
+    ws_sum.merge_cells(start_row=tip_r, start_column=1, end_row=tip_r, end_column=5)
+    ws_sum.cell(tip_r, 1).value = (
+        'Open the "Formulary" sheet: use Data → Filter on row 1, freeze panes, and widen columns as needed. '
+        'Category and Name cells wrap text. "Total stock qty" is the sum of pharmacy batch on-hand quantities; '
+        '"No. of batches" is how many PharmacyStock rows exist for that drug.'
+    )
+    ws_sum.cell(tip_r, 1).font = Font(italic=True, size=10, color='6B7280')
+
+    ws_d = wb.create_sheet('Formulary', 1)
+    ws_d.sheet_properties.tabColor = HEADER
+    headers = [
+        'Category code',
+        'Therapeutic category (full)',
+        'Drug name',
+        'Generic name',
+        'Strength',
+        'Form',
+        'Pack size',
+        'Active',
+        'Controlled substance',
+        'Unit price (GHS)',
+        'Cost price (GHS)',
+        'Total stock qty',
+        'No. of batches',
+        'ATC code',
+    ]
+    ncols = len(headers)
+    for col, h in enumerate(headers, 1):
+        c = ws_d.cell(1, col, h)
+        c.fill = PatternFill(start_color=HEADER, end_color=HEADER, fill_type='solid')
+        c.font = Font(bold=True, color='FFFFFF', size=11)
+        c.alignment = center
+        c.border = grid
+
+    for idx, drug in enumerate(drugs):
+        row = 2 + idx
+        total_qty, n_batches = stock_by_drug.get(drug.pk, (0, 0))
+        vals = [
+            drug.category or '',
+            drug.get_category_display() or '',
+            drug.name,
+            drug.generic_name or '',
+            drug.strength,
+            drug.form,
+            drug.pack_size or '',
+            'Yes' if drug.is_active else 'No',
+            'Yes' if drug.is_controlled else 'No',
+            float(drug.unit_price or 0),
+            float(drug.cost_price or 0),
+            total_qty,
+            n_batches,
+            drug.atc_code or '',
+        ]
+        zebra = idx % 2 == 1
+        for col, val in enumerate(vals, 1):
+            cell = ws_d.cell(row, col, val)
+            cell.border = grid
+            if zebra:
+                cell.fill = PatternFill(start_color=ZEBRA, end_color=ZEBRA, fill_type='solid')
+            if col in (2, 3, 4):
+                cell.alignment = wrap_top
+            elif col in (8, 9):
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+            elif col in (10, 11):
+                cell.alignment = Alignment(horizontal='right', vertical='center')
+                cell.number_format = '#,##0.00'
+            elif col in (12, 13):
+                cell.alignment = Alignment(horizontal='right', vertical='center')
+                cell.number_format = '#,##0'
+            else:
+                cell.alignment = Alignment(vertical='top')
+
+    last = 1 + len(drugs)
+    ws_d.auto_filter.ref = f'A1:{get_column_letter(ncols)}{max(last, 1)}'
+    ws_d.freeze_panes = 'A2'
+    widths = [14, 52, 38, 24, 12, 14, 12, 10, 12, 16, 16, 14, 12, 14]
+    for i, w in enumerate(widths, 1):
+        if i <= ncols:
+            ws_d.column_dimensions[get_column_letter(i)].width = w
+
+    out = BytesIO()
+    wb.save(out)
+    out.seek(0)
+    response = HttpResponse(
+        out.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    fname = f'drug_formulary_{now.strftime("%Y%m%d_%H%M%S")}.xlsx'
+    response['Content-Disposition'] = f'attachment; filename="{fname}"'
+    return response
 
 
 @login_required
 def drug_detail(request, pk):
     """View drug details"""
     from datetime import timedelta
+    from .models_payment_verification import PharmacyDispenseHistory
+    from .models_pharmacy_walkin import WalkInPharmacySaleItem
     drug = get_object_or_404(Drug, pk=pk, is_deleted=False)
     
     # Get stock information
-    stock_entries = PharmacyStock.objects.filter(drug=drug, is_deleted=False).order_by('expiry_date')
-    total_stock = stock_entries.aggregate(total=Sum('quantity_on_hand'))['total'] or 0
-    
-    # Calculate stock value
-    stock_value = total_stock * drug.unit_price
-    
+    stock_entries_qs = PharmacyStock.objects.filter(drug=drug, is_deleted=False).order_by('expiry_date')
+    total_stock_on_hand = stock_entries_qs.aggregate(total=Sum('quantity_on_hand'))['total'] or 0
+    total_initial_stock = stock_entries_qs.aggregate(total=Sum('initial_quantity'))['total'] or 0
+
     # Get recent prescriptions
     recent_prescriptions = Prescription.objects.filter(
         drug=drug,
@@ -5908,6 +6798,29 @@ def drug_detail(request, pk):
     ).select_related('order__encounter__patient', 'prescribed_by__user').order_by('-created')[:10]
     
     prescription_count = Prescription.objects.filter(drug=drug, is_deleted=False).count()
+    dispensed_txn_count = PharmacyDispenseHistory.objects.filter(
+        drug=drug,
+        is_deleted=False,
+    ).count()
+    dispensed_qty_prescription = PharmacyDispenseHistory.objects.filter(
+        drug=drug,
+        is_deleted=False,
+    ).aggregate(total=Sum('quantity_dispensed'))['total'] or 0
+    dispensed_qty_walkin = WalkInPharmacySaleItem.objects.filter(
+        drug=drug,
+        is_deleted=False,
+        sale__is_deleted=False,
+        sale__is_dispensed=True,
+    ).aggregate(total=Sum('quantity'))['total'] or 0
+    total_dispensed_qty = dispensed_qty_prescription + dispensed_qty_walkin
+    total_used_stock = total_dispensed_qty
+    total_stock = total_initial_stock - total_dispensed_qty
+    stock_entries = list(stock_entries_qs)
+    for stock in stock_entries:
+        stock.used_quantity = (stock.initial_quantity or 0) - (stock.quantity_on_hand or 0)
+    
+    # Calculate stock value
+    stock_value = total_stock * drug.unit_price
     
     # Dates for expiry checking
     today = timezone.now().date()
@@ -5917,11 +6830,17 @@ def drug_detail(request, pk):
         'drug': drug,
         'stock_entries': stock_entries,
         'total_stock': total_stock,
+        'total_stock_on_hand': total_stock_on_hand,
+        'total_initial_stock': total_initial_stock,
+        'total_used_stock': total_used_stock,
         'stock_value': stock_value,
         'recent_prescriptions': recent_prescriptions,
         'prescription_count': prescription_count,
+        'dispensed_txn_count': dispensed_txn_count,
+        'total_dispensed_qty': total_dispensed_qty,
         'today': today,
         'expiring_soon': expiring_soon,
+        'can_edit_stock': is_admin_user(request.user),
     }
     return render(request, 'hospital/drug_detail.html', context)
 
@@ -5950,6 +6869,26 @@ def drug_audit_trail(request, pk):
     
     # Build comprehensive audit trail
     audit_entries = []
+
+    # Pharmacy batches (main stock path for many sites) — query once for ledger + current_stock summary
+    pharmacy_stocks_qs = PharmacyStock.objects.filter(
+        drug=drug,
+        is_deleted=False,
+    ).select_related('created_by', 'drug').order_by('-created')
+
+    # 0. Formulary / catalog — when the drug record was created (new drugs had no ledger rows before)
+    created_ts = getattr(drug, 'created', None)
+    if created_ts:
+        audit_entries.append({
+            'type': 'catalog_created',
+            'date': created_ts.date(),
+            'datetime': created_ts,
+            'reference': str(drug.pk)[:8].upper(),
+            'description': 'Drug added to formulary (catalog entry)',
+            'quantity': 0,
+            'quantity_type': 'catalog',
+            'notes': None,
+        })
     
     # 1. STORE TRANSFERS (where drug was transferred to/from)
     # First get inventory items for this drug
@@ -6052,7 +6991,7 @@ def drug_audit_trail(request, pk):
                 'date': sale.dispensed_at.date(),
                 'datetime': sale.dispensed_at,
                 'reference': sale.sale_number,
-                'description': f'Walk-in Sale to: {sale.customer_name}',
+                'description': f'Prescribe Sale to: {sale.customer_name}',
                 'quantity': item.quantity,
                 'quantity_type': 'dispensed',
                 'customer_name': sale.customer_name,
@@ -6066,6 +7005,40 @@ def drug_audit_trail(request, pk):
                 'payment_status': sale.get_payment_status_display(),
                 'notes': sale.notes,
             })
+
+    # 3b. PHARMACY STOCK BATCHES (receipts at Main Pharmacy / locations — was missing from ledger)
+    for stock in pharmacy_stocks_qs:
+        created_ts = stock.created
+        qty_received = int(stock.initial_quantity or 0)
+        if qty_received <= 0:
+            qty_received = int(stock.quantity_on_hand or 0)
+        added_by = 'System'
+        if stock.created_by_id:
+            added_by = (
+                stock.created_by.get_full_name()
+                or getattr(stock.created_by, 'username', None)
+                or 'System'
+            )
+        audit_entries.append({
+            'type': 'pharmacy_stock',
+            'date': created_ts.date(),
+            'datetime': created_ts,
+            'reference': f'BATCH-{stock.batch_number}',
+            'description': (
+                f'Pharmacy stock received · {stock.location or "Pharmacy"} · '
+                f'Batch {stock.batch_number} · Expires {stock.expiry_date}'
+            ),
+            'quantity': max(qty_received, 0),
+            'quantity_type': 'added',
+            'batch_number': stock.batch_number,
+            'expiry_date': stock.expiry_date,
+            'location': stock.location or 'Pharmacy',
+            'quantity_on_hand': stock.quantity_on_hand,
+            'initial_quantity': stock.initial_quantity,
+            'created_by': added_by,
+            'unit_cost': stock.unit_cost,
+            'notes': None,
+        })
     
     # 4. INVENTORY TRANSACTIONS (adjustments, receipts, etc.)
     # InventoryTransaction has performed_by (not created_by); use only valid FK names in select_related
@@ -6108,13 +7081,8 @@ def drug_audit_trail(request, pk):
         current_stock[store_name]['quantity'] += inv_item.quantity_on_hand
         current_stock[store_name]['value'] += (inv_item.quantity_on_hand * (inv_item.unit_cost or Decimal('0.00')))
     
-    # Also check PharmacyStock (already imported at top of file)
-    pharmacy_stocks = PharmacyStock.objects.filter(
-        drug=drug,
-        is_deleted=False
-    ).select_related('drug')
-    
-    for stock in pharmacy_stocks:
+    # Also check PharmacyStock (same queryset as ledger above)
+    for stock in pharmacy_stocks_qs:
         location = stock.location or 'Pharmacy'
         if location not in current_stock:
             current_stock[location] = {
@@ -6148,7 +7116,10 @@ def drug_audit_trail(request, pk):
     # Calculate statistics
     total_transferred = sum(e['quantity'] for e in audit_entries if e['type'] == 'transfer')
     total_dispensed = sum(e['quantity'] for e in audit_entries if e['type'] in ['dispensing', 'walkin_sale'])
-    total_adjusted = sum(e['quantity'] for e in audit_entries if e['type'] == 'inventory_transaction' and e['quantity_type'] == 'added')
+    total_adjusted = (
+        sum(e['quantity'] for e in audit_entries if e['type'] == 'inventory_transaction' and e['quantity_type'] == 'added')
+        + sum(e['quantity'] for e in audit_entries if e['type'] == 'pharmacy_stock')
+    )
     total_removed = sum(e['quantity'] for e in audit_entries if e['type'] == 'inventory_transaction' and e['quantity_type'] == 'removed')
     
     # Pagination
@@ -6173,11 +7144,22 @@ def drug_audit_trail(request, pk):
     return render(request, 'hospital/drug_audit_trail.html', context)
 
 
+def _can_access_drug_catalog_edit(user):
+    """Admin, account/finance, and procurement/store manager can access drug catalog edit."""
+    return is_admin_user(user) or is_account_or_finance(user) or is_procurement_staff(user)
+
+
 @login_required
+@user_passes_test(_can_access_drug_catalog_edit, login_url='/admin/login/')
 def drug_create(request):
-    """Create a new drug"""
+    """Create a new drug. Anyone who can access this page can set selling price; cost price is admin/procurement only."""
+    # Access already restricted by decorator: allow selling price edit for all who reach the form
+    can_edit_selling_price = True
+    can_edit_cost_price = is_admin_user(request.user) or is_procurement_staff(request.user)
     if request.method == 'POST':
         try:
+            unit_price = (request.POST.get('unit_price', 0) or 0) if can_edit_selling_price else 0
+            cost_price = (request.POST.get('cost_price', 0) or 0) if can_edit_cost_price else 0
             drug = Drug.objects.create(
                 atc_code=request.POST.get('atc_code', ''),
                 name=request.POST['name'],
@@ -6188,25 +7170,39 @@ def drug_create(request):
                 category=request.POST.get('category', 'other'),
                 is_controlled=request.POST.get('is_controlled') == 'on',
                 is_active=request.POST.get('is_active', 'on') == 'on',
-                unit_price=request.POST.get('unit_price', 0) or 0,
-                cost_price=request.POST.get('cost_price', 0) or 0,
+                unit_price=unit_price,
+                cost_price=cost_price,
             )
             messages.success(request, f'Drug "{drug.name}" created successfully.')
             return redirect('hospital:drug_detail', pk=drug.pk)
         except Exception as e:
             messages.error(request, f'Error creating drug: {str(e)}')
     
+    # Minimal drug-like object for create form (template expects drug.unit_price, etc.)
+    from types import SimpleNamespace
+    create_drug = SimpleNamespace(
+        name='', generic_name='', atc_code='', strength='', form='', pack_size='',
+        category='other', is_controlled=False, is_active=True, unit_price=0, cost_price=0,
+    )
     context = {
         'action': 'Create',
-        'drug_categories': Drug.CATEGORIES
+        'drug': create_drug,
+        'drug_categories': Drug.CATEGORIES,
+        'can_edit_selling_price': can_edit_selling_price,
+        'can_edit_cost_price': can_edit_cost_price,
     }
     return render(request, 'hospital/drug_form.html', context)
 
 
 @login_required
+@user_passes_test(_can_access_drug_catalog_edit, login_url='/admin/login/')
 def drug_edit(request, pk):
-    """Edit an existing drug"""
+    """Edit drug. Anyone who can access this page can edit selling/unit price; cost price and stock expiry are admin/procurement only."""
     drug = get_object_or_404(Drug, pk=pk, is_deleted=False)
+    # Access already restricted by decorator: allow selling price edit for all who reach the form
+    can_edit_selling_price = True
+    can_edit_cost_price = is_admin_user(request.user) or is_procurement_staff(request.user)
+    can_edit_stock = is_admin_user(request.user) or is_procurement_staff(request.user)
     
     if request.method == 'POST':
         try:
@@ -6219,19 +7215,56 @@ def drug_edit(request, pk):
             drug.category = request.POST.get('category', 'other')
             drug.is_controlled = request.POST.get('is_controlled') == 'on'
             drug.is_active = request.POST.get('is_active', 'on') == 'on'
-            drug.unit_price = request.POST.get('unit_price', 0) or 0
-            drug.cost_price = request.POST.get('cost_price', 0) or 0
+            if can_edit_selling_price:
+                drug.unit_price = request.POST.get('unit_price', 0) or 0
+            if can_edit_cost_price:
+                drug.cost_price = request.POST.get('cost_price', 0) or 0
             drug.save()
+            
+            # Update expiry dates for PharmacyStock batches (admin only)
+            if can_edit_stock:
+                from datetime import datetime
+                from .models import PharmacyStock
+                for key, value in request.POST.items():
+                    if key.startswith('stock_expiry_') and value:
+                        try:
+                            stock_pk = key.replace('stock_expiry_', '')
+                            stock = PharmacyStock.objects.get(
+                                pk=stock_pk,
+                                drug=drug,
+                                is_deleted=False
+                            )
+                            stock.expiry_date = datetime.strptime(value, '%Y-%m-%d').date()
+                            stock.save()
+                        except (ValueError, PharmacyStock.DoesNotExist):
+                            pass
             
             messages.success(request, f'Drug "{drug.name}" updated successfully.')
             return redirect('hospital:drug_detail', pk=drug.pk)
         except Exception as e:
             messages.error(request, f'Error updating drug: {str(e)}')
     
+    # Get stock batches for expiry editing
+    stock_entries = []
+    try:
+        from .models import PharmacyStock
+        stock_entries = list(
+            PharmacyStock.objects.filter(
+                drug=drug,
+                is_deleted=False
+            ).order_by('expiry_date')
+        )
+    except Exception:
+        pass
+    
     context = {
         'drug': drug,
         'action': 'Edit',
-        'drug_categories': Drug.CATEGORIES
+        'drug_categories': Drug.CATEGORIES,
+        'stock_entries': stock_entries,
+        'can_edit_selling_price': can_edit_selling_price,
+        'can_edit_cost_price': can_edit_cost_price,
+        'can_edit_stock': can_edit_stock,
     }
     return render(request, 'hospital/drug_form.html', context)
 
@@ -6272,6 +7305,7 @@ def lab_tests_catalog(request):
     # Get unique specimen types for filter dropdown
     specimen_types = LabTest.objects.filter(is_deleted=False).values_list('specimen_type', flat=True).distinct().order_by('specimen_type')
     
+    can_manage_catalog = _can_access_lab_catalog_edit(request.user)
     context = {
         'tests': tests_page,
         'specimen_types': specimen_types,
@@ -6279,6 +7313,7 @@ def lab_tests_catalog(request):
         'specimen_filter': specimen_filter,
         'status_filter': status_filter,
         'total_tests': tests.count(),
+        'can_manage_catalog': can_manage_catalog,
     }
     return render(request, 'hospital/lab_tests_catalog.html', context)
 
@@ -6299,27 +7334,86 @@ def lab_test_detail(request, pk):
     completed_results = LabResult.objects.filter(test=test, status='completed', is_deleted=False).count()
     abnormal_results = LabResult.objects.filter(test=test, is_abnormal=True, is_deleted=False).count()
     
+    try:
+        lab_test_delete_url = reverse('hospital:lab_test_delete', kwargs={'pk': test.pk})
+    except Exception:
+        lab_test_delete_url = None
     context = {
         'test': test,
         'recent_results': recent_results,
         'total_results': total_results,
         'completed_results': completed_results,
         'abnormal_results': abnormal_results,
+        'lab_test_delete_url': lab_test_delete_url,
+        'can_manage_catalog': _can_access_lab_catalog_edit(request.user),
     }
     return render(request, 'hospital/lab_test_detail.html', context)
 
 
+def _parse_tat_minutes(val, default=60):
+    """Safely parse tat_minutes from form; avoids int('') error."""
+    if val is None or str(val).strip() == '':
+        return default
+    try:
+        n = int(val)
+        return max(1, n) if n > 0 else default
+    except (ValueError, TypeError):
+        return default
+
+
+def _can_access_lab_catalog_edit(user):
+    """Who may create/edit/delete LabTest catalog rows: lab staff, admins, finance, procurement."""
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if getattr(user, 'is_superuser', False):
+        return True
+    try:
+        from .utils_roles import get_user_role
+        if get_user_role(user) in ('lab_technician', 'admin'):
+            return True
+    except Exception:
+        pass
+    if is_admin_user(user) or is_account_or_finance(user) or is_procurement_staff(user):
+        return True
+    try:
+        if user.has_perm('hospital.change_labtest'):
+            return True
+    except Exception:
+        pass
+    try:
+        from .models import Staff
+        staff = Staff.objects.filter(user=user, is_deleted=False).order_by('-created').first()
+        if staff and staff.profession:
+            prof = (staff.profession or '').strip().lower().replace(' ', '_').replace('-', '_')
+            lab_professions = {
+                'lab_technician', 'lab_tech', 'laboratory_technician', 'laboratory_scientist',
+                'medical_laboratory_scientist', 'lab', 'laboratory', 'mls',
+            }
+            if prof in lab_professions or ('lab' in prof and 'assistant' not in prof):
+                return True
+    except Exception:
+        pass
+    if user.groups.filter(
+        name__in=['Laboratory', 'Lab', 'Lab Technician', 'Lab Technicians', 'Laboratory Technician']
+    ).exists():
+        return True
+    return False
+
+
 @login_required
+@user_passes_test(_can_access_lab_catalog_edit, login_url='/admin/login/')
 def lab_test_create(request):
-    """Create a new lab test"""
+    """Create a new lab test. Anyone who can access this page can set price."""
+    can_edit_price = True
     if request.method == 'POST':
         try:
+            price = (request.POST.get('price', 0) or 0) if can_edit_price else 0
             test = LabTest.objects.create(
                 code=request.POST['code'],
                 name=request.POST['name'],
                 specimen_type=request.POST['specimen_type'],
-                tat_minutes=int(request.POST.get('tat_minutes', 60)),
-                price=request.POST.get('price', 0) or 0,
+                tat_minutes=_parse_tat_minutes(request.POST.get('tat_minutes'), 60),
+                price=price,
                 is_active=request.POST.get('is_active', 'on') == 'on',
             )
             messages.success(request, f'Lab test "{test.name}" created successfully.')
@@ -6327,21 +7421,27 @@ def lab_test_create(request):
         except Exception as e:
             messages.error(request, f'Error creating lab test: {str(e)}')
     
-    return render(request, 'hospital/lab_test_form.html', {'action': 'Create'})
+    return render(request, 'hospital/lab_test_form.html', {
+        'action': 'Create',
+        'can_edit_price': can_edit_price,
+    })
 
 
 @login_required
+@user_passes_test(_can_access_lab_catalog_edit, login_url='/admin/login/')
 def lab_test_edit(request, pk):
-    """Edit an existing lab test"""
+    """Edit lab test. Anyone who can access this page can change price."""
     test = get_object_or_404(LabTest, pk=pk, is_deleted=False)
+    can_edit_price = True
     
     if request.method == 'POST':
         try:
             test.code = request.POST['code']
             test.name = request.POST['name']
             test.specimen_type = request.POST['specimen_type']
-            test.tat_minutes = int(request.POST.get('tat_minutes', 60))
-            test.price = request.POST.get('price', 0) or 0
+            test.tat_minutes = _parse_tat_minutes(request.POST.get('tat_minutes'), test.tat_minutes or 60)
+            if can_edit_price:
+                test.price = request.POST.get('price', 0) or 0
             test.is_active = request.POST.get('is_active', 'on') == 'on'
             test.save()
             
@@ -6350,11 +7450,36 @@ def lab_test_edit(request, pk):
         except Exception as e:
             messages.error(request, f'Error updating lab test: {str(e)}')
     
+    try:
+        delete_url = reverse('hospital:lab_test_delete', kwargs={'pk': test.pk})
+    except Exception:
+        delete_url = None
     context = {
         'test': test,
-        'action': 'Edit'
+        'action': 'Edit',
+        'lab_test_delete_url': delete_url,
+        'can_edit_price': can_edit_price,
     }
     return render(request, 'hospital/lab_test_form.html', context)
+
+
+@login_required
+@user_passes_test(_can_access_lab_catalog_edit, login_url='/admin/login/')
+def lab_test_delete(request, pk):
+    """Soft-delete a lab test (sets is_deleted=True)"""
+    test = get_object_or_404(LabTest, pk=pk, is_deleted=False)
+    if request.method == 'POST':
+        try:
+            test.is_deleted = True
+            test.save()
+            messages.success(request, f'Lab test "{test.name}" has been deleted.')
+            return redirect('hospital:lab_tests_catalog')
+        except Exception as e:
+            messages.error(request, f'Error deleting lab test: {str(e)}')
+            return redirect('hospital:lab_test_detail', pk=pk)
+    # GET: show confirmation
+    context = {'test': test}
+    return render(request, 'hospital/lab_test_confirm_delete.html', context)
 
 
 # ==================== DEPARTMENTS & WARDS MANAGEMENT ====================
@@ -6689,6 +7814,23 @@ def medical_records_list(request):
             Q(patient__mrn__icontains=search_query)
         )
     
+    # Date filter (record created date)
+    date_from = request.GET.get('date_from', '').strip()
+    date_to = request.GET.get('date_to', '').strip()
+    from datetime import datetime
+    if date_from:
+        try:
+            date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+            records = records.filter(created__date__gte=date_from_obj)
+        except ValueError:
+            date_from = ''
+    if date_to:
+        try:
+            date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+            records = records.filter(created__date__lte=date_to_obj)
+        except ValueError:
+            date_to = ''
+    
     # Filter by record type
     type_filter = request.GET.get('type', '')
     if type_filter:
@@ -6699,7 +7841,7 @@ def medical_records_list(request):
     if patient_filter:
         records = records.filter(patient_id=patient_filter)
     
-    # Group records by patient (folder view)
+    # Group records by patient (folder view); dedupe so same encounter+type+title+datetime = one row
     patient_map = OrderedDict()
     for record in records:
         if not record.patient:
@@ -6711,12 +7853,22 @@ def medical_records_list(request):
                 'records': [],
                 'record_count': 0,
                 'last_created': record.created,
+                '_seen': set(),
             }
         folder = patient_map[pid]
+        # Same date+time = duplicate: use date+time to the second so duplicates collapse
+        enc_key = record.encounter_id if record.encounter_id is not None else ''
+        created_sec = record.created.strftime('%Y-%m-%d %H:%M:%S') if record.created else ''
+        dedupe_key = (enc_key, (record.record_type or '').strip(), (record.title or '').strip(), created_sec)
+        if dedupe_key in folder['_seen']:
+            continue
+        folder['_seen'].add(dedupe_key)
         folder['record_count'] += 1
         if record.created > folder['last_created']:
             folder['last_created'] = record.created
         folder['records'].append(record)
+    for folder in patient_map.values():
+        folder.pop('_seen', None)
     patient_records = sorted(
         patient_map.values(),
         key=lambda item: item['last_created'],
@@ -6730,6 +7882,8 @@ def medical_records_list(request):
         'search_query': search_query,
         'type_filter': type_filter,
         'patient_filter': patient_filter,
+        'date_from': date_from,
+        'date_to': date_to,
         'total_records': records.count(),
     }
     return render(request, 'hospital/medical_records_list.html', context)
@@ -6737,11 +7891,71 @@ def medical_records_list(request):
 
 @login_required
 def medical_record_detail(request, pk):
-    """View medical record details"""
+    """View medical record details; nurses and doctors can add clinical notes for the encounter."""
     record = get_object_or_404(MedicalRecord, pk=pk, is_deleted=False)
+    
+    # Handle adding a clinical note (nurse or doctor) for this record's encounter
+    if request.method == 'POST' and request.POST.get('action') == 'add_clinical_note':
+        if not record.encounter_id:
+            messages.error(request, 'This record is not linked to an encounter. Cannot add note here.')
+        else:
+            try:
+                staff = Staff.objects.get(user=request.user, is_active=True, is_deleted=False)
+                note_type = request.POST.get('note_type', 'progress').strip() or 'progress'
+                objective = request.POST.get('objective', '').strip()
+                notes = request.POST.get('notes', '').strip()
+                if not notes:
+                    messages.error(request, 'Note text is required.')
+                else:
+                    from .models_advanced import ClinicalNote
+                    ClinicalNote.objects.create(
+                        encounter_id=record.encounter_id,
+                        note_type=note_type,
+                        objective=objective,
+                        notes=notes,
+                        created_by=staff,
+                    )
+                    messages.success(request, 'Clinical note added successfully.')
+            except Staff.DoesNotExist:
+                messages.error(request, 'You must have an active staff profile to add clinical notes.')
+            except Exception as e:
+                logger.error(f"Error adding clinical note on medical record detail: {e}", exc_info=True)
+                messages.error(request, f'Error saving note: {str(e)}')
+        return redirect('hospital:medical_record_detail', pk=pk)
+    
+    # All clinical notes for this encounter so every saved note is visible (no filter by type or profession)
+    clinical_notes = []
+    nurse_notes = []
+    doctor_notes = []
+    try:
+        if record.encounter_id:
+            from .models_advanced import ClinicalNote
+            clinical_notes = ClinicalNote.objects.filter(
+                encounter_id=record.encounter_id,
+                is_deleted=False
+            ).select_related('created_by__user').order_by('-created')
+            _progress = [n for n in clinical_notes if getattr(n, 'note_type', None) == 'progress']
+            nurse_notes = [n for n in _progress if getattr(getattr(n, 'created_by', None), 'profession', None) == 'nurse']
+            doctor_notes = [n for n in _progress if getattr(getattr(n, 'created_by', None), 'profession', None) == 'doctor']
+    except Exception:
+        clinical_notes = []
+        nurse_notes = []
+        doctor_notes = []
+    
+    # Can current user add a note? (staff only, and record must have an encounter)
+    can_add_note = False
+    try:
+        if record.encounter_id and Staff.objects.filter(user=request.user, is_active=True, is_deleted=False).exists():
+            can_add_note = True
+    except Exception:
+        pass
     
     context = {
         'record': record,
+        'clinical_notes': clinical_notes,
+        'nurse_notes': nurse_notes,
+        'doctor_notes': doctor_notes,
+        'can_add_note': can_add_note,
     }
     return render(request, 'hospital/medical_record_detail.html', context)
 

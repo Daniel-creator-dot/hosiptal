@@ -5,6 +5,35 @@
 {% block title %}{{ title }}{% endblock %}
 
 {% block extra_css %}
+<!-- Immediate script to hide dropdown before page renders -->
+<script>
+(function() {
+    // Run immediately, before DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', hidePatientDropdown);
+    } else {
+        hidePatientDropdown();
+    }
+    
+    function hidePatientDropdown() {
+        var select = document.getElementById('id_patient');
+        if (select) {
+            select.style.cssText = 'display: none !important; visibility: hidden !important; position: absolute !important; height: 0 !important; width: 0 !important; opacity: 0 !important; pointer-events: none !important;';
+        }
+        // Also hide by name
+        var selects = document.querySelectorAll('select[name="patient"]');
+        for (var i = 0; i < selects.length; i++) {
+            selects[i].style.cssText = 'display: none !important; visibility: hidden !important; position: absolute !important; height: 0 !important; width: 0 !important; opacity: 0 !important; pointer-events: none !important;';
+        }
+    }
+    
+    // Run multiple times to catch late-rendered elements
+    setTimeout(hidePatientDropdown, 0);
+    setTimeout(hidePatientDropdown, 100);
+    setTimeout(hidePatientDropdown, 500);
+    setTimeout(hidePatientDropdown, 1000);
+})();
+</script>
 <style>
     .form-card {
         border-radius: 10px;
@@ -30,6 +59,56 @@
         padding: 1rem;
         margin-bottom: 1.5rem;
         border-radius: 4px;
+    }
+    /* CRITICAL: Hide the original patient dropdown completely */
+    #id_patient,
+    select[name="patient"],
+    select#id_patient {
+        display: none !important;
+        visibility: hidden !important;
+        position: absolute !important;
+        height: 0 !important;
+        width: 0 !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: none !important;
+    }
+    
+    /* Patient Search Results Styling */
+    #patientSearchResults {
+        position: absolute;
+        z-index: 1000;
+        width: 100%;
+        max-height: 300px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        background: white;
+        margin-top: 2px;
+    }
+    #patientSearchResults .list-group-item {
+        border: none;
+        border-bottom: 1px solid #eee;
+        padding: 0.75rem 1rem;
+    }
+    #patientSearchResults .list-group-item:last-child {
+        border-bottom: none;
+    }
+    #patientSearchResults .list-group-item:hover {
+        background-color: #f8f9fa;
+    }
+    #patientSearchResults .list-group-item.patient-select-item {
+        cursor: pointer;
+    }
+    
+    /* Ensure search input is visible */
+    #patientSearch {
+        display: block !important;
+        visibility: visible !important;
+        width: 100% !important;
     }
 </style>
 {% endblock %}
@@ -84,15 +163,26 @@
                         <div class="form-section">
                             <h5><i class="bi bi-person"></i> Patient Information</h5>
                             <div class="row">
-                                <div class="col-md-12 mb-3">
-                                    <label for="{{ form.patient.id_for_label }}" class="form-label required-field">
+                                <div class="col-md-12 mb-3" style="position: relative;">
+                                    <label for="patientSearch" class="form-label required-field">
                                         Patient
                                     </label>
-                                    {% render_field form.patient class="form-control form-control-lg" %}
+                                    <!-- Render the original field but hide it completely - this is what gets submitted -->
+                                    <div style="display: none !important; position: absolute !important; height: 0 !important; width: 0 !important; overflow: hidden !important;">
+                                        {% render_field form.patient class="form-control" id="id_patient" %}
+                                    </div>
+                                    <!-- Custom searchable input (visible to user) -->
+                                    <input type="text" 
+                                           id="patientSearch" 
+                                           class="form-control form-control-lg" 
+                                           placeholder="🔍 Type patient name, MRN, or phone number to search..."
+                                           autocomplete="off"
+                                           style="width: 100%;">
+                                    <div id="patientSearchResults" class="list-group" style="display: none; position: absolute; z-index: 1000; width: 100%; max-height: 300px; overflow-y: auto; background: white; border: 1px solid #ddd; border-radius: 4px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-top: 2px;"></div>
                                     {% if form.patient.errors %}
-                                        <div class="text-danger">{{ form.patient.errors }}</div>
+                                        <div class="text-danger mt-1">{{ form.patient.errors }}</div>
                                     {% endif %}
-                                    <small class="text-muted">Select the patient for this appointment</small>
+                                    <small class="text-muted d-block mt-1">Start typing to search for a patient</small>
                                 </div>
                             </div>
                         </div>
@@ -105,20 +195,27 @@
                                     <label for="{{ form.provider.id_for_label }}" class="form-label required-field">
                                         Provider (Doctor)
                                     </label>
-                                    {% render_field form.provider class="form-control" %}
+                                    <div class="input-group">
+                                        {% render_field form.provider class="form-control" id="id_provider" %}
+                                        <button type="button" class="btn btn-outline-info" id="btn-view-doctor-calendar" title="View Doctor's Calendar" disabled>
+                                            <i class="bi bi-calendar3"></i> View Calendar
+                                        </button>
+                                    </div>
                                     {% if form.provider.errors %}
                                         <div class="text-danger">{{ form.provider.errors }}</div>
                                     {% endif %}
+                                    <small class="text-muted">Select a doctor to see their calendar and availability</small>
                                 </div>
                                 
                                 <div class="col-md-6 mb-3">
                                     <label for="{{ form.department.id_for_label }}" class="form-label required-field">
-                                        Department
+                                        Specialty/Department
                                     </label>
                                     {% render_field form.department class="form-control" %}
                                     {% if form.department.errors %}
                                         <div class="text-danger">{{ form.department.errors }}</div>
                                     {% endif %}
+                                    <small class="text-muted">Select medical specialty (Eye, Dental, Gynae, etc.)</small>
                                 </div>
                             </div>
                             
@@ -127,11 +224,21 @@
                                     <label for="{{ form.appointment_date.id_for_label }}" class="form-label required-field">
                                         Appointment Date & Time
                                     </label>
-                                    {% render_field form.appointment_date class="form-control" %}
+                                    {% render_field form.appointment_date class="form-control" id="id_appointment_date" %}
                                     {% if form.appointment_date.errors %}
                                         <div class="text-danger">{{ form.appointment_date.errors }}</div>
                                     {% endif %}
                                     <small class="text-muted">Format: YYYY-MM-DD HH:MM</small>
+                                    <div id="availability-status" class="mt-2" style="display: none;">
+                                        <div id="availability-loading" class="alert alert-info" style="display: none;">
+                                            <i class="bi bi-hourglass-split"></i> Checking availability...
+                                        </div>
+                                        <div id="availability-result" class="alert" style="display: none;"></div>
+                                        <div id="available-slots" class="mt-2" style="display: none;">
+                                            <strong>Available Time Slots:</strong>
+                                            <div id="slots-container" class="d-flex flex-wrap gap-2 mt-2"></div>
+                                        </div>
+                                    </div>
                                 </div>
                                 
                                 <div class="col-md-4 mb-3">
@@ -189,11 +296,327 @@
 
 {% block extra_js %}
 <script>
-    // Auto-focus on first field
+    // Patient Search Functionality
+    let patientSearchTimeout;
+    let currentHighlight = -1;
+    
+    // Wait for DOM to be fully loaded
     document.addEventListener('DOMContentLoaded', function() {
-        const firstField = document.querySelector('select, input[type="text"]');
-        if (firstField) {
-            firstField.focus();
+        const patientSearch = document.getElementById('patientSearch');
+        const patientSearchResults = document.getElementById('patientSearchResults');
+        const originalPatientField = document.getElementById('id_patient'); // This is the actual form field
+        
+        // CRITICAL: Hide the original dropdown field completely - run immediately
+        function hideOriginalField() {
+            const field = document.getElementById('id_patient');
+            if (field) {
+                field.style.cssText = 'display: none !important; visibility: hidden !important; position: absolute !important; height: 0 !important; width: 0 !important; opacity: 0 !important; pointer-events: none !important;';
+            }
+            // Hide all select elements with name="patient"
+            document.querySelectorAll('select[name="patient"]').forEach(function(select) {
+                select.style.cssText = 'display: none !important; visibility: hidden !important; position: absolute !important; height: 0 !important; width: 0 !important; opacity: 0 !important; pointer-events: none !important;';
+            });
+        }
+        
+        // Run immediately and also on DOMContentLoaded
+        hideOriginalField();
+        
+        // Also run after a short delay to catch any late-rendered elements
+        setTimeout(hideOriginalField, 100);
+        setTimeout(hideOriginalField, 500);
+        
+        if (originalPatientField) {
+            hideOriginalField();
+        }
+    
+    // Function to select a patient
+    function selectPatient(element) {
+        const patientId = element.getAttribute('data-id');
+        const patientName = element.getAttribute('data-name');
+        const patientMrn = element.getAttribute('data-mrn') || '';
+        
+        // Update the original form field (this is what gets submitted)
+        if (originalPatientField) {
+            originalPatientField.value = patientId;
+        }
+        // Update the visible search input
+        if (patientSearch) {
+            patientSearch.value = patientName + (patientMrn ? ` (${patientMrn})` : '');
+        }
+        // Hide the results dropdown
+        if (patientSearchResults) {
+            patientSearchResults.style.display = 'none';
+            patientSearchResults.innerHTML = '';
+        }
+        currentHighlight = -1;
+    }
+    
+    // Helper function to update highlight
+    function updateHighlight(items, index) {
+        items.forEach((item, i) => {
+            if (i === index) {
+                item.style.backgroundColor = '#0d6efd';
+                item.style.color = 'white';
+                item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            } else {
+                item.style.backgroundColor = '';
+                item.style.color = '';
+            }
+        });
+    }
+    
+        
+        // Focus on patient search field
+        if (patientSearch) {
+            patientSearch.focus();
+        }
+        
+        // Patient search functionality
+        if (patientSearch && patientSearchResults && originalPatientField) {
+            patientSearch.addEventListener('input', function() {
+                clearTimeout(patientSearchTimeout);
+                const query = this.value.trim();
+                currentHighlight = -1;
+                
+                if (query.length < 2) {
+                    patientSearchResults.style.display = 'none';
+                    patientSearchResults.innerHTML = '';
+                    if (originalPatientField) {
+                        originalPatientField.value = '';
+                    }
+                    return;
+                }
+                
+                patientSearchTimeout = setTimeout(() => {
+                    fetch(`{% url 'hospital:api_patient_search' %}?q=${encodeURIComponent(query)}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.patients && data.patients.length > 0) {
+                                patientSearchResults.innerHTML = data.patients.map(p => `
+                                    <a href="#" class="list-group-item list-group-item-action patient-select-item" 
+                                       data-id="${p.id}" 
+                                       data-name="${p.name}"
+                                       data-mrn="${p.mrn || ''}"
+                                       style="cursor: pointer;">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <strong>${p.name}</strong>
+                                                ${p.mrn ? `<br><small class="text-muted">MRN: ${p.mrn}</small>` : ''}
+                                            </div>
+                                            ${p.phone ? `<div class="text-end"><small class="text-muted">${p.phone}</small></div>` : ''}
+                                        </div>
+                                    </a>
+                                `).join('');
+                                patientSearchResults.style.display = 'block';
+                                
+                                // Add click handlers
+                                document.querySelectorAll('.patient-select-item').forEach((el) => {
+                                    el.addEventListener('click', function(e) {
+                                        e.preventDefault();
+                                        selectPatient(this);
+                                    });
+                                    
+                                    // Hover effect
+                                    el.addEventListener('mouseenter', function() {
+                                        if (this.style.backgroundColor !== 'rgb(13, 110, 253)') {
+                                            this.style.backgroundColor = '#e9ecef';
+                                        }
+                                    });
+                                    el.addEventListener('mouseleave', function() {
+                                        if (this.style.backgroundColor !== 'rgb(13, 110, 253)') {
+                                            this.style.backgroundColor = '';
+                                        }
+                                    });
+                                });
+                            } else {
+                                patientSearchResults.innerHTML = '<div class="list-group-item text-muted">No patients found. Try a different search term.</div>';
+                                patientSearchResults.style.display = 'block';
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error searching patients:', error);
+                            patientSearchResults.innerHTML = '<div class="list-group-item text-danger">Error searching patients. Please try again.</div>';
+                            patientSearchResults.style.display = 'block';
+                        });
+                }, 300);
+            });
+            
+            // Keyboard navigation
+            patientSearch.addEventListener('keydown', function(e) {
+                const items = document.querySelectorAll('.patient-select-item');
+                if (items.length === 0) return;
+                
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    currentHighlight = Math.min(currentHighlight + 1, items.length - 1);
+                    updateHighlight(items, currentHighlight);
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    currentHighlight = Math.max(currentHighlight - 1, -1);
+                    if (currentHighlight >= 0) {
+                        updateHighlight(items, currentHighlight);
+                    } else {
+                        // Clear all highlights when going above first item
+                        items.forEach(item => {
+                            item.style.backgroundColor = '';
+                            item.style.color = '';
+                        });
+                    }
+                } else if (e.key === 'Enter' && currentHighlight >= 0 && items[currentHighlight]) {
+                    e.preventDefault();
+                    selectPatient(items[currentHighlight]);
+                } else if (e.key === 'Escape') {
+                    patientSearchResults.style.display = 'none';
+                    currentHighlight = -1;
+                }
+            });
+            
+            // Hide results when clicking outside
+            document.addEventListener('click', function(e) {
+                if (!patientSearch.contains(e.target) && 
+                    !patientSearchResults.contains(e.target)) {
+                    patientSearchResults.style.display = 'none';
+                    currentHighlight = -1;
+                }
+            });
+            
+            // Clear search when input loses focus (with delay to allow clicking results)
+            patientSearch.addEventListener('blur', function() {
+                setTimeout(() => {
+                    if (!patientSearchResults.contains(document.activeElement)) {
+                        patientSearchResults.style.display = 'none';
+                    }
+                }, 200);
+            });
+        }
+        
+        // Form validation before submit
+        const form = document.querySelector('form');
+        if (form && originalPatientField) {
+            form.addEventListener('submit', function(e) {
+                if (!originalPatientField.value || originalPatientField.value.trim() === '') {
+                    e.preventDefault();
+                    alert('Please select a patient from the search results.');
+                    if (patientSearch) {
+                        patientSearch.focus();
+                    }
+                    return false;
+                }
+            });
+        }
+
+        // Doctor availability checking
+        const providerSelect = document.getElementById('id_provider');
+        const appointmentDateInput = document.getElementById('id_appointment_date');
+        const durationInput = document.getElementById('id_duration_minutes');
+        const viewCalendarBtn = document.getElementById('btn-view-doctor-calendar');
+        const availabilityStatus = document.getElementById('availability-status');
+        const availabilityLoading = document.getElementById('availability-loading');
+        const availabilityResult = document.getElementById('availability-result');
+        const availableSlots = document.getElementById('available-slots');
+        const slotsContainer = document.getElementById('slots-container');
+
+        // Enable/disable view calendar button based on provider selection
+        if (providerSelect && viewCalendarBtn) {
+            providerSelect.addEventListener('change', function() {
+                const selectedProvider = this.value;
+                if (selectedProvider) {
+                    viewCalendarBtn.disabled = false;
+                    viewCalendarBtn.onclick = function() {
+                        // Open doctor's calendar in new tab using general appointment calendar with provider filter
+                        window.open(`{% url 'hospital:appointment_calendar_view' %}?provider=${selectedProvider}&view=week`, '_blank');
+                    };
+                } else {
+                    viewCalendarBtn.disabled = true;
+                }
+                checkAvailability();
+            });
+        }
+
+        // Check availability when date or provider changes
+        if (appointmentDateInput && providerSelect) {
+            appointmentDateInput.addEventListener('change', checkAvailability);
+            if (durationInput) {
+                durationInput.addEventListener('change', checkAvailability);
+            }
+        }
+
+        function checkAvailability() {
+            const providerId = providerSelect?.value;
+            const appointmentDate = appointmentDateInput?.value;
+            const duration = durationInput?.value || 30;
+
+            if (!providerId || !appointmentDate) {
+                availabilityStatus.style.display = 'none';
+                return;
+            }
+
+            // Extract date from datetime input (format: YYYY-MM-DDTHH:MM)
+            const datePart = appointmentDate.split('T')[0];
+            if (!datePart) {
+                availabilityStatus.style.display = 'none';
+                return;
+            }
+
+            // Show loading
+            availabilityStatus.style.display = 'block';
+            availabilityLoading.style.display = 'block';
+            availabilityResult.style.display = 'none';
+            availableSlots.style.display = 'none';
+
+            // Call availability API
+            fetch(`{% url 'hospital:check_availability_api' %}?provider=${providerId}&date=${datePart}&duration=${duration}`)
+                .then(response => response.json())
+                .then(data => {
+                    availabilityLoading.style.display = 'none';
+
+                    if (data.error) {
+                        availabilityResult.className = 'alert alert-danger';
+                        availabilityResult.innerHTML = `<i class="bi bi-exclamation-triangle"></i> ${data.error}`;
+                        availabilityResult.style.display = 'block';
+                        return;
+                    }
+
+                    if (data.slots && data.slots.length > 0) {
+                        const availableCount = data.slots.filter(slot => slot.available).length;
+                        const totalCount = data.slots.length;
+
+                        if (availableCount > 0) {
+                            availabilityResult.className = 'alert alert-success';
+                            availabilityResult.innerHTML = `<i class="bi bi-check-circle"></i> <strong>Available:</strong> ${availableCount} out of ${totalCount} time slots are available`;
+                            availabilityResult.style.display = 'block';
+
+                            // Show available slots
+                            slotsContainer.innerHTML = '';
+                            data.slots.forEach(slot => {
+                                if (slot.available) {
+                                    const slotBtn = document.createElement('button');
+                                    slotBtn.type = 'button';
+                                    slotBtn.className = 'btn btn-sm btn-outline-success';
+                                    slotBtn.textContent = `${slot.start_time} - ${slot.end_time}`;
+                                    slotBtn.onclick = function() {
+                                        // Set the appointment time
+                                        const datetimeValue = `${datePart}T${slot.start_time}`;
+                                        appointmentDateInput.value = datetimeValue;
+                                        availabilityStatus.style.display = 'none';
+                                    };
+                                    slotsContainer.appendChild(slotBtn);
+                                }
+                            });
+                            availableSlots.style.display = 'block';
+                        } else {
+                            availabilityResult.className = 'alert alert-warning';
+                            availabilityResult.innerHTML = `<i class="bi bi-exclamation-triangle"></i> <strong>No available slots:</strong> All ${totalCount} time slots are booked for this date`;
+                            availabilityResult.style.display = 'block';
+                        }
+                    }
+                })
+                .catch(error => {
+                    availabilityLoading.style.display = 'none';
+                    availabilityResult.className = 'alert alert-danger';
+                    availabilityResult.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Error checking availability: ${error.message}`;
+                    availabilityResult.style.display = 'block';
+                });
         }
     });
 </script>

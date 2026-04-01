@@ -1,0 +1,342 @@
+{# Mirror of hms/templates/hospital/accountant/payroll_detail.html when both exist. #}
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Payroll {{ payroll.payroll_number }} — HMS{% endblock %}
+{% block page_title %}Payroll {{ payroll.payroll_number }}{% endblock %}
+{% block page_subtitle %}{{ payroll_heading }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  .detail-ribbon {
+    background: linear-gradient(110deg, #134e4a 0%, #0d9488 45%, #2dd4bf 100%);
+    border-radius: 14px;
+    color: #fff;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.25rem;
+    box-shadow: 0 10px 36px rgba(13, 148, 136, 0.28);
+  }
+  .kpi {
+    background: rgba(255,255,255,0.12);
+    border-radius: 10px;
+    padding: 0.75rem 1rem;
+    border: 1px solid rgba(255,255,255,0.18);
+  }
+  .kpi .v { font-size: 1.35rem; font-weight: 700; }
+  .kpi .l { font-size: 0.7rem; opacity: 0.88; text-transform: uppercase; letter-spacing: 0.08em; }
+  .import-panel {
+    background: #f8fafc;
+    border: 1px dashed #94a3b8;
+    border-radius: 12px;
+    padding: 1.25rem;
+  }
+  .sticky-actions { position: sticky; top: 0.5rem; z-index: 2; }
+  .grid-lines { font-size: 0.78rem; }
+  .grid-lines th { white-space: nowrap; }
+  @media print {
+    .sidebar, .sidebar-overlay, .topbar, .activity-reminder-banner,
+    .no-print-payroll, #messages-container {
+      display: none !important;
+    }
+    .main-content {
+      margin-left: 0 !important;
+      width: 100% !important;
+      max-width: 100% !important;
+    }
+    .content-container { padding: 0 !important; max-width: 100% !important; }
+    .detail-ribbon {
+      background: #f1f5f9 !important;
+      color: #0f172a !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .card { box-shadow: none !important; border: 1px solid #cbd5e1 !important; }
+    .grid-lines { font-size: 9pt; }
+    a[href]:after { content: none !important; }
+    @page { margin: 10mm; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="detail-ribbon row g-3 align-items-center">
+    <div class="col-lg-7">
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <span class="badge bg-light text-dark">{{ payroll.get_status_display }}</span>
+        {% if payroll.status == 'approved' and payroll.approved_by %}
+        <span class="small opacity-90"><i class="bi bi-person-check me-1"></i>By {{ payroll.approved_by.get_full_name|default:payroll.approved_by.username }}</span>
+        {% endif %}
+        {% if payroll.import_source_filename %}
+        <span class="small opacity-90 text-truncate" style="max-width: 22rem;"><i class="bi bi-file-earmark-spreadsheet me-1"></i>{{ payroll.import_source_filename }}</span>
+        {% elif source_banner != "—" %}
+        <span class="small opacity-90"><i class="bi bi-pencil-square me-1"></i>{{ source_banner }}</span>
+        {% endif %}
+      </div>
+      <h4 class="mb-1 fw-bold">{{ payroll_heading }}</h4>
+      <div class="small opacity-90">{{ payroll.payroll_period_start|date:"M j, Y" }} → {{ payroll.payroll_period_end|date:"M j, Y" }} · Pay date {{ payroll.pay_date|date:"M j, Y" }}</div>
+    </div>
+    <div class="col-lg-5">
+      <div class="row g-2">
+        <div class="col-4">
+          <div class="kpi text-center"><div class="l">Gross</div><div class="v">GHS {{ payroll.total_gross_pay|floatformat:0|intcomma }}</div></div>
+        </div>
+        <div class="col-4">
+          <div class="kpi text-center"><div class="l">Deduct</div><div class="v">GHS {{ payroll.total_deductions|floatformat:0|intcomma }}</div></div>
+        </div>
+        <div class="col-4">
+          <div class="kpi text-center"><div class="l">Net</div><div class="v">GHS {{ payroll.total_net_pay|floatformat:0|intcomma }}</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if can_submit_payroll or can_withdraw_payroll or can_approve_payroll %}
+  <div class="card border-0 shadow-sm mb-3 no-print-payroll">
+    <div class="card-body py-3 d-flex flex-wrap align-items-center justify-content-between gap-3">
+      <div class="small text-secondary">
+        {% if payroll.status == 'pending_approval' %}
+        <strong class="text-dark">Awaiting administrator.</strong> Accounting cannot change lines until an admin approves or returns this run to draft.
+        {% elif can_submit_payroll %}
+        When this month’s sheet is ready, submit it for an <strong>Administrator</strong> to approve.
+        {% endif %}
+      </div>
+      <div class="d-flex flex-wrap gap-2">
+        {% if can_submit_payroll %}
+        <form method="post" action="{% url 'accountant_payroll_submit_approval' payroll.pk %}" class="d-inline" onsubmit="return confirm('Submit this payroll for administrator approval? Import and edits will be locked until it is returned to draft.');">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-send-check me-1"></i>Submit for approval</button>
+        </form>
+        {% endif %}
+        {% if can_withdraw_payroll %}
+        <form method="post" action="{% url 'accountant_payroll_withdraw_submission' payroll.pk %}" class="d-inline" onsubmit="return confirm('Withdraw this submission? The run will go back to draft so you can edit again.');">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-outline-secondary btn-sm">Withdraw submission</button>
+        </form>
+        {% endif %}
+        {% if can_approve_payroll %}
+        <form method="post" action="{% url 'accountant_payroll_approve' payroll.pk %}" class="d-inline">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-success btn-sm"><i class="bi bi-check2-circle me-1"></i>Approve payroll</button>
+        </form>
+        <form method="post" action="{% url 'accountant_payroll_reject' payroll.pk %}" class="d-inline" onsubmit="return confirm('Return this payroll to draft so accounting can revise it?');">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-outline-danger btn-sm">Return to draft</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="row g-3 mb-4">
+    <div class="col-lg-4 no-print-payroll">
+      <div class="import-panel h-100">
+        {% if not can_edit_payroll %}
+        <div class="alert alert-secondary py-2 small mb-3 mb-lg-2">
+          {% if payroll.status == 'pending_approval' %}
+          This run is <strong>locked</strong> while it awaits administrator approval.
+          {% elif payroll.status == 'approved' %}
+          This run is <strong>approved</strong>. To change lines, an administrator must return it to draft.
+          {% else %}
+          This run cannot be edited from Excel in its current status.
+          {% endif %}
+        </div>
+        {% endif %}
+        {% if not has_rmc_columns %}
+        <div class="alert alert-warning py-2 small mb-3 mb-lg-2">
+          This server is on the <strong>legacy</strong> payroll line schema. Run <code>python manage.py migrate hospital</code> to enable RMC column import and the detailed breakdown table.
+        </div>
+        {% endif %}
+        <h6 class="fw-bold text-secondary mb-2"><i class="bi bi-cloud-arrow-up me-1"></i> Import Sample Salary-RMC</h6>
+        <p class="small text-muted mb-3">Upload the filled workbook. HMS matches <strong>Emp. Code</strong> to staff <strong>employee ID</strong>.</p>
+        <form method="post" action="{% url 'accountant_payroll_import' %}" enctype="multipart/form-data" {% if not has_rmc_columns or not can_edit_payroll %}class="opacity-50" aria-disabled="true"{% endif %}>
+          {% csrf_token %}
+          <input type="hidden" name="payroll_id" value="{{ payroll.pk }}">
+          <div class="mb-2">
+            <input type="file" name="excel_file" class="form-control form-control-sm" accept=".xlsx,.xls" {% if has_rmc_columns and can_edit_payroll %}required{% else %}disabled{% endif %}>
+          </div>
+          <div class="form-check form-check-sm mb-2">
+            <input class="form-check-input" type="checkbox" name="sync_dates" value="1" id="sync_dates" checked {% if not has_rmc_columns or not can_edit_payroll %}disabled{% endif %}>
+            <label class="form-check-label small" for="sync_dates">Set period &amp; pay date from sheet (e.g. PERIOD :JANUARY 2026)</label>
+          </div>
+          <div class="form-check form-check-sm mb-2">
+            <input class="form-check-input" type="checkbox" name="overwrite_label" value="1" id="overwrite_label" {% if not has_rmc_columns or not can_edit_payroll %}disabled{% endif %}>
+            <label class="form-check-label small" for="overwrite_label">Overwrite display label from sheet</label>
+          </div>
+          <div class="form-check form-check-sm mb-3">
+            <input class="form-check-input" type="checkbox" name="replace_existing" value="1" id="replace_existing" checked {% if not has_rmc_columns or not can_edit_payroll %}disabled{% endif %}>
+            <label class="form-check-label small" for="replace_existing">Replace existing lines for this run</label>
+          </div>
+          <button type="submit" class="btn btn-success btn-sm w-100" {% if not has_rmc_columns or not can_edit_payroll %}disabled{% endif %}><i class="bi bi-upload me-1"></i> Import Excel</button>
+        </form>
+        <hr class="my-3">
+        {% if has_rmc_columns %}
+        <h6 class="fw-bold text-secondary mb-2"><i class="bi bi-percent me-1"></i>Automatic deductions</h6>
+        {% if can_edit_payroll %}
+        <p class="small text-muted mb-2">Turn on to recalculate SSF, PF, PAYE (optional flat %), and other % from each line when you import or save here.</p>
+        <form method="post" action="{% url 'accountant_payroll_deduction_rates' payroll.pk %}" class="mb-3">
+          {% csrf_token %}
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" name="deduction_apply_percentages" value="1" id="detail_deduction_apply" {% if payroll.deduction_apply_percentages %}checked{% endif %}>
+            <label class="form-check-label small" for="detail_deduction_apply">Apply percentage deductions</label>
+          </div>
+          <div class="row g-1 mb-2">
+            <div class="col-6">
+              <label class="form-label small mb-0" for="detail_ssnit">SSF emp %</label>
+              <input type="number" name="deduction_ssnit_employee_pct" id="detail_ssnit" class="form-control form-control-sm" step="0.01" min="0" max="100" value="{{ payroll.deduction_ssnit_employee_pct }}">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-0" for="detail_pf">PF emp %</label>
+              <input type="number" name="deduction_pension_employee_pct" id="detail_pf" class="form-control form-control-sm" step="0.01" min="0" max="100" value="{{ payroll.deduction_pension_employee_pct }}">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-0" for="detail_paye">PAYE %</label>
+              <input type="number" name="deduction_paye_pct" id="detail_paye" class="form-control form-control-sm" step="0.01" min="0" max="100" value="{{ payroll.deduction_paye_pct }}">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-0" for="detail_other">Other %</label>
+              <input type="number" name="deduction_other_deduction_pct" id="detail_other" class="form-control form-control-sm" step="0.01" min="0" max="100" value="{{ payroll.deduction_other_deduction_pct }}">
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm w-100">Save rates &amp; recalculate lines</button>
+        </form>
+        {% else %}
+        <div class="alert alert-light border py-2 small mb-3" role="status">
+          <strong>Auto deductions:</strong>
+          {% if payroll.deduction_apply_percentages %}
+          <span class="text-success">On</span> — SSF {{ payroll.deduction_ssnit_employee_pct }}%, PF {{ payroll.deduction_pension_employee_pct }}%
+          {% if payroll.deduction_paye_pct %} · PAYE {{ payroll.deduction_paye_pct }}%{% endif %}
+          {% if payroll.deduction_other_deduction_pct %} · Other {{ payroll.deduction_other_deduction_pct }}%{% endif %}.
+          {% else %}
+          <span class="text-muted">Off</span> (amounts come from the spreadsheet or admin).
+          {% endif %}
+        </div>
+        {% endif %}
+        {% endif %}
+        <div class="d-flex flex-wrap gap-2 sticky-actions">
+          <a href="{% url 'accountant_payroll_export_lines' payroll.pk %}" class="btn btn-outline-success btn-sm"><i class="bi bi-file-earmark-spreadsheet"></i> Staff lines (.xlsx)</a>
+          <a href="{% url 'accountant_payroll_template' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-download"></i> Template</a>
+          <a href="{% url 'admin:hospital_accountingpayroll_change' payroll.id %}" class="btn btn-outline-primary btn-sm"><i class="bi bi-gear"></i> Admin</a>
+          <a href="{% url 'accountant_payroll_list' %}" class="btn btn-outline-dark btn-sm">All runs</a>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-8 no-print-payroll">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <h6 class="card-title fw-bold text-secondary">Net pay by department <span class="text-muted fw-normal small">(from import)</span></h6>
+          <canvas id="deptChart" height="120"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-white py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <span class="fw-semibold"><i class="bi bi-people me-2 text-secondary"></i>{{ entries|length }} staff line(s)</span>
+      <div class="d-flex flex-wrap gap-2 no-print-payroll">
+        <a href="{% url 'accountant_payroll_export_lines' payroll.pk %}" class="btn btn-sm btn-outline-success"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Download Excel</a>
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer me-1"></i>Print</button>
+      </div>
+    </div>
+    <div class="table-responsive">
+      {% if entries %}
+      <table class="table table-sm table-hover mb-0 grid-lines align-middle">
+        <thead class="table-light">
+          <tr>
+            {% if has_rmc_columns %}
+            <th>#</th>
+            <th>Code</th>
+            <th>Name</th>
+            <th>Dept</th>
+            <th class="text-end">Basic</th>
+            <th class="text-end">Other/OT</th>
+            <th class="text-end">Medical</th>
+            <th class="text-end">Risk</th>
+            <th class="text-end">Gross</th>
+            <th class="text-end">SSF 5.5%</th>
+            <th class="text-end">PF emp</th>
+            <th class="text-end">PAYE</th>
+            <th class="text-end fw-bold">Net</th>
+            {% else %}
+            <th>Code</th>
+            <th>Name</th>
+            <th>Department</th>
+            <th class="text-end">Gross</th>
+            <th class="text-end">Deductions</th>
+            <th class="text-end fw-bold">Net</th>
+            {% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in entries %}
+          <tr>
+            {% if has_rmc_columns %}
+            <td>{% if show_sheet_serial %}{{ e.sheet_serial|default:"—" }}{% else %}{{ forloop.counter }}{% endif %}</td>
+            <td class="font-monospace">{{ e.staff.employee_id }}</td>
+            <td>{{ e.staff.user.get_full_name }}</td>
+            <td class="text-muted small">{{ e.department_snapshot|truncatechars:24 }}</td>
+            <td class="text-end font-monospace">{{ e.basic_salary|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace">{{ e.other_allowances|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace">{{ e.medical_allowance|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace">{{ e.risk_emergency_allowance|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace fw-semibold">{{ e.gross_pay|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace">{{ e.ssnit_employee|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace">{{ e.pension_employee|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace">{{ e.paye_tax|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace fw-bold text-success">{{ e.net_pay|floatformat:2|intcomma }}</td>
+            {% else %}
+            <td class="font-monospace">{{ e.staff.employee_id }}</td>
+            <td>{{ e.staff.user.get_full_name }}</td>
+            <td class="text-muted small">{% if e.staff.department %}{{ e.staff.department.name|truncatechars:28 }}{% else %}—{% endif %}</td>
+            <td class="text-end font-monospace fw-semibold">{{ e.gross_pay|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace">{{ e.deductions|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace fw-bold text-success">{{ e.net_pay|floatformat:2|intcomma }}</td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="p-5 text-center text-muted">
+        <p class="mb-0">No lines yet — import your <strong>Sample Salary-RMC.xlsx</strong> file above.</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+  const labels = {{ chart_labels_json|safe }};
+  const values = {{ chart_values_json|safe }};
+  const ctx = document.getElementById('deptChart');
+  if (!ctx || !labels.length) return;
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Net pay (GHS)',
+        data: values,
+        backgroundColor: 'rgba(13, 148, 136, 0.55)',
+        borderColor: 'rgba(15, 118, 110, 1)',
+        borderWidth: 1,
+        borderRadius: 6,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, ticks: { callback: v => 'GHS ' + v.toLocaleString() } },
+        x: { ticks: { maxRotation: 45, minRotation: 0 } }
+      }
+    }
+  });
+})();
+</script>
+{% endblock %}

@@ -263,13 +263,12 @@ def _get_gp_consultations_report(start_date, end_date):
         created__date__gte=start_date,
         created__date__lte=end_date,
         is_deleted=False,
-        encounter_type='outpatient'
-    ).select_related('patient', 'provider', 'department').filter(
+        encounter_type='outpatient',
         provider__profession='doctor'
-    ).order_by('-created')
+    ).select_related('patient', 'provider', 'provider__department').order_by('-created')
     
     total_consultations = consultations.count()
-    consultations_by_department = consultations.values('department__name').annotate(count=Count('id'))
+    consultations_by_department = consultations.values('provider__department__name').annotate(count=Count('id'))
     consultations_by_provider = consultations.values('provider__user__first_name', 'provider__user__last_name').annotate(count=Count('id'))
     
     summary = {
@@ -280,13 +279,18 @@ def _get_gp_consultations_report(start_date, end_date):
     
     items = []
     for consultation in consultations:
+        # Get department through provider
+        department_name = 'N/A'
+        if consultation.provider and consultation.provider.department:
+            department_name = consultation.provider.department.name
+        
         items.append({
             'consultation_date': consultation.created.date(),
             'consultation_time': consultation.created.time(),
             'patient_name': consultation.patient.full_name if consultation.patient else 'N/A',
             'patient_mrn': consultation.patient.mrn if consultation.patient else 'N/A',
             'provider': consultation.provider.user.get_full_name() if consultation.provider and consultation.provider.user else 'N/A',
-            'department': consultation.department.name if consultation.department else 'N/A',
+            'department': department_name,
             'status': consultation.get_status_display() if hasattr(consultation, 'get_status_display') else consultation.status,
         })
     

@@ -61,6 +61,13 @@
                 {% if invoice.payer %}
                 <strong>Payer:</strong> {{ invoice.payer.name }}
                 {% endif %}
+                {% if invoice.balance > 0 %}
+                <div class="mt-2">
+                    <a href="{% url 'hospital:cashier_invoice_detail' invoice.pk %}" class="btn btn-sm btn-outline-warning">
+                        <i class="bi bi-dash-circle"></i> Waive items (e.g. registration – old system patients)
+                    </a>
+                </div>
+                {% endif %}
             </div>
             {% elif bill %}
             {% if bill.invoice %}
@@ -74,35 +81,95 @@
             <form method="post">
                 {% csrf_token %}
                 
+                <!-- Payment Method Selection - Prominent Display -->
+                <div class="mb-4">
+                    <label class="form-label" style="font-size: 16px; font-weight: 600; margin-bottom: 12px;">
+                        <i class="bi bi-credit-card-2-front me-2"></i>Payment Method <span class="text-danger">*</span>
+                    </label>
+                    <div class="row g-2" id="paymentMethodCards">
+                        <div class="col-md-4 col-sm-6">
+                            <label class="payment-method-card" data-method="cash">
+                                <input type="radio" name="payment_method" value="cash" checked required>
+                                <div class="card h-100 text-center p-3" style="border: 2px solid #28a745; border-radius: 12px; cursor: pointer; transition: all 0.3s;">
+                                    <i class="bi bi-cash-coin" style="font-size: 32px; color: #28a745;"></i>
+                                    <div class="mt-2" style="font-weight: 600; color: #28a745;">Cash</div>
+                                    <small class="text-muted">Physical cash payment</small>
+                                </div>
+                            </label>
+                        </div>
+                        <div class="col-md-4 col-sm-6">
+                            <label class="payment-method-card" data-method="mobile_money">
+                                <input type="radio" name="payment_method" value="mobile_money" required>
+                                <div class="card h-100 text-center p-3" style="border: 2px solid #e5e7eb; border-radius: 12px; cursor: pointer; transition: all 0.3s;">
+                                    <i class="bi bi-phone" style="font-size: 32px; color: #6366f1;"></i>
+                                    <div class="mt-2" style="font-weight: 600;">Mobile Money</div>
+                                    <small class="text-muted">MOMO / MTN / Vodafone</small>
+                                </div>
+                            </label>
+                        </div>
+                        <div class="col-md-4 col-sm-6">
+                            <label class="payment-method-card" data-method="card">
+                                <input type="radio" name="payment_method" value="card" required>
+                                <div class="card h-100 text-center p-3" style="border: 2px solid #e5e7eb; border-radius: 12px; cursor: pointer; transition: all 0.3s;">
+                                    <i class="bi bi-credit-card" style="font-size: 32px; color: #f59e0b;"></i>
+                                    <div class="mt-2" style="font-weight: 600;">Card</div>
+                                    <small class="text-muted">Debit / Credit Card</small>
+                                </div>
+                            </label>
+                        </div>
+                        <div class="col-md-4 col-sm-6">
+                            <label class="payment-method-card" data-method="bank_transfer">
+                                <input type="radio" name="payment_method" value="bank_transfer" required>
+                                <div class="card h-100 text-center p-3" style="border: 2px solid #e5e7eb; border-radius: 12px; cursor: pointer; transition: all 0.3s;">
+                                    <i class="bi bi-bank" style="font-size: 32px; color: #3b82f6;"></i>
+                                    <div class="mt-2" style="font-weight: 600;">Bank Transfer</div>
+                                    <small class="text-muted">Bank transfer / EFT</small>
+                                </div>
+                            </label>
+                        </div>
+                        <div class="col-md-4 col-sm-6">
+                            <label class="payment-method-card" data-method="cheque">
+                                <input type="radio" name="payment_method" value="cheque" required>
+                                <div class="card h-100 text-center p-3" style="border: 2px solid #e5e7eb; border-radius: 12px; cursor: pointer; transition: all 0.3s;">
+                                    <i class="bi bi-file-earmark-text" style="font-size: 32px; color: #8b5cf6;"></i>
+                                    <div class="mt-2" style="font-weight: 600;">Cheque</div>
+                                    <small class="text-muted">Cheque payment</small>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="row g-3 mb-3">
                     <div class="col-md-6">
-                        <label class="form-label">Amount to Pay <span class="text-danger">*</span></label>
+                        <label class="form-label" style="font-size: 16px; font-weight: 600;">
+                            <i class="bi bi-currency-dollar me-2"></i>Amount to Pay <span class="text-danger">*</span>
+                        </label>
                         {% if invoice %}
                         <input type="number" name="amount" step="0.01" min="0.01" max="{{ invoice.balance }}" 
-                               value="{{ invoice.balance }}" class="form-control form-control-modern" required>
+                               value="{% if default_amount %}{{ default_amount }}{% else %}{{ invoice.balance }}{% endif %}" class="form-control form-control-modern" 
+                               style="font-size: 18px; font-weight: 600; padding: 12px;" required title="Enter number" placeholder="Enter number">
                         <small class="text-muted">Maximum: GHS {{ invoice.balance|floatformat:2 }}</small>
                         {% elif bill %}
                         <input type="number" name="amount" step="0.01" min="0.01" max="{{ bill.patient_portion }}" 
-                               value="{{ bill.patient_portion }}" class="form-control form-control-modern" required>
+                               value="{% if default_amount %}{{ default_amount }}{% else %}{{ bill.patient_portion }}{% endif %}" class="form-control form-control-modern" 
+                               style="font-size: 18px; font-weight: 600; padding: 12px;" required title="Enter number" placeholder="Enter number">
                         <small class="text-muted">Maximum: GHS {{ bill.patient_portion|floatformat:2 }}</small>
                         {% endif %}
                     </div>
                     <div class="col-md-6">
-                        <label class="form-label">Payment Method <span class="text-danger">*</span></label>
-                        <select name="payment_method" class="form-select form-control-modern" required>
-                            <option value="cash">Cash</option>
-                            <option value="card">Card</option>
-                            <option value="mobile_money">Mobile Money</option>
-                            <option value="bank_transfer">Bank Transfer</option>
-                            <option value="cheque">Cheque</option>
-                        </select>
+                        <label class="form-label" style="font-size: 16px; font-weight: 600;" id="transactionIdLabel">
+                            <i class="bi bi-receipt me-2"></i>Transaction ID / Reference Number
+                            <span id="transactionIdRequired" class="text-danger" style="display: none;">*</span>
+                        </label>
+                        <input type="text" name="reference_number" id="referenceNumberInput" 
+                               class="form-control form-control-modern" 
+                               placeholder="Enter transaction ID, card last 4 digits, or reference number"
+                               title="Enter text" placeholder="Enter text">
+                        <small class="text-muted" id="transactionIdHelp">
+                            <span id="helpText">Optional - for tracking and reconciliation</span>
+                        </small>
                     </div>
-                </div>
-                
-                <div class="mb-3">
-                    <label class="form-label">Reference Number</label>
-                    <input type="text" name="reference_number" class="form-control form-control-modern" 
-                           placeholder="Transaction/Receipt number (optional)">
                 </div>
                 
                 <div class="mb-3">
@@ -164,6 +231,21 @@
         </div>
         {% endif %}
         
+        {% if patient.deposit_balance > 0 %}
+        <div class="modern-card mt-3" style="border-left: 4px solid #48bb78;">
+            <h6 style="font-weight: 600; margin-bottom: 12px; color: #48bb78;">
+                <i class="bi bi-wallet2"></i> Patient Credit
+            </h6>
+            <div style="font-size: 14px;">
+                <strong>Available Credit:</strong> GHS {{ patient.deposit_balance|floatformat:2|intcomma }}
+            </div>
+            <p class="mb-0 mt-2 text-muted" style="font-size: 12px;">
+                To apply credit to this invoice, use 
+                <a href="{% url 'hospital:patient_deposit_history' patient.pk %}">Deposit History</a> 
+                and apply manually, or it may auto-apply when invoice is issued.
+            </p>
+        </div>
+        {% endif %}
         {% if invoice %}
         <div class="modern-card mt-3">
             <h6 style="font-weight: 600; margin-bottom: 12px;">Invoice Info</h6>
@@ -179,4 +261,101 @@
         {% endif %}
     </div>
 </div>
+
+<style>
+    .payment-method-card input[type="radio"] {
+        display: none;
+    }
+    
+    .payment-method-card input[type="radio"]:checked + .card {
+        border-color: #6366f1 !important;
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(99, 102, 241, 0.05) 100%);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+    }
+    
+    .payment-method-card .card:hover {
+        border-color: #6366f1 !important;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    
+    .payment-method-card[data-method="cash"] input[type="radio"]:checked + .card {
+        border-color: #28a745 !important;
+        background: linear-gradient(135deg, rgba(40, 167, 69, 0.1) 0%, rgba(40, 167, 69, 0.05) 100%);
+        box-shadow: 0 4px 12px rgba(40, 167, 69, 0.2);
+    }
+    
+    .payment-method-card[data-method="mobile_money"] input[type="radio"]:checked + .card {
+        border-color: #6366f1 !important;
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(99, 102, 241, 0.05) 100%);
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+    }
+    
+    .payment-method-card[data-method="card"] input[type="radio"]:checked + .card {
+        border-color: #f59e0b !important;
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(245, 158, 11, 0.05) 100%);
+        box-shadow: 0 4px 12px rgba(245, 158, 11, 0.2);
+    }
+    
+    .payment-method-card[data-method="bank_transfer"] input[type="radio"]:checked + .card {
+        border-color: #3b82f6 !important;
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(59, 130, 246, 0.05) 100%);
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+    }
+    
+    .payment-method-card[data-method="cheque"] input[type="radio"]:checked + .card {
+        border-color: #8b5cf6 !important;
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(139, 92, 246, 0.05) 100%);
+        box-shadow: 0 4px 12px rgba(139, 92, 246, 0.2);
+    }
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const paymentMethodCards = document.querySelectorAll('.payment-method-card input[type="radio"]');
+    const referenceNumberInput = document.getElementById('referenceNumberInput');
+    const transactionIdLabel = document.getElementById('transactionIdLabel');
+    const transactionIdRequired = document.getElementById('transactionIdRequired');
+    const helpText = document.getElementById('helpText');
+    
+    function updateTransactionIdField() {
+        const selectedMethod = document.querySelector('input[name="payment_method"]:checked')?.value;
+        
+        if (selectedMethod === 'cash') {
+            referenceNumberInput.required = false;
+            transactionIdRequired.style.display = 'none';
+            referenceNumberInput.placeholder = 'Optional - Receipt number or reference';
+            helpText.textContent = 'Optional - for cash payments';
+        } else if (selectedMethod === 'mobile_money') {
+            referenceNumberInput.required = true;
+            transactionIdRequired.style.display = 'inline';
+            referenceNumberInput.placeholder = 'Enter MOMO Transaction ID (e.g., MTN123456789)';
+            helpText.textContent = 'Required - Enter the Mobile Money transaction ID';
+        } else if (selectedMethod === 'card') {
+            referenceNumberInput.required = true;
+            transactionIdRequired.style.display = 'inline';
+            referenceNumberInput.placeholder = 'Enter Card Transaction ID or last 4 digits';
+            helpText.textContent = 'Required - Enter card transaction ID or last 4 digits';
+        } else if (selectedMethod === 'bank_transfer') {
+            referenceNumberInput.required = true;
+            transactionIdRequired.style.display = 'inline';
+            referenceNumberInput.placeholder = 'Enter Bank Transfer Reference Number';
+            helpText.textContent = 'Required - Enter bank transfer reference number';
+        } else if (selectedMethod === 'cheque') {
+            referenceNumberInput.required = true;
+            transactionIdRequired.style.display = 'inline';
+            referenceNumberInput.placeholder = 'Enter Cheque Number';
+            helpText.textContent = 'Required - Enter cheque number';
+        }
+    }
+    
+    paymentMethodCards.forEach(card => {
+        card.addEventListener('change', updateTransactionIdField);
+    });
+    
+    // Initialize on page load
+    updateTransactionIdField();
+});
+</script>
 {% endblock %}

@@ -35,11 +35,76 @@ class ClinicalNote(BaseModel):
     
     class Meta:
         ordering = ['-created']
+        # Prevent duplicates: same encounter + note_type + similar notes
+        indexes = [
+            models.Index(fields=['encounter', 'note_type', 'is_deleted']),
+        ]
     
     def __str__(self):
         return f"{self.get_note_type_display()} - {self.encounter.patient.full_name}"
     
     def save(self, *args, **kwargs):
+        """Prevent duplicate clinical notes. Progress notes are never merged - each save creates a new entry."""
+        # Progress notes: always create new row (never merge/replace) so every save is a new note
+        if self.note_type == 'progress':
+            pass  # Skip duplicate check; fall through to normal save below
+        elif not self.is_deleted and self.encounter_id and self.note_type:
+            from datetime import timedelta
+            
+            # First check: Exact match on notes content (not used for progress - see above)
+            existing = ClinicalNote.objects.filter(
+                encounter_id=self.encounter_id,
+                note_type=self.note_type,
+                notes=self.notes,
+                is_deleted=False
+            ).exclude(id=self.id if self.id else None).first()
+            
+            # Second check: Same encounter + note_type + created within 5 minutes
+            # This catches duplicates created at the same time with slightly different content
+            # IMPORTANT: Do NOT merge progress notes by time - each progress note is a distinct
+            # chronological entry; merging would hide new content from doctors.
+            if not existing and self.note_type != 'progress':
+                five_minutes_ago = timezone.now() - timedelta(minutes=5)
+                recent_duplicate = ClinicalNote.objects.filter(
+                    encounter_id=self.encounter_id,
+                    note_type=self.note_type,
+                    created__gte=five_minutes_ago,
+                    is_deleted=False
+                ).exclude(id=self.id if self.id else None).order_by('-created').first()
+                
+                if recent_duplicate:
+                    # Check if assessment is similar (for consultation notes)
+                    if self.note_type == 'consultation':
+                        # If both have assessment and they're similar, treat as duplicate
+                        if self.assessment and recent_duplicate.assessment:
+                            # Simple similarity check: if assessment starts with same words
+                            self_words = self.assessment.split()[:5]
+                            existing_words = recent_duplicate.assessment.split()[:5]
+                            if self_words == existing_words:
+                                existing = recent_duplicate
+                        # Or if created within 1 minute, likely a duplicate
+                        elif (timezone.now() - recent_duplicate.created).total_seconds() < 60:
+                            existing = recent_duplicate
+                    else:
+                        # For other note types (not progress), if created within 1 minute, treat as duplicate
+                        if (timezone.now() - recent_duplicate.created).total_seconds() < 60:
+                            existing = recent_duplicate
+            
+            if existing:
+                # Update existing note with latest content (so doctor's edits are saved)
+                existing.notes = self.notes if self.notes else existing.notes
+                existing.subjective = self.subjective if self.subjective else existing.subjective
+                existing.objective = self.objective if self.objective else existing.objective
+                existing.assessment = self.assessment if self.assessment else existing.assessment
+                existing.plan = self.plan if self.plan else existing.plan
+                if self.created_by_id:
+                    existing.created_by = self.created_by
+                existing.save()
+                # Set self.pk to existing to prevent creation
+                self.pk = existing.pk
+                self.id = existing.id
+                return
+        
         """Auto-add consultation charge when consultation note is saved"""
         is_new = self.pk is None
         
@@ -60,8 +125,21 @@ class ClinicalNote(BaseModel):
                     consultation_type = 'specialist'
             
             try:
-                add_consultation_charge(self.encounter, consultation_type)
-            except Exception:
+                # Anyone who goes through consultation must be billed
+                invoice = add_consultation_charge(
+                    self.encounter,
+                    consultation_type,
+                    doctor_staff=self.created_by,
+                )
+                if invoice:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.info(f"💰 Consultation charge added via ClinicalNote signal for encounter {self.encounter.id}")
+                # If None, it's a review visit - no charge (silently skip)
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to add consultation charge via ClinicalNote signal: {e}")
                 pass  # Don't break note saving if billing fails
         
         super().save(*args, **kwargs)
@@ -123,6 +201,14 @@ class Diagnosis(BaseModel):
     encounter = models.ForeignKey(Encounter, on_delete=models.CASCADE, related_name='diagnoses')
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='diagnoses')
     icd10_code = models.CharField(max_length=20, blank=True)
+    diagnosis_code = models.ForeignKey(
+        'DiagnosisCode',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='patient_diagnoses',
+        help_text="Link to DiagnosisCode for proper name display"
+    )
     diagnosis = models.CharField(max_length=200)
     diagnosis_type = models.CharField(max_length=50, default='primary')  # primary, secondary, differential
     description = models.TextField(blank=True)
@@ -132,9 +218,47 @@ class Diagnosis(BaseModel):
     class Meta:
         ordering = ['-diagnosis_date']
         verbose_name_plural = 'Diagnoses'
+        indexes = [
+            models.Index(fields=['patient', 'is_deleted'], name='diag_patient_del_idx'),
+            models.Index(fields=['encounter', 'is_deleted'], name='diag_encounter_del_idx'),
+            models.Index(fields=['diagnosis_date'], name='diag_date_idx'),
+        ]
     
     def __str__(self):
-        return f"{self.diagnosis} - {self.patient.full_name}"
+        return f"{self.diagnosis_name} - {self.patient.full_name}"
+    
+    @property
+    def diagnosis_name(self):
+        """Get diagnosis name from code or use stored diagnosis"""
+        if self.diagnosis_code:
+            return self.diagnosis_code.short_description or self.diagnosis_code.description
+        return self.diagnosis
+    
+    @property
+    def display_code(self):
+        """Get ICD-10 code for display"""
+        if self.diagnosis_code:
+            return self.diagnosis_code.code
+        return self.icd10_code or ''
+    
+    def save(self, *args, **kwargs):
+        """Auto-link to DiagnosisCode if icd10_code is provided"""
+        if self.icd10_code and not self.diagnosis_code:
+            try:
+                from .models_diagnosis import DiagnosisCode
+                code_obj = DiagnosisCode.objects.filter(
+                    code=self.icd10_code,
+                    is_active=True,
+                    is_deleted=False
+                ).first()
+                if code_obj:
+                    self.diagnosis_code = code_obj
+                    # Update diagnosis name if not set
+                    if not self.diagnosis:
+                        self.diagnosis = code_obj.short_description or code_obj.description
+            except:
+                pass
+        super().save(*args, **kwargs)
 
 
 class Procedure(BaseModel):
@@ -151,6 +275,11 @@ class Procedure(BaseModel):
     
     class Meta:
         ordering = ['-procedure_date']
+        indexes = [
+            models.Index(fields=['patient', 'is_deleted'], name='proc_patient_del_idx'),
+            models.Index(fields=['encounter', 'is_deleted'], name='proc_encounter_del_idx'),
+            models.Index(fields=['procedure_date'], name='proc_date_idx'),
+        ]
     
     def __str__(self):
         return f"{self.procedure_name} - {self.patient.full_name}"
@@ -261,6 +390,11 @@ class Triage(BaseModel):
     
     class Meta:
         ordering = ['triage_time']
+        indexes = [
+            models.Index(fields=['encounter', 'is_deleted'], name='triage_enc_del_idx'),
+            models.Index(fields=['triage_level', 'is_deleted'], name='triage_level_del_idx'),
+            models.Index(fields=['triage_time'], name='triage_time_idx'),
+        ]
     
     def __str__(self):
         return f"Triage {self.get_triage_level_display()} - {self.encounter.patient.full_name}"
@@ -280,6 +414,8 @@ class ImagingStudy(BaseModel):
         ('nuclear', 'Nuclear Medicine'),
         ('pet', 'PET Scan'),
         ('dexa', 'DEXA Scan'),
+        ('ecg', 'ECG'),
+        ('other', 'Other'),
     ]
     
     STATUS_CHOICES = [
@@ -382,6 +518,57 @@ class ImagingStudy(BaseModel):
     def __str__(self):
         return f"{self.get_modality_display()} - {self.patient.full_name} - {self.body_part}"
     
+    def save(self, *args, **kwargs):
+        """Override save to prevent duplicates - only check for very recent duplicates"""
+        # Only check for duplicates on new objects and skip if this is a bulk operation
+        if not self.pk and not kwargs.get('bulk', False):
+            from django.utils import timezone
+            from datetime import timedelta
+            
+            # Check for existing study with same patient + modality + study_type within last 30 minutes
+            # This prevents rapid duplicate creation from double-clicks or form resubmissions
+            thirty_minutes_ago = timezone.now() - timedelta(minutes=30)
+            
+            duplicate = ImagingStudy.objects.filter(
+                patient=self.patient,
+                modality=self.modality,
+                study_type=self.study_type or '',
+                is_deleted=False,
+                created__gte=thirty_minutes_ago
+            ).exclude(pk=self.pk).order_by('-created').first()
+            
+            # Also check within same encounter if available
+            if not duplicate and self.encounter_id:
+                duplicate = ImagingStudy.objects.filter(
+                    patient=self.patient,
+                    encounter=self.encounter,
+                    modality=self.modality,
+                    is_deleted=False,
+                    created__gte=thirty_minutes_ago
+                ).exclude(pk=self.pk).order_by('-created').first()
+            
+            if duplicate:
+                # Very recent duplicate found - update existing instead of creating new
+                # This prevents duplicates from rapid form submissions
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Duplicate ImagingStudy prevented: Found existing study {duplicate.id} "
+                    f"for patient {self.patient_id}, modality {self.modality}, "
+                    f"created {duplicate.created}"
+                )
+                # Update existing duplicate with new order if provided
+                if self.order and duplicate.order != self.order:
+                    duplicate.order = self.order
+                    duplicate.save(update_fields=['order'])
+                # Set self.pk to existing duplicate to prevent creation
+                self.pk = duplicate.pk
+                self.id = duplicate.id
+                # Don't call super().save() - we're using the existing record
+                return
+        
+        super().save(*args, **kwargs)
+    
     @property
     def is_stat(self):
         """Check if this is a STAT (urgent) order"""
@@ -411,10 +598,105 @@ class ImagingStudy(BaseModel):
         return self.turnaround_time_minutes
 
 
+class ImagingCatalog(BaseModel):
+    """Catalog of available imaging studies for ordering"""
+    code = models.CharField(max_length=50, unique=True, help_text='Procedure code')
+    name = models.CharField(max_length=200, help_text='Imaging study name')
+    modality = models.CharField(max_length=20, choices=ImagingStudy.MODALITY_CHOICES, default='xray')
+    body_part = models.CharField(max_length=100, blank=True, help_text='Body part or region')
+    study_type = models.CharField(max_length=100, blank=True, help_text='Type of study')
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text='Cash/private patient price')
+    corporate_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Corporate client price')
+    insurance_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Insurance/NHIS price')
+    description = models.TextField(blank=True, help_text='Description of the imaging study')
+    is_active = models.BooleanField(default=True, help_text='Whether this study is available for ordering')
+    
+    class Meta:
+        ordering = ['modality', 'name']
+        verbose_name_plural = 'Imaging Catalog'
+    
+    def __str__(self):
+        return f"{self.code} - {self.name} ({self.get_modality_display()})"
+
+
+class ProcedureCatalog(BaseModel):
+    """Catalog of available medical procedures for ordering (separate from imaging)"""
+    PROCEDURE_CATEGORIES = [
+        ('minor_surgery', 'Minor Surgery'),
+        ('major_surgery', 'Major Surgery'),
+        ('dental', 'Dental Procedure'),
+        ('ophthalmic', 'Ophthalmic Procedure'),
+        ('endoscopy', 'Endoscopy'),
+        ('biopsy', 'Biopsy'),
+        ('injection', 'Injection'),
+        ('wound_care', 'Wound Care'),
+        ('catheterization', 'Catheterization'),
+        ('dressing', 'Dressing Change'),
+        ('suturing', 'Suturing'),
+        ('incision_drainage', 'Incision & Drainage'),
+        ('other', 'Other Procedure'),
+    ]
+    
+    code = models.CharField(max_length=50, unique=True, help_text='Procedure code (e.g., PROC001)')
+    name = models.CharField(max_length=200, help_text='Procedure name')
+    category = models.CharField(max_length=30, choices=PROCEDURE_CATEGORIES, default='other', help_text='Procedure category')
+    description = models.TextField(blank=True, help_text='Description of the procedure')
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text='Default/Base price for this procedure (cash price)')
+    
+    # Multi-tier pricing
+    cash_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Cash/Private patient price')
+    corporate_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Corporate client price')
+    insurance_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Insurance/NHIS price')
+    
+    # Additional procedure details
+    estimated_duration_minutes = models.PositiveIntegerField(default=30, help_text='Estimated duration in minutes')
+    requires_anesthesia = models.BooleanField(default=False, help_text='Whether procedure requires anesthesia')
+    requires_theatre = models.BooleanField(default=False, help_text='Whether procedure requires operating theatre')
+    is_active = models.BooleanField(default=True, help_text='Whether this procedure is available for ordering')
+    
+    class Meta:
+        ordering = ['category', 'name']
+        verbose_name = 'Procedure Catalog'
+        verbose_name_plural = 'Procedure Catalog'
+        indexes = [
+            models.Index(fields=['category', 'is_active']),
+            models.Index(fields=['code']),
+        ]
+    
+    def __str__(self):
+        return f"{self.code} - {self.name} ({self.get_category_display()})"
+
+
+class ProcedureConsumable(BaseModel):
+    """Link procedures to consumables - defines which consumables are typically used for each procedure"""
+    procedure = models.ForeignKey(ProcedureCatalog, on_delete=models.CASCADE, related_name='consumables')
+    service_code = models.ForeignKey('ServiceCode', on_delete=models.CASCADE, related_name='procedure_usages')
+    default_quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1.0, help_text='Default quantity for this consumable in this procedure')
+    is_required = models.BooleanField(default=False, help_text='Whether this consumable is required for the procedure')
+    notes = models.TextField(blank=True, help_text='Notes about usage of this consumable in the procedure')
+    
+    class Meta:
+        unique_together = ['procedure', 'service_code']
+        ordering = ['procedure', 'service_code']
+        verbose_name = 'Procedure Consumable'
+        verbose_name_plural = 'Procedure Consumables'
+    
+    def __str__(self):
+        return f"{self.procedure.name} → {self.service_code.description}"
+
+
+def _imaging_image_upload_path(instance, filename):
+    """Save imaging files to patient-specific folders. Uses FileField (not ImageField) to support DICOM."""
+    from django.utils import timezone
+    now = timezone.now()
+    patient_id = getattr(instance.imaging_study, 'patient_id', None) or 'unknown'
+    return f'imaging_studies/patient_{patient_id}/{now:%Y/%m/%d}/{filename}'
+
+
 class ImagingImage(BaseModel):
-    """Images associated with imaging studies"""
+    """Images associated with imaging studies. Uses FileField (not ImageField) to support DICOM format."""
     imaging_study = models.ForeignKey(ImagingStudy, on_delete=models.CASCADE, related_name='images')
-    image = models.ImageField(upload_to='imaging_studies/%Y/%m/%d/', help_text='Upload medical imaging picture')
+    image = models.FileField(upload_to=_imaging_image_upload_path, help_text='Upload medical imaging picture (JPG, PNG, DICOM)')
     description = models.CharField(max_length=200, blank=True, help_text='Brief description of this image')
     sequence_number = models.PositiveIntegerField(default=1, help_text='Order/sequence of this image in the study')
     uploaded_by = models.ForeignKey(Staff, on_delete=models.SET_NULL, null=True, blank=True, related_name='uploaded_images')

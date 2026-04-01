@@ -1,0 +1,97 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}{% if form_type == 'edit' %}Edit{% else %}New{% endif %} Bank Reconciliation - HMS{% endblock %}
+{% block page_title %}{% if form_type == 'edit' %}Edit Bank Reconciliation{% else %}New Bank Reconciliation{% endif %}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-lg-10 mx-auto">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white border-0 py-3 d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0"><i class="bi bi-bank me-2"></i>{% if form_type == 'edit' %}Edit{% else %}New{% endif %} Bank Reconciliation</h4>
+                    <a href="{% url 'hospital:bank_reconciliation_list' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left me-1"></i>Back to list</a>
+                </div>
+                <div class="card-body p-4">
+                    <form method="post" class="needs-validation" novalidate>
+                        {% csrf_token %}
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Bank Account <span class="text-danger">*</span></label>
+                                <select name="bank_account" class="form-select" required>
+                                    <option value="">Select bank account</option>
+                                    {% for ba in bank_accounts %}
+                                    <option value="{{ ba.id }}" {% if reconciliation and reconciliation.bank_account_id == ba.id %}selected{% endif %}>{{ ba.account_name }} ({{ ba.account_number|default:'' }})</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Statement Date <span class="text-danger">*</span></label>
+                                <input type="date" name="statement_date" class="form-control" value="{% if reconciliation %}{{ reconciliation.statement_date|date:'Y-m-d' }}{% else %}{% now 'Y-m-d' %}{% endif %}" required>
+                            </div>
+                        </div>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Statement Balance (GHS) <span class="text-danger">*</span></label>
+                                <input type="number" name="statement_balance" class="form-control" step="0.01" value="{% if reconciliation %}{{ reconciliation.statement_balance }}{% endif %}" required placeholder="Ending balance per bank statement">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Book Balance (GHS) <span class="text-danger">*</span></label>
+                                <input type="number" name="book_balance" class="form-control" step="0.01" value="{% if reconciliation %}{{ reconciliation.book_balance }}{% endif %}" required placeholder="Ending balance per books">
+                            </div>
+                        </div>
+                        <h6 class="text-muted mt-4 mb-2">Adjustments</h6>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-4">
+                                <label class="form-label">Deposits in Transit (GHS)</label>
+                                <input type="number" name="deposits_in_transit" class="form-control" step="0.01" min="0" value="{% if reconciliation %}{{ reconciliation.deposits_in_transit }}{% else %}0{% endif %}">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Outstanding Cheques (GHS)</label>
+                                <input type="number" name="outstanding_cheques" class="form-control" step="0.01" min="0" value="{% if reconciliation %}{{ reconciliation.outstanding_cheques }}{% else %}0{% endif %}">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Bank Charges (GHS)</label>
+                                <input type="number" name="bank_charges" class="form-control" step="0.01" min="0" value="{% if reconciliation %}{{ reconciliation.bank_charges }}{% else %}0{% endif %}">
+                            </div>
+                        </div>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-4">
+                                <label class="form-label">Interest Earned (GHS)</label>
+                                <input type="number" name="interest_earned" class="form-control" step="0.01" min="0" value="{% if reconciliation %}{{ reconciliation.interest_earned }}{% else %}0{% endif %}">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Other Adjustments (GHS)</label>
+                                <input type="number" name="other_adjustments" class="form-control" step="0.01" value="{% if reconciliation %}{{ reconciliation.other_adjustments }}{% else %}0{% endif %}">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Status</label>
+                                <select name="status" class="form-select">
+                                    <option value="draft" {% if reconciliation and reconciliation.status == 'draft' %}selected{% endif %}>Draft</option>
+                                    <option value="in_progress" {% if reconciliation and reconciliation.status == 'in_progress' %}selected{% endif %}>In Progress</option>
+                                    <option value="completed" {% if reconciliation and reconciliation.status == 'completed' %}selected{% endif %}>Completed</option>
+                                    <option value="reconciled" {% if reconciliation and reconciliation.status == 'reconciled' %}selected{% endif %}>Fully Reconciled</option>
+                                </select>
+                            </div>
+                        </div>
+                        {% if reconciliation %}
+                        <div class="alert alert-light border mb-4">
+                            <strong>Calculated:</strong> Adjusted Balance = GHS {{ reconciliation.adjusted_balance|floatformat:2|intcomma }} &nbsp;|&nbsp; Difference = GHS {{ reconciliation.difference|floatformat:2|intcomma }}
+                        </div>
+                        {% endif %}
+                        <div class="mb-4">
+                            <label class="form-label">Notes</label>
+                            <textarea name="notes" class="form-control" rows="2">{% if reconciliation %}{{ reconciliation.notes }}{% endif %}</textarea>
+                        </div>
+                        <div class="d-flex justify-content-between pt-2">
+                            <a href="{% url 'hospital:bank_reconciliation_list' %}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-2"></i>Cancel</a>
+                            <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle me-2"></i>{% if form_type == 'edit' %}Update{% else %}Create{% endif %} Reconciliation</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

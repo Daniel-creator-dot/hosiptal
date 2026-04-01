@@ -54,6 +54,7 @@ Login settings in `hms/settings.py`:
 ## Role-Based Dashboards
 
 The system automatically redirects users to:
+- **Accountants** → Comprehensive Accountant Dashboard (`/hms/accountant/comprehensive-dashboard/`)
 - **Doctors** → Medical Dashboard
 - **Nurses** → Nurse Dashboard
 - **Lab Technicians** → Lab Technician Dashboard
@@ -63,6 +64,13 @@ The system automatically redirects users to:
 - **HR Managers** → HR Dashboard
 - **Admins** → Admin Dashboard
 - **Others** → Main Dashboard
+
+### Accountant Dashboard Access
+
+**Robbert Kwame Gbologah** (and all accountants) are automatically redirected to the Comprehensive Accountant Dashboard after login:
+- **URL**: `/hms/accountant/comprehensive-dashboard/`
+- **Features**: Full accounting dashboard with KPIs, cashbook, bank reconciliation, insurance receivable, procurement, payroll, doctor commissions, financial reports, and more
+- **Auto-redirect**: Yes - system detects accountant role and redirects automatically
 
 ## Testing
 

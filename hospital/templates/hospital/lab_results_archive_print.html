@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laboratory Results Archive - {{ settings.hospital_name|default:"Hospital" }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 15mm;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 10pt;
+            line-height: 1.5;
+            color: #333;
+        }
+
+        .report-container {
+            width: 100%;
+            max-width: 210mm;
+            margin: 0 auto;
+        }
+
+        /* Header Section - Professional Letterhead */
+        .report-header {
+            border-bottom: 4px solid {{ settings.report_header_color|default:'#2196F3' }};
+            padding: 20px 0;
+            margin-bottom: 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            background: linear-gradient(to bottom, rgba(255,255,255,0.95) 0%, rgba(248,249,250,0.95) 100%);
+            position: relative;
+        }
+        
+        .report-header::after {
+            content: '';
+            position: absolute;
+            bottom: -4px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(to right, {{ settings.report_header_color|default:'#2196F3' }}, transparent);
+        }
+
+        .header-left {
+            flex: 1;
+        }
+
+        .hospital-logo {
+            max-width: {{ settings.logo_width|default:150 }}px;
+            max-height: {{ settings.logo_height|default:150 }}px;
+            margin-bottom: 12px;
+            display: block;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
+        }
+
+        .hospital-name {
+            font-size: 24pt;
+            font-weight: 800;
+            color: {{ settings.report_header_color|default:'#2196F3' }};
+            margin-bottom: 6px;
+            letter-spacing: -0.5px;
+            text-transform: uppercase;
+        }
+
+        .hospital-tagline {
+            font-size: 11pt;
+            color: #555;
+            margin-bottom: 10px;
+            font-weight: 500;
+            font-style: italic;
+        }
+
+        .hospital-contact {
+            font-size: 9pt;
+            color: #666;
+            line-height: 1.6;
+            margin-top: 8px;
+        }
+        
+        .hospital-contact strong {
+            color: #333;
+            font-weight: 600;
+        }
+
+        .department-badge {
+            background: linear-gradient(135deg, {{ settings.report_header_color|default:'#2196F3' }} 0%, {{ settings.report_header_color|default:'#1976D2' }} 100%);
+            color: white;
+            padding: 18px 24px;
+            border-radius: 10px;
+            text-align: center;
+            min-width: 200px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            border: 2px solid rgba(255,255,255,0.2);
+        }
+
+        .department-name {
+            font-size: 14pt;
+            font-weight: 700;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .department-accreditation {
+            font-size: 8.5pt;
+            opacity: 0.95;
+            font-weight: 500;
+            line-height: 1.4;
+        }
+
+        /* Report Title */
+        .report-title-section {
+            background: linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%);
+            padding: 18px;
+            border-radius: 8px;
+            margin-bottom: 25px;
+            border-left: 5px solid {{ settings.report_header_color|default:'#2196F3' }};
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        .report-title {
+            font-size: 18pt;
+            font-weight: 800;
+            color: #333;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .report-subtitle {
+            font-size: 10pt;
+            color: #666;
+            font-weight: 500;
+        }
+
+        /* Statistics */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .stat-box {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 28pt;
+            font-weight: 700;
+            color: {{ settings.report_header_color|default:'#2196F3' }};
+            line-height: 1;
+        }
+
+        .stat-label {
+            font-size: 10pt;
+            color: #666;
+            margin-top: 8px;
+            font-weight: 600;
+        }
+
+        /* Results Table */
+        .results-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 30px;
+            background: white;
+        }
+
+        .results-table thead {
+            background: {{ settings.report_header_color|default:'#2196F3' }};
+            color: white;
+        }
+
+        .results-table th {
+            padding: 12px 8px;
+            text-align: left;
+            font-weight: 700;
+            font-size: 9pt;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .results-table td {
+            padding: 10px 8px;
+            border: 1px solid #ddd;
+            font-size: 9pt;
+            vertical-align: top;
+        }
+
+        .results-table tbody tr:nth-child(even) {
+            background: #fafafa;
+        }
+
+        .results-table tbody tr:hover {
+            background: #f0f0f0;
+        }
+
+        .status-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 8pt;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-completed { background: #E8F5E9; color: #2E7D32; }
+        .status-pending { background: #FFF3E0; color: #E65100; }
+        .status-in-progress { background: #E3F2FD; color: #1565C0; }
+        .status-abnormal { background: #FFEBEE; color: #C62828; }
+
+        .abnormal-flag {
+            color: #d32f2f;
+            font-weight: 700;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            background: #fafafa;
+            border-radius: 8px;
+            border: 2px dashed #ddd;
+        }
+
+        .empty-icon {
+            font-size: 60pt;
+            color: #ccc;
+            margin-bottom: 20px;
+        }
+
+        /* Authorization Section */
+        .authorization-section {
+            margin-top: 40px;
+            padding-top: 30px;
+            border-top: 3px solid #e0e0e0;
+            page-break-inside: avoid;
+        }
+
+        .signature-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 50px;
+            margin-top: 25px;
+        }
+
+        .signature-box {
+            text-align: center;
+        }
+
+        .signature-line {
+            margin-bottom: 70px;
+            min-height: 70px;
+            border-bottom: 2px solid #333;
+            position: relative;
+        }
+
+        .signature-name {
+            position: absolute;
+            bottom: 5px;
+            left: 0;
+            right: 0;
+            font-size: 10pt;
+            color: #666;
+        }
+
+        .signature-label {
+            font-size: 10pt;
+            color: #666;
+            margin-top: 8px;
+            font-weight: 600;
+        }
+
+        .signature-date {
+            font-size: 9pt;
+            color: #999;
+            margin-top: 5px;
+        }
+
+        .authorization-notice {
+            margin-top: 35px;
+            padding: 20px;
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            border-radius: 8px;
+            border-left: 5px solid {{ settings.report_header_color|default:'#2196F3' }};
+        }
+
+        .authorization-notice p {
+            font-size: 10pt;
+            color: #1e40af;
+            margin: 0;
+            line-height: 1.7;
+            font-weight: 500;
+        }
+
+        /* Footer */
+        .report-footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 3px solid {{ settings.report_header_color|default:'#2196F3' }};
+            font-size: 8.5pt;
+            color: #666;
+            text-align: center;
+            line-height: 1.7;
+        }
+
+        .footer-notice {
+            background: #e3f2fd;
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 12px;
+            font-style: italic;
+        }
+
+        /* Watermark */
+        .watermark {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(-45deg);
+            font-size: 80pt;
+            color: rgba(0, 0, 0, 0.03);
+            z-index: -1;
+            font-weight: 700;
+        }
+
+        /* Print Styles */
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            
+            body {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            
+            .page-break {
+                page-break-after: always;
+            }
+            
+            .results-table {
+                page-break-inside: auto;
+            }
+            
+            .results-table tr {
+                page-break-inside: avoid;
+                page-break-after: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Watermark -->
+    <div class="watermark">{{ settings.hospital_name|default:"LABORATORY" }}</div>
+
+    <div class="report-container">
+        <!-- Header -->
+        <div class="report-header">
+            <div class="header-left">
+                {% if settings.logo %}
+                <img src="{{ settings.logo.url }}" alt="{{ settings.hospital_name }}" class="hospital-logo">
+                {% endif %}
+                <div class="hospital-name">{{ settings.hospital_name|default:"Hospital Management System" }}</div>
+                <div class="hospital-tagline">{{ settings.hospital_tagline|default:"Quality Healthcare for All" }}</div>
+                <div class="hospital-contact">
+                    {% if settings.address %}
+                        <strong>Address:</strong> {{ settings.address }}{% if settings.city %}, {{ settings.city }}{% endif %}{% if settings.state %}, {{ settings.state }}{% endif %}{% if settings.postal_code %} {{ settings.postal_code }}{% endif %}<br>
+                    {% endif %}
+                    {% if settings.phone %}<strong>Tel:</strong> {{ settings.phone }}{% endif %}
+                    {% if settings.phone and settings.email %} | {% endif %}
+                    {% if settings.email %}<strong>Email:</strong> {{ settings.email }}{% endif %}
+                    {% if settings.website %}<br><strong>Website:</strong> {{ settings.website }}{% endif %}
+                </div>
+            </div>
+            
+            <div class="department-badge">
+                <div class="department-name">{{ settings.lab_department_name|default:"Clinical Laboratory" }}</div>
+                {% if settings.lab_accreditation %}
+                <div class="department-accreditation">{{ settings.lab_accreditation }}</div>
+                {% endif %}
+                {% if settings.lab_license_number %}
+                <div class="department-accreditation">License: {{ settings.lab_license_number }}</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Report Title -->
+        <div class="report-title-section">
+            <div class="report-title">LABORATORY RESULTS ARCHIVE</div>
+            <div class="report-subtitle">
+                Generated on {{ now|date:"d M Y, H:i" }}
+                {% if status_filter %} | Filter: {{ status_filter|upper }}{% endif %}
+                {% if query %} | Search: "{{ query }}"{% endif %}
+            </div>
+        </div>
+
+        <!-- Statistics -->
+        <div class="stats-grid">
+            <div class="stat-box">
+                <div class="stat-value">{{ results|length }}</div>
+                <div class="stat-label">Total Results</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" style="color: #4CAF50;">{{ completed_count }}</div>
+                <div class="stat-label">Completed</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" style="color: #f44336;">{{ abnormal_count }}</div>
+                <div class="stat-label">Abnormal</div>
+            </div>
+        </div>
+
+        <!-- Results Table -->
+        {% if results %}
+        <table class="results-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Patient Name</th>
+                    <th>MRN</th>
+                    <th>Test Name</th>
+                    <th>Result</th>
+                    <th>Status</th>
+                    <th>Verified By</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for result in results %}
+                <tr>
+                    <td>{{ result.verified_at|date:"d M Y"|default:result.created|date:"d M Y" }}</td>
+                    <td><strong>{{ result.order.encounter.patient.full_name }}</strong></td>
+                    <td>{{ result.order.encounter.patient.mrn }}</td>
+                    <td>{{ result.test.name }}<br><small style="color: #666;">({{ result.test.code }})</small></td>
+                    <td>
+                        {% if result.value %}
+                            <strong>{{ result.value }}</strong> {{ result.units|default:"" }}
+                        {% elif result.qualitative_result %}
+                            <strong>{{ result.qualitative_result }}</strong>
+                        {% elif result.details %}
+                            <em>Panel Test</em>
+                        {% else %}
+                            <em>Pending</em>
+                        {% endif %}
+                        {% if result.is_abnormal %}
+                            <br><span class="abnormal-flag">⚠ ABNORMAL</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="status-badge status-{{ result.status }}">
+                            {{ result.get_status_display }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if result.verified_by and result.verified_by.user %}
+                            {{ result.verified_by.user.get_full_name|default:result.verified_by.user.username|default:"N/A" }}
+                        {% else %}
+                            <em>Pending</em>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-icon">📋</div>
+            <h3>No Lab Results Found</h3>
+            <p style="color: #666; margin-top: 10px;">No results match the current search criteria or filters.</p>
+        </div>
+        {% endif %}
+
+        <!-- Authorization Section -->
+        <div class="authorization-section">
+            <div class="signature-grid">
+                <!-- Laboratory Director Signature -->
+                <div class="signature-box">
+                    <div class="signature-line">
+                        <div class="signature-name">
+                            &nbsp;
+                        </div>
+                    </div>
+                    <div class="signature-label">
+                        <strong>Laboratory Director</strong><br>
+                        {% if settings.lab_department_name %}{{ settings.lab_department_name }}{% else %}Clinical Laboratory{% endif %}
+                    </div>
+                    <div class="signature-date">
+                        Date: _______________
+                    </div>
+                </div>
+
+                <!-- Medical Director Signature -->
+                <div class="signature-box">
+                    <div class="signature-line">
+                        <div class="signature-name">
+                            &nbsp;
+                        </div>
+                    </div>
+                    <div class="signature-label">
+                        <strong>Medical Director</strong><br>
+                        {{ settings.hospital_name|default:"Hospital Management System" }}
+                    </div>
+                    <div class="signature-date">
+                        Date: _______________
+                    </div>
+                </div>
+            </div>
+            
+            <div class="authorization-notice">
+                <p>
+                    <strong>AUTHORIZATION:</strong> This laboratory results archive has been reviewed and authorized for external use. 
+                    All results listed have been verified according to standard laboratory procedures. 
+                    For questions or clarifications, please contact the laboratory at 
+                    {% if settings.lab_phone %}{{ settings.lab_phone }}{% else %}{{ settings.phone }}{% endif %}.
+                </p>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="report-footer">
+            {% if settings.report_footer_text %}
+                {{ settings.report_footer_text|linebreaks }}
+            {% else %}
+                <p>This archive is electronically generated and validated by {{ settings.hospital_name|default:"our laboratory" }}.</p>
+            {% endif %}
+            
+            <div class="footer-notice">
+                <strong>NOTICE:</strong> This document is confidential and intended solely for authorized personnel. 
+                Results should be interpreted in conjunction with clinical findings and other diagnostic data.
+            </div>
+            
+            <p style="margin-top: 12px;">
+                Printed on: {{ now|date:"d M Y, H:i" }} | 
+                {% if settings.lab_phone %}Lab: {{ settings.lab_phone }}{% endif %}
+                {% if settings.lab_email %} | Email: {{ settings.lab_email }}{% endif %}
+            </p>
+        </div>
+    </div>
+
+    <!-- Print Button (Hidden when printing) -->
+    <div class="no-print" style="position: fixed; bottom: 20px; right: 20px; z-index: 1000;">
+        <button onclick="window.print()" style="padding: 15px 30px; background: #2196F3; color: white; border: none; border-radius: 8px; font-size: 14pt; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+            🖨️ Print Report
+        </button>
+        <button onclick="window.close()" style="padding: 15px 30px; background: #666; color: white; border: none; border-radius: 8px; font-size: 14pt; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.15); margin-left: 10px;">
+            ✕ Close
+        </button>
+    </div>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+

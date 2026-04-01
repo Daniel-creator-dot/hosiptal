@@ -26,7 +26,11 @@ app.conf.beat_schedule = {
     },
     'cleanup-old-sessions': {
         'task': 'hms.tasks.cleanup_old_sessions',
-        'schedule': 86400.0,  # 24 hours
+        'schedule': 86400.0,  # 24 hours (for very old sessions)
+    },
+    'cleanup-expired-sessions-realtime': {
+        'task': 'hms.tasks.cleanup_expired_sessions_realtime',
+        'schedule': 300.0,  # 5 minutes (real-time cleanup of expired sessions)
     },
     'send-birthday-wishes-daily': {
         'task': 'hms.tasks.send_birthday_wishes',

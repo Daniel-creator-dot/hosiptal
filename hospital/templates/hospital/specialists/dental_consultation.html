@@ -437,12 +437,17 @@
                 <span style="font-size: 14px; color: #6b7280; font-weight: 500;">{{ dental_chart.chart_date|date:"F d, Y" }}</span>
             </div>
             <div class="toolbar-actions">
-                <select id="conditionTypeSelector" class="condition-selector">
+                <!-- Condition to mark tooth status directly on chart -->
+                <select id="conditionTypeSelector" class="condition-selector" title="Select option" aria-label="Select option">
                     <option value="">Select Condition...</option>
                     {% for value, label in condition_types %}
                     <option value="{{ value }}">{{ label }}</option>
                     {% endfor %}
                 </select>
+                <!-- Direct link from selected teeth to procedure creation -->
+                <button class="btn btn-primary-modern btn-modern" type="button" onclick="openProcedureForSelectedTeeth()">
+                    <i class="bi bi-plus-circle"></i> Add Procedure for Selected Teeth
+                </button>
                 <button class="btn-clear" onclick="clearSelection()">
                     <i class="bi bi-x-circle-fill"></i>
                     Clear Selection
@@ -762,17 +767,38 @@
             <div class="modal-body">
                 <form id="procedureForm">
                     <input type="hidden" name="dental_chart_id" value="{{ dental_chart.id }}">
+
+                    <!-- Smart helper: show currently selected teeth from chart -->
+                    <div class="mb-3">
+                        <label class="form-label">Teeth Selected on Chart</label>
+                        <div id="selectedTeethPills" class="d-flex flex-wrap gap-1">
+                            <!-- Filled dynamically from JS based on selectedTeeth array -->
+                        </div>
+                        <small class="text-muted">Click teeth on the diagram above to update this selection in real time.</small>
+                    </div>
+
+                    <!-- Common dental procedures for very fast charting -->
+                    <div class="mb-3">
+                        <label class="form-label">Common Dental Procedures</label>
+                        <div class="d-flex flex-wrap gap-2" id="commonProceduresList">
+                            <!-- Populated from JS so we can fine‑tune text/codes without touching template again -->
+                        </div>
+                        <small class="text-muted">
+                            Click a chip to auto-fill code, name, type and a sensible default fee. You can still edit anything before saving.
+                        </small>
+                    </div>
+
                     <div class="mb-3">
                         <label class="form-label">Procedure Code</label>
-                        <input type="text" class="form-control-modern" name="procedure_code" required>
+                        <input type="text" class="form-control-modern" name="procedure_code" required title="Enter text" placeholder="Enter text">
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Procedure Name</label>
-                        <input type="text" class="form-control-modern" name="procedure_name" required>
+                        <input type="text" class="form-control-modern" name="procedure_name" required title="Enter text" placeholder="Enter text">
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Procedure Type</label>
-                        <select class="form-control-modern" name="procedure_type" required>
+                        <select class="form-control-modern" name="procedure_type" required title="Select option" aria-label="Select option">
                             {% for value, label in procedure_types %}
                             <option value="{{ value }}">{{ label }}</option>
                             {% endfor %}
@@ -780,16 +806,16 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Teeth (comma-separated, e.g., 11,12,13)</label>
-                        <input type="text" class="form-control-modern" name="teeth" id="selectedTeeth" placeholder="Select teeth from diagram">
+                        <input type="text" class="form-control-modern" name="teeth" id="selectedTeeth" placeholder="Select teeth from diagram" title="Enter text" placeholder="Enter text">
                     </div>
                     <div class="row">
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Quantity</label>
-                            <input type="number" class="form-control-modern" name="quantity" value="1" min="1">
+                            <input type="number" class="form-control-modern" name="quantity" value="1" min="1" title="Enter number" placeholder="Enter number">
                         </div>
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Fee (GHS)</label>
-                            <input type="number" class="form-control-modern" name="fee" step="0.01" min="0" value="0">
+                            <input type="number" class="form-control-modern" name="fee" step="0.01" min="0" value="0" title="Enter number" placeholder="Enter number">
                         </div>
                     </div>
                     <div class="mb-3">
@@ -824,6 +850,72 @@
     // Modern Dental Chart JavaScript
     let selectedTooth = null;
     let selectedTeeth = [];
+    // Simple in-memory catalog of very common dental procedures
+    const commonDentalProcedures = [
+        {
+            key: 'filling_single',
+            code: 'FILL-S',
+            name: 'Composite Filling (Single Surface)',
+            type: 'restorative',
+            defaultFee: 350.00
+        },
+        {
+            key: 'filling_multi',
+            code: 'FILL-M',
+            name: 'Composite Filling (Multi Surface)',
+            type: 'restorative',
+            defaultFee: 480.00
+        },
+        {
+            key: 'extraction_simple',
+            code: 'EXT-S',
+            name: 'Simple Extraction',
+            type: 'surgical',
+            defaultFee: 400.00
+        },
+        {
+            key: 'extraction_surgical',
+            code: 'EXT-C',
+            name: 'Surgical / Complicated Extraction',
+            type: 'surgical',
+            defaultFee: 650.00
+        },
+        {
+            key: 'root_canal_single',
+            code: 'RCT-A',
+            name: 'Root Canal Treatment (Anterior)',
+            type: 'endodontic',
+            defaultFee: 950.00
+        },
+        {
+            key: 'root_canal_posterior',
+            code: 'RCT-P',
+            name: 'Root Canal Treatment (Posterior)',
+            type: 'endodontic',
+            defaultFee: 1250.00
+        },
+        {
+            key: 'scaling_polish',
+            code: 'SP',
+            name: 'Scaling and Polishing',
+            type: 'periodontal',
+            defaultFee: 600.00
+        },
+        {
+            key: 'xray_periapical',
+            code: 'XR-PA',
+            name: 'Periapical X-Ray',
+            type: 'diagnostic',
+            defaultFee: 150.00
+        },
+        {
+            key: 'crown_prep',
+            code: 'CRN-P',
+            name: 'Crown Preparation',
+            type: 'prosthodontic',
+            defaultFee: 1800.00
+        }
+    ];
     
     function selectTooth(toothNumber) {
         selectedTooth = toothNumber;
@@ -876,6 +968,12 @@
         const selectedTeethInput = document.getElementById('selectedTeeth');
         if (selectedTeethInput) {
             selectedTeethInput.value = '';
+        }
+
+        // Clear chips in modal helper
+        const pills = document.getElementById('selectedTeethPills');
+        if (pills) {
+            pills.innerHTML = '';
         }
         
         // Hide tooth info panel
@@ -997,10 +1095,35 @@
             }
         });
     }
-    
+
+    // When doctor clicks "Add Procedure" from anywhere, always keep teeth in sync
     function showAddProcedureModal() {
-        const modal = new bootstrap.Modal(document.getElementById('addProcedureModal'));
+        const modalEl = document.getElementById('addProcedureModal');
+        if (!modalEl) return;
+
+        // Ensure the free-text teeth field matches our selection array
+        const selectedTeethInput = document.getElementById('selectedTeeth');
+        if (selectedTeethInput) {
+            selectedTeethInput.value = (selectedTeeth || []).join(',');
+        }
+
+        // Render nice chips for visual confirmation
+        renderSelectedTeethPills();
+
+        // Populate common procedure chips the first time
+        renderCommonProcedures();
+
+        const modal = new bootstrap.Modal(modalEl);
         modal.show();
+    }
+
+    // Shortcut from toolbar: open modal specifically for currently highlighted teeth
+    function openProcedureForSelectedTeeth() {
+        if (!selectedTeeth || selectedTeeth.length === 0) {
+            showNotification('Please select at least one tooth on the chart first.', 'error');
+            return;
+        }
+        showAddProcedureModal();
     }
     
     function saveProcedure() {
@@ -1047,7 +1170,80 @@
             }
         });
     }
-    
+
+    // Helper: render the visual pills for selected teeth inside the modal
+    function renderSelectedTeethPills() {
+        const pills = document.getElementById('selectedTeethPills');
+        if (!pills) return;
+        pills.innerHTML = '';
+
+        if (!selectedTeeth || selectedTeeth.length === 0) {
+            pills.innerHTML = '<span class="text-muted" style="font-size: 13px;">No teeth selected yet.</span>';
+            return;
+        }
+
+        selectedTeeth.forEach(t => {
+            const span = document.createElement('span');
+            span.className = 'badge rounded-pill bg-primary';
+            span.style.marginRight = '4px';
+            span.textContent = `Tooth ${t}`;
+            pills.appendChild(span);
+        });
+    }
+
+    // Helper: render list of common procedures as clickable chips
+    function renderCommonProcedures() {
+        const container = document.getElementById('commonProceduresList');
+        if (!container || container.dataset.initialized === '1') return;
+
+        container.innerHTML = '';
+        commonDentalProcedures.forEach(proc => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-sm btn-outline-primary';
+            btn.style.borderRadius = '999px';
+            btn.style.fontSize = '12px';
+            btn.style.padding = '4px 10px';
+            btn.textContent = proc.name;
+            btn.onclick = function () {
+                applyCommonProcedure(proc);
+            };
+            container.appendChild(btn);
+        });
+
+        container.dataset.initialized = '1';
+    }
+
+    // When a common procedure is chosen, auto-fill fields but still allow edits
+    function applyCommonProcedure(proc) {
+        const codeInput = document.querySelector('input[name="procedure_code"]');
+        const nameInput = document.querySelector('input[name="procedure_name"]');
+        const typeSelect = document.querySelector('select[name="procedure_type"]');
+        const feeInput = document.querySelector('input[name="fee"]');
+
+        if (codeInput) codeInput.value = proc.code || '';
+        if (nameInput) nameInput.value = proc.name || '';
+
+        if (typeSelect && proc.type) {
+            const opt = Array.from(typeSelect.options).find(o => o.value === proc.type);
+            if (opt) {
+                typeSelect.value = proc.type;
+            }
+        }
+
+        if (feeInput && proc.defaultFee != null) {
+            feeInput.value = proc.defaultFee.toFixed(2);
+        }
+
+        // If no teeth manually typed yet, default to current selection
+        const selectedTeethInput = document.getElementById('selectedTeeth');
+        if (selectedTeethInput && !selectedTeethInput.value && selectedTeeth.length > 0) {
+            selectedTeethInput.value = selectedTeeth.join(',');
+        }
+
+        showNotification('Common procedure template applied. Review and save.', 'success');
+    }
+
     // Add hover effects for better UX
     document.querySelectorAll('.tooth-group').forEach(group => {
         group.addEventListener('mouseenter', function() {

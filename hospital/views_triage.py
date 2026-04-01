@@ -19,7 +19,10 @@ from .models_advanced import Triage
 from .models_workflow import PatientFlowStage
 
 
+from .decorators import role_required
+
 @login_required
+@role_required('nurse', 'midwife', 'admin', message='Access denied. Only nurses and midwives can access triage.')
 def triage_dashboard_enhanced(request):
     """
     World-class triage dashboard with patient flow tracking
@@ -174,6 +177,7 @@ def triage_dashboard_enhanced(request):
 
 
 @login_required
+@role_required('nurse', 'midwife', 'admin', message='Access denied. Only nurses and midwives can move patients.')
 def move_patient_to_department(request, encounter_id):
     """
     Move patient to next department in workflow
@@ -232,6 +236,7 @@ def move_patient_to_department(request, encounter_id):
 
 
 @login_required
+@role_required('nurse', 'midwife', 'admin', message='Access denied. Only nurses and midwives can access triage reports.')
 def triage_reports(request):
     """
     Comprehensive triage reporting dashboard
@@ -376,6 +381,7 @@ def triage_reports(request):
 
 
 @login_required
+@role_required('nurse', 'midwife', 'admin', message='Access denied. Only nurses and midwives can complete stages.')
 def complete_and_move(request, encounter_id, current_stage):
     """
     Complete current stage and move to next

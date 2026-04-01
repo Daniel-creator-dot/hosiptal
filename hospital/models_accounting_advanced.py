@@ -8,8 +8,8 @@ from django.db import models, transaction
 from django.contrib.auth.models import User
 from django.utils import timezone
 from django.core.validators import MinValueValidator
-from decimal import Decimal
-from datetime import datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
+from datetime import datetime, timedelta, date
 from .models import BaseModel, Patient, Invoice, Department, Staff, Payer
 from .models_accounting import Account, CostCenter
 
@@ -301,6 +301,45 @@ class AdvancedGeneralLedger(BaseModel):
     
     def __str__(self):
         return f"{self.account.account_code} - {self.transaction_date} - Dr:{self.debit_amount} Cr:{self.credit_amount}"
+    
+    def save(self, *args, **kwargs):
+        """Calculate running balance before saving - but preserve Excel import balances"""
+        from decimal import Decimal
+        
+        # If balance is already set and non-zero (from Excel import), preserve it
+        # Only calculate if balance is 0 or not set
+        update_fields = kwargs.get('update_fields', [])
+        
+        # For Excel imports: balance is set explicitly, don't recalculate
+        # For new entries: calculate from previous balance
+        if self.balance and self.balance != 0:
+            # Balance already set (from Excel import) - preserve it
+            pass
+        elif 'balance' not in update_fields or self.balance == 0:
+            # Calculate running balance for new entries
+            # Get previous balance from last entry for this account (excluding this entry)
+            previous_entry = AdvancedGeneralLedger.objects.filter(
+                account=self.account,
+                is_voided=False,
+                is_deleted=False
+            ).exclude(pk=self.pk if self.pk else None).order_by('transaction_date', 'created', 'id').last()
+            
+            previous_balance = previous_entry.balance if previous_entry else Decimal('0.00')
+            
+            # Calculate balance change based on account type
+            if self.account.account_type in ['asset', 'expense']:
+                # Assets and Expenses: Debit increases, Credit decreases
+                # Balance = previous_balance + debit - credit
+                balance_change = self.debit_amount - self.credit_amount
+            else:
+                # Liabilities, Equity, Revenue: Credit increases, Debit decreases
+                # Balance = previous_balance + credit - debit
+                balance_change = self.credit_amount - self.debit_amount
+            
+            # Update running balance
+            self.balance = previous_balance + balance_change
+        
+        super().save(*args, **kwargs)
 
 
 # ==================== PAYMENT VOUCHERS ====================
@@ -874,6 +913,211 @@ class Expense(BaseModel):
         return f"{prefix}{new_num:06d}"
 
 
+# ==================== PETTY CASH TRANSACTIONS ====================
+
+class PettyCashTransaction(BaseModel):
+    """Petty Cash Transactions with Account Personnel and Officer Approval Workflow"""
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('pending_approval', 'Pending Account Officer Approval'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('paid', 'Paid'),
+        ('void', 'Void'),
+    ]
+    
+    transaction_number = models.CharField(max_length=50, unique=True)
+    transaction_date = models.DateField(default=timezone.now)
+    
+    # Transaction details
+    description = models.TextField(help_text="Purpose of the petty cash transaction")
+    amount = models.DecimalField(max_digits=15, decimal_places=2, validators=[MinValueValidator(0)])
+    
+    # Payee details
+    payee_name = models.CharField(max_length=200, help_text="Name of person receiving payment")
+    payee_type = models.CharField(max_length=50, blank=True, help_text="e.g., Staff, Vendor, Supplier")
+    
+    # Expense categorization
+    expense_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='petty_cash_transactions', 
+                                       limit_choices_to={'account_type': 'expense'}, 
+                                       help_text="Expense account to debit")
+    cost_center = models.ForeignKey(CostCenter, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    # Approval workflow
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='petty_cash_created', 
+                                  help_text="Account Personnel who created this transaction")
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, 
+                                   related_name='petty_cash_approved',
+                                   help_text="Account Officer who approved this transaction")
+    approved_date = models.DateTimeField(null=True, blank=True)
+    rejected_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, 
+                                   related_name='petty_cash_rejected')
+    rejected_date = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True, help_text="Reason for rejection if applicable")
+    
+    # Payment details
+    payment_date = models.DateField(null=True, blank=True, help_text="Date payment was made")
+    receipt_number = models.CharField(max_length=100, blank=True, help_text="Receipt number if available")
+    
+    # Accounting links
+    journal_entry = models.ForeignKey(AdvancedJournalEntry, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    # Supporting documents
+    invoice_number = models.CharField(max_length=100, blank=True)
+    notes = models.TextField(blank=True, help_text="Additional notes or comments")
+    
+    class Meta:
+        ordering = ['-transaction_date', '-created']
+        verbose_name = 'Petty Cash Transaction'
+        verbose_name_plural = 'Petty Cash Transactions'
+    
+    def __str__(self):
+        return f"{self.transaction_number} - {self.payee_name} - GHS {self.amount}"
+    
+    def save(self, *args, **kwargs):
+        if not self.transaction_number:
+            self.transaction_number = self.generate_transaction_number()
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_transaction_number():
+        """Generate unique petty cash transaction number: PC202511000001"""
+        today = timezone.now()
+        prefix = f"PC{today.strftime('%Y%m')}"
+        
+        last_transaction = PettyCashTransaction.objects.filter(
+            transaction_number__startswith=prefix
+        ).order_by('-transaction_number').first()
+        
+        if last_transaction:
+            try:
+                last_num = int(last_transaction.transaction_number[-6:])
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        return f"{prefix}{new_num:06d}"
+    
+    def requires_approval(self):
+        """Check if transaction requires account officer approval"""
+        # All transactions require approval, but amounts > 500 GHC are mandatory
+        return True
+    
+    def can_be_auto_approved(self):
+        """Check if transaction can be auto-approved (amount <= 500 GHC)"""
+        return self.amount <= Decimal('500.00')
+    
+    def submit_for_approval(self, user):
+        """Submit transaction for account officer approval"""
+        if self.status != 'draft':
+            raise ValueError("Only draft transactions can be submitted for approval")
+        
+        self.status = 'pending_approval'
+        self.created_by = user
+        self.save()
+    
+    def approve(self, user):
+        """Approve transaction by account officer"""
+        if self.status != 'pending_approval':
+            raise ValueError("Only pending transactions can be approved")
+        
+        with transaction.atomic():
+            self.status = 'approved'
+            self.approved_by = user
+            self.approved_date = timezone.now()
+            self.save()
+            
+            # Create journal entry: Debit Expense, Credit Petty Cash
+            self._create_journal_entry(user)
+    
+    def _create_journal_entry(self, user):
+        """Create journal entry for approved petty cash transaction"""
+        from .models_accounting_advanced import Journal, AdvancedJournalEntryLine
+        
+        # Get petty cash account (account code 1030)
+        petty_cash_account = Account.objects.filter(account_code='1030').first()
+        if not petty_cash_account:
+            # Create petty cash account if it doesn't exist
+            petty_cash_account = Account.objects.create(
+                account_code='1030',
+                account_name='Petty Cash',
+                account_type='asset',
+                description='Petty cash account for small payments',
+                is_active=True
+            )
+        
+        # Get payment journal
+        payment_journal = Journal.objects.filter(journal_type='payment').first()
+        if not payment_journal:
+            payment_journal = Journal.objects.create(
+                journal_code='PAY',
+                journal_name='Payment Journal',
+                journal_type='payment',
+                is_active=True
+            )
+        
+        # Create journal entry
+        je = AdvancedJournalEntry.objects.create(
+            journal=payment_journal,
+            entry_date=self.transaction_date,
+            description=f"Petty Cash Payment: {self.description}",
+            status='posted',
+            entered_by=user,
+            is_posted=True,
+        )
+        
+        # Debit Expense Account
+        AdvancedJournalEntryLine.objects.create(
+            journal_entry=je,
+            account=self.expense_account,
+            cost_center=self.cost_center,
+            debit_amount=self.amount,
+            credit_amount=0,
+            description=self.description,
+        )
+        
+        # Credit Petty Cash Account
+        AdvancedJournalEntryLine.objects.create(
+            journal_entry=je,
+            account=petty_cash_account,
+            debit_amount=0,
+            credit_amount=self.amount,
+            description=f"Petty Cash Payment: {self.payee_name}",
+        )
+        
+        # Update totals
+        je.total_debit = self.amount
+        je.total_credit = self.amount
+        je.save()
+        
+        # Link journal entry
+        self.journal_entry = je
+        self.save()
+    
+    def reject(self, user, reason=''):
+        """Reject transaction by account officer"""
+        if self.status != 'pending_approval':
+            raise ValueError("Only pending transactions can be rejected")
+        
+        self.status = 'rejected'
+        self.rejected_by = user
+        self.rejected_date = timezone.now()
+        self.rejection_reason = reason
+        self.save()
+    
+    def mark_paid(self, user, payment_date=None):
+        """Mark transaction as paid"""
+        if self.status != 'approved':
+            raise ValueError("Only approved transactions can be marked as paid")
+        
+        self.status = 'paid'
+        self.payment_date = payment_date or timezone.now().date()
+        self.save()
+
+
 # ==================== ACCOUNTS RECEIVABLE/PAYABLE ====================
 
 class AdvancedAccountsReceivable(BaseModel):
@@ -971,6 +1215,193 @@ class AccountsPayable(BaseModel):
     def __str__(self):
         return f"{self.bill_number} - {self.vendor_name} - GHS {self.balance_due}"
     
+    def clean(self):
+        """Django's clean method - called before save()"""
+        super().clean()
+        # Convert dates to date objects if they're strings
+        if isinstance(self.bill_date, str):
+            try:
+                self.bill_date = datetime.strptime(self.bill_date, '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                try:
+                    self.bill_date = datetime.strptime(self.bill_date, '%Y/%m/%d').date()
+                except (ValueError, TypeError):
+                    self.bill_date = timezone.now().date()
+        
+        if isinstance(self.due_date, str):
+            try:
+                self.due_date = datetime.strptime(self.due_date, '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                try:
+                    self.due_date = datetime.strptime(self.due_date, '%Y/%m/%d').date()
+                except (ValueError, TypeError):
+                    # Default to bill_date + 30 days
+                    if isinstance(self.bill_date, date):
+                        self.due_date = self.bill_date + timedelta(days=30)
+                    else:
+                        self.due_date = timezone.now().date() + timedelta(days=30)
+    
+    def _ensure_date_object(self, date_value, default_date=None):
+        """Helper method to ensure a value is a date object"""
+        if date_value is None:
+            return default_date or timezone.now().date()
+        
+        if isinstance(date_value, date):
+            return date_value
+        
+        if isinstance(date_value, (datetime, timezone.datetime)):
+            return date_value.date() if hasattr(date_value, 'date') else date_value
+        
+        if isinstance(date_value, str):
+            try:
+                return datetime.strptime(date_value, '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                try:
+                    return datetime.strptime(date_value, '%Y/%m/%d').date()
+                except (ValueError, TypeError):
+                    return default_date or timezone.now().date()
+        
+        # Last resort
+        return default_date or timezone.now().date()
+    
+    def save(self, *args, **kwargs):
+        """Auto-calculate balance_due and overdue status"""
+        # CRITICAL: Call full_clean() first to ensure dates are converted via clean()
+        try:
+            self.full_clean()
+        except:
+            # If full_clean() fails, at least try clean()
+            try:
+                self.clean()
+            except:
+                pass  # If clean() also fails, we'll handle conversion below
+        
+        # CRITICAL: Convert dates FIRST, before any operations
+        # Force conversion - don't trust anything
+        if not isinstance(self.bill_date, date):
+            self.bill_date = self._ensure_date_object(self.bill_date, timezone.now().date())
+        
+        if not isinstance(self.due_date, date):
+            default_due = (self.bill_date + timedelta(days=30)) if isinstance(self.bill_date, date) else (timezone.now().date() + timedelta(days=30))
+            self.due_date = self._ensure_date_object(self.due_date, default_due)
+        
+        # Triple-check: ensure both are date objects after conversion
+        if not isinstance(self.bill_date, date):
+            self.bill_date = timezone.now().date()
+        if not isinstance(self.due_date, date):
+            self.due_date = self.bill_date + timedelta(days=30) if isinstance(self.bill_date, date) else timezone.now().date() + timedelta(days=30)
+        
+        # Ensure amount and amount_paid are Decimal
+        from decimal import Decimal
+        if not isinstance(self.amount, Decimal):
+            try:
+                self.amount = Decimal(str(self.amount))
+            except (ValueError, TypeError):
+                self.amount = Decimal('0.00')
+        
+        if not isinstance(self.amount_paid, Decimal):
+            try:
+                self.amount_paid = Decimal(str(self.amount_paid))
+            except (ValueError, TypeError):
+                self.amount_paid = Decimal('0.00')
+        
+        # Calculate balance
+        self.balance_due = self.amount - self.amount_paid
+        
+        # Calculate overdue status - dates are now guaranteed to be date objects
+        today = timezone.now().date()
+        
+        # Final safety check: ensure both dates are date objects
+        if not isinstance(self.due_date, date):
+            default_due_date = (self.bill_date + timedelta(days=30)) if isinstance(self.bill_date, date) else (timezone.now().date() + timedelta(days=30))
+            self.due_date = self._ensure_date_object(self.due_date, default_due_date)
+        
+        if not isinstance(self.bill_date, date):
+            self.bill_date = self._ensure_date_object(self.bill_date, timezone.now().date())
+        
+        # Calculate overdue status using a completely safe comparison function
+        def safe_date_compare(date1, date2):
+            """Safely compare two dates, converting strings to dates if needed"""
+            try:
+                # Convert both to date objects
+                d1 = self._ensure_date_object(date1, timezone.now().date())
+                d2 = self._ensure_date_object(date2, timezone.now().date())
+                
+                # Final check
+                if not isinstance(d1, date):
+                    d1 = timezone.now().date()
+                if not isinstance(d2, date):
+                    d2 = timezone.now().date()
+                
+                # Now safe to compare
+                return d1 < d2, d1, d2
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Safe date compare failed: {e}, date1: {repr(date1)}, date2: {repr(date2)}")
+                # Return False and today's date for both
+                today = timezone.now().date()
+                return False, today, today
+        
+        # Use safe comparison
+        try:
+            is_past_due, due_date_obj, today_obj = safe_date_compare(self.due_date, timezone.now().date())
+            
+            # Update instance with converted date
+            self.due_date = due_date_obj
+            
+            if is_past_due and self.balance_due > 0:
+                self.is_overdue = True
+                self.days_overdue = (today_obj - due_date_obj).days
+            else:
+                self.is_overdue = False
+                self.days_overdue = 0
+                
+        except Exception as e:
+            # Last resort - just set defaults
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Date comparison completely failed: {e}. due_date: {repr(self.due_date)}, type: {type(self.due_date)}")
+            self.is_overdue = False
+            self.days_overdue = 0
+        
+        super().save(*args, **kwargs)
+    
+    def add_amount(self, new_amount, description=''):
+        """
+        Add a new amount to existing AP (when goods are brought in)
+        Auto-calculates the new balance
+        
+        Args:
+            new_amount: Decimal - The new amount to add
+            description: str - Optional description for the addition
+        
+        Returns:
+            The updated AP instance
+        """
+        from decimal import Decimal
+        
+        if not isinstance(new_amount, Decimal):
+            new_amount = Decimal(str(new_amount))
+        
+        # Add to existing amount
+        self.amount += new_amount
+        
+        # Recalculate balance (balance = amount - amount_paid)
+        self.balance_due = self.amount - self.amount_paid
+        
+        # Update description if provided
+        if description:
+            if self.description:
+                self.description += f"\n[Added: {timezone.now().strftime('%Y-%m-%d')}] {description} - GHS {new_amount:,.2f}"
+            else:
+                self.description = f"[Added: {timezone.now().strftime('%Y-%m-%d')}] {description} - GHS {new_amount:,.2f}"
+        
+        # Save will auto-calculate overdue status
+        self.save()
+        
+        return self
+    
     def validate_3_way_match(self):
         """
         Validate 3-way matching: PO, Invoice, GRN amounts must match
@@ -994,12 +1425,23 @@ class AccountsPayable(BaseModel):
 
 class BankAccount(BaseModel):
     """Bank Accounts"""
+    ACCOUNT_TYPE_CHOICES = [
+        ('checking', 'Checking / Current'),
+        ('savings', 'Savings'),
+        ('credit', 'Credit'),
+        ('operating', 'Operating'),
+        ('other', 'Other'),
+    ]
     account_name = models.CharField(max_length=200)
     account_number = models.CharField(max_length=50, unique=True)
     bank_name = models.CharField(max_length=200)
     branch = models.CharField(max_length=200, blank=True)
     
-    account_type = models.CharField(max_length=50, default='checking')  # checking, savings, credit
+    account_type = models.CharField(
+        max_length=50,
+        choices=ACCOUNT_TYPE_CHOICES,
+        default='checking',
+    )
     currency = models.CharField(max_length=3, default='GHS')
     
     opening_balance = models.DecimalField(max_digits=15, decimal_places=2, default=0)
@@ -1012,6 +1454,13 @@ class BankAccount(BaseModel):
     
     class Meta:
         ordering = ['bank_name', 'account_name']
+    
+    def get_account_type_display_safe(self):
+        """Return display label for account_type; use 'Checking / Current' for invalid/unknown values."""
+        valid_values = [c[0] for c in self.ACCOUNT_TYPE_CHOICES]
+        if self.account_type and self.account_type.lower() in [v.lower() for v in valid_values]:
+            return self.get_account_type_display()
+        return 'Checking / Current'
     
     def __str__(self):
         return f"{self.bank_name} - {self.account_number}"
@@ -1732,6 +2181,7 @@ class AccountingPayroll(BaseModel):
     STATUS_CHOICES = [
         ('draft', 'Draft'),
         ('calculated', 'Calculated'),
+        ('pending_approval', 'Pending administrator approval'),
         ('approved', 'Approved'),
         ('paid', 'Paid'),
     ]
@@ -1740,6 +2190,38 @@ class AccountingPayroll(BaseModel):
     payroll_period_start = models.DateField()
     payroll_period_end = models.DateField()
     pay_date = models.DateField()
+    period_label = models.CharField(
+        max_length=120, blank=True,
+        help_text='Optional label shown in UI (e.g. January 2026 — Salary RMC)'
+    )
+    import_source_filename = models.CharField(max_length=255, blank=True)
+    
+    deduction_apply_percentages = models.BooleanField(
+        default=False,
+        help_text=(
+            'When on, each staff line SSF (employee), PF (employee), PAYE, and optional other deduction '
+            'are computed from the rates below whenever a line is saved or Excel is imported.'
+        ),
+    )
+    deduction_ssnit_employee_pct = models.DecimalField(
+        max_digits=6, decimal_places=2, default=Decimal('5.5'),
+        help_text='SSF employee: % of basic salary (falls back to gross earnings if basic is zero).',
+    )
+    deduction_pension_employee_pct = models.DecimalField(
+        max_digits=6, decimal_places=2, default=Decimal('5.0'),
+        help_text='Provident fund (employee): % of basic salary (falls back to gross earnings if basic is zero).',
+    )
+    deduction_paye_pct = models.DecimalField(
+        max_digits=6, decimal_places=2, default=Decimal('0'),
+        help_text=(
+            'Flat % for PAYE when Taxable income is set; if that is zero, estimated on '
+            '(gross earnings - personal relief). Set 0 to enter PAYE manually.'
+        ),
+    )
+    deduction_other_deduction_pct = models.DecimalField(
+        max_digits=6, decimal_places=2, default=Decimal('0'),
+        help_text='Optional extra deduction as % of gross earnings (maps to other deductions).',
+    )
     
     total_gross_pay = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     total_deductions = models.DecimalField(max_digits=15, decimal_places=2, default=0)
@@ -1762,6 +2244,27 @@ class AccountingPayroll(BaseModel):
         
         self.total_net_pay = self.total_gross_pay - self.total_deductions
         super().save(*args, **kwargs)
+    
+    def recalculate_totals_from_entries(self):
+        """Roll up line totals from active payroll entries."""
+        from django.db.models import Sum
+        agg = self.entries.filter(is_deleted=False).aggregate(
+            g=Sum('gross_pay'),
+            d=Sum('deductions'),
+            n=Sum('net_pay'),
+        )
+        self.total_gross_pay = agg['g'] or Decimal('0')
+        self.total_deductions = agg['d'] or Decimal('0')
+        self.total_net_pay = agg['n'] or Decimal('0')
+        self.save(update_fields=['total_gross_pay', 'total_deductions', 'total_net_pay', 'modified'])
+    
+    def apply_percentage_deductions_to_all_entries(self):
+        """Recompute SSF/PF/PAYE/other on every line from this run’s percentage settings."""
+        if not self.deduction_apply_percentages:
+            return
+        for entry in self.entries.filter(is_deleted=False):
+            entry.save()
+        self.recalculate_totals_from_entries()
     
     @staticmethod
     def generate_payroll_number():
@@ -1790,6 +2293,47 @@ class AccountingPayrollEntry(BaseModel):
     payroll = models.ForeignKey(AccountingPayroll, on_delete=models.CASCADE, related_name='entries')
     staff = models.ForeignKey('Staff', on_delete=models.CASCADE, related_name='payroll_entries')
     
+    # RMC-style salary sheet breakdown (matches Sample Salary-RMC.xlsx — Raphal Medical Centre)
+    basic_salary = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    housing_allowance = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    transport_allowance = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    other_allowances = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text='Other allowance / overtime (RMC column)',
+    )
+    overtime_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    bonus_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    medical_allowance = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    risk_emergency_allowance = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    
+    paye_tax = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    ssnit_employee = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text='5.5% SSF employee contribution',
+    )
+    pension_employee = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text='5.0% PF employee',
+    )
+    pf_employer_contribution = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text='5.0% PF employer (informational)',
+    )
+    ssf_employer_contribution = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text='13% SSF employer (informational)',
+    )
+    personal_relief = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    total_relief = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    taxable_income = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    loan_deduction = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    other_deductions_detail = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    
+    sheet_serial = models.PositiveIntegerField(null=True, blank=True)
+    department_snapshot = models.CharField(max_length=200, blank=True)
+    rank_snapshot = models.CharField(max_length=120, blank=True)
+    service_length_snapshot = models.CharField(max_length=80, blank=True)
+    
     gross_pay = models.DecimalField(max_digits=15, decimal_places=2)
     deductions = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     net_pay = models.DecimalField(max_digits=15, decimal_places=2)
@@ -1808,6 +2352,49 @@ class AccountingPayrollEntry(BaseModel):
     
     def __str__(self):
         return f"{self.payroll.payroll_number} - {self.staff.user.get_full_name()} - GHS {self.net_pay}"
+    
+    def save(self, *args, **kwargs):
+        """Derive gross/deductions/net from RMC breakdown when any breakdown field is used."""
+        D = Decimal
+        earn = (
+            self.basic_salary + self.housing_allowance + self.transport_allowance
+            + self.other_allowances + self.overtime_amount + self.bonus_amount
+            + self.medical_allowance + self.risk_emergency_allowance
+        )
+        payroll = None
+        if self.payroll_id:
+            payroll = self.payroll
+        if (
+            payroll
+            and getattr(payroll, 'deduction_apply_percentages', False)
+            and earn > D('0')
+        ):
+            base_staff = self.basic_salary if self.basic_salary > D('0') else earn
+            q = lambda x: (x).quantize(D('0.01'), rounding=ROUND_HALF_UP)
+            if payroll.deduction_ssnit_employee_pct > D('0'):
+                self.ssnit_employee = q(base_staff * payroll.deduction_ssnit_employee_pct / D('100'))
+            if payroll.deduction_pension_employee_pct > D('0'):
+                self.pension_employee = q(base_staff * payroll.deduction_pension_employee_pct / D('100'))
+            if payroll.deduction_paye_pct > D('0'):
+                if self.taxable_income > D('0'):
+                    self.paye_tax = q(self.taxable_income * payroll.deduction_paye_pct / D('100'))
+                else:
+                    taxable_est = earn - self.personal_relief
+                    if taxable_est > D('0'):
+                        self.paye_tax = q(taxable_est * payroll.deduction_paye_pct / D('100'))
+                    else:
+                        self.paye_tax = D('0')
+            if payroll.deduction_other_deduction_pct > D('0'):
+                self.other_deductions_detail = q(earn * payroll.deduction_other_deduction_pct / D('100'))
+        ded = (
+            self.paye_tax + self.ssnit_employee + self.pension_employee
+            + self.loan_deduction + self.other_deductions_detail
+        )
+        if earn > D('0') or ded > D('0'):
+            self.gross_pay = earn
+            self.deductions = ded
+        self.net_pay = self.gross_pay - self.deductions
+        super().save(*args, **kwargs)
 
 
 class DoctorCommission(BaseModel):

@@ -204,22 +204,44 @@ class PerformanceAnalyticsService:
         }
 
     def _lab_metrics(self, staff, start, end):
-        tests_completed = LabResult.objects.filter(
-            performed_by=staff,
-            performed_at__date__gte=start,
-            performed_at__date__lte=end,
-            is_deleted=False,
-        )
-        completed_count = tests_completed.count()
-        critical_flags = tests_completed.filter(is_critical=True).count()
-
-        tat_expr = tests_completed.exclude(performed_at__isnull=True).annotate(
-            tat=ExpressionWrapper(
-                F('performed_at') - F('lab_order__ordered_at'),
-                output_field=DurationField()
+        try:
+            tests_completed = LabResult.objects.filter(
+                verified_by=staff,
+                verified_at__date__gte=start,
+                verified_at__date__lte=end,
+                status='completed',
+                is_deleted=False,
             )
-        ).aggregate(avg=Avg('tat'))['avg']
-        avg_tat = _safe_duration_minutes(tat_expr) if tat_expr else Decimal('0')
+            completed_count = tests_completed.count()
+            
+            # Check for abnormal results
+            try:
+                critical_flags = tests_completed.filter(is_abnormal=True).count()
+            except Exception:
+                critical_flags = 0
+
+            # Calculate turnaround time
+            try:
+                tat_expr = tests_completed.exclude(
+                    verified_at__isnull=True
+                ).exclude(
+                    order__isnull=True
+                ).exclude(
+                    order__created__isnull=True
+                ).annotate(
+                    tat=ExpressionWrapper(
+                        F('verified_at') - F('order__created'),
+                        output_field=DurationField()
+                    )
+                ).aggregate(avg=Avg('tat'))['avg']
+                avg_tat = _safe_duration_minutes(tat_expr) if tat_expr else Decimal('0')
+            except Exception:
+                avg_tat = Decimal('0')
+        except Exception as e:
+            # Return safe defaults if any error occurs
+            completed_count = 0
+            critical_flags = 0
+            avg_tat = Decimal('0')
 
         metrics = {
             'counts': {

@@ -7,8 +7,8 @@
 <div class="container-fluid">
     <div class="row mb-4">
         <div class="col-md-12">
-            <h2 style="font-weight: 700; color: #1f2937;">💊 New Walk-in Sale</h2>
-            <p class="text-muted">Sell medication directly to customers (no prescription required)</p>
+            <h2 style="font-weight: 700; color: #1f2937;">💊 Pharmacy Prescription</h2>
+            <p class="text-muted">Prescribe & sell medication directly to customers</p>
         </div>
     </div>
 
@@ -21,27 +21,42 @@
                     
                     <form id="walkInSaleForm" method="post">
                         {% csrf_token %}
-                        
+                        <input type="hidden" name="patient_id" id="patientId" value="">
                         <div class="row mb-3">
                             <div class="col-md-6">
                                 <label class="form-label">Customer Type</label>
-                                <select class="form-select" name="customer_type" id="customerType" required>
-                                    <option value="walkin" selected>Walk-in Customer</option>
-                                    <option value="registered">Registered Patient</option>
+                                <select class="form-select" name="customer_type" id="customerType" required title="Select option" aria-label="Select option" onchange="handleCustomerTypeChange(this.value)">
+                                    <option value="walkin" selected>Prescribe Customer</option>
+                                    <option value="registered">PrimeCare Patient</option>
                                 </select>
+                                <small class="form-text text-muted">Is this a PrimeCare patient? Select to search by name, MRN, or phone.</small>
                             </div>
                         </div>
                         
-                        <!-- Walk-in Customer Fields -->
+                        <!-- Prescribe Customer Fields -->
                         <div id="walkinFields">
                             <div class="row mb-3">
                                 <div class="col-md-6">
                                     <label class="form-label">Customer Name *</label>
-                                    <input type="text" class="form-control" name="customer_name" id="customerName" required>
+                                    <input type="text" class="form-control" name="customer_name" id="customerName" required title="Enter text" placeholder="Enter customer name">
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label">Phone Number</label>
-                                    <input type="text" class="form-control" name="customer_phone" id="customerPhone" placeholder="+233...">
+                                    <input type="text" class="form-control" name="customer_phone" id="customerPhone" placeholder="+233..." title="Enter text">
+                                </div>
+                            </div>
+                            <div class="mb-3 position-relative">
+                                <label class="form-label">Optional: Link to PrimeCare Patient</label>
+                                <div class="input-group">
+                                    <span class="input-group-text"><i class="bi bi-person-search"></i></span>
+                                    <input type="text" class="form-control" id="walkinPatientSearch" 
+                                           placeholder="Search by name, MRN, or phone to link sale..."
+                                           autocomplete="off">
+                                </div>
+                                <div id="walkinPatientDropdown" class="list-group position-absolute start-0 end-0 mt-1" style="z-index: 1000; max-height: 200px; overflow-y: auto; display: none; border: 1px solid #dee2e6; border-radius: 0.375rem; box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15);"></div>
+                                <small class="form-text text-muted">If customer is a PrimeCare patient, search and select to link this sale.</small>
+                                <div id="walkinPatientInfo" class="mt-2 p-2 bg-success bg-opacity-10 rounded border border-success" style="display: none;">
+                                    <small><i class="bi bi-check-circle text-success"></i> Linked to <strong id="walkinPatientName">-</strong> (MRN: <span id="walkinPatientMRN">-</span>) <a href="#" id="clearWalkinPatient" class="ms-2">Clear</a></small>
                                 </div>
                             </div>
                             <div class="mb-3">
@@ -50,13 +65,61 @@
                             </div>
                         </div>
                         
-                        <!-- Registered Patient Search -->
-                        <div id="registeredPatientFields" style="display: none;">
+                        <!-- PrimeCare Patient Search (when customer type is PrimeCare Patient) -->
+                        <div id="registeredPatientFields" style="display: none !important;">
                             <div class="mb-3">
-                                <label class="form-label">Search Patient</label>
-                                <input type="text" class="form-control" id="patientSearch" placeholder="Search by name, MRN, or phone">
-                                <input type="hidden" name="patient_id" id="patientId">
-                                <div id="patientSearchResults" class="list-group mt-2" style="max-height: 200px; overflow-y: auto;"></div>
+                                <label class="form-label">Search PrimeCare Patient <span class="text-danger">*</span></label>
+                                <div class="position-relative">
+                                    <div class="input-group">
+                                        <span class="input-group-text"><i class="bi bi-person-search"></i></span>
+                                        <input type="text" 
+                                               class="form-control" 
+                                               id="patientSearchInput" 
+                                               placeholder="Type name, MRN, or phone to search PrimeCare patients..."
+                                               autocomplete="off"
+                                               required>
+                                        <button type="button" class="btn btn-outline-primary" id="patientSearchBtn" title="Search">
+                                            <i class="bi bi-search"></i>
+                                        </button>
+                                    </div>
+                                    <div id="patientDropdown" class="list-group position-absolute w-100 mt-1 bg-white" style="z-index: 1050; max-height: 300px; overflow-y: auto; display: none; border: 1px solid #dee2e6; border-radius: 0.375rem; box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15);">
+                                        <!-- Patient options will be inserted here -->
+                                    </div>
+                                </div>
+                                <small class="form-text text-muted">
+                                    <i class="bi bi-info-circle"></i> Start typing to search and select a PrimeCare patient
+                                </small>
+                                <div id="patientInfo" class="mt-2 p-2 bg-light rounded" style="display: none;">
+                                    <small>
+                                        <strong>MRN:</strong> <span id="patientMRN">-</span> | 
+                                        <strong>Phone:</strong> <span id="patientPhone">-</span> |
+                                        <strong>Payer:</strong> <span id="patientPayer">-</span>
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <hr class="my-4">
+                        
+                        <h5 class="card-title mb-3">Payment / Billing</h5>
+                        <div class="row mb-3">
+                            <div class="col-md-12">
+                                <label class="form-label">Payer Type</label>
+                                <select class="form-select" name="payer_type" id="payerType" required title="Select option" aria-label="Select option" onchange="handlePayerTypeChange(this.value)">
+                                    <option value="cash" selected>Cash</option>
+                                    <option value="corporate">Corporate</option>
+                                    <option value="insurance">Insurance</option>
+                                </select>
+                                <small class="form-text text-muted">Who will be billed for this sale? Cash, Corporate account, or Insurance.</small>
+                            </div>
+                        </div>
+                        <div id="payerSelectRow" class="row mb-3" style="display: none;">
+                            <div class="col-md-12">
+                                <label class="form-label" id="payerSelectLabel">Select Payer</label>
+                                <select class="form-select" id="payerIdSelect">
+                                    <option value="">-- Select --</option>
+                                </select>
+                                <input type="hidden" name="payer_id" id="payerIdHidden" value="">
                             </div>
                         </div>
                         
@@ -66,20 +129,33 @@
                         
                         <!-- Drug Search -->
                         <div class="mb-3">
-                            <label class="form-label">Search Medication</label>
+                            <label class="form-label"><i class="bi bi-capsule"></i> Search Drugs</label>
                             <div class="input-group">
-                                <input type="text" class="form-control" id="drugSearch" placeholder="Search by drug name or generic name">
-                                <button class="btn btn-outline-secondary" type="button" id="searchDrugBtn">
+                                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                <input type="text" class="form-control" id="drugSearch" placeholder="Type drug name or generic name to search..." autocomplete="off">
+                                <button class="btn btn-primary" type="button" id="searchDrugBtn" title="Search drugs">
                                     <i class="bi bi-search"></i> Search
                                 </button>
                             </div>
-                            <div id="drugSearchResults" class="list-group mt-2" style="max-height: 300px; overflow-y: auto;"></div>
+                            <small class="form-text text-muted">Search by brand name or generic name. Results show stock and price. Check multiple drugs and click Add Selected.</small>
+                            <div id="drugSearchResults" class="list-group mt-2" style="max-height: 300px; overflow-y: auto; border-radius: 0.375rem;"></div>
+                            <div id="drugSearchActions" class="mt-2" style="display: none;">
+                                <button type="button" class="btn btn-success" id="addSelectedDrugsBtn" disabled>
+                                    <i class="bi bi-plus-circle"></i> Add Selected (<span id="selectedDrugCount">0</span>)
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm ms-2" id="clearDrugSelectionBtn">Clear selection</button>
+                            </div>
                         </div>
                         
                         <!-- Selected Items -->
                         <div class="card bg-light mb-3">
                             <div class="card-body">
-                                <h6 class="mb-3">Selected Items</h6>
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <h6 class="mb-0">Selected Items</h6>
+                                    <button type="button" class="btn btn-sm btn-outline-danger" id="clearAllItemsBtn" style="display: none;">
+                                        <i class="bi bi-trash"></i> Clear All
+                                    </button>
+                                </div>
                                 <div id="selectedItems">
                                     <p class="text-muted text-center">No items added yet</p>
                                 </div>
@@ -88,13 +164,19 @@
                         
                         <input type="hidden" name="items" id="itemsData">
                         
-                        <div class="d-flex gap-2">
-                            <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
-                                <i class="bi bi-check-circle"></i> Create Sale
-                            </button>
-                            <a href="{% url 'hospital:pharmacy_walkin_sales_list' %}" class="btn btn-outline-secondary btn-lg">
-                                <i class="bi bi-x-circle"></i> Cancel
-                            </a>
+                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3 p-3 bg-light rounded">
+                            <div>
+                                <span class="text-muted">Total Amount:</span>
+                                <strong class="h4 text-primary ms-2">GHS <span id="saleTotalAmount">0.00</span></strong>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
+                                    <i class="bi bi-check-circle"></i> Create Sale
+                                </button>
+                                <a href="{% url 'hospital:pharmacy_walkin_sales_list' %}" class="btn btn-outline-secondary btn-lg">
+                                    <i class="bi bi-x-circle"></i> Cancel
+                                </a>
+                            </div>
                         </div>
                     </form>
                 </div>
@@ -125,7 +207,7 @@
                     
                     <div class="alert alert-info">
                         <i class="bi bi-info-circle"></i>
-                        <strong>Note:</strong> Customer must pay at cashier before medication can be dispensed.
+                        <strong>Workflow:</strong> 1) Create sale here (select Cash, Corporate, or Insurance) → 2) Customer pays at <strong>Cashier</strong> (cash) or bill goes to Corporate/Insurance → 3) Customer returns to Pharmacy to collect medication (dispense).
                     </div>
                 </div>
             </div>
@@ -134,29 +216,131 @@
 </div>
 
 <script>
+// Payer options for Corporate and Insurance
+const PAYER_OPTIONS = {
+    corporate: [
+        {% for p in corporate_payers %}
+        { id: '{{ p.id }}', name: '{{ p.name|escapejs }}' }{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    ],
+    insurance: [
+        {% for p in insurance_payers %}
+        { id: '{{ p.id }}', name: '{{ p.name|escapejs }}' }{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    ]
+};
+
+// Global function for inline onchange handler
+function handlePayerTypeChange(value) {
+    const row = document.getElementById('payerSelectRow');
+    const select = document.getElementById('payerIdSelect');
+    const hidden = document.getElementById('payerIdHidden');
+    const label = document.getElementById('payerSelectLabel');
+    if (!row || !select || !hidden) return;
+    if (value === 'cash') {
+        row.style.display = 'none';
+        select.innerHTML = '<option value="">-- Select --</option>';
+        hidden.value = '';
+        select.required = false;
+    } else {
+        row.style.display = 'block';
+        label.textContent = value === 'corporate' ? 'Select Corporate Account' : 'Select Insurance';
+        const opts = PAYER_OPTIONS[value] || [];
+        select.innerHTML = '<option value="">-- Select ' + (value === 'corporate' ? 'Corporate' : 'Insurance') + ' --</option>' +
+            opts.map(p => '<option value="' + p.id + '">' + p.name + '</option>').join('');
+        select.required = true;
+        hidden.value = '';
+    }
+}
+function syncPayerId() {
+    const select = document.getElementById('payerIdSelect');
+    const hidden = document.getElementById('payerIdHidden');
+    if (select && hidden) hidden.value = select.value || '';
+}
+
+// Global function for inline onchange handler
+function handleCustomerTypeChange(value) {
+    const walkinFields = document.getElementById('walkinFields');
+    const registeredPatientFields = document.getElementById('registeredPatientFields');
+    const customerNameInput = document.getElementById('customerName');
+    const patientSearchInput = document.getElementById('patientSearchInput');
+    
+    if (value === 'registered') {
+        // Show registered patient fields
+        if (walkinFields) walkinFields.style.display = 'none';
+        if (registeredPatientFields) {
+            registeredPatientFields.style.cssText = 'display: block !important;';
+        }
+        if (customerNameInput) customerNameInput.required = false;
+        if (patientSearchInput) patientSearchInput.required = true;
+    } else {
+        // Show walk-in fields
+        if (walkinFields) walkinFields.style.display = 'block';
+        if (registeredPatientFields) {
+            registeredPatientFields.style.cssText = 'display: none !important;';
+        }
+        if (customerNameInput) customerNameInput.required = true;
+        if (patientSearchInput) {
+            patientSearchInput.required = false;
+            patientSearchInput.value = '';
+        }
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
 let selectedItems = [];
 
-// Customer Type Toggle
-document.getElementById('customerType').addEventListener('change', function() {
-    if (this.value === 'registered') {
-        document.getElementById('walkinFields').style.display = 'none';
-        document.getElementById('registeredPatientFields').style.display = 'block';
-        document.getElementById('customerName').required = false;
-    } else {
-        document.getElementById('walkinFields').style.display = 'block';
-        document.getElementById('registeredPatientFields').style.display = 'none';
-        document.getElementById('customerName').required = true;
+// Get elements
+const customerTypeSelect = document.getElementById('customerType');
+const walkinFields = document.getElementById('walkinFields');
+const registeredPatientFields = document.getElementById('registeredPatientFields');
+const customerNameInput = document.getElementById('customerName');
+const patientSearchInput = document.getElementById('patientSearchInput');
+const patientDropdown = document.getElementById('patientDropdown');
+const patientIdInput = document.getElementById('patientId');
+const patientInfo = document.getElementById('patientInfo');
+
+// Patient Dropdown with Search
+let patientSearchTimeout;
+
+// Customer Type Toggle - Also handled by inline onchange
+if (customerTypeSelect) {
+    // Set initial state
+    handleCustomerTypeChange(customerTypeSelect.value);
+    
+    // Also add event listener as backup
+    customerTypeSelect.addEventListener('change', function() {
+        handleCustomerTypeChange(this.value);
+    });
+}
+
+// Payer Type Toggle
+const payerTypeSelect = document.getElementById('payerType');
+if (payerTypeSelect) {
+    handlePayerTypeChange(payerTypeSelect.value);
+    payerTypeSelect.addEventListener('change', function() {
+        handlePayerTypeChange(this.value);
+        if (typeof runDrugSearch === 'function' && drugSearchInput && drugSearchInput.value.trim().length >= 2) {
+            runDrugSearch(drugSearchInput.value.trim());
+        }
+    });
+}
+document.getElementById('payerIdSelect')?.addEventListener('change', function() {
+    syncPayerId();
+    if (typeof runDrugSearch === 'function' && drugSearchInput && drugSearchInput.value.trim().length >= 2) {
+        runDrugSearch(drugSearchInput.value.trim());
     }
 });
 
-// Patient Search
-let patientSearchTimeout;
-document.getElementById('patientSearch').addEventListener('input', function() {
+// Search patients as user types
+if (patientSearchInput) {
+    patientSearchInput.addEventListener('input', function() {
     clearTimeout(patientSearchTimeout);
     const query = this.value.trim();
     
     if (query.length < 2) {
-        document.getElementById('patientSearchResults').innerHTML = '';
+        patientDropdown.style.display = 'none';
+        patientDropdown.innerHTML = '';
         return;
     }
     
@@ -164,45 +348,202 @@ document.getElementById('patientSearch').addEventListener('input', function() {
         fetch(`{% url 'hospital:api_patient_search' %}?q=${encodeURIComponent(query)}`)
             .then(r => r.json())
             .then(data => {
-                const results = document.getElementById('patientSearchResults');
                 if (data.patients.length === 0) {
-                    results.innerHTML = '<div class="list-group-item text-muted">No patients found</div>';
+                    patientDropdown.innerHTML = '<div class="list-group-item text-muted">No patients found</div>';
+                    patientDropdown.style.display = 'block';
                     return;
                 }
                 
-                results.innerHTML = data.patients.map(p => `
-                    <a href="#" class="list-group-item list-group-item-action patient-select" 
-                       data-id="${p.id}" data-name="${p.name}" data-phone="${p.phone}">
-                        <div class="d-flex justify-content-between">
-                            <div>
-                                <strong>${p.name}</strong><br>
-                                <small class="text-muted">MRN: ${p.mrn}</small>
-                            </div>
-                            <div class="text-end">
-                                <small>${p.phone}</small>
-                            </div>
+                patientDropdown.innerHTML = data.patients.map(p => `
+                    <div class="list-group-item patient-option d-flex justify-content-between align-items-start py-3" 
+                         data-id="${p.id}" 
+                         data-name="${p.name || ''}" 
+                         data-mrn="${p.mrn || ''}"
+                         data-phone="${p.phone || ''}"
+                         data-payer="${p.payer_type || 'cash'}">
+                        <div class="flex-grow-1">
+                            <strong>${p.name || ''}</strong><br>
+                            <small class="text-muted">MRN: ${p.mrn || ''}</small>
+                            ${p.phone ? `<br><small class="text-muted">Phone: ${p.phone}</small>` : ''}
                         </div>
-                    </a>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="badge bg-info">${(p.payer_type || 'cash').toUpperCase()}</span>
+                            <button type="button" class="btn btn-sm btn-primary patient-select-btn">Select</button>
+                        </div>
+                    </div>
                 `).join('');
                 
-                // Add click handlers
-                document.querySelectorAll('.patient-select').forEach(el => {
-                    el.addEventListener('click', function(e) {
-                        e.preventDefault();
-                        document.getElementById('patientId').value = this.dataset.id;
-                        document.getElementById('customerName').value = this.dataset.name;
-                        document.getElementById('customerPhone').value = this.dataset.phone;
-                        document.getElementById('patientSearch').value = this.dataset.name;
-                        document.getElementById('patientSearchResults').innerHTML = '';
-                    });
-                });
+                patientDropdown.style.display = 'block';
+            })
+            .catch(error => {
+                console.error('Error searching patients:', error);
+                patientDropdown.innerHTML = '<div class="list-group-item text-danger">Error loading patients</div>';
+                patientDropdown.style.display = 'block';
             });
     }, 300);
+    });
+}
+
+// Patient selection - use event delegation (handles dynamically added options)
+function handlePatientSelect(option) {
+    if (!option || !option.dataset.id) return;
+    const patientId = option.dataset.id;
+    const patientName = option.dataset.name;
+    const patientMRN = option.dataset.mrn;
+    const patientPhone = option.dataset.phone || '';
+    const patientPayer = option.dataset.payer || 'cash';
+    patientIdInput.value = patientId;
+    patientSearchInput.value = `${patientName} (MRN: ${patientMRN})`;
+    document.getElementById('customerName').value = patientName;
+    const phoneEl = document.getElementById('customerPhone');
+    if (phoneEl) phoneEl.value = patientPhone;
+    document.getElementById('patientMRN').textContent = patientMRN;
+    document.getElementById('patientPhone').textContent = patientPhone || '-';
+    document.getElementById('patientPayer').textContent = patientPayer.toUpperCase();
+    document.getElementById('patientInfo').style.display = 'block';
+    patientDropdown.style.display = 'none';
+    if (typeof runDrugSearch === 'function' && drugSearchInput && drugSearchInput.value.trim().length >= 2) {
+        runDrugSearch(drugSearchInput.value.trim());
+    }
+}
+
+if (patientDropdown) {
+    patientDropdown.addEventListener('click', function(e) {
+        const option = e.target.closest('.patient-option');
+        if (option) {
+            e.preventDefault();
+            e.stopPropagation();
+            handlePatientSelect(option);
+        }
+    });
+    patientDropdown.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            const option = e.target.closest('.patient-option');
+            if (option) {
+                e.preventDefault();
+                handlePatientSelect(option);
+            }
+        }
+    });
+}
+
+// Hide dropdown when clicking outside
+document.addEventListener('click', function(e) {
+    if (patientSearchInput && patientDropdown) {
+        if (!patientSearchInput.contains(e.target) && !patientDropdown.contains(e.target)) {
+            patientDropdown.style.display = 'none';
+        }
+    }
+});
+
+// Show dropdown on focus if there's a query
+if (patientSearchInput) {
+    patientSearchInput.addEventListener('focus', function() {
+        if (patientDropdown && this.value.trim().length >= 2 && patientDropdown.innerHTML) {
+            patientDropdown.style.display = 'block';
+        }
+    });
+}
+
+// Patient search button click (for PrimeCare Patient type)
+document.getElementById('patientSearchBtn')?.addEventListener('click', function() {
+    if (patientSearchInput && patientSearchInput.value.trim().length >= 2) {
+        patientSearchInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+});
+
+// Optional Walk-in Patient Search - link sale to PrimeCare patient
+const walkinPatientSearch = document.getElementById('walkinPatientSearch');
+const walkinPatientDropdown = document.getElementById('walkinPatientDropdown');
+const walkinPatientInfo = document.getElementById('walkinPatientInfo');
+const clearWalkinPatient = document.getElementById('clearWalkinPatient');
+let walkinPatientTimeout;
+
+if (walkinPatientSearch) {
+    walkinPatientSearch.addEventListener('input', function() {
+        clearTimeout(walkinPatientTimeout);
+        const q = this.value.trim();
+        if (q.length < 2) {
+            walkinPatientDropdown.innerHTML = '';
+            walkinPatientDropdown.style.display = 'none';
+            return;
+        }
+        walkinPatientTimeout = setTimeout(() => {
+            fetch(`{% url 'hospital:api_patient_search' %}?q=${encodeURIComponent(q)}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.patients || data.patients.length === 0) {
+                        walkinPatientDropdown.innerHTML = '<div class="list-group-item text-muted">No PrimeCare patients found</div>';
+                    } else {
+                        walkinPatientDropdown.innerHTML = data.patients.map(p => `
+                            <div class="list-group-item walkin-patient-option d-flex justify-content-between align-items-start py-3" 
+                                 data-id="${p.id}" data-name="${p.name}" data-mrn="${p.mrn}" data-phone="${p.phone || ''}">
+                                <div>
+                                    <strong>${p.name}</strong> <span class="badge bg-secondary">${p.mrn}</span>
+                                    ${p.phone ? `<br><small class="text-muted">${p.phone}</small>` : ''}
+                                </div>
+                                <button type="button" class="btn btn-sm btn-success">Select</button>
+                            </div>
+                        `).join('');
+                    }
+                    walkinPatientDropdown.style.display = 'block';
+                })
+                .catch(() => {
+                    walkinPatientDropdown.innerHTML = '<div class="list-group-item text-danger">Error searching</div>';
+                    walkinPatientDropdown.style.display = 'block';
+                });
+        }, 300);
+    });
+}
+
+// Walk-in patient selection - event delegation
+if (walkinPatientDropdown) {
+    walkinPatientDropdown.addEventListener('click', function(e) {
+        const option = e.target.closest('.walkin-patient-option');
+        if (option && option.dataset.id) {
+            e.preventDefault();
+            e.stopPropagation();
+            patientIdInput.value = option.dataset.id;
+            customerNameInput.value = option.dataset.name;
+            const phoneEl = document.getElementById('customerPhone');
+            if (phoneEl && option.dataset.phone) phoneEl.value = option.dataset.phone;
+            document.getElementById('walkinPatientName').textContent = option.dataset.name;
+            document.getElementById('walkinPatientMRN').textContent = option.dataset.mrn;
+            walkinPatientInfo.style.display = 'block';
+            walkinPatientSearch.value = '';
+            walkinPatientDropdown.innerHTML = '';
+            walkinPatientDropdown.style.display = 'none';
+            if (typeof runDrugSearch === 'function' && drugSearchInput && drugSearchInput.value.trim().length >= 2) {
+                runDrugSearch(drugSearchInput.value.trim());
+            }
+        }
+    });
+}
+
+if (clearWalkinPatient) {
+    clearWalkinPatient.addEventListener('click', function(e) {
+        e.preventDefault();
+        patientIdInput.value = '';
+        walkinPatientInfo.style.display = 'none';
+        document.getElementById('walkinPatientName').textContent = '-';
+        document.getElementById('walkinPatientMRN').textContent = '-';
+        if (typeof runDrugSearch === 'function' && drugSearchInput && drugSearchInput.value.trim().length >= 2) {
+            runDrugSearch(drugSearchInput.value.trim());
+        }
+    });
+}
+
+document.addEventListener('click', function(e) {
+    if (walkinPatientSearch && walkinPatientDropdown && !walkinPatientSearch.contains(e.target) && !walkinPatientDropdown.contains(e.target)) {
+        walkinPatientDropdown.style.display = 'none';
+    }
 });
 
 // Drug Search
 let drugSearchTimeout;
-document.getElementById('drugSearch').addEventListener('input', function() {
+const drugSearchInput = document.getElementById('drugSearch');
+if (drugSearchInput) {
+    drugSearchInput.addEventListener('input', function() {
     clearTimeout(drugSearchTimeout);
     const query = this.value.trim();
     
@@ -211,46 +552,137 @@ document.getElementById('drugSearch').addEventListener('input', function() {
         return;
     }
     
-    drugSearchTimeout = setTimeout(() => {
-        fetch(`{% url 'hospital:api_search_drugs' %}?q=${encodeURIComponent(query)}`)
-            .then(r => r.json())
-            .then(data => {
-                const results = document.getElementById('drugSearchResults');
-                if (data.drugs.length === 0) {
-                    results.innerHTML = '<div class="list-group-item text-muted">No drugs found</div>';
-                    return;
-                }
-                
-                results.innerHTML = data.drugs.map(d => {
-                    const encodedDrug = encodeURIComponent(JSON.stringify(d));
-                    return `
-                    <a href="#" class="list-group-item list-group-item-action drug-select" data-drug="${encodedDrug}">
-                        <div class="d-flex justify-content-between align-items-start">
-                            <div>
-                                <strong>${d.name}</strong> ${d.strength} ${d.form}<br>
-                                <small class="text-muted">${d.generic_name}</small><br>
-                                <span class="badge bg-success">Stock: ${d.stock_available}</span>
-                            </div>
-                            <div class="text-end">
-                                <strong class="text-primary">GHS ${d.unit_price}</strong>
-                            </div>
-                        </div>
-                    </a>`;
-                }).join('');
-                
-                // Add click handlers
-                document.querySelectorAll('.drug-select').forEach(el => {
-                    el.addEventListener('click', function(e) {
-                        e.preventDefault();
-                        const drug = JSON.parse(decodeURIComponent(this.dataset.drug));
-                        addItemToSale(drug);
-                        document.getElementById('drugSearch').value = '';
-                        document.getElementById('drugSearchResults').innerHTML = '';
-                    });
-                });
-            });
-    }, 300);
+    drugSearchTimeout = setTimeout(() => runDrugSearch(query), 300);
+    });
+}
+
+function walkInDrugSearchQuerySuffix() {
+    const params = new URLSearchParams();
+    const payerType = document.getElementById('payerType')?.value || 'cash';
+    if (payerType === 'cash') {
+        params.set('price_basis', 'cash');
+    } else {
+        const hid = document.getElementById('payerIdHidden')?.value?.trim();
+        if (hid) params.set('payer_id', hid);
+    }
+    const pid = document.getElementById('patientId')?.value?.trim();
+    if (pid) params.set('patient_id', pid);
+    const s = params.toString();
+    return s ? ('&' + s) : '';
+}
+
+// Drug search - can be called from input or button
+function runDrugSearch(query) {
+    query = (query || drugSearchInput?.value?.trim() || '').trim();
+    const results = document.getElementById('drugSearchResults');
+    const actions = document.getElementById('drugSearchActions');
+    if (query.length < 2) {
+        results.innerHTML = '<div class="list-group-item text-muted">Type at least 2 characters to search</div>';
+        actions.style.display = 'none';
+        return;
+    }
+    fetch(`{% url 'hospital:api_search_drugs' %}?q=${encodeURIComponent(query)}` + walkInDrugSearchQuerySuffix())
+        .then(r => r.json())
+        .then(data => {
+            if (!data.drugs || data.drugs.length === 0) {
+                results.innerHTML = '<div class="list-group-item text-muted">No drugs found</div>';
+                actions.style.display = 'none';
+                return;
+            }
+            results.innerHTML = data.drugs.map(d => {
+                const encodedDrug = encodeURIComponent(JSON.stringify(d));
+                const alreadyAdded = selectedItems.some(i => i.drug_id === d.id);
+                return `
+                <div class="list-group-item list-group-item-action drug-row d-flex align-items-start gap-2 ${alreadyAdded ? 'bg-light' : ''}" 
+                     data-drug="${encodedDrug}" role="button">
+                    <input type="checkbox" class="form-check-input mt-1 drug-checkbox" ${alreadyAdded ? 'disabled' : ''} 
+                           data-drug="${encodedDrug}">
+                    <div class="flex-grow-1">
+                        <strong>${d.name}</strong> ${d.strength || ''} ${d.form || ''}<br>
+                        <small class="text-muted">${d.generic_name || ''}</small><br>
+                        <span class="badge bg-success me-1">Qty in stock: ${d.stock_available || 0}</span>
+                        <span class="badge bg-primary">GHS ${d.unit_price || '0.00'} each</span>
+                        ${alreadyAdded ? '<span class="badge bg-secondary ms-1">Already added</span>' : ''}
+                    </div>
+                    <div class="text-end align-self-center">
+                        <strong class="text-primary">GHS ${d.unit_price || '0.00'}</strong>
+                    </div>
+                </div>`;
+            }).join('');
+            actions.style.display = 'block';
+            updateSelectedDrugCount();
+        })
+        .catch(() => {
+            results.innerHTML = '<div class="list-group-item text-danger">Error searching drugs</div>';
+            actions.style.display = 'none';
+        });
+}
+
+function updateSelectedDrugCount() {
+    const checked = document.querySelectorAll('#drugSearchResults .drug-checkbox:checked');
+    const count = checked.length;
+    const countEl = document.getElementById('selectedDrugCount');
+    const addBtn = document.getElementById('addSelectedDrugsBtn');
+    if (countEl) countEl.textContent = count;
+    if (addBtn) addBtn.disabled = count === 0;
+}
+
+// Drug results - click row to toggle checkbox (except when clicking checkbox itself)
+document.getElementById('drugSearchResults')?.addEventListener('click', function(e) {
+    const row = e.target.closest('.drug-row');
+    if (!row) return;
+    const checkbox = row.querySelector('.drug-checkbox');
+    if (!checkbox || checkbox.disabled) return;
+    if (e.target === checkbox) {
+        updateSelectedDrugCount();
+        return;
+    }
+    e.preventDefault();
+    checkbox.checked = !checkbox.checked;
+    updateSelectedDrugCount();
 });
+
+// Prevent checkbox click from double-toggling
+document.getElementById('drugSearchResults')?.addEventListener('change', function(e) {
+    if (e.target.classList.contains('drug-checkbox')) {
+        updateSelectedDrugCount();
+    }
+});
+
+// Add selected drugs button
+document.getElementById('addSelectedDrugsBtn')?.addEventListener('click', function() {
+    const checked = document.querySelectorAll('#drugSearchResults .drug-checkbox:checked');
+    let added = 0;
+    checked.forEach(cb => {
+        try {
+            const drug = JSON.parse(decodeURIComponent(cb.dataset.drug));
+            if (!selectedItems.find(i => i.drug_id === drug.id)) {
+                addItemToSale(drug);
+                added++;
+            }
+        } catch (err) {}
+    });
+    if (added > 0) {
+        runDrugSearch(drugSearchInput?.value); // Refresh to show "Already added"
+    }
+});
+
+// Clear drug selection
+document.getElementById('clearDrugSelectionBtn')?.addEventListener('click', function() {
+    document.querySelectorAll('#drugSearchResults .drug-checkbox:checked').forEach(cb => {
+        cb.checked = false;
+    });
+    updateSelectedDrugCount();
+});
+
+// Drug search button click
+document.getElementById('searchDrugBtn')?.addEventListener('click', function() {
+    runDrugSearch(drugSearchInput?.value);
+});
+
+// Initialize drug search actions visibility
+const drugSearchActions = document.getElementById('drugSearchActions');
+if (drugSearchActions) drugSearchActions.style.display = 'none';
 
 function addItemToSale(drug) {
     // Check if already added
@@ -275,6 +707,8 @@ function addItemToSale(drug) {
 
 function renderSelectedItems() {
     const container = document.getElementById('selectedItems');
+    const clearAllBtn = document.getElementById('clearAllItemsBtn');
+    if (clearAllBtn) clearAllBtn.style.display = selectedItems.length > 0 ? 'inline-block' : 'none';
     
     if (selectedItems.length === 0) {
         container.innerHTML = '<p class="text-muted text-center">No items added yet</p>';
@@ -282,41 +716,67 @@ function renderSelectedItems() {
         return;
     }
     
-    container.innerHTML = selectedItems.map((item, index) => `
+    container.innerHTML = selectedItems.map((item, index) => {
+        const unitPrice = parseFloat(item.unit_price) || 0;
+        const qty = parseInt(item.quantity) || 1;
+        const lineTotal = (unitPrice * qty).toFixed(2);
+        return `
         <div class="card mb-2">
             <div class="card-body p-3">
                 <div class="row align-items-center">
-                    <div class="col-md-5">
+                    <div class="col-md-4">
                         <strong>${item.name}</strong><br>
-                        <small class="text-muted">${item.strength} ${item.form}</small><br>
-                        <small class="badge bg-info">Stock: ${item.stock_available}</small>
+                        <small class="text-muted">${item.strength || ''} ${item.form || ''}</small><br>
+                        <span class="badge bg-info me-1">Stock: ${item.stock_available != null ? item.stock_available : 0}</span>
+                        <span class="badge bg-secondary">GHS ${unitPrice.toFixed(2)}/unit</span>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small mb-1">Qty</label>
+                        <input type="number" class="form-control form-control-sm item-qty" data-index="${index}"
+                               value="${qty}" min="1" max="${item.stock_available || 999}"
+                               title="Enter quantity">
                     </div>
                     <div class="col-md-3">
-                        <label class="form-label small mb-1">Quantity</label>
-                        <input type="number" class="form-control form-control-sm" 
-                               value="${item.quantity}" min="1" max="${item.stock_available}"
-                               onchange="updateQuantity(${index}, this.value)">
+                        <label class="form-label small mb-1">Line Total</label>
+                        <div class="fw-bold text-primary item-line-total">GHS ${lineTotal}</div>
                     </div>
-                    <div class="col-md-3">
-                        <label class="form-label small mb-1">Total</label>
-                        <div class="fw-bold text-primary">GHS ${(item.quantity * item.unit_price).toFixed(2)}</div>
-                    </div>
-                    <div class="col-md-1">
-                        <button type="button" class="btn btn-sm btn-danger" onclick="removeItem(${index})">
-                            <i class="bi bi-trash"></i>
+                    <div class="col-md-3 text-end">
+                        <button type="button" class="btn btn-danger btn-sm" onclick="removeItem(${index})" title="Remove this item">
+                            <i class="bi bi-trash"></i> Remove
                         </button>
                     </div>
                 </div>
                 <div class="mt-2">
                     <label class="form-label small mb-1">Dosage Instructions</label>
-                    <input type="text" class="form-control form-control-sm" 
+                    <input type="text" class="form-control form-control-sm item-instructions" data-index="${index}"
                            placeholder="E.g., Take 1 tablet twice daily after meals"
-                           value="${item.dosage_instructions}"
-                           onchange="updateInstructions(${index}, this.value)">
+                           value="${item.dosage_instructions}" title="Enter dosage instructions">
                 </div>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
+    
+    // Attach quantity and instructions handlers
+    container.querySelectorAll('.item-qty').forEach(input => {
+        const handler = () => {
+            const idx = parseInt(input.dataset.index);
+            const val = parseInt(input.value) || 1;
+            selectedItems[idx].quantity = Math.max(1, Math.min(val, selectedItems[idx].stock_available || 999));
+            input.value = selectedItems[idx].quantity;
+            renderSelectedItems();
+        };
+        input.oninput = handler;
+        input.onchange = handler;
+    });
+    container.querySelectorAll('.item-instructions').forEach(input => {
+        const saveInstructions = () => {
+            const idx = parseInt(input.dataset.index);
+            if (!isNaN(idx) && selectedItems[idx]) selectedItems[idx].dosage_instructions = input.value || '';
+        };
+        input.onchange = saveInstructions;
+        input.onblur = saveInstructions;
+    });
     
     updateSummary();
 }
@@ -334,32 +794,121 @@ function removeItem(index) {
     selectedItems.splice(index, 1);
     renderSelectedItems();
 }
+window.removeItem = removeItem;  // Expose for inline onclick
+
+// Clear all selected items
+document.getElementById('clearAllItemsBtn')?.addEventListener('click', function() {
+    if (selectedItems.length > 0 && confirm('Remove all medications from this sale?')) {
+        selectedItems.length = 0;
+        renderSelectedItems();
+        if (drugSearchInput?.value) runDrugSearch(drugSearchInput.value); // Refresh drug search
+    }
+});
 
 function updateSummary() {
     const itemCount = selectedItems.length;
-    const subtotal = selectedItems.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
+    const subtotal = selectedItems.reduce((sum, item) => {
+        const qty = parseInt(item.quantity) || 1;
+        const price = parseFloat(item.unit_price) || 0;
+        return sum + (qty * price);
+    }, 0);
+    const total = subtotal.toFixed(2);
     
-    document.getElementById('itemCount').textContent = itemCount;
-    document.getElementById('subtotal').textContent = subtotal.toFixed(2);
-    document.getElementById('total').textContent = subtotal.toFixed(2);
+    const countEl = document.getElementById('itemCount');
+    const subtotalEl = document.getElementById('subtotal');
+    const totalEl = document.getElementById('total');
+    if (countEl) countEl.textContent = itemCount;
+    if (subtotalEl) subtotalEl.textContent = total;
+    if (totalEl) totalEl.textContent = total;
+    
+    // Update total near Create Sale button if it exists
+    const saleTotalEl = document.getElementById('saleTotalAmount');
+    if (saleTotalEl) saleTotalEl.textContent = total;
 }
 
 // Form submission
-document.getElementById('walkInSaleForm').addEventListener('submit', function(e) {
+const walkInSaleForm = document.getElementById('walkInSaleForm');
+if (walkInSaleForm) {
+    walkInSaleForm.addEventListener('submit', function(e) {
     if (selectedItems.length === 0) {
         e.preventDefault();
         alert('Please add at least one medication to the sale.');
         return;
     }
-    
-    document.getElementById('itemsData').value = JSON.stringify(selectedItems);
-});
+    syncPayerId();  // Copy payer selection to hidden before submit
+    const payerType = document.getElementById('payerType')?.value;
+    if ((payerType === 'corporate' || payerType === 'insurance') && !document.getElementById('payerIdHidden')?.value) {
+        e.preventDefault();
+        alert('Please select a ' + (payerType === 'corporate' ? 'Corporate account' : 'Insurance') + ' for this sale.');
+        return;
+    }
+        document.getElementById('itemsData').value = JSON.stringify(selectedItems);
+        const btn = document.getElementById('submitBtn');
+        if (btn && btn.dataset.submitting === '1') {
+            e.preventDefault();
+            return;
+        }
+        if (btn) {
+            btn.dataset.submitting = '1';
+            btn.disabled = true;
+            btn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Creating sale…';
+        }
+    });
+}
+
+// Initialize - check if registered patient is pre-selected
+if (customerTypeSelect && customerTypeSelect.value === 'registered') {
+    customerTypeSelect.dispatchEvent(new Event('change'));
+}
+
+}); // End DOMContentLoaded
 </script>
 
 <style>
 .sticky-top {
     position: -webkit-sticky;
     position: sticky;
+}
+
+#patientDropdown {
+    background: white;
+    margin-top: 2px;
+}
+
+#patientDropdown .patient-option,
+#walkinPatientDropdown .walkin-patient-option {
+    cursor: default;
+    transition: background-color 0.2s;
+}
+#patientDropdown .patient-select-btn,
+#walkinPatientDropdown .btn {
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+#patientDropdown .patient-option:hover,
+#walkinPatientDropdown .walkin-patient-option:hover {
+    background-color: #e7f1ff !important;
+    border-left: 3px solid #0d6efd;
+}
+
+#patientDropdown .patient-option:active,
+#walkinPatientDropdown .walkin-patient-option:active {
+    background-color: #cfe2ff !important;
+}
+
+#patientInfo {
+    border-left: 3px solid #0d6efd;
+}
+
+.drug-row {
+    cursor: pointer;
+}
+.drug-row:not(.bg-light):hover {
+    background-color: #e7f1ff !important;
+}
+.drug-row .drug-checkbox {
+    flex-shrink: 0;
 }
 </style>
 {% endblock %}

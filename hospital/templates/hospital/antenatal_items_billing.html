@@ -1,0 +1,385 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Antenatal Items - Bill Pharmacy Items{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <h2 style="font-weight: 700; color: #1f2937;">
+                <i class="bi bi-heart-pulse-fill text-primary me-2"></i>Antenatal Items Billing
+            </h2>
+            <p class="text-muted">Select patient and pharmacy items to create a bill. Patient pays at cashier.</p>
+        </div>
+    </div>
+
+    <form id="antenatalForm" method="post">
+        {% csrf_token %}
+        <input type="hidden" name="patient_id" id="patientId" value="">
+        <input type="hidden" name="payer_id" id="payerIdHidden" value="">
+        <input type="hidden" name="items" id="itemsData" value="[]">
+
+        <div class="row">
+            <div class="col-lg-8">
+                <!-- Step 1: Select Patient -->
+                <div class="card shadow-sm mb-4 border-primary">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0"><i class="bi bi-person-fill me-2"></i>1. Select Patient <span class="text-warning">*</span></h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="position-relative">
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                <input type="text" class="form-control" id="patientSearchInput"
+                                       placeholder="Type name, MRN, or phone to search (antenatal patients shown first)..."
+                                       autocomplete="off" required>
+                            </div>
+                            <div id="patientDropdown" class="list-group position-absolute w-100 mt-1 bg-white" style="z-index: 1050; max-height: 280px; overflow-y: auto; display: none; border: 1px solid #dee2e6; border-radius: 0.375rem; box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15);"></div>
+                        </div>
+                        <div id="patientInfo" class="mt-3 p-3 bg-success bg-opacity-10 rounded border border-success" style="display: none;">
+                            <strong><i class="bi bi-check-circle text-success"></i> Selected:</strong>
+                            <span id="patientName">-</span> (MRN: <span id="patientMRN">-</span>)
+                            <span class="badge bg-info ms-2" id="patientPayer">-</span>
+                            <a href="#" id="clearPatient" class="ms-3 text-danger">Change</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2: Select Items -->
+                <div class="card shadow-sm mb-4 border-success">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0"><i class="bi bi-capsule me-2"></i>2. Select Pharmacy Items <span class="text-warning">*</span></h5>
+                    </div>
+                    <div class="card-body">
+                        {% if antenatal_items %}
+                        <div class="mb-3">
+                            <label class="form-label small text-muted">Quick add (common antenatal items):</label>
+                            <div class="d-flex flex-wrap gap-2">
+                                {% for drug in antenatal_items %}
+                                <button type="button" class="btn btn-outline-primary btn-sm quick-add-btn"
+                                        data-name="{{ drug.name }}" title="{{ drug.name }}">
+                                    {{ drug.name|truncatechars:25 }}
+                                </button>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endif %}
+                        <div class="mb-3">
+                            <label class="form-label">Or search for any drug:</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="drugSearch" placeholder="Search drugs..." autocomplete="off">
+                                <button type="button" class="btn btn-primary" id="searchDrugBtn"><i class="bi bi-search"></i></button>
+                            </div>
+                            <div id="drugSearchResults" class="list-group mt-2" style="max-height: 220px; overflow-y: auto;"></div>
+                        </div>
+                        <div class="bg-light rounded p-3">
+                            <strong>Selected Items</strong>
+                            <div id="selectedItems" class="mt-2">
+                                <p class="text-muted mb-0">No items added yet</p>
+                            </div>
+                            <div id="clearAllRow" class="mt-2" style="display: none;">
+                                <button type="button" class="btn btn-sm btn-outline-danger" id="clearAllBtn"><i class="bi bi-trash"></i> Clear all</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3: Payer -->
+                <div class="card shadow-sm mb-4 border-info">
+                    <div class="card-header bg-info text-white">
+                        <h5 class="mb-0"><i class="bi bi-currency-dollar me-2"></i>3. Billing / Payer</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <label class="form-label">Payer Type</label>
+                                <select class="form-select" id="payerType" onchange="handlePayerChange()">
+                                    <option value="cash" selected>Cash</option>
+                                    <option value="corporate">Corporate</option>
+                                    <option value="insurance">Insurance</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6" id="payerSelectCol" style="display: none;">
+                                <label class="form-label" id="payerSelectLabel">Select Payer</label>
+                                <select class="form-select" id="payerIdSelect"></select>
+                            </div>
+                        </div>
+                        <small class="text-muted">Default: Patient's insurance. Or select Cash/Corporate.</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-4">
+                <div class="card shadow-sm sticky-top" style="top: 20px;">
+                    <div class="card-body">
+                        <h5 class="card-title">Summary</h5>
+                        <div class="mb-2"><span class="text-muted">Patient:</span> <strong id="sumPatient">-</strong></div>
+                        <div class="mb-2"><span class="text-muted">Items:</span> <strong id="sumItems">0</strong></div>
+                        <div class="mb-2"><span class="text-muted">Total:</span> <strong class="h4 text-primary">GHS <span id="sumTotal">0.00</span></strong></div>
+                        <hr>
+                        <button type="submit" class="btn btn-success btn-lg w-100" id="submitBtn" disabled>
+                            <i class="bi bi-check-circle"></i> Create Bill
+                        </button>
+                        <a href="{% url 'hospital:antenatal_care' %}" class="btn btn-outline-secondary mt-2 w-100">Back to Antenatal Care</a>
+                        <div class="alert alert-info mt-3 small mb-0">
+                            <i class="bi bi-info-circle"></i> Patient pays at cashier, then collects items at pharmacy.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+<script>
+const PAYER_OPTIONS = {
+    corporate: [{% for p in corporate_payers %}{ id: '{{ p.id }}', name: '{{ p.name|escapejs }}' }{% if not forloop.last %},{% endif %}{% endfor %}],
+    insurance: [{% for p in insurance_payers %}{ id: '{{ p.id }}', name: '{{ p.name|escapejs }}' }{% if not forloop.last %},{% endif %}{% endfor %}]
+};
+let selectedPatient = null;
+let selectedItems = [];
+
+function handlePayerChange() {
+    const v = document.getElementById('payerType').value;
+    const col = document.getElementById('payerSelectCol');
+    const sel = document.getElementById('payerIdSelect');
+    const hid = document.getElementById('payerIdHidden');
+    if (v === 'cash') {
+        col.style.display = 'none';
+        hid.value = '';
+    } else {
+        col.style.display = 'block';
+        document.getElementById('payerSelectLabel').textContent = v === 'corporate' ? 'Select Corporate' : 'Select Insurance';
+        const opts = PAYER_OPTIONS[v] || [];
+        sel.innerHTML = '<option value="">-- Select --</option>' + opts.map(p => '<option value="' + p.id + '">' + p.name + '</option>').join('');
+        sel.onchange = () => {
+            hid.value = sel.value || '';
+            const dq = document.getElementById('drugSearch').value.trim();
+            if (dq.length >= 2) runDrugSearch(dq);
+        };
+    }
+    const dq = document.getElementById('drugSearch').value.trim();
+    if (dq.length >= 2) runDrugSearch(dq);
+}
+
+function antenatalDrugSearchSuffix() {
+    const params = new URLSearchParams();
+    const payerType = document.getElementById('payerType')?.value || 'cash';
+    if (payerType === 'cash') {
+        params.set('price_basis', 'cash');
+    } else {
+        const hid = document.getElementById('payerIdHidden')?.value?.trim();
+        if (hid) params.set('payer_id', hid);
+    }
+    if (selectedPatient && selectedPatient.id) params.set('patient_id', selectedPatient.id);
+    const s = params.toString();
+    return s ? ('&' + s) : '';
+}
+
+let patientTimeout;
+document.getElementById('patientSearchInput').addEventListener('input', function() {
+    clearTimeout(patientTimeout);
+    const q = this.value.trim();
+    const dd = document.getElementById('patientDropdown');
+    if (q.length < 2) { dd.innerHTML = ''; dd.style.display = 'none'; return; }
+    patientTimeout = setTimeout(() => {
+        fetch(`{% url 'hospital:api_patient_search' %}?q=${encodeURIComponent(q)}&antenatal=1`)
+            .then(r => r.json())
+            .then(data => {
+                if (!data.patients || data.patients.length === 0) {
+                    dd.innerHTML = '<div class="list-group-item text-muted">No patients found</div>';
+                } else {
+                    dd.innerHTML = data.patients.map(p => `
+                        <div class="list-group-item list-group-item-action" role="button"
+                             data-id="${p.id}" data-name="${p.name}" data-mrn="${p.mrn}" data-payer="${p.payer_type || 'cash'}">
+                            <strong>${p.name}</strong> <span class="badge bg-secondary">${p.mrn}</span><br>
+                            <small class="text-muted">${p.phone || '-'}</small>
+                            <span class="badge bg-info float-end">${(p.payer_type || 'cash').toUpperCase()}</span>
+                        </div>`).join('');
+                }
+                dd.style.display = 'block';
+            });
+    }, 250);
+});
+
+document.getElementById('patientDropdown').addEventListener('click', function(e) {
+    const el = e.target.closest('.list-group-item');
+    if (!el || !el.dataset.id) return;
+    selectedPatient = { id: el.dataset.id, name: el.dataset.name, mrn: el.dataset.mrn, payer: el.dataset.payer };
+    document.getElementById('patientId').value = selectedPatient.id;
+    document.getElementById('patientSearchInput').value = selectedPatient.name + ' (MRN: ' + selectedPatient.mrn + ')';
+    document.getElementById('patientName').textContent = selectedPatient.name;
+    document.getElementById('patientMRN').textContent = selectedPatient.mrn;
+    document.getElementById('patientPayer').textContent = (selectedPatient.payer || 'cash').toUpperCase();
+    document.getElementById('patientInfo').style.display = 'block';
+    document.getElementById('patientDropdown').style.display = 'none';
+    updateSummary();
+    const dq = document.getElementById('drugSearch').value.trim();
+    if (dq.length >= 2) runDrugSearch(dq);
+});
+document.getElementById('clearPatient')?.addEventListener('click', function(e) {
+    e.preventDefault();
+    selectedPatient = null;
+    document.getElementById('patientId').value = '';
+    document.getElementById('patientSearchInput').value = '';
+    document.getElementById('patientInfo').style.display = 'none';
+    updateSummary();
+    const dq = document.getElementById('drugSearch').value.trim();
+    if (dq.length >= 2) runDrugSearch(dq);
+});
+
+function runDrugSearch(query) {
+    query = (query || document.getElementById('drugSearch').value.trim() || '').trim();
+    const results = document.getElementById('drugSearchResults');
+    if (query.length < 2) {
+        results.innerHTML = '<div class="list-group-item text-muted">Type 2+ characters</div>';
+        return;
+    }
+    const drugUrl = `{% url 'hospital:api_search_drugs' %}?q=${encodeURIComponent(query)}` + antenatalDrugSearchSuffix();
+    fetch(drugUrl)
+        .then(r => r.json())
+        .then(data => {
+            if (!data.drugs || data.drugs.length === 0) {
+                results.innerHTML = '<div class="list-group-item text-muted">No drugs found</div>';
+                return;
+            }
+            results.innerHTML = data.drugs.map(d => {
+                const added = selectedItems.some(i => i.drug_id === d.id);
+                const enc = encodeURIComponent(JSON.stringify(d));
+                return `<div class="list-group-item list-group-item-action drug-row ${added ? 'bg-light' : ''}" role="button" data-drug="${enc}">
+                    <strong>${d.name}</strong> ${d.strength || ''} ${d.form || ''}<br>
+                    <small class="text-muted">Stock: ${d.stock_available || 0} | GHS ${d.unit_price}/unit</small>
+                    ${added ? '<span class="badge bg-secondary float-end">Added</span>' : '<button type="button" class="btn btn-sm btn-success float-end add-drug-btn">+ Add</button>'}
+                </div>`;
+            }).join('');
+            results.querySelectorAll('.add-drug-btn').forEach(btn => {
+                btn.onclick = function(e) {
+                    e.stopPropagation();
+                    const row = this.closest('.drug-row');
+                    if (row && row.dataset.drug) {
+                        try {
+                            const drug = JSON.parse(decodeURIComponent(row.dataset.drug));
+                            addItem(drug);
+                            runDrugSearch(document.getElementById('drugSearch').value);
+                        } catch(err) {}
+                    }
+                };
+            });
+        });
+}
+document.getElementById('drugSearch').addEventListener('input', function() {
+    clearTimeout(window.drugTimeout);
+    window.drugTimeout = setTimeout(() => runDrugSearch(this.value), 300);
+});
+document.getElementById('searchDrugBtn').addEventListener('click', () => runDrugSearch(document.getElementById('drugSearch').value));
+
+document.querySelectorAll('.quick-add-btn').forEach(btn => {
+    btn.onclick = function() {
+        runDrugSearch(this.dataset.name);
+        setTimeout(() => {
+            const firstRow = document.querySelector('#drugSearchResults .drug-row:not(.bg-light)');
+            if (firstRow && firstRow.dataset.drug) {
+                try {
+                    const drug = JSON.parse(decodeURIComponent(firstRow.dataset.drug));
+                    addItem(drug);
+                } catch(err) {}
+            }
+        }, 400);
+    };
+});
+
+function addItem(drug) {
+    if (selectedItems.some(i => i.drug_id === drug.id)) {
+        const idx = selectedItems.findIndex(i => i.drug_id === drug.id);
+        selectedItems[idx].quantity = (selectedItems[idx].quantity || 1) + 1;
+    } else {
+        selectedItems.push({
+            drug_id: drug.id,
+            name: drug.name,
+            strength: drug.strength,
+            form: drug.form,
+            unit_price: parseFloat(drug.unit_price),
+            quantity: 1,
+            stock_available: drug.stock_available
+        });
+    }
+    renderItems();
+}
+
+function removeItem(index) {
+    selectedItems.splice(index, 1);
+    renderItems();
+}
+
+function renderItems() {
+    const container = document.getElementById('selectedItems');
+    const clearRow = document.getElementById('clearAllRow');
+    if (selectedItems.length === 0) {
+        container.innerHTML = '<p class="text-muted mb-0">No items added yet</p>';
+        clearRow.style.display = 'none';
+    } else {
+        container.innerHTML = selectedItems.map((item, i) => {
+            const tot = (item.unit_price * (item.quantity || 1)).toFixed(2);
+            return `<div class="d-flex justify-content-between align-items-center py-2 border-bottom">
+                <div>
+                    <strong>${item.name}</strong> ${item.strength || ''} ${item.form || ''}<br>
+                    <small>GHS ${item.unit_price.toFixed(2)} × <input type="number" class="form-control form-control-sm d-inline-block" style="width:60px" value="${item.quantity}" min="1" data-idx="${i}" onchange="updateQty(${i}, this.value)"> = GHS ${tot}</small>
+                </div>
+                <button type="button" class="btn btn-danger btn-sm" onclick="removeItem(${i})"><i class="bi bi-trash"></i></button>
+            </div>`;
+        }).join('');
+        clearRow.style.display = 'block';
+    }
+    updateSummary();
+}
+
+function updateQty(idx, val) {
+    const q = parseInt(val) || 1;
+    if (selectedItems[idx]) selectedItems[idx].quantity = Math.max(1, q);
+    renderItems();
+}
+window.updateQty = updateQty;
+
+document.getElementById('clearAllBtn')?.addEventListener('click', function() {
+    selectedItems = [];
+    renderItems();
+});
+
+function updateSummary() {
+    document.getElementById('sumPatient').textContent = selectedPatient ? selectedPatient.name : '-';
+    document.getElementById('sumItems').textContent = selectedItems.length;
+    const total = selectedItems.reduce((s, i) => s + (i.unit_price * (i.quantity || 1)), 0);
+    document.getElementById('sumTotal').textContent = total.toFixed(2);
+    document.getElementById('submitBtn').disabled = !selectedPatient || selectedItems.length === 0;
+}
+
+document.getElementById('antenatalForm').addEventListener('submit', function(e) {
+    if (!selectedPatient || selectedItems.length === 0) {
+        e.preventDefault();
+        alert('Please select a patient and add at least one item.');
+        return;
+    }
+    const btn = document.getElementById('submitBtn');
+    if (btn.dataset.submitting === '1') {
+        e.preventDefault();
+        return;
+    }
+    const payerSelect = document.getElementById('payerIdSelect');
+    if (payerSelect && payerSelect.offsetParent) {
+        document.getElementById('payerIdHidden').value = payerSelect.value || '';
+    }
+    document.getElementById('itemsData').value = JSON.stringify(selectedItems.map(i => ({
+        drug_id: i.drug_id,
+        quantity: i.quantity || 1,
+        unit_price: i.unit_price,
+        dosage_instructions: ''
+    })));
+    btn.dataset.submitting = '1';
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Creating bill…';
+});
+
+handlePayerChange();
+</script>
+{% endblock %}

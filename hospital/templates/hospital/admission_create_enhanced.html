@@ -238,7 +238,13 @@
                 <span>Select Patient to Admit</span>
             </div>
             
-            <input type="text" id="patientSearch" class="form-input-modern mb-3" placeholder="🔍 Search by name or MRN..." oninput="filterPatients(this.value)">
+            <input type="text" id="patientSearch" class="form-input-modern mb-3" placeholder="🔍 Filter list by name or MRN..." oninput="filterPatients(this.value)" title="Enter text">
+            
+            <div class="mb-3 p-3 border rounded" style="background: #f8fafc;">
+                <label class="form-label-modern small text-muted mb-2">Can't find the patient above? Search any patient:</label>
+                <input type="text" id="anyPatientSearch" class="form-input-modern" placeholder="Type name or MRN to search all patients..." autocomplete="off" style="max-width: 100%;">
+                <div id="anyPatientResults" class="list-group mt-2" style="max-height: 200px; overflow-y: auto; display: none;"></div>
+            </div>
             
             <div style="max-height: 400px; overflow-y: auto;">
                 {% for encounter in encounters %}
@@ -263,12 +269,13 @@
                 {% empty %}
                 <div class="text-center py-5">
                     <i class="bi bi-inbox" style="font-size: 64px; color: #ccc;"></i>
-                    <p class="text-muted mt-3">No active encounters ready for admission</p>
+                    <p class="text-muted mt-3">No recent encounters. Use the search above to find and admit any patient.</p>
                 </div>
                 {% endfor %}
             </div>
             
             <input type="hidden" name="encounter_id" id="selectedEncounterId">
+            <input type="hidden" name="patient_id" id="selectedPatientId">
             
             <div class="text-center mt-4">
                 <button type="button" class="btn-modern-large btn-admit" onclick="nextStep(2)" id="step1NextBtn" disabled>
@@ -279,14 +286,14 @@
         </div>
         
         <!-- Step 2: Select Bed -->
-        <div class="admission-card" id="step2Panel" style="display: none;">
+        <div class="admission-card" id="step2Panel" class="d-none">
             <div class="section-title">
                 <div class="section-icon"><i class="bi bi-bed"></i></div>
                 <span>Select Available Bed</span>
             </div>
             
             <div class="mb-3">
-                <select class="form-input-modern" onchange="filterBedsByWard(this.value)">
+                <select class="form-input-modern" onchange="filterBedsByWard(this.value)" title="Select option" aria-label="Select option">
                     <option value="">All Wards</option>
                     {% regroup available_beds by ward as beds_by_ward %}
                     {% for ward_group in beds_by_ward %}
@@ -325,7 +332,7 @@
         </div>
         
         <!-- Step 3: Confirm and Details -->
-        <div class="admission-card" id="step3Panel" style="display: none;">
+        <div class="admission-card" id="step3Panel" class="d-none">
             <div class="section-title">
                 <div class="section-icon"><i class="bi bi-check-circle"></i></div>
                 <span>Confirm Admission Details</span>
@@ -348,7 +355,7 @@
                            class="form-input-modern" 
                            list="diagnosisList"
                            placeholder="Type to search: e.g., 'Pneumonia' or 'J18.9'"
-                           autocomplete="off">
+                           autocomplete="off" title="Enter text" placeholder="Enter text">
                     <datalist id="diagnosisList">
                         {% if diagnosis_codes %}
                         {% for code in diagnosis_codes %}
@@ -396,14 +403,30 @@ function selectPatient(encounterId, patientName, mrn) {
     });
     
     // Add selection to clicked card
-    event.target.closest('.patient-select-card').classList.add('selected');
+    if (event && event.target) event.target.closest('.patient-select-card')?.classList.add('selected');
     
-    // Store selection
-    document.getElementById('selectedEncounterId').value = encounterId;
+    // Store selection - use encounter
+    document.getElementById('selectedEncounterId').value = encounterId || '';
+    document.getElementById('selectedPatientId').value = '';
     selectedPatientInfo = {id: encounterId, name: patientName, mrn: mrn};
     
     // Enable next button
     document.getElementById('step1NextBtn').disabled = false;
+}
+
+function selectPatientFromSearch(patientId, encounterId, patientName, mrn) {
+    // Clear list selection
+    document.querySelectorAll('.patient-select-card').forEach(card => {
+        card.classList.remove('selected');
+    });
+    
+    document.getElementById('selectedEncounterId').value = encounterId || '';
+    document.getElementById('selectedPatientId').value = patientId || '';
+    selectedPatientInfo = {id: encounterId || patientId, name: patientName, mrn: mrn};
+    document.getElementById('step1NextBtn').disabled = false;
+    
+    document.getElementById('anyPatientSearch').value = patientName + ' (MRN: ' + mrn + ')';
+    document.getElementById('anyPatientResults').style.display = 'none';
 }
 
 function selectBed(bedId, bedNumber, wardName) {
@@ -475,6 +498,53 @@ function filterBedsByWard(wardId) {
     });
 }
 
+// Search any patient for admission (all patients can be put to bed)
+let anyPatientSearchTimeout;
+document.addEventListener('DOMContentLoaded', function() {
+    const input = document.getElementById('anyPatientSearch');
+    const resultsDiv = document.getElementById('anyPatientResults');
+    if (!input || !resultsDiv) return;
+    
+    input.addEventListener('input', function() {
+        const q = (input.value || '').trim();
+        clearTimeout(anyPatientSearchTimeout);
+        if (q.length < 2) {
+            resultsDiv.style.display = 'none';
+            resultsDiv.innerHTML = '';
+            return;
+        }
+        anyPatientSearchTimeout = setTimeout(function() {
+            fetch('{% url "hospital:api_admission_patient_search" %}?q=' + encodeURIComponent(q))
+                .then(r => r.json())
+                .then(data => {
+                    const results = data.results || [];
+                    if (results.length === 0) {
+                        resultsDiv.innerHTML = '<div class="list-group-item text-muted">No patients found</div>';
+                    } else {
+                        resultsDiv.innerHTML = results.map(function(r) {
+                            return '<a href="#" class="list-group-item list-group-item-action" data-id="' + r.id + '" data-enc="' + (r.encounter_id || '') + '" data-name="' + (r.name || '').replace(/"/g, '&quot;') + '" data-mrn="' + (r.mrn || 'N/A').replace(/"/g, '&quot;') + '">' + r.display + '</a>';
+                        }).join('');
+                        resultsDiv.querySelectorAll('a').forEach(function(a) {
+                            a.addEventListener('click', function(e) {
+                                e.preventDefault();
+                                selectPatientFromSearch(a.dataset.id, a.dataset.enc || null, a.dataset.name, a.dataset.mrn);
+                            });
+                        });
+                    }
+                    resultsDiv.style.display = 'block';
+                })
+                .catch(function() {
+                    resultsDiv.innerHTML = '<div class="list-group-item text-danger">Error searching</div>';
+                    resultsDiv.style.display = 'block';
+                });
+        }, 300);
+    });
+    
+    input.addEventListener('blur', function() {
+        setTimeout(function() { resultsDiv.style.display = 'none'; }, 200);
+    });
+});
+
 // Auto-select if bed was pre-selected in URL
 {% if selected_encounter %}
 window.addEventListener('DOMContentLoaded', function() {
@@ -485,7 +555,7 @@ window.addEventListener('DOMContentLoaded', function() {
     };
     document.getElementById('selectedEncounterId').value = '{{ selected_encounter.pk }}';
     document.getElementById('step1NextBtn').disabled = false;
-    showStep(2);
+    nextStep(2);
 });
 {% elif selected_bed %}
 window.addEventListener('DOMContentLoaded', function() {

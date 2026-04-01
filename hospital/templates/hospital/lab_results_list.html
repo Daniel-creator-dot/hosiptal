@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load static humanize %}
+{% load static humanize hospital_extras %}
 
 {% block title %}Lab Results - HMS{% endblock %}
 {% block page_title %}🔬 Laboratory Results Archive{% endblock %}
@@ -379,7 +379,8 @@
     <form method="get">
         <div class="search-box">
             <i class="bi bi-search"></i>
-            <input type="text" name="q" value="{{ query }}" placeholder="Search by patient name, test name, MRN..." autocomplete="off">
+            <input type="text" name="q" id="labResultsPatientSearch" value="{{ query }}" placeholder="Search by patient name, test name, MRN..." autocomplete="off" title="Enter text" placeholder="Enter text">
+            <input type="hidden" name="patient_id" id="selectedLabResultsPatientId" value="">
             <button type="submit" class="btn btn-primary-modern">Search</button>
         </div>
         
@@ -396,9 +397,9 @@
             <a href="?status=completed" class="filter-pill {% if status_filter == 'completed' %}active{% endif %}">
                 <i class="bi bi-check-circle me-1"></i>Completed
             </a>
-            <button type="button" class="filter-pill" onclick="window.print()">
-                <i class="bi bi-printer me-1"></i>Print
-            </button>
+            <a href="?{% if status_filter %}status={{ status_filter }}&{% endif %}{% if query %}q={{ query }}&{% endif %}print=1" target="_blank" class="filter-pill">
+                <i class="bi bi-printer me-1"></i>Print Archive
+            </a>
         </div>
     </form>
 </div>
@@ -429,6 +430,7 @@
                 <a href="{% url 'hospital:patient_detail' result.order.encounter.patient.pk %}" class="patient-name" onclick="event.stopPropagation()">
                     {{ result.order.encounter.patient.full_name }}
                 </a>
+                <div class="text-muted small">MRN: {{ result.order.encounter.patient.mrn|default:"—" }}</div>
                 <div class="test-name">{{ result.test.name }} ({{ result.test.code }})</div>
             </div>
             
@@ -454,10 +456,19 @@
                 <span>{{ result.verified_at|date:"d M Y"|default:result.created|date:"d M Y" }}</span>
             </div>
             
-            {% if result.verified_by %}
+            {% if result.get_expected_completion_display and result.status != 'completed' %}
+            <div class="detail-item">
+                <i class="bi bi-calendar-clock"></i>
+                <span class="{% if result.expected_completion_datetime %}fw-bold text-primary{% endif %}">
+                    Expected: {{ result.get_expected_completion_display }}
+                </span>
+            </div>
+            {% endif %}
+            
+            {% if result.verified_by and result.verified_by.user %}
             <div class="detail-item">
                 <i class="bi bi-person-check"></i>
-                <span>{{ result.verified_by.user.get_full_name|default:result.verified_by.user.username }}</span>
+                <span>{{ result.verified_by.user.get_full_name|default:result.verified_by.user.username|default:"Not assigned" }}</span>
             </div>
             {% endif %}
             
@@ -477,13 +488,13 @@
         </div>
         
         <div class="result-actions" onclick="event.stopPropagation()">
-            <a href="{% url 'hospital:tabular_lab_report' result.pk %}" class="action-btn primary">
-                <i class="bi bi-table"></i>
-                View Full Report
+            <a href="{% url 'hospital:print_lab_report' result.pk %}" target="_blank" class="action-btn primary" onclick="event.stopPropagation()">
+                <i class="bi bi-file-earmark-medical"></i>
+                View Report
             </a>
             
             {% if result.status != 'completed' %}
-            <a href="{% url 'hospital:edit_lab_result' result.pk %}" class="action-btn success">
+            <a href="{% lab_result_entry_url result %}" class="action-btn success" title="Enter results for {{ result.order.encounter.patient.full_name }} — {{ result.test.name }}">
                 <i class="bi bi-pencil"></i>
                 Enter Results
             </a>
@@ -576,9 +587,9 @@
     <button class="fab-btn" onclick="exportToExcel()" title="Export to Excel">
         <i class="bi bi-file-earmark-spreadsheet"></i>
     </button>
-    <button class="fab-btn" onclick="window.print()" title="Print">
+    <a href="?{% if status_filter %}status={{ status_filter }}&{% endif %}{% if query %}q={{ query }}&{% endif %}print=1" target="_blank" class="fab-btn" title="Print Archive" style="text-decoration: none; color: white;">
         <i class="bi bi-printer"></i>
-    </button>
+    </a>
     <button class="fab-btn" onclick="location.reload()" title="Refresh">
         <i class="bi bi-arrow-clockwise"></i>
     </button>
@@ -596,10 +607,22 @@ function toggleDetails(id) {
 
 // Print functionality now handled by dedicated print view
 
-// Export to Excel (placeholder)
+// Export to Excel
 function exportToExcel() {
-    alert('Exporting to Excel... Feature coming soon!');
-    // Implementation would convert table data to Excel format
+    // Build URL with current filters
+    const url = new URL('{% url "hospital:export_lab_results_excel" %}', window.location.origin);
+    const params = new URLSearchParams(window.location.search);
+    
+    // Add current filters to export URL
+    if (params.get('status')) {
+        url.searchParams.set('status', params.get('status'));
+    }
+    if (params.get('q')) {
+        url.searchParams.set('q', params.get('q'));
+    }
+    
+    // Trigger download
+    window.location.href = url.toString();
 }
 
 // Keyboard shortcuts
@@ -607,7 +630,9 @@ document.addEventListener('keydown', function(e) {
     // Ctrl/Cmd + P for print
     if ((e.ctrlKey || e.metaKey) && e.key === 'p') {
         e.preventDefault();
-        window.print();
+        const url = new URL(window.location.href);
+        url.searchParams.set('print', '1');
+        window.open(url.toString(), '_blank');
     }
     // Ctrl/Cmd + F for search
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
@@ -639,4 +664,30 @@ setInterval(() => {
     }
 }
 </style>
+
+<script>
+// Initialize autocomplete for lab results patient search
+document.addEventListener('DOMContentLoaded', function() {
+    const labResultsPatientSearch = document.getElementById('labResultsPatientSearch');
+    if (labResultsPatientSearch) {
+        new AutocompleteSearch(labResultsPatientSearch, {
+            apiUrl: '{% url "hospital:api_autocomplete_patients" %}',
+            minChars: 2,
+            delay: 300,
+            maxResults: 20,
+            displayField: 'display',
+            valueField: 'id',
+            resultsKey: 'results',
+            subtextField: 'subtext',
+            onSelect: function(patient, input) {
+                input.value = patient.display;
+                const patientIdField = document.getElementById('selectedLabResultsPatientId');
+                if (patientIdField) {
+                    patientIdField.value = patient.id;
+                }
+            }
+        });
+    }
+});
+</script>
 {% endblock %}

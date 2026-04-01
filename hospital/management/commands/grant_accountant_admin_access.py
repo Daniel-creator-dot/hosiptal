@@ -40,6 +40,10 @@ class Command(BaseCommand):
             'registrationfee', 'cashsale', 'accountingcorporateaccount',
             'withholdingreceivable', 'deposit', 'initialrevaluation',
             'accountcategory', 'fiscalyear', 'accountingperiod', 'journal',
+            'pettycashtransaction',  # Petty cash transactions
+            'insurancereceivableentry',  # Insurance Receivable Entry (PrimeCare)
+            'insurancepaymentreceived',  # Insurance Payment Received (PrimeCare)
+            'undepositedfunds',  # Undeposited Funds (PrimeCare)
         ]
         
         permissions_granted = 0
@@ -85,7 +89,7 @@ class Command(BaseCommand):
             total_perms = 0
             for user in users:
                 role = get_user_role(user)
-                if role == 'accountant':
+                if role in ('accountant', 'senior_account_officer'):
                     user.is_staff = True
                     user.save()
                     perms = self.grant_accounting_permissions(user)
@@ -93,14 +97,14 @@ class Command(BaseCommand):
                     total_perms += perms
                     self.stdout.write(
                         self.style.SUCCESS(
-                            f'Granted admin access to {user.username} (accountant) '
+                            f'Granted admin access to {user.username} ({role}) '
                             f'({perms} permissions granted)'
                         )
                     )
             
             self.stdout.write(
                 self.style.SUCCESS(
-                    f'Granted admin access to {count} accountant users '
+                    f'Granted admin access to {count} accountant/senior account officer users '
                     f'({total_perms} total permissions granted)'
                 )
             )

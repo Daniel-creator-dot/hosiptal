@@ -9,24 +9,54 @@ from django.db.models import Q, Count
 from django.core.paginator import Paginator
 from django.http import JsonResponse
 from django.utils import timezone
-from django.db import transaction
+from django.db import transaction, ProgrammingError, OperationalError, connection
 import re
 from datetime import datetime
 
 from .models import Patient, Encounter, Staff
-from .models_legacy_patients import LegacyPatient
+try:
+    from .models_legacy_patients import LegacyPatient
+    LEGACY_PATIENT_AVAILABLE = True
+except Exception:
+    LegacyPatient = None
+    LEGACY_PATIENT_AVAILABLE = False
+
 from .models_legacy_mapping import LegacyIDMapping
+
+
+def _legacy_table_exists():
+    """Check if patient_data table exists"""
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'patient_data'
+                );
+            """)
+            return cursor.fetchone()[0]
+    except Exception:
+        return False
 
 
 @login_required
 def legacy_patient_list(request):
     """View all legacy patients with migration status"""
+    if not LEGACY_PATIENT_AVAILABLE or not _legacy_table_exists():
+        messages.warning(request, 'Legacy patient table (patient_data) does not exist in the database.')
+        return redirect('hospital:dashboard')
+    
     # Get search query
     search_query = request.GET.get('q', '')
     filter_status = request.GET.get('status', 'all')  # all, migrated, not_migrated
     
-    # Get all legacy patients
-    legacy_patients = LegacyPatient.objects.all().order_by('-id')
+    try:
+        # Get all legacy patients
+        legacy_patients = LegacyPatient.objects.all().order_by('-id')
+    except (ProgrammingError, OperationalError):
+        messages.error(request, 'Legacy patient table is not accessible.')
+        return redirect('hospital:dashboard')
     
     # Apply search filter
     if search_query:
@@ -63,10 +93,16 @@ def legacy_patient_list(request):
     page_obj = paginator.get_page(page_number)
     
     # Statistics
-    total_legacy = LegacyPatient.objects.count()
-    total_migrated = Patient.objects.filter(mrn__startswith='PMC-LEG-', is_deleted=False).count()
-    total_not_migrated = total_legacy - total_migrated
-    migration_percentage = (total_migrated / total_legacy * 100) if total_legacy > 0 else 0
+    try:
+        total_legacy = LegacyPatient.objects.count()
+        total_migrated = Patient.objects.filter(mrn__startswith='PMC-LEG-', is_deleted=False).count()
+        total_not_migrated = total_legacy - total_migrated
+        migration_percentage = (total_migrated / total_legacy * 100) if total_legacy > 0 else 0
+    except (ProgrammingError, OperationalError):
+        total_legacy = 0
+        total_migrated = 0
+        total_not_migrated = 0
+        migration_percentage = 0
     
     context = {
         'page_obj': page_obj,
@@ -84,7 +120,15 @@ def legacy_patient_list(request):
 @login_required
 def legacy_patient_detail(request, pid):
     """View details of a legacy patient"""
-    legacy_patient = get_object_or_404(LegacyPatient, pid=pid)
+    if not LEGACY_PATIENT_AVAILABLE or not _legacy_table_exists():
+        messages.warning(request, 'Legacy patient table (patient_data) does not exist in the database.')
+        return redirect('hospital:dashboard')
+    
+    try:
+        legacy_patient = get_object_or_404(LegacyPatient, pid=pid)
+    except (ProgrammingError, OperationalError):
+        messages.error(request, 'Legacy patient table is not accessible.')
+        return redirect('hospital:dashboard')
     mrn = f'PMC-LEG-{str(legacy_patient.pid).zfill(6)}'
     
     # Check if migrated
@@ -115,7 +159,15 @@ def migrate_legacy_patient(request, pid):
     if request.method != 'POST':
         return JsonResponse({'error': 'POST required'}, status=405)
     
-    legacy_patient = get_object_or_404(LegacyPatient, pid=pid)
+    if not LEGACY_PATIENT_AVAILABLE or not _legacy_table_exists():
+        messages.warning(request, 'Legacy patient table (patient_data) does not exist in the database.')
+        return redirect('hospital:dashboard')
+    
+    try:
+        legacy_patient = get_object_or_404(LegacyPatient, pid=pid)
+    except (ProgrammingError, OperationalError):
+        messages.error(request, 'Legacy patient table is not accessible.')
+        return redirect('hospital:dashboard')
     mrn = f'PMC-LEG-{str(legacy_patient.pid).zfill(6)}'
     
     # Check if already migrated
@@ -175,45 +227,99 @@ def migrate_legacy_patient(request, pid):
 @login_required
 def migration_dashboard(request):
     """Dashboard showing migration status and tools"""
-    # Get migration statistics
-    total_legacy = LegacyPatient.objects.count()
-    total_django = Patient.objects.filter(is_deleted=False).count()
-    total_migrated = Patient.objects.filter(mrn__startswith='PMC-LEG-', is_deleted=False).count()
-    total_not_migrated = total_legacy - total_migrated
-    migration_percentage = (total_migrated / total_legacy * 100) if total_legacy > 0 else 0
+    # Check if legacy table exists
+    legacy_table_exists = _legacy_table_exists()
     
-    # Get recent migrations
-    recent_migrations = LegacyIDMapping.objects.filter(
-        legacy_table='patient_data'
-    ).select_related().order_by('-migrated_at')[:20]
+    if not LEGACY_PATIENT_AVAILABLE or not legacy_table_exists:
+        messages.info(
+            request,
+            'Legacy patient table (patient_data) does not exist in the database. '
+            'This table is only available when connected to the legacy MySQL database. '
+            'Legacy patients have been migrated to the main Patient model.'
+        )
+        # Show dashboard with only Django patient stats
+        total_django = Patient.objects.filter(is_deleted=False).count()
+        total_migrated = Patient.objects.filter(mrn__startswith='PMC-LEG-', is_deleted=False).count()
+        
+        context = {
+            'total_legacy': 0,
+            'total_django': total_django,
+            'total_migrated': total_migrated,
+            'total_not_migrated': 0,
+            'migration_percentage': 100.0 if total_migrated > 0 else 0.0,
+            'recent_migrations': [],
+            'unmigrated_sample': [],
+            'recent_migrated': Patient.objects.filter(
+                mrn__startswith='PMC-LEG-',
+                is_deleted=False
+            ).order_by('-created')[:10],
+            'legacy_table_exists': False,
+        }
+        return render(request, 'hospital/legacy_patients/migration_dashboard.html', context)
     
-    # Get unmigrated patients sample
-    unmigrated_sample = []
-    for lp in LegacyPatient.objects.all()[:100]:
-        mrn = f'PMC-LEG-{str(lp.pid).zfill(6)}'
-        if not Patient.objects.filter(mrn=mrn, is_deleted=False).exists():
-            unmigrated_sample.append(lp)
-            if len(unmigrated_sample) >= 10:
-                break
-    
-    # Get recent migrated patients
-    recent_migrated = Patient.objects.filter(
-        mrn__startswith='PMC-LEG-',
-        is_deleted=False
-    ).order_by('-created')[:10]
-    
-    context = {
-        'total_legacy': total_legacy,
-        'total_django': total_django,
-        'total_migrated': total_migrated,
-        'total_not_migrated': total_not_migrated,
-        'migration_percentage': round(migration_percentage, 1),
-        'recent_migrations': recent_migrations,
-        'unmigrated_sample': unmigrated_sample,
-        'recent_migrated': recent_migrated,
-    }
-    
-    return render(request, 'hospital/legacy_patients/migration_dashboard.html', context)
+    try:
+        # Get migration statistics
+        total_legacy = LegacyPatient.objects.count()
+        total_django = Patient.objects.filter(is_deleted=False).count()
+        total_migrated = Patient.objects.filter(mrn__startswith='PMC-LEG-', is_deleted=False).count()
+        total_not_migrated = total_legacy - total_migrated
+        migration_percentage = (total_migrated / total_legacy * 100) if total_legacy > 0 else 0
+        
+        # Get recent migrations
+        recent_migrations = LegacyIDMapping.objects.filter(
+            legacy_table='patient_data'
+        ).select_related().order_by('-migrated_at')[:20]
+        
+        # Get unmigrated patients sample
+        unmigrated_sample = []
+        for lp in LegacyPatient.objects.all()[:100]:
+            mrn = f'PMC-LEG-{str(lp.pid).zfill(6)}'
+            if not Patient.objects.filter(mrn=mrn, is_deleted=False).exists():
+                unmigrated_sample.append(lp)
+                if len(unmigrated_sample) >= 10:
+                    break
+        
+        # Get recent migrated patients
+        recent_migrated = Patient.objects.filter(
+            mrn__startswith='PMC-LEG-',
+            is_deleted=False
+        ).order_by('-created')[:10]
+        
+        context = {
+            'total_legacy': total_legacy,
+            'total_django': total_django,
+            'total_migrated': total_migrated,
+            'total_not_migrated': total_not_migrated,
+            'migration_percentage': round(migration_percentage, 1),
+            'recent_migrations': recent_migrations,
+            'unmigrated_sample': unmigrated_sample,
+            'recent_migrated': recent_migrated,
+            'legacy_table_exists': True,
+        }
+        
+        return render(request, 'hospital/legacy_patients/migration_dashboard.html', context)
+        
+    except (ProgrammingError, OperationalError) as e:
+        messages.error(request, f'Error accessing legacy patient data: {str(e)}')
+        # Return dashboard with default values
+        total_django = Patient.objects.filter(is_deleted=False).count()
+        total_migrated = Patient.objects.filter(mrn__startswith='PMC-LEG-', is_deleted=False).count()
+        
+        context = {
+            'total_legacy': 0,
+            'total_django': total_django,
+            'total_migrated': total_migrated,
+            'total_not_migrated': 0,
+            'migration_percentage': 100.0 if total_migrated > 0 else 0.0,
+            'recent_migrations': [],
+            'unmigrated_sample': [],
+            'recent_migrated': Patient.objects.filter(
+                mrn__startswith='PMC-LEG-',
+                is_deleted=False
+            ).order_by('-created')[:10],
+            'legacy_table_exists': False,
+        }
+        return render(request, 'hospital/legacy_patients/migration_dashboard.html', context)
 
 
 @login_required

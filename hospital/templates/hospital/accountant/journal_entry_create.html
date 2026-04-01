@@ -1,0 +1,189 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Create Journal Entry - HMS{% endblock %}
+{% block page_title %}Create Journal Entry{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-lg-10 mx-auto">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white border-0 py-3">
+                    <h4 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Create Journal Entry</h4>
+                </div>
+                <div class="card-body">
+                    <form method="post" id="journalEntryForm">
+                        {% csrf_token %}
+                        
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-4">
+                                <label class="form-label">Journal <span class="text-danger">*</span></label>
+                                <select name="journal" class="form-select" required>
+                                    <option value="">Select Journal</option>
+                                    {% for journal in journals %}
+                                    <option value="{{ journal.id }}">{{ journal.code }} - {{ journal.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Entry Date <span class="text-danger">*</span></label>
+                                <input type="date" name="entry_date" class="form-control" value="{% now 'Y-m-d' %}" required>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Reference</label>
+                                <input type="text" name="reference" class="form-control" placeholder="Optional reference">
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="form-label">Description <span class="text-danger">*</span></label>
+                            <textarea name="description" class="form-control" rows="2" required></textarea>
+                        </div>
+
+                        <!-- Journal Entry Lines -->
+                        <div class="mb-4">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h5>Journal Entry Lines</h5>
+                                <button type="button" class="btn btn-sm btn-primary" onclick="addJournalLine()">
+                                    <i class="bi bi-plus-circle me-1"></i>Add Line
+                                </button>
+                            </div>
+                            <div id="journalLines">
+                                <!-- Lines will be added dynamically -->
+                            </div>
+                            <input type="hidden" name="line_count" id="line_count" value="0">
+                        </div>
+
+                        <!-- Totals -->
+                        <div class="row mb-4">
+                            <div class="col-md-6">
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        <strong>Total Debit:</strong>
+                                        <span id="total_debit" class="h5">GHS 0.00</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        <strong>Total Credit:</strong>
+                                        <span id="total_credit" class="h5">GHS 0.00</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="balance_warning" class="alert alert-warning d-none">
+                            <i class="bi bi-exclamation-triangle me-2"></i>Debits and credits must balance!
+                        </div>
+
+                        <div class="d-flex justify-content-between">
+                            <a href="{% url 'hospital:journal_entry_list' %}" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-left me-2"></i>Cancel
+                            </a>
+                            <button type="submit" class="btn btn-primary" id="submitBtn" disabled>
+                                <i class="bi bi-check-circle me-2"></i>Create Journal Entry
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let lineCounter = 0;
+const accounts = [
+    {% for account in accounts %}
+    {id: '{{ account.id }}', code: '{{ account.account_code }}', name: '{{ account.account_name }}'},
+    {% endfor %}
+];
+
+function addJournalLine() {
+    lineCounter++;
+    const lineHtml = `
+        <div class="card mb-3 journal-line" data-line="${lineCounter}">
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Account <span class="text-danger">*</span></label>
+                        <select name="line_${lineCounter}_account" class="form-select account-select" required>
+                            <option value="">Select Account</option>
+                            {% for account in accounts %}
+                            <option value="{{ account.id }}">{{ account.account_code }} - {{ account.account_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Debit</label>
+                        <input type="number" name="line_${lineCounter}_debit" class="form-control debit-input" step="0.01" min="0" value="0" onchange="updateTotals()">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Credit</label>
+                        <input type="number" name="line_${lineCounter}_credit" class="form-control credit-input" step="0.01" min="0" value="0" onchange="updateTotals()">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">&nbsp;</label>
+                        <button type="button" class="btn btn-danger w-100" onclick="removeLine(${lineCounter})">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="row mt-2">
+                    <div class="col-12">
+                        <input type="text" name="line_${lineCounter}_description" class="form-control" placeholder="Line description (optional)">
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    document.getElementById('journalLines').insertAdjacentHTML('beforeend', lineHtml);
+    document.getElementById('line_count').value = lineCounter;
+    updateTotals();
+}
+
+function removeLine(lineNum) {
+    document.querySelector(`.journal-line[data-line="${lineNum}"]`).remove();
+    updateTotals();
+}
+
+function updateTotals() {
+    let totalDebit = 0;
+    let totalCredit = 0;
+    
+    document.querySelectorAll('.debit-input').forEach(input => {
+        totalDebit += parseFloat(input.value) || 0;
+    });
+    
+    document.querySelectorAll('.credit-input').forEach(input => {
+        totalCredit += parseFloat(input.value) || 0;
+    });
+    
+    document.getElementById('total_debit').textContent = 'GHS ' + totalDebit.toFixed(2);
+    document.getElementById('total_credit').textContent = 'GHS ' + totalCredit.toFixed(2);
+    
+    const diff = Math.abs(totalDebit - totalCredit);
+    const warning = document.getElementById('balance_warning');
+    const submitBtn = document.getElementById('submitBtn');
+    
+    if (diff > 0.01 && totalDebit > 0 && totalCredit > 0) {
+        warning.classList.remove('d-none');
+        submitBtn.disabled = true;
+    } else if (totalDebit > 0 && totalCredit > 0 && diff <= 0.01) {
+        warning.classList.add('d-none');
+        submitBtn.disabled = false;
+    } else {
+        warning.classList.add('d-none');
+        submitBtn.disabled = true;
+    }
+}
+
+// Add initial line
+document.addEventListener('DOMContentLoaded', function() {
+    addJournalLine();
+});
+</script>
+{% endblock %}

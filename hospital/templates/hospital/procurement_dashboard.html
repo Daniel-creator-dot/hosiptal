@@ -27,6 +27,12 @@
         overflow: hidden;
         border: 1px solid rgba(255,255,255,0.2);
     }
+    .theme-dark .stat-card-modern {
+        background: #0f172a;
+        border-color: #1f2937;
+        box-shadow: 0 16px 40px rgba(0,0,0,0.35);
+        color: #e2e8f0;
+    }
     
     .stat-card-modern::before {
         content: '';
@@ -81,6 +87,9 @@
         text-transform: uppercase;
         letter-spacing: 1px;
     }
+    .theme-dark .stat-card-modern .stat-label {
+        color: #cbd5e1;
+    }
     
     .stat-card-modern .stat-trend {
         margin-top: 12px;
@@ -131,6 +140,12 @@
         padding: 24px;
         box-shadow: 0 10px 30px rgba(0,0,0,0.08);
         margin-bottom: 24px;
+    }
+    .theme-dark .chart-container {
+        background: #0f172a;
+        border: 1px solid #1f2937;
+        box-shadow: 0 16px 40px rgba(0,0,0,0.35);
+        color: #e2e8f0;
     }
     
     .status-badge-modern {
@@ -588,6 +603,24 @@
             <h6>Low Stock</h6>
         </a>
     </div>
+    {% if can_add_pharmacy_stock %}
+    <div class="col-md-2">
+        <a href="{% url 'hospital:pharmacy_stock_add' %}" class="quick-action-card">
+            <div class="icon" style="background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%); color: white;">
+                <i class="bi bi-plus-circle-dotted"></i>
+            </div>
+            <h6>Add Pharmacy Stock</h6>
+        </a>
+    </div>
+    <div class="col-md-2">
+        <a href="{% url 'hospital:pharmacy_stock_list' %}" class="quick-action-card">
+            <div class="icon" style="background: linear-gradient(135deg, #059669 0%, #047857 100%); color: white;">
+                <i class="bi bi-prescription2"></i>
+            </div>
+            <h6>Pharmacy Stock</h6>
+        </a>
+    </div>
+    {% endif %}
 </div>
 
 <!-- Pending Transfers -->
@@ -663,6 +696,12 @@
         {% if top_suppliers %}
         const ctx = document.getElementById('topSuppliersChart');
         if (ctx) {
+            const isDark = document.body.classList.contains('theme-dark');
+            const gridColor = isDark ? 'rgba(226,232,240,0.08)' : 'rgba(0,0,0,0.05)';
+            const tickColor = isDark ? '#cbd5e1' : '#475569';
+            const tooltipBg = isDark ? 'rgba(15,23,42,0.92)' : 'rgba(0,0,0,0.8)';
+            const tooltipBorder = isDark ? 'rgba(226,232,240,0.08)' : 'rgba(255,255,255,0.1)';
+
             const suppliersData = {
                 labels: [
                     {% for supplier in top_suppliers|slice:":10" %}
@@ -705,7 +744,7 @@
                 }]
             };
             
-            new Chart(ctx, {
+            const chartInstance = new Chart(ctx, {
                 type: 'bar',
                 data: suppliersData,
                 options: {
@@ -716,7 +755,7 @@
                             display: false
                         },
                         tooltip: {
-                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            backgroundColor: tooltipBg,
                             padding: 12,
                             titleFont: {
                                 size: 14,
@@ -725,6 +764,8 @@
                             bodyFont: {
                                 size: 13
                             },
+                            borderColor: tooltipBorder,
+                            borderWidth: 1,
                             callbacks: {
                                 label: function(context) {
                                     return 'Total: GHS ' + context.parsed.y.toLocaleString();
@@ -736,16 +777,18 @@
                         y: {
                             beginAtZero: true,
                             ticks: {
+                                color: tickColor,
                                 callback: function(value) {
                                     return 'GHS ' + value.toLocaleString();
                                 }
                             },
                             grid: {
-                                color: 'rgba(0, 0, 0, 0.05)'
+                                color: gridColor
                             }
                         },
                         x: {
                             ticks: {
+                                color: tickColor,
                                 maxRotation: 45,
                                 minRotation: 45
                             },
@@ -756,6 +799,26 @@
                     }
                 }
             });
+
+            // Observe theme changes to update chart colors live
+            const themeObserver = new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    if (mutation.attributeName === 'class') {
+                        const nowDark = document.body.classList.contains('theme-dark');
+                        const grid = nowDark ? 'rgba(226,232,240,0.08)' : 'rgba(0,0,0,0.05)';
+                        const tick = nowDark ? '#cbd5e1' : '#475569';
+                        const tBg = nowDark ? 'rgba(15,23,42,0.92)' : 'rgba(0,0,0,0.8)';
+                        const tBorder = nowDark ? 'rgba(226,232,240,0.08)' : 'rgba(255,255,255,0.1)';
+                        chartInstance.options.scales.x.ticks.color = tick;
+                        chartInstance.options.scales.y.ticks.color = tick;
+                        chartInstance.options.scales.y.grid.color = grid;
+                        chartInstance.options.plugins.tooltip.backgroundColor = tBg;
+                        chartInstance.options.plugins.tooltip.borderColor = tBorder;
+                        chartInstance.update();
+                    }
+                });
+            });
+            themeObserver.observe(document.body, { attributes: true });
         }
         {% endif %}
     });

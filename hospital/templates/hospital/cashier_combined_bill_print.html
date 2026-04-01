@@ -78,40 +78,76 @@
                         </div>
                     </div>
                     
-                    <!-- Services List -->
+                    <!-- Items paid for -->
                     <div class="mb-4">
-                        <h5>Services Rendered:</h5>
-                        {% if services %}
+                        <h5>Items Paid For:</h5>
+                        {% if receipt_items %}
+                        <div class="table-responsive">
+                            <table class="table table-bordered">
+                                <thead>
+                                    <tr>
+                                        <th>Description</th>
+                                        <th class="text-end">Amount (GHS)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for item in receipt_items %}
+                                    <tr>
+                                        <td>{{ item.description }}</td>
+                                        <td class="text-end">{{ item.amount|floatformat:2 }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% elif services %}
                         <div class="table-responsive">
                             <table class="table table-bordered">
                                 <thead>
                                     <tr>
                                         <th>#</th>
                                         <th>Type</th>
-                                        <th>Service</th>
+                                        <th>Service / Item</th>
+                                        <th class="text-center">Qty</th>
+                                        <th class="text-end">Unit (GHS)</th>
                                         <th class="text-end">Amount (GHS)</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {% for service in services %}
+                                    {% if service.breakdown %}
+                                    <tr class="table-light">
+                                        <td>{{ forloop.counter }}</td>
+                                        <td><span class="badge bg-success">Prescribe</span></td>
+                                        <td colspan="4"><strong>{{ service.name|default:"Prescribe Sale" }}</strong></td>
+                                    </tr>
+                                    {% for row in service.breakdown %}
+                                    <tr>
+                                        <td></td>
+                                        <td></td>
+                                        <td>{{ row.description|default:"—" }}</td>
+                                        <td class="text-center">{{ row.quantity|default:1 }}</td>
+                                        <td class="text-end">{{ row.unit_price|default:"0.00" }}</td>
+                                        <td class="text-end"><strong>{{ row.amount|default:"0.00" }}</strong></td>
+                                    </tr>
+                                    {% endfor %}
+                                    {% else %}
                                     <tr>
                                         <td>{{ forloop.counter }}</td>
                                         <td>
-                                            {% if service.type == 'lab' %}
-                                                <span class="badge bg-info">Lab</span>
-                                            {% elif service.type == 'pharmacy' %}
-                                                <span class="badge bg-success">Pharmacy</span>
-                                            {% elif service.type == 'imaging' %}
-                                                <span class="badge bg-purple">Imaging</span>
-                                            {% elif service.type == 'consultation' %}
-                                                <span class="badge bg-primary">Consultation</span>
-                                            {% else %}
-                                                <span class="badge bg-secondary">{{ service.type|title }}</span>
-                                            {% endif %}
+                                            {% if service.type == 'lab' %}<span class="badge bg-info">Lab</span>
+                                            {% elif service.type == 'pharmacy' %}<span class="badge bg-success">Pharmacy</span>
+                                            {% elif service.type == 'pharmacy_walkin' %}<span class="badge bg-success">Prescribe</span>
+                                            {% elif service.type == 'imaging' %}<span class="badge bg-purple">Imaging</span>
+                                            {% elif service.type == 'consultation' %}<span class="badge bg-primary">Consultation</span>
+                                            {% else %}<span class="badge bg-secondary">{{ service.type|title }}</span>{% endif %}
                                         </td>
                                         <td>{{ service.name|default:"Service" }}</td>
+                                        <td class="text-center">—</td>
+                                        <td class="text-end">—</td>
                                         <td class="text-end">{{ service.price|default:"0.00" }}</td>
                                     </tr>
+                                    {% endif %}
                                     {% endfor %}
                                 </tbody>
                             </table>
@@ -123,17 +159,51 @@
                         {% endif %}
                     </div>
                     
-                    <!-- Total -->
+                    <!-- Amount actually paid (what was collected from patient) -->
                     <div class="bill-total">
                         <div class="row">
                             <div class="col-md-8">
-                                <h4 class="mb-0">Total Amount:</h4>
+                                <h4 class="mb-0">Amount Paid:</h4>
+                                <small class="text-muted">Amount collected in this payment</small>
                             </div>
                             <div class="col-md-4 text-end">
                                 <h4 class="mb-0 text-success">GHS {{ receipt.amount_paid|floatformat:2 }}</h4>
                             </div>
                         </div>
                     </div>
+                    
+                    <!-- Deposits on account -->
+                    {% if patient_deposits %}
+                    <div class="mt-4">
+                        <h5 class="mb-2">Deposits on Account</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Deposit No</th>
+                                        <th>Date</th>
+                                        <th class="text-end">Deposit Amount (GHS)</th>
+                                        <th class="text-end">Available (GHS)</th>
+                                        <th class="text-end">Used (GHS)</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for dep in patient_deposits %}
+                                    <tr>
+                                        <td>{{ dep.deposit_number }}</td>
+                                        <td>{{ dep.deposit_date|date:"d M Y H:i" }}</td>
+                                        <td class="text-end">{{ dep.deposit_amount|floatformat:2 }}</td>
+                                        <td class="text-end">{{ dep.available_balance|floatformat:2 }}</td>
+                                        <td class="text-end">{{ dep.used_amount|floatformat:2 }}</td>
+                                        <td>{{ dep.get_status_display|default:dep.status }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% endif %}
                     
                     <!-- Notes -->
                     {% if receipt.notes %}

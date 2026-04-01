@@ -21,7 +21,7 @@
 
     <div class="row g-4">
         <div class="col-lg-8">
-            <div class="card h-100">
+            <div class="card h-100 mb-4">
                 <div class="card-header bg-light">
                     <strong>Record Content</strong>
                     <span class="badge bg-info text-dark ms-2">{{ record.record_type|title }}</span>
@@ -31,6 +31,79 @@
                         <p class="mb-0" style="white-space: pre-line;">{{ record.content }}</p>
                     {% else %}
                         <em class="text-muted">No narrative content available.</em>
+                    {% endif %}
+
+                    {# All clinical notes for this encounter – every saved note is shown #}
+                    {% if record.encounter %}
+                        <hr class="my-4">
+                        <h5 class="mb-3">
+                            <i class="bi bi-journal-medical me-1"></i>
+                            All Clinical Notes for this Encounter
+                            <span class="badge bg-secondary ms-2">{{ clinical_notes|length }}</span>
+                        </h5>
+                        {% if clinical_notes %}
+                            {% for note in clinical_notes %}
+                            <div class="mb-3 pb-3 {% if not forloop.last %}border-bottom{% endif %}">
+                                <div class="d-flex justify-content-between mb-1 flex-wrap gap-1">
+                                    <div class="fw-semibold d-flex align-items-center flex-wrap gap-1">
+                                        <span class="badge {% if note.note_type == 'progress' %}{% if note.created_by and note.created_by.profession == 'doctor' %}bg-success{% else %}bg-primary{% endif %}{% else %}bg-secondary{% endif %}">
+                                            {{ note.get_note_type_display }}
+                                            {% if note.note_type == 'progress' and note.created_by %}
+                                                {% if note.created_by.profession == 'doctor' %} (Doctor){% else %} (Nurse){% endif %}
+                                            {% endif %}
+                                        </span>
+                                        {% if note.created_by and note.created_by.user %}
+                                            {{ note.created_by.user.get_full_name|default:note.created_by.user.username }}
+                                        {% else %}
+                                            <em>Staff</em>
+                                        {% endif %}
+                                    </div>
+                                    <small class="text-muted">
+                                        {{ note.created|date:"M d, Y H:i" }}
+                                    </small>
+                                </div>
+                                {% if note.notes %}
+                                <div class="small {% if note.note_type == 'progress' and note.created_by and note.created_by.profession == 'doctor' %}style="background:#ECFDF5; border-radius:8px; padding:10px; border-left:3px solid #059669;"{% else %}style="background:#EFF6FF; border-radius:8px; padding:10px; border-left:3px solid #3B82F6;"{% endif %}">
+                                    {{ note.notes|linebreaks }}
+                                </div>
+                                {% endif %}
+                                {% if note.subjective %}<div class="mt-1 small text-muted"><strong>Subjective:</strong> {{ note.subjective }}</div>{% endif %}
+                                {% if note.objective %}<div class="mt-1 small text-muted"><strong>Observations:</strong> {{ note.objective }}</div>{% endif %}
+                                {% if note.assessment %}<div class="mt-1 small text-muted"><strong>Assessment:</strong> {{ note.assessment }}</div>{% endif %}
+                                {% if note.plan %}<div class="mt-1 small text-muted"><strong>Plan:</strong> {{ note.plan }}</div>{% endif %}
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <em class="text-muted">No clinical notes have been recorded for this encounter yet.</em>
+                        {% endif %}
+
+                        {% if can_add_note %}
+                        <hr class="my-4">
+                        <h6 class="mb-2"><i class="bi bi-plus-circle me-1"></i> Add Clinical Note</h6>
+                        <p class="text-muted small mb-3">Nurses and doctors can add a progress or SOAP note for this encounter here.</p>
+                        <form method="post" action="{% url 'hospital:medical_record_detail' record.pk %}" class="border rounded p-3 bg-light">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="add_clinical_note">
+                            <div class="mb-3">
+                                <label class="form-label">Note type</label>
+                                <select name="note_type" class="form-select form-select-sm" required>
+                                    <option value="progress">Progress Note</option>
+                                    <option value="soap">SOAP Note</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Observations (optional)</label>
+                                <input type="text" name="objective" class="form-control form-control-sm" placeholder="Brief observations or objective findings" maxlength="500">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Note <span class="text-danger">*</span></label>
+                                <textarea name="notes" class="form-control" rows="4" required placeholder="Enter your clinical note..."></textarea>
+                            </div>
+                            <button type="submit" class="btn btn-primary btn-sm">
+                                <i class="bi bi-check-lg me-1"></i> Add Note
+                            </button>
+                        </form>
+                        {% endif %}
                     {% endif %}
                 </div>
             </div>

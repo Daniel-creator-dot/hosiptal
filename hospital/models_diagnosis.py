@@ -1,8 +1,10 @@
 """
 Diagnosis and ICD-10 Code Models
 WHO International Classification of Diseases (ICD-10) support
+Tuned for Africa, especially Ghana
 """
 from django.db import models
+from django.contrib.auth.models import User
 from .models import BaseModel
 
 
@@ -51,6 +53,45 @@ class DiagnosisCode(BaseModel):
     usage_count = models.IntegerField(default=0, 
                                      help_text="Track how often this code is used")
     
+    # Track who created and updated this diagnosis code
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='diagnosis_codes_created',
+        help_text="User who added this diagnosis code to the system"
+    )
+    updated_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='diagnosis_codes_updated',
+        help_text="User who last updated this diagnosis code"
+    )
+    
+    # Ghana/Africa-specific fields
+    is_ghana_common = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Commonly seen in Ghana healthcare settings"
+    )
+    is_africa_common = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Commonly seen in African healthcare settings"
+    )
+    local_name = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Local/Ghanaian name for this condition (if applicable)"
+    )
+    notes = models.TextField(
+        blank=True,
+        help_text="Additional notes about this diagnosis in Ghana context"
+    )
+    
     class Meta:
         ordering = ['code']
         verbose_name = "Diagnosis Code (ICD-10)"
@@ -94,10 +135,37 @@ class DiagnosisCode(BaseModel):
         return cls.objects.filter(
             Q(code__icontains=query) | 
             Q(description__icontains=query) |
-            Q(short_description__icontains=query),
+            Q(short_description__icontains=query) |
+            Q(local_name__icontains=query),
             is_active=True,
             is_deleted=False
-        ).order_by('-is_common', 'code')[:50]
+        ).order_by('-is_ghana_common', '-is_africa_common', '-is_common', 'code')[:50]
+    
+    @classmethod
+    def get_ghana_common(cls):
+        """Get diagnoses commonly seen in Ghana"""
+        return cls.objects.filter(
+            is_active=True,
+            is_deleted=False,
+            is_ghana_common=True
+        ).order_by('code')
+    
+    @classmethod
+    def get_africa_common(cls):
+        """Get diagnoses commonly seen in Africa"""
+        return cls.objects.filter(
+            is_active=True,
+            is_deleted=False,
+            is_africa_common=True
+        ).order_by('code')
+    
+    def save(self, *args, **kwargs):
+        """Override save to track who updated"""
+        # If this is an update and updated_by is not set, try to get from kwargs
+        if self.pk and not self.updated_by:
+            # Will be set by views/admin
+            pass
+        super().save(*args, **kwargs)
 
 
 

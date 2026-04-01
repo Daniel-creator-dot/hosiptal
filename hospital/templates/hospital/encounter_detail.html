@@ -1,9 +1,9 @@
 {% extends 'hospital/base.html' %}
-{% load humanize static %}
+{% load humanize static hospital_extras %}
 
-{% block title %}Encounter - {{ encounter.patient.full_name }} - HMS{% endblock %}
+{% block title %}Encounter - {% if encounter.patient %}{% if encounter.patient.full_name %}{{ encounter.patient.full_name }}{% else %}Patient{% endif %}{% else %}Patient{% endif %} - HMS{% endblock %}
 {% block page_title %}📋 Patient Encounter{% endblock %}
-{% block page_subtitle %}{{ encounter.get_encounter_type_display }} · Started {{ encounter.started_at|naturaltime }}{% endblock %}
+{% block page_subtitle %}{% if encounter.encounter_type %}{{ encounter.get_encounter_type_display|default:encounter.encounter_type }}{% else %}-{% endif %} · {% if encounter.started_at %}Started {{ encounter.started_at|naturaltime }}{% else %}No start time{% endif %}{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -481,6 +481,43 @@
             font-size: 36px;
         }
     }
+
+    /* Patient Flow Intelligence Styles */
+    @keyframes blink-warning {
+        0%, 100% {
+            opacity: 1;
+            color: #EF4444;
+        }
+        50% {
+            opacity: 0.5;
+            color: #DC2626;
+        }
+    }
+
+    .blink-warning {
+        animation: blink-warning 1.5s ease-in-out infinite;
+    }
+
+    @keyframes spin {
+        from {
+            transform: rotate(0deg);
+        }
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    .spinning-icon {
+        animation: spin 2s linear infinite;
+    }
+
+    .flow-stage-item {
+        transition: all 0.3s ease;
+    }
+
+    .flow-stage-item:hover {
+        transform: translateX(4px);
+    }
 </style>
 {% endblock %}
 
@@ -492,22 +529,24 @@
         <!-- Patient Avatar -->
         <div class="text-center">
             <div class="patient-avatar-large mx-auto">
-                {{ encounter.patient.full_name|slice:":1"|upper }}
+                {% if encounter.patient %}{% if encounter.patient.full_name %}{{ encounter.patient.full_name|slice:":1"|upper }}{% elif encounter.patient.first_name %}{{ encounter.patient.first_name|slice:":1"|upper }}{% else %}?{% endif %}{% else %}?{% endif %}
             </div>
             <div class="mt-3">
                 <span class="badge-modern badge-light" style="background: rgba(255,255,255,0.2); color: white; padding: 8px 16px;">
-                    {{ encounter.get_encounter_type_display }}
+                    {% if encounter.encounter_type %}{{ encounter.get_encounter_type_display|default:encounter.encounter_type }}{% else %}-{% endif %}
                 </span>
             </div>
         </div>
         
         <!-- Patient Details -->
         <div class="patient-details">
-            <h2>{{ encounter.patient.full_name }}</h2>
+            <h2>{% if encounter.patient %}{% if encounter.patient.full_name %}{{ encounter.patient.full_name }}{% elif encounter.patient.first_name or encounter.patient.last_name %}{{ encounter.patient.first_name|default:"" }} {{ encounter.patient.last_name|default:"" }}{% else %}Unknown Patient{% endif %}{% else %}Unknown Patient{% endif %}</h2>
+            {% if encounter.patient %}<div class="mt-2 mb-1">{% patient_payer_badges encounter.patient encounter %}</div>{% endif %}
+            {% if encounter.patient %}
             <div class="patient-info-row">
-                <span class="info-badge"><i class="bi bi-credit-card me-1"></i>MRN: {{ encounter.patient.mrn }}</span>
-                <span class="info-badge"><i class="bi bi-calendar me-1"></i>{{ encounter.patient.age }} years</span>
-                <span class="info-badge"><i class="bi bi-gender-ambiguous me-1"></i>{{ encounter.patient.get_gender_display }}</span>
+                <span class="info-badge"><i class="bi bi-credit-card me-1"></i>MRN: {{ encounter.patient.mrn|default:"-" }}</span>
+                <span class="info-badge"><i class="bi bi-calendar me-1"></i>{% if encounter.patient.age %}{{ encounter.patient.age }} years{% else %}-{% endif %}</span>
+                <span class="info-badge"><i class="bi bi-gender-ambiguous me-1"></i>{% if encounter.patient.gender %}{{ encounter.patient.get_gender_display|default:encounter.patient.gender }}{% else %}-{% endif %}</span>
                 {% if encounter.patient.blood_type %}
                 <span class="info-badge"><i class="bi bi-droplet me-1"></i>{{ encounter.patient.blood_type }}</span>
                 {% endif %}
@@ -518,6 +557,7 @@
                 <span class="info-badge"><i class="bi bi-envelope me-1"></i>{{ encounter.patient.email }}</span>
                 {% endif %}
             </div>
+            {% endif %}
         </div>
         
         <!-- Actions -->
@@ -542,6 +582,10 @@
                 <a href="{% url 'hospital:consultation_view' encounter_id=encounter.pk %}" class="hero-btn">
                     <i class="bi bi-stethoscope me-2"></i>Start Consultation
                 </a>
+            {% elif encounter.can_reopen_consultation %}
+                <a href="{% url 'hospital:consultation_view' encounter_id=encounter.pk %}" class="hero-btn" style="background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);">
+                    <i class="bi bi-box-arrow-in-right me-2"></i>Re-open Consultation
+                </a>
             {% endif %}
             <a href="{% url 'hospital:patient_flow' encounter.pk %}" class="hero-btn">
                 <i class="bi bi-diagram-3 me-2"></i>Patient Flow
@@ -552,6 +596,21 @@
             <a href="{% url 'hospital:patient_detail' encounter.patient.pk %}" class="hero-btn">
                 <i class="bi bi-person me-2"></i>Patient Chart
             </a>
+            {% if encounter.status == 'active' %}
+            <a href="{% url 'hospital:screening_templates_for_encounter' encounter_id=encounter.pk %}" class="hero-btn" style="background: rgba(13, 148, 136, 0.25); border-color: rgba(13, 148, 136, 0.5);">
+                <i class="bi bi-clipboard2-pulse me-2"></i>Apply screening template
+            </a>
+            {% endif %}
+            {% if is_screening_encounter or screening_report %}
+            <a href="{% url 'hospital:screening_report_form' encounter_id=encounter.pk %}" class="hero-btn" style="background: rgba(124, 58, 237, 0.2); border-color: rgba(124, 58, 237, 0.5);">
+                <i class="bi bi-file-earmark-text me-2"></i>{% if screening_report %}Edit{% else %}Complete{% endif %} screening report
+            </a>
+            {% if screening_report %}
+            <a href="{% url 'hospital:screening_report_print' encounter_id=encounter.pk %}" class="hero-btn" style="background: rgba(16, 185, 129, 0.2); border-color: rgba(16, 185, 129, 0.5);">
+                <i class="bi bi-printer me-2"></i>Print report
+            </a>
+            {% endif %}
+            {% endif %}
         </div>
     </div>
 </div>
@@ -593,11 +652,23 @@
             {% endif %}
             <div class="info-item">
                 <span class="info-label">Location:</span>
-                <span class="info-value">{{ encounter.location.name|default:"-" }}</span>
+                <span class="info-value">
+                    {% if encounter.location %}
+                        {{ encounter.location.name|default:"-" }}
+                    {% else %}
+                        -
+                    {% endif %}
+                </span>
             </div>
             <div class="info-item">
                 <span class="info-label">Provider:</span>
-                <span class="info-value">{{ encounter.provider.user.get_full_name|default:"-" }}</span>
+                <span class="info-value">
+                    {% if encounter.provider and encounter.provider.user %}
+                        {{ encounter.provider.user.get_full_name|default:encounter.provider.user.username|default:"Not assigned" }}
+                    {% else %}
+                        Not assigned
+                    {% endif %}
+                </span>
             </div>
         </div>
     </div>
@@ -654,6 +725,249 @@
     </div>
     {% endif %}
 </div>
+
+<!-- ========== SUPER INTELLIGENT PATIENT FLOW TRACKING ========== -->
+{% if flow_analytics %}
+<div class="section-panel" style="margin-top: 24px; background: linear-gradient(135deg, #F8FAFC 0%, #F1F5F9 100%); border: 2px solid #E2E8F0;">
+    <div class="section-header-modern">
+        <div class="section-title-modern">
+            <div class="section-icon" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                <i class="bi bi-diagram-3"></i>
+            </div>
+            <div>
+                <h3 style="margin: 0; font-size: 24px; font-weight: 800; color: #1E293B;">Patient Flow Intelligence</h3>
+                <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748B; font-weight: 500;">
+                    Real-time tracking • Location • Time Analytics
+                </p>
+            </div>
+        </div>
+        <div style="display: flex; gap: 12px; align-items: center;">
+            <div id="flow-auto-refresh-badge" style="padding: 8px 16px; background: #D1FAE5; border-radius: 20px; font-size: 12px; font-weight: 700; color: #065F46;">
+                <i class="bi bi-arrow-repeat"></i> Auto-Refresh
+            </div>
+            <div style="padding: 8px 16px; background: #DBEAFE; border-radius: 20px; font-size: 12px; font-weight: 700; color: #1E40AF;">
+                <i class="bi bi-clock"></i> Updated: <span id="flow-last-update">Just now</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Current Status Banner -->
+    <div id="flow-current-status" style="background: white; border-radius: 16px; padding: 24px; margin-bottom: 24px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border-left: 6px solid #667eea;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; align-items: center;">
+            <div>
+                <div style="font-size: 12px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">
+                    <i class="bi bi-geo-alt-fill"></i> Current Location
+                </div>
+                <div id="flow-current-location" style="font-size: 24px; font-weight: 800; color: #1E293B;">
+                    {{ flow_analytics.current_location|default:"Unknown" }}
+                </div>
+            </div>
+            <div style="border-left: 2px solid #E2E8F0; border-right: 2px solid #E2E8F0; padding: 0 24px;">
+                <div style="font-size: 12px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">
+                    <i class="bi bi-hourglass-split"></i> Wait Time
+                </div>
+                <div id="flow-wait-time" class="{% if flow_analytics.is_long_wait %}blink-warning{% endif %}" style="font-size: 32px; font-weight: 900; color: {% if flow_analytics.is_long_wait %}#EF4444{% else %}#667eea{% endif %};">
+                    {{ flow_analytics.current_wait_formatted|default:"0 min" }}
+                </div>
+            </div>
+            <div>
+                <div style="font-size: 12px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">
+                    <i class="bi bi-speedometer2"></i> Progress
+                </div>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <div style="flex: 1; background: #E2E8F0; border-radius: 10px; height: 12px; overflow: hidden;">
+                        <div id="flow-progress-bar" style="background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); height: 100%; width: {{ flow_analytics.progress_percentage }}%; border-radius: 10px; transition: width 0.5s ease;"></div>
+                    </div>
+                    <div id="flow-progress-percent" style="font-size: 20px; font-weight: 800; color: #667eea; min-width: 60px; text-align: right;">
+                        {{ flow_analytics.progress_percentage }}%
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Flow Timeline -->
+    <div style="background: white; border-radius: 16px; padding: 24px; margin-bottom: 24px; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">
+        <h4 style="font-size: 18px; font-weight: 700; color: #1E293B; margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+            <i class="bi bi-timeline" style="color: #667eea;"></i>
+            Flow Timeline
+        </h4>
+        <div id="flow-timeline" style="position: relative; padding-left: 40px;">
+            {% for stage_data in flow_analytics.enhanced_stages %}
+                {% with stage=stage_data.stage %}
+                <div class="flow-stage-item" data-stage-id="{{ stage.pk }}" style="position: relative; margin-bottom: 32px; padding-bottom: 32px; border-left: 3px solid {% if stage.status == 'completed' %}#10B981{% elif stage.status == 'in_progress' %}#667eea{% else %}#E2E8F0{% endif %}; padding-left: 24px;">
+                    <!-- Stage Icon -->
+                    <div style="position: absolute; left: -16px; top: 0; width: 32px; height: 32px; border-radius: 50%; background: {% if stage.status == 'completed' %}#10B981{% elif stage.status == 'in_progress' %}#667eea{% else %}#E2E8F0{% endif %}; display: flex; align-items: center; justify-content: center; border: 4px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                        {% if stage.status == 'completed' %}
+                            <i class="bi bi-check-circle-fill" style="color: white; font-size: 18px;"></i>
+                        {% elif stage.status == 'in_progress' %}
+                            <i class="bi bi-arrow-repeat spinning-icon" style="color: white; font-size: 18px;"></i>
+                        {% else %}
+                            <i class="bi bi-circle" style="color: #94A3B8; font-size: 18px;"></i>
+                        {% endif %}
+                    </div>
+                    
+                    <!-- Stage Content -->
+                    <div style="background: {% if stage.status == 'in_progress' %}#EEF2FF{% elif stage.status == 'completed' %}#F0FDF4{% else %}#F9FAFB{% endif %}; border-radius: 12px; padding: 20px; border: 2px solid {% if stage.status == 'in_progress' %}#667eea{% elif stage.status == 'completed' %}#10B981{% else %}#E2E8F0{% endif %};">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+                            <div>
+                                <h5 style="font-size: 18px; font-weight: 700; color: #1E293B; margin: 0 0 4px 0;">
+                                    {{ stage.get_stage_type_display }}
+                                </h5>
+                                <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                                    <span class="badge" style="background: {% if stage.status == 'completed' %}#10B981{% elif stage.status == 'in_progress' %}#667eea{% else %}#94A3B8{% endif %}; color: white; padding: 4px 12px; border-radius: 12px; font-size: 11px; font-weight: 700;">
+                                        {{ stage.get_status_display|upper }}
+                                    </span>
+                                    {% if stage.priority == 'stat' %}
+                                        <span class="badge" style="background: #EF4444; color: white; padding: 4px 12px; border-radius: 12px; font-size: 11px; font-weight: 700;">STAT</span>
+                                    {% elif stage.priority == 'urgent' %}
+                                        <span class="badge" style="background: #F59E0B; color: white; padding: 4px 12px; border-radius: 12px; font-size: 11px; font-weight: 700;">URGENT</span>
+                                    {% endif %}
+                                    {% if stage_data.is_slow %}
+                                        <span class="badge blink-warning" style="background: #EF4444; color: white; padding: 4px 12px; border-radius: 12px; font-size: 11px; font-weight: 700;">
+                                            <i class="bi bi-exclamation-triangle-fill"></i> SLOW
+                                        </span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div style="text-align: right;">
+                                {% if stage.status == 'completed' %}
+                                    <div style="font-size: 14px; color: #64748B; font-weight: 600;">
+                                        <i class="bi bi-clock"></i> Duration
+                                    </div>
+                                    <div style="font-size: 20px; font-weight: 800; color: #10B981; margin-top: 4px;">
+                                        {{ stage_data.duration|default:"N/A" }}
+                                    </div>
+                                {% elif stage.status == 'in_progress' %}
+                                    <div style="font-size: 14px; color: #64748B; font-weight: 600;">
+                                        <i class="bi bi-hourglass-split"></i> Elapsed
+                                    </div>
+                                    <div id="stage-{{ stage.pk }}-elapsed" class="{% if stage_data.is_slow %}blink-warning{% endif %}" style="font-size: 20px; font-weight: 800; color: {% if stage_data.is_slow %}#EF4444{% else %}#667eea{% endif %}; margin-top: 4px;">
+                                        {{ stage_data.elapsed_time|default:"< 1 min" }}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        {% if stage.started_at %}
+                        <div style="font-size: 12px; color: #64748B; margin-top: 8px;">
+                            <i class="bi bi-calendar3"></i> Started: {{ stage.started_at|date:"M d, Y H:i" }}
+                        </div>
+                        {% endif %}
+                        
+                        {% if stage.completed_at %}
+                        <div style="font-size: 12px; color: #64748B; margin-top: 4px;">
+                            <i class="bi bi-check-circle"></i> Completed: {{ stage.completed_at|date:"M d, Y H:i" }}
+                        </div>
+                        {% endif %}
+                        
+                        {% if stage.completed_by %}
+                        <div style="font-size: 12px; color: #64748B; margin-top: 4px;">
+                            <i class="bi bi-person-check"></i> By: {{ stage.completed_by.user.get_full_name|default:stage.completed_by.user.username }}
+                        </div>
+                        {% endif %}
+                        
+                        {% if stage.notes %}
+                        <div style="margin-top: 12px; padding: 12px; background: white; border-radius: 8px; border-left: 3px solid #667eea;">
+                            <div style="font-size: 12px; font-weight: 600; color: #64748B; margin-bottom: 4px;">Notes:</div>
+                            <div style="font-size: 13px; color: #1E293B;">{{ stage.notes }}</div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endwith %}
+            {% empty %}
+                <div style="text-align: center; padding: 40px; color: #64748B;">
+                    <i class="bi bi-info-circle" style="font-size: 48px; margin-bottom: 16px; opacity: 0.5;"></i>
+                    <p style="font-size: 16px; margin: 0;">No flow stages tracked yet. Patient flow will appear here once stages are created.</p>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Analytics Summary -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+        <div style="background: white; border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-top: 4px solid #10B981;">
+            <div style="font-size: 12px; font-weight: 700; color: #64748B; text-transform: uppercase; margin-bottom: 8px;">
+                Total Duration
+            </div>
+            <div style="font-size: 28px; font-weight: 800; color: #10B981;">
+                {{ flow_analytics.total_time_formatted|default:"0 min" }}
+            </div>
+        </div>
+        <div style="background: white; border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-top: 4px solid #667eea;">
+            <div style="font-size: 12px; font-weight: 700; color: #64748B; text-transform: uppercase; margin-bottom: 8px;">
+                Avg Time/Stage
+            </div>
+            <div style="font-size: 28px; font-weight: 800; color: #667eea;">
+                {{ flow_analytics.avg_time_per_stage|default:"N/A" }}
+            </div>
+        </div>
+        <div style="background: white; border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-top: 4px solid #F59E0B;">
+            <div style="font-size: 12px; font-weight: 700; color: #64748B; text-transform: uppercase; margin-bottom: 8px;">
+                Staff Involved
+            </div>
+            <div style="font-size: 28px; font-weight: 800; color: #F59E0B;">
+                {{ flow_analytics.staff_count|default:0 }}
+            </div>
+        </div>
+        <div style="background: white; border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-top: 4px solid #8B5CF6;">
+            <div style="font-size: 12px; font-weight: 700; color: #64748B; text-transform: uppercase; margin-bottom: 8px;">
+                Encounter Duration
+            </div>
+            <div style="font-size: 28px; font-weight: 800; color: #8B5CF6;">
+                {{ flow_analytics.encounter_duration_formatted|default:"0 min" }}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Doctor Plans Section (for nurses to view) -->
+{% if clinical_notes_with_plan %}
+<div class="card mb-4" style="border-left: 4px solid #007bff;">
+    <div class="card-header bg-primary text-white">
+        <h5 class="mb-0">
+            <i class="bi bi-clipboard-pulse me-2"></i>Doctor Plans & Care Plans
+        </h5>
+    </div>
+    <div class="card-body">
+        <div class="list-group">
+            {% for note in clinical_notes_with_plan %}
+            <div class="list-group-item">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <h6 class="mb-1">
+                            {{ note.get_note_type_display }}
+                            {% if note.created_by %}
+                                <small class="text-muted">by Dr. {{ note.created_by.user.get_full_name|default:note.created_by.user.username }}</small>
+                            {% endif %}
+                        </h6>
+                        {% if note.plan %}
+                        <div class="mb-2">
+                            <strong style="color: #007bff;">Plan:</strong>
+                            <div style="background: #f8f9fa; padding: 10px; border-radius: 6px; margin-top: 5px; color: #212529 !important;">
+                                {{ note.plan }}
+                            </div>
+                        </div>
+                        {% endif %}
+                        {% if note.objective %}
+                        <div class="mb-2">
+                            <strong>Objective:</strong> <span style="color: #1F2937 !important;">{{ note.objective }}</span>
+                        </div>
+                        {% endif %}
+                        {% if note.notes %}
+                        <p class="mb-1" style="color: #1F2937 !important;">{{ note.notes|truncatewords:50 }}</p>
+                        {% endif %}
+                        <small class="text-muted">{{ note.created|date:"M d, Y H:i" }}</small>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
 
 <!-- Vital Signs Dashboard -->
 {% if can_view_vitals|default:True and latest_vitals %}
@@ -816,6 +1130,303 @@
         </div>
     </div>
 </div>
+
+<!-- Doctor's Treatment Plan (For Nurses) -->
+{% if is_nurse or user_role == 'nurse' %}
+<div class="row g-4 mb-4">
+    <div class="col-md-12">
+        <div class="section-panel" style="background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%); border-left: 4px solid #F59E0B;">
+            <div class="section-header-modern">
+                <div class="section-title-modern">
+                    <div class="section-icon" style="background: #F59E0B; color: white;">
+                        <i class="bi bi-clipboard-heart"></i>
+                    </div>
+                    Doctor's Treatment Plan
+                </div>
+            </div>
+            
+            {% if care_plans %}
+                {% for plan in care_plans %}
+                <div class="card mb-3" style="border-left: 3px solid #F59E0B;">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h6 class="mb-0">
+                                <i class="bi bi-person-badge me-2"></i>
+                                {% if plan.created_by %}{{ plan.created_by.user.get_full_name|default:plan.created_by.user.username }}{% else %}Doctor{% endif %}
+                            </h6>
+                            <small class="text-muted">{{ plan.created|date:"M d, Y H:i" }}</small>
+                        </div>
+                        {% if plan.diagnosis %}
+                        <div class="mb-2">
+                            <strong>Diagnosis:</strong> {{ plan.diagnosis }}
+                        </div>
+                        {% endif %}
+                        {% if plan.goals %}
+                        <div class="mb-2">
+                            <strong>Goals:</strong> {{ plan.goals }}
+                        </div>
+                        {% endif %}
+                        {% if plan.interventions %}
+                        <div class="mb-2">
+                            <strong>Interventions:</strong> {{ plan.interventions }}
+                        </div>
+                        {% endif %}
+                        {% if plan.notes %}
+                        <div>
+                            <strong>Notes:</strong> {{ plan.notes }}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            {% elif clinical_notes_with_plan %}
+                {% for note in clinical_notes_with_plan %}
+                <div class="card mb-3" style="border-left: 3px solid #F59E0B;">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h6 class="mb-0">
+                                <i class="bi bi-person-badge me-2"></i>
+                                {% if note.created_by %}{{ note.created_by.user.get_full_name|default:note.created_by.user.username }}{% else %}Doctor{% endif %}
+                            </h6>
+                            <small class="text-muted">{{ note.created|date:"M d, Y H:i" }}</small>
+                        </div>
+                        {% if note.plan %}
+                        <div class="mb-2">
+                            <strong>Treatment Plan:</strong>
+                            <div style="background: white; padding: 12px; border-radius: 8px; margin-top: 8px;">
+                                {{ note.plan|linebreaks }}
+                            </div>
+                        </div>
+                        {% endif %}
+                        {% if note.assessment %}
+                        <div class="mb-2">
+                            <strong>Assessment:</strong> {{ note.assessment|truncatewords:30 }}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="text-center py-4">
+                    <i class="bi bi-clipboard-heart" style="font-size: 48px; color: #FCD34D;"></i>
+                    <p class="text-muted mt-3">No treatment plan available yet</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Doctor Notes Section -->
+{% if doctor_notes %}
+<div class="row g-4 mb-4">
+    <div class="col-md-12">
+        <div class="section-panel" style="background: linear-gradient(135deg, #D1FAE5 0%, #A7F3D0 100%); border-left: 4px solid #059669;">
+            <div class="section-header-modern">
+                <div class="section-title-modern">
+                    <div class="section-icon" style="background: #059669; color: white;">
+                        <i class="bi bi-journal-medical"></i>
+                    </div>
+                    Doctor Notes
+                    <span class="badge bg-light text-dark ms-2">{{ doctor_notes|length }}</span>
+                </div>
+            </div>
+            {% for note in doctor_notes %}
+            <div class="card mb-3" style="border-left: 3px solid #059669;">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <h6 class="mb-0">
+                            <i class="bi bi-person-badge me-2"></i>
+                            {% if note.created_by %}{{ note.created_by.user.get_full_name|default:note.created_by.user.username }}{% else %}Doctor{% endif %}
+                        </h6>
+                        <small class="text-muted">{{ note.created|date:"M d, Y H:i" }}</small>
+                    </div>
+                    {% if note.notes %}
+                    <div style="background: #ECFDF5; padding: 12px; border-radius: 8px; margin-top: 8px;">
+                        {{ note.notes|linebreaks }}
+                    </div>
+                    {% endif %}
+                    {% if note.assessment %}<div class="mt-2"><strong>Assessment:</strong> {{ note.assessment }}</div>{% endif %}
+                    {% if note.plan %}<div class="mt-2"><strong>Plan:</strong> {{ note.plan }}</div>{% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Doctor Notes Section -->
+{% if doctor_notes %}
+<div class="row g-4 mb-4">
+    <div class="col-md-12">
+        <div class="section-panel" style="background: linear-gradient(135deg, #D1FAE5 0%, #A7F3D0 100%); border-left: 4px solid #059669;">
+            <div class="section-header-modern">
+                <div class="section-title-modern">
+                    <div class="section-icon" style="background: #059669; color: white;">
+                        <i class="bi bi-journal-medical"></i>
+                    </div>
+                    Doctor Notes
+                    <span class="badge bg-light text-dark ms-2">{{ doctor_notes|length }}</span>
+                </div>
+            </div>
+            {% for note in doctor_notes %}
+            <div class="card mb-3" style="border-left: 3px solid #059669;">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <h6 class="mb-0">
+                            <i class="bi bi-person-badge me-2"></i>
+                            {% if note.created_by %}{{ note.created_by.user.get_full_name|default:note.created_by.user.username }}{% else %}Doctor{% endif %}
+                        </h6>
+                        <small class="text-muted">{{ note.created|date:"M d, Y H:i" }}</small>
+                    </div>
+                    {% if note.notes %}
+                    <div style="background: #ECFDF5; padding: 12px; border-radius: 8px; margin-top: 8px;">
+                        {{ note.notes|linebreaks }}
+                    </div>
+                    {% endif %}
+                    {% if note.assessment %}<div class="mt-2"><strong>Assessment:</strong> {{ note.assessment }}</div>{% endif %}
+                    {% if note.plan %}<div class="mt-2"><strong>Plan:</strong> {{ note.plan|linebreaks }}</div>{% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Nurse Notes Section -->
+<div class="row g-4 mb-4">
+    <div class="col-md-12">
+        <div class="section-panel" style="background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%); border-left: 4px solid #3B82F6;">
+            <div class="section-header-modern">
+                <div class="section-title-modern">
+                    <div class="section-icon" style="background: #3B82F6; color: white;">
+                        <i class="bi bi-journal-text"></i>
+                    </div>
+                    Nurse Notes
+                    <span class="badge bg-light text-dark ms-2">{{ nurse_notes|length }}</span>
+                </div>
+                {% if encounter.status == 'active' %}
+                <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#nurseNoteModal">
+                    <i class="bi bi-plus-circle me-1"></i>Add Note
+                </button>
+                {% endif %}
+            </div>
+            
+            {% if nurse_notes %}
+                {% for note in nurse_notes %}
+                <div class="card mb-3" style="border-left: 3px solid #3B82F6;">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h6 class="mb-0">
+                                <i class="bi bi-person-heart me-2"></i>
+                                {% if note.created_by %}{{ note.created_by.user.get_full_name|default:note.created_by.user.username }}{% else %}Nurse{% endif %}
+                            </h6>
+                            <small class="text-muted">{{ note.created|date:"M d, Y H:i" }}</small>
+                        </div>
+                        {% if note.notes %}
+                        <div style="background: white; padding: 12px; border-radius: 8px; margin-top: 8px;">
+                            {{ note.notes|linebreaks }}
+                        </div>
+                        {% endif %}
+                        {% if note.objective %}
+                        <div class="mt-2">
+                            <strong>Observations:</strong> {{ note.objective }}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="text-center py-4">
+                    <i class="bi bi-journal-text" style="font-size: 48px; color: #93C5FD;"></i>
+                    <p class="text-muted mt-3">No nurse notes yet</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Other Clinical Notes (SOAP, Consultation, etc.) – every saved note shown -->
+{% if other_notes %}
+<div class="row g-4 mb-4">
+    <div class="col-md-12">
+        <div class="section-panel" style="background: #F9FAFB; border-left: 4px solid #6B7280;">
+            <div class="section-header-modern">
+                <div class="section-title-modern">
+                    <div class="section-icon" style="background: #6B7280; color: white;">
+                        <i class="bi bi-journal-check"></i>
+                    </div>
+                    Other Clinical Notes (SOAP, Consultation, Discharge)
+                    <span class="badge bg-secondary ms-2">{{ other_notes|length }}</span>
+                </div>
+            </div>
+            {% for note in other_notes %}
+            <div class="card mb-3" style="border-left: 3px solid #6B7280;">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <span class="badge bg-secondary">{{ note.get_note_type_display }}</span>
+                            <span class="ms-2 fw-semibold">{% if note.created_by and note.created_by.user %}{{ note.created_by.user.get_full_name|default:note.created_by.user.username }}{% else %}Staff{% endif %}</span>
+                        </div>
+                        <small class="text-muted">{{ note.created|date:"M d, Y H:i" }}</small>
+                    </div>
+                    {% if note.notes %}<div class="mb-2">{{ note.notes|linebreaks }}</div>{% endif %}
+                    {% if note.subjective %}<div class="small"><strong>Subjective:</strong> {{ note.subjective }}</div>{% endif %}
+                    {% if note.objective %}<div class="small"><strong>Objective:</strong> {{ note.objective }}</div>{% endif %}
+                    {% if note.assessment %}<div class="small"><strong>Assessment:</strong> {{ note.assessment }}</div>{% endif %}
+                    {% if note.plan %}<div class="small"><strong>Plan:</strong> {{ note.plan }}</div>{% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Nurse Note Modal -->
+{% if encounter.status == 'active' %}
+<div class="modal fade" id="nurseNoteModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header" style="background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%); color: white;">
+                <h5 class="modal-title">
+                    <i class="bi bi-journal-text me-2"></i>Add Nurse Note
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'hospital:encounter_detail' encounter.pk %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="add_nurse_note">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Note Type</label>
+                        <select name="note_type" class="form-select" required>
+                            <option value="progress">Progress Note</option>
+                            <option value="soap">SOAP Note</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Observations (Objective)</label>
+                        <textarea name="objective" class="form-control" rows="3" placeholder="What you observed..."></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Notes</label>
+                        <textarea name="notes" class="form-control" rows="5" placeholder="Enter your nursing notes..." required></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-save me-2"></i>Save Note
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endif %}
 
 <!-- Surgery Dashboard (Only for Surgery Encounters) -->
 {% if encounter.encounter_type == 'surgery' and encounter.status == 'active' %}
@@ -1130,6 +1741,88 @@ setInterval(() => {
         })
         .catch(error => console.error('Error:', error));
 }, 30000);
+
+// ========== SUPER INTELLIGENT PATIENT FLOW REAL-TIME UPDATES ==========
+{% if flow_analytics %}
+let flowUpdateInterval;
+
+function updateFlowDisplay(data) {
+    if (!data || !data.success) return;
+    
+    // Update current location
+    const locationEl = document.getElementById('flow-current-location');
+    if (locationEl && data.current_location) {
+        locationEl.textContent = data.current_location;
+    }
+    
+    // Update wait time
+    const waitTimeEl = document.getElementById('flow-wait-time');
+    if (waitTimeEl) {
+        const waitMinutes = data.current_wait_time || 0;
+        const isLongWait = waitMinutes > 60;
+        
+        waitTimeEl.textContent = data.current_wait_formatted || '0 min';
+        waitTimeEl.className = isLongWait ? 'blink-warning' : '';
+        waitTimeEl.style.color = isLongWait ? '#EF4444' : '#667eea';
+    }
+    
+    // Update progress bar
+    const progressBar = document.getElementById('flow-progress-bar');
+    const progressPercent = document.getElementById('flow-progress-percent');
+    if (progressBar && data.progress_percentage !== undefined) {
+        progressBar.style.width = data.progress_percentage + '%';
+    }
+    if (progressPercent && data.progress_percentage !== undefined) {
+        progressPercent.textContent = data.progress_percentage + '%';
+    }
+    
+    // Update individual stage elapsed times
+    if (data.stages && Array.isArray(data.stages)) {
+        data.stages.forEach(stage => {
+            const elapsedEl = document.getElementById('stage-' + stage.id + '-elapsed');
+            if (elapsedEl && stage.status === 'in_progress') {
+                const isSlow = stage.elapsed_minutes > 60;
+                elapsedEl.textContent = stage.elapsed_time || '< 1 min';
+                elapsedEl.className = isSlow ? 'blink-warning' : '';
+                elapsedEl.style.color = isSlow ? '#EF4444' : '#667eea';
+            }
+        });
+    }
+    
+    // Update last update time
+    const lastUpdateEl = document.getElementById('flow-last-update');
+    if (lastUpdateEl) {
+        const now = new Date();
+        lastUpdateEl.textContent = now.toLocaleTimeString();
+    }
+}
+
+function fetchFlowUpdates() {
+    fetch('{% url "hospital:encounter_flow_ajax" encounter.pk %}')
+        .then(response => response.json())
+        .then(data => {
+            updateFlowDisplay(data);
+        })
+        .catch(error => {
+            console.error('Error fetching flow updates:', error);
+        });
+}
+
+// Start auto-refresh every 10 seconds
+if (document.getElementById('flow-current-status')) {
+    flowUpdateInterval = setInterval(fetchFlowUpdates, 10000);
+    
+    // Also update on page focus
+    document.addEventListener('visibilitychange', function() {
+        if (!document.hidden) {
+            fetchFlowUpdates();
+        }
+    });
+    
+    // Initial update after 2 seconds
+    setTimeout(fetchFlowUpdates, 2000);
+}
+{% endif %}
 </script>
 {% endblock %}
 

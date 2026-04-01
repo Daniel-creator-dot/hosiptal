@@ -16,6 +16,7 @@ import calendar
 
 from .models import Patient, Invoice, InvoiceLine, Payer, ServiceCode
 from .models_insurance import InsuranceClaimItem, MonthlyInsuranceClaim
+from .insurance_claim_query import insurance_claim_item_deduped_q
 
 
 @login_required
@@ -26,32 +27,41 @@ def insurance_claims_dashboard(request):
     current_year = today.year
     
     # Statistics
+    _claim_base = InsuranceClaimItem.objects.filter(is_deleted=False).filter(
+        insurance_claim_item_deduped_q()
+    )
     stats = {
-        'total_pending_claims': InsuranceClaimItem.objects.filter(
-            claim_status='pending',
-            is_deleted=False
-        ).count(),
-        'total_submitted_claims': InsuranceClaimItem.objects.filter(
+        'total_pending_claims': _claim_base.filter(claim_status='pending').count(),
+        'total_submitted_claims': _claim_base.filter(
             claim_status__in=['submitted', 'processing'],
-            is_deleted=False
         ).count(),
-        'total_paid_claims': InsuranceClaimItem.objects.filter(
-            claim_status='paid',
-            is_deleted=False
-        ).count(),
-        'total_rejected_claims': InsuranceClaimItem.objects.filter(
-            claim_status='rejected',
-            is_deleted=False
-        ).count(),
+        'total_paid_claims': _claim_base.filter(claim_status='paid').count(),
+        'total_rejected_claims': _claim_base.filter(claim_status='rejected').count(),
         'total_outstanding_amount': (
-            (InsuranceClaimItem.objects.filter(
-                claim_status__in=['pending', 'submitted', 'processing', 'approved', 'partially_paid'],
-                is_deleted=False
-            ).aggregate(total=Sum('billed_amount'))['total'] or Decimal('0.00')) -
-            (InsuranceClaimItem.objects.filter(
-                claim_status__in=['pending', 'submitted', 'processing', 'approved', 'partially_paid'],
-                is_deleted=False
-            ).aggregate(total=Sum('paid_amount'))['total'] or Decimal('0.00'))
+            (
+                _claim_base.filter(
+                    claim_status__in=[
+                        'pending',
+                        'submitted',
+                        'processing',
+                        'approved',
+                        'partially_paid',
+                    ],
+                ).aggregate(total=Sum('billed_amount'))['total']
+                or Decimal('0.00')
+            )
+            - (
+                _claim_base.filter(
+                    claim_status__in=[
+                        'pending',
+                        'submitted',
+                        'processing',
+                        'approved',
+                        'partially_paid',
+                    ],
+                ).aggregate(total=Sum('paid_amount'))['total']
+                or Decimal('0.00')
+            )
         ),
     }
     
@@ -65,17 +75,21 @@ def insurance_claims_dashboard(request):
     )
     
     # Recent claim items
-    recent_claims = InsuranceClaimItem.objects.filter(
-        is_deleted=False
-    ).select_related('patient', 'payer').order_by('-created')[:10]
+    recent_claims = (
+        InsuranceClaimItem.objects.filter(is_deleted=False)
+        .filter(insurance_claim_item_deduped_q())
+        .select_related('patient', 'payer')
+        .order_by('-created')[:10]
+    )
     
     # Claims by status
-    claims_by_status = InsuranceClaimItem.objects.filter(
-        is_deleted=False
-    ).values('claim_status').annotate(
-        count=Count('id'),
-        total_amount=Sum('billed_amount')
-    ).order_by('claim_status')
+    claims_by_status = (
+        InsuranceClaimItem.objects.filter(is_deleted=False)
+        .filter(insurance_claim_item_deduped_q())
+        .values('claim_status')
+        .annotate(count=Count('id'), total_amount=Sum('billed_amount'))
+        .order_by('claim_status')
+    )
     
     context = {
         'stats': stats,
@@ -98,9 +112,11 @@ def insurance_claim_items_list(request):
     date_from = request.GET.get('date_from', '')
     date_to = request.GET.get('date_to', '')
     
-    claim_items = InsuranceClaimItem.objects.filter(
-        is_deleted=False
-    ).select_related('patient', 'payer', 'invoice', 'service_code')
+    claim_items = (
+        InsuranceClaimItem.objects.filter(is_deleted=False)
+        .filter(insurance_claim_item_deduped_q())
+        .select_related('patient', 'payer', 'invoice', 'service_code')
+    )
     
     if query:
         claim_items = claim_items.filter(
@@ -287,13 +303,15 @@ def generate_monthly_claims(request):
     
     for payer in payers:
         # Get all pending claim items for this payer in this month
-        claim_items = InsuranceClaimItem.objects.filter(
-            payer=payer,
-            service_date__year=year,
-            service_date__month=month,
-            claim_status='pending',
-            monthly_claim__isnull=True,
-            is_deleted=False
+        claim_items = (
+            InsuranceClaimItem.objects.filter(
+                payer=payer,
+                service_date__year=year,
+                service_date__month=month,
+                claim_status='pending',
+                monthly_claim__isnull=True,
+                is_deleted=False,
+            ).filter(insurance_claim_item_deduped_q())
         )
         
         if not claim_items.exists():
@@ -345,10 +363,12 @@ def patient_insurance_claims(request, patient_id):
     """View all insurance claims for a specific patient"""
     patient = get_object_or_404(Patient, pk=patient_id, is_deleted=False)
     
-    claim_items = InsuranceClaimItem.objects.filter(
-        patient=patient,
-        is_deleted=False
-    ).select_related('payer', 'invoice', 'service_code').order_by('-service_date')
+    claim_items = (
+        InsuranceClaimItem.objects.filter(patient=patient, is_deleted=False)
+        .filter(insurance_claim_item_deduped_q())
+        .select_related('payer', 'invoice', 'service_code')
+        .order_by('-service_date')
+    )
     
     # Statistics
     stats = claim_items.aggregate(

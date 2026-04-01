@@ -4,26 +4,88 @@
 {% block title %}{{ title }} - Procurement{% endblock %}
 {% block page_title %}{{ title }}{% endblock %}
 
+{% block extra_css %}
+<style>
+    .drug-guide-link {
+        margin-top: 8px;
+        font-size: 13px;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-md-10">
         <div class="modern-card">
-            <div class="mb-3">
-                {% if 'supplier' in title|lower %}
-                    <a href="{% url 'hospital:suppliers_list' %}" class="btn btn-outline-secondary btn-modern">
-                {% elif 'store' in title|lower %}
-                    <a href="{% url 'hospital:stores_list' %}" class="btn btn-outline-secondary btn-modern">
-                {% elif 'inventory' in title|lower and object %}
-                    <a href="{% url 'hospital:store_detail' object.store.pk %}" class="btn btn-outline-secondary btn-modern">
-                {% else %}
-                    <a href="{% url 'hospital:procurement_dashboard' %}" class="btn btn-outline-secondary btn-modern">
-                {% endif %}
-                    <i class="bi bi-arrow-left"></i> Back
+            <div class="mb-3 d-flex justify-content-between align-items-center">
+                <div>
+                    {% if 'supplier' in title|lower %}
+                        <a href="{% url 'hospital:suppliers_list' %}" class="btn btn-outline-secondary btn-modern">
+                    {% elif 'store' in title|lower %}
+                        <a href="{% url 'hospital:stores_list' %}" class="btn btn-outline-secondary btn-modern">
+                    {% elif 'inventory' in title|lower and object %}
+                        <a href="{% url 'hospital:store_detail' object.store.pk %}" class="btn btn-outline-secondary btn-modern">
+                    {% else %}
+                        <a href="{% url 'hospital:procurement_dashboard' %}" class="btn btn-outline-secondary btn-modern">
+                    {% endif %}
+                        <i class="bi bi-arrow-left"></i> Back
+                    </a>
+                </div>
+                {% if 'inventory' in title|lower or 'drug' in title|lower %}
+                <a href="{% url 'hospital:drug_classification_guide' %}" target="_blank" class="btn btn-info btn-modern">
+                    <i class="bi bi-book"></i> Drug Classification Guide
                 </a>
+                {% endif %}
             </div>
             {% crispy form %}
         </div>
     </div>
 </div>
+
+{% if 'inventory' in title|lower %}
+<script>
+    // Auto-fill category when drug is selected
+    function updateCategoryFromDrug(drugSelect) {
+        const drugId = drugSelect.value;
+        if (!drugId) return;
+        
+        // Fetch drug details via AJAX
+        fetch(`/hms/api/drug/${drugId}/`)
+            .then(response => {
+                if (!response.ok) throw new Error('Drug not found');
+                return response.json();
+            })
+            .then(data => {
+                if (data.category) {
+                    // Find category field and set it
+                    const categorySelect = document.querySelector('select[name="category"]');
+                    if (categorySelect) {
+                        // Try to find matching category option
+                        const options = categorySelect.options;
+                        for (let i = 0; i < options.length; i++) {
+                            if (options[i].value === data.category || options[i].text.includes(data.category_display)) {
+                                categorySelect.value = options[i].value;
+                                break;
+                            }
+                        }
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching drug details:', error);
+            });
+    }
+    
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        const drugSelects = document.querySelectorAll('.drug-select');
+        drugSelects.forEach(select => {
+            if (select.value) {
+                updateCategoryFromDrug(select);
+            }
+        });
+    });
+</script>
+{% endif %}
 {% endblock %}
 

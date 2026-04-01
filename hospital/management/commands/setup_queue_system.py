@@ -46,8 +46,13 @@ class Command(BaseCommand):
                 avg_time = 15
                 buffer = 5
             else:
-                # Use first 3 letters of department name
-                prefix = dept_name[:3].replace(' ', '')[:3]
+                # Use first 3 letters of department name (avoid confusing SMS prefixes like ACC-)
+                prefix = dept_name.replace(' ', '')[:3]
+                blocked = {'ACC', 'XXX', 'ASS'}
+                if prefix in blocked:
+                    code = (department.code or '').strip().upper().replace(' ', '')
+                    code = ''.join(c for c in code if c.isalnum())[:5]
+                    prefix = code if code and code not in blocked else 'VIS'
                 avg_time = 15
                 buffer = 5
             

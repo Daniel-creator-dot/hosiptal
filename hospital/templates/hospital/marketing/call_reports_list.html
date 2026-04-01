@@ -1,0 +1,204 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Call Reports - Marketing{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2><i class="bi bi-telephone me-2"></i>Call Reports</h2>
+            <p class="text-muted">Track and manage all marketing calls and client interactions</p>
+        </div>
+        <a href="{% url 'hospital:create_call_report' %}" class="btn btn-primary">
+            <i class="bi bi-plus-circle me-1"></i>New Call Report
+        </a>
+    </div>
+    
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card border-left-primary">
+                <div class="card-body">
+                    <div class="text-muted small">Total Calls</div>
+                    <div class="h4 mb-0">{{ total_calls }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-left-info">
+                <div class="card-body">
+                    <div class="text-muted small">Calls Today</div>
+                    <div class="h4 mb-0">{{ calls_today }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-left-warning">
+                <div class="card-body">
+                    <div class="text-muted small">Follow-ups Due</div>
+                    <div class="h4 mb-0">{{ follow_ups_due }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-left-success">
+                <div class="card-body">
+                    <div class="text-muted small">High-Value Opportunities</div>
+                    <div class="h4 mb-0">{{ high_value_opportunities }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Search</label>
+                    <input type="text" name="search" class="form-control" value="{{ search_query }}" placeholder="Name, phone, company...">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Call Type</label>
+                    <select name="call_type" class="form-select">
+                        <option value="">All Types</option>
+                        {% for value, label in call_report.CALL_TYPES %}
+                        <option value="{{ value }}" {% if call_type_filter == value %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Outcome</label>
+                    <select name="outcome" class="form-select">
+                        <option value="">All Outcomes</option>
+                        {% for value, label in call_report.CALL_OUTCOMES %}
+                        <option value="{{ value }}" {% if outcome_filter == value %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Follow-up</label>
+                    <select name="follow_up" class="form-select">
+                        <option value="">All</option>
+                        <option value="required" {% if follow_up_filter == 'required' %}selected{% endif %}>Required</option>
+                        <option value="due" {% if follow_up_filter == 'due' %}selected{% endif %}>Due</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Date Range</label>
+                    <div class="input-group">
+                        <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+                        <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+                    </div>
+                </div>
+                <div class="col-md-12">
+                    <button type="submit" class="btn btn-primary">Filter</button>
+                    <a href="{% url 'hospital:call_reports_list' %}" class="btn btn-outline-secondary">Clear</a>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Call Reports Table -->
+    <div class="card">
+        <div class="card-body">
+            {% if call_reports %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Date & Time</th>
+                            <th>Contact</th>
+                            <th>Company</th>
+                            <th>Type</th>
+                            <th>Outcome</th>
+                            <th>Duration</th>
+                            <th>Value</th>
+                            <th>Follow-up</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for report in call_reports %}
+                        <tr>
+                            <td>
+                                <small>{{ report.call_date|date:"M d, Y" }}</small><br>
+                                <small class="text-muted">{{ report.call_date|date:"H:i" }}</small>
+                            </td>
+                            <td>
+                                <strong>{{ report.contact_name }}</strong><br>
+                                <small class="text-muted">{{ report.contact_phone }}</small>
+                            </td>
+                            <td>{{ report.company_name|default:"—" }}</td>
+                            <td>
+                                <span class="badge bg-info">{{ report.get_call_type_display }}</span>
+                            </td>
+                            <td>
+                                <span class="badge bg-{{ report.call_outcome }}">{{ report.get_call_outcome_display }}</span>
+                            </td>
+                            <td>{{ report.call_duration_minutes }} min</td>
+                            <td>
+                                {% if report.potential_value %}
+                                <strong>GHS {{ report.potential_value|floatformat:2|intcomma }}</strong>
+                                {% else %}
+                                —
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if report.follow_up_required %}
+                                {% if report.is_follow_up_due %}
+                                <span class="badge bg-warning">Due</span><br>
+                                {% endif %}
+                                <small>{{ report.follow_up_date|date:"M d, Y"|default:"Not scheduled" }}</small>
+                                {% else %}
+                                <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:call_report_detail' report.id %}" class="btn btn-sm btn-outline-primary">
+                                    View
+                                </a>
+                                <a href="{% url 'hospital:edit_call_report' report.id %}" class="btn btn-sm btn-outline-secondary">
+                                    Edit
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination -->
+            {% if call_reports.has_other_pages %}
+            <nav aria-label="Page navigation">
+                <ul class="pagination justify-content-center">
+                    {% if call_reports.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ call_reports.previous_page_number }}">Previous</a>
+                    </li>
+                    {% endif %}
+                    <li class="page-item active">
+                        <span class="page-link">Page {{ call_reports.number }} of {{ call_reports.paginator.num_pages }}</span>
+                    </li>
+                    {% if call_reports.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ call_reports.next_page_number }}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-telephone" style="font-size: 4rem; color: #cbd5e1;"></i>
+                <p class="text-muted mt-3">No call reports found</p>
+                <a href="{% url 'hospital:create_call_report' %}" class="btn btn-primary">
+                    <i class="bi bi-plus-circle me-1"></i>Create First Call Report
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

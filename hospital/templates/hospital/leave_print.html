@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leave Approval Document - {{ leave_request.request_number }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 20mm;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 11pt;
+            line-height: 1.6;
+            color: #333;
+            background: white;
+        }
+
+        .document-container {
+            width: 100%;
+            max-width: 210mm;
+            margin: 0 auto;
+            padding: 10mm;
+            background: white;
+        }
+
+        /* Header Section - Professional Letterhead */
+        .document-header {
+            border-bottom: 4px solid {{ settings.report_header_color|default:'#2196F3' }};
+            padding: 20px 0;
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            background: linear-gradient(to bottom, rgba(255,255,255,0.95) 0%, rgba(248,249,250,0.95) 100%);
+            position: relative;
+        }
+        
+        .document-header::after {
+            content: '';
+            position: absolute;
+            bottom: -4px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(to right, {{ settings.report_header_color|default:'#2196F3' }}, transparent);
+        }
+
+        .header-left {
+            flex: 1;
+        }
+
+        .hospital-logo {
+            max-width: {{ settings.logo_width|default:120 }}px;
+            max-height: {{ settings.logo_height|default:120 }}px;
+            margin-bottom: 12px;
+            display: block;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
+        }
+
+        .hospital-name {
+            font-size: 24pt;
+            font-weight: 800;
+            color: {{ settings.report_header_color|default:'#2196F3' }};
+            margin-bottom: 6px;
+            letter-spacing: -0.5px;
+            text-transform: uppercase;
+        }
+
+        .hospital-tagline {
+            font-size: 11pt;
+            color: #555;
+            margin-bottom: 10px;
+            font-weight: 500;
+            font-style: italic;
+        }
+
+        .hospital-contact {
+            font-size: 9pt;
+            color: #666;
+            line-height: 1.6;
+            margin-top: 8px;
+        }
+        
+        .hospital-contact strong {
+            color: #333;
+            font-weight: 600;
+        }
+
+        .header-right {
+            text-align: right;
+            padding-left: 20px;
+        }
+
+        .document-type {
+            background: linear-gradient(135deg, {{ settings.report_header_color|default:'#2196F3' }} 0%, {{ settings.report_header_color|default:'#1976D2' }} 100%);
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            text-align: center;
+            min-width: 180px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .document-type-title {
+            font-size: 14pt;
+            font-weight: 700;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .document-type-subtitle {
+            font-size: 9pt;
+            opacity: 0.95;
+            font-weight: 500;
+        }
+
+        /* Document Title */
+        .document-title-section {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            border-left: 4px solid {{ settings.report_header_color|default:'#2196F3' }};
+        }
+
+        .document-title {
+            font-size: 20pt;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .document-subtitle {
+            font-size: 11pt;
+            color: #666;
+            font-weight: 500;
+        }
+
+        /* Leave Information Box */
+        .leave-info-box {
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 25px;
+            margin-bottom: 25px;
+            background: #fafafa;
+        }
+
+        .info-section {
+            margin-bottom: 20px;
+        }
+
+        .info-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .info-row:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+
+        .info-label {
+            font-weight: 600;
+            color: #555;
+            font-size: 10pt;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            min-width: 150px;
+        }
+
+        .info-value {
+            flex: 1;
+            text-align: right;
+            font-size: 11pt;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .info-value-badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 5px;
+            font-weight: 600;
+            font-size: 10pt;
+        }
+
+        .badge-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .badge-info {
+            background: #17a2b8;
+            color: white;
+        }
+
+        .badge-primary {
+            background: {{ settings.report_header_color|default:'#2196F3' }};
+            color: white;
+        }
+
+        /* Reason Section */
+        .reason-section {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+
+        .reason-label {
+            font-weight: 600;
+            color: #555;
+            margin-bottom: 10px;
+            font-size: 10pt;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .reason-text {
+            color: #333;
+            line-height: 1.8;
+            font-size: 11pt;
+        }
+
+        /* Approval Section */
+        .approval-section {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 25px;
+            text-align: center;
+        }
+
+        .approval-title {
+            font-size: 14pt;
+            font-weight: 700;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .approval-details {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .approval-item {
+            flex: 1;
+            min-width: 200px;
+            margin: 10px;
+        }
+
+        .approval-label {
+            font-size: 9pt;
+            opacity: 0.9;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .approval-value {
+            font-size: 12pt;
+            font-weight: 600;
+        }
+
+        /* Signature Section */
+        .signature-section {
+            margin-top: 40px;
+            display: flex;
+            justify-content: space-between;
+            padding-top: 30px;
+            border-top: 2px solid #e0e0e0;
+        }
+
+        .signature-box {
+            flex: 1;
+            text-align: center;
+            margin: 0 15px;
+        }
+
+        .signature-line {
+            border-top: 2px solid #333;
+            margin: 60px auto 10px;
+            width: 200px;
+        }
+
+        .signature-label {
+            font-weight: 600;
+            color: #555;
+            font-size: 10pt;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .signature-name {
+            margin-top: 5px;
+            font-size: 11pt;
+            color: #333;
+            font-weight: 500;
+        }
+
+        /* Footer */
+        .document-footer {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #e0e0e0;
+            text-align: center;
+            font-size: 9pt;
+            color: #666;
+        }
+
+        /* Print Styles */
+        @media print {
+            body {
+                background: white;
+                font-size: 10pt;
+            }
+
+            .document-container {
+                padding: 0;
+                max-width: 100%;
+            }
+
+            .no-print {
+                display: none !important;
+            }
+
+            .document-header {
+                page-break-after: avoid;
+            }
+
+            .leave-info-box {
+                page-break-inside: avoid;
+            }
+
+            .approval-section {
+                page-break-inside: avoid;
+            }
+
+            .signature-section {
+                page-break-inside: avoid;
+            }
+        }
+
+        /* Screen-only print button */
+        @media screen {
+            .print-button-container {
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                z-index: 1000;
+            }
+
+            .print-button {
+                background: {{ settings.report_header_color|default:'#2196F3' }};
+                color: white;
+                border: none;
+                padding: 12px 24px;
+                border-radius: 6px;
+                font-size: 11pt;
+                font-weight: 600;
+                cursor: pointer;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+                transition: all 0.3s ease;
+            }
+
+            .print-button:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 6px 16px rgba(0,0,0,0.3);
+            }
+
+            .print-button:active {
+                transform: translateY(0);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="print-button-container no-print">
+        <button class="print-button" onclick="window.print()">
+            🖨️ Print Document
+        </button>
+    </div>
+
+    <div class="document-container">
+        <!-- Header -->
+        <div class="document-header">
+            <div class="header-left">
+                {% if settings and settings.logo %}
+                <img src="{{ settings.logo.url }}" alt="Hospital Logo" class="hospital-logo">
+                {% endif %}
+                <div class="hospital-name">
+                    {{ settings.hospital_name|default:"Hospital Management System" }}
+                </div>
+                {% if settings and settings.hospital_tagline %}
+                <div class="hospital-tagline">{{ settings.hospital_tagline }}</div>
+                {% endif %}
+                <div class="hospital-contact">
+                    {% if settings and settings.address %}
+                    <strong>Address:</strong> {{ settings.address }}<br>
+                    {% endif %}
+                    {% if settings and settings.phone %}
+                    <strong>Phone:</strong> {{ settings.phone }}
+                    {% endif %}
+                    {% if settings and settings.email %}
+                    <strong>Email:</strong> {{ settings.email }}
+                    {% endif %}
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="document-type">
+                    <div class="document-type-title">Leave Approval</div>
+                    <div class="document-type-subtitle">Official Document</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Document Title -->
+        <div class="document-title-section">
+            <div class="document-title">Leave Approval Certificate</div>
+            <div class="document-subtitle">Request Number: {{ leave_request.request_number|default:"N/A" }}</div>
+        </div>
+
+        <!-- Leave Information -->
+        <div class="leave-info-box">
+            <div class="info-section">
+                <div class="info-row">
+                    <div class="info-label">Staff Name:</div>
+                    <div class="info-value">
+                        <strong>{{ leave_request.staff.user.get_full_name|default:leave_request.staff.user.username }}</strong>
+                    </div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Employee ID:</div>
+                    <div class="info-value">
+                        {% if leave_request.staff.employee_id %}
+                            {{ leave_request.staff.employee_id }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Department:</div>
+                    <div class="info-value">
+                        {% if leave_request.staff.department %}
+                            {{ leave_request.staff.department.name }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Position:</div>
+                    <div class="info-value">
+                        {% if leave_request.staff.profession %}
+                            {{ leave_request.staff.get_profession_display }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Leave Type:</div>
+                    <div class="info-value">
+                        <span class="info-value-badge badge-info">{{ leave_request.get_leave_type_display }}</span>
+                    </div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Start Date:</div>
+                    <div class="info-value">
+                        <strong>{{ leave_request.start_date|date:"F d, Y" }} ({{ leave_request.start_date|date:"l" }})</strong>
+                    </div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">End Date:</div>
+                    <div class="info-value">
+                        <strong>{{ leave_request.end_date|date:"F d, Y" }} ({{ leave_request.end_date|date:"l" }})</strong>
+                    </div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Working Days:</div>
+                    <div class="info-value">
+                        <span class="info-value-badge badge-primary">
+                            <strong>{{ leave_request.days_requested }} day{{ leave_request.days_requested|pluralize }}</strong>
+                        </span>
+                        <small style="margin-left: 10px; color: #666;">(Weekends excluded)</small>
+                    </div>
+                </div>
+                {% if leave_request.return_date %}
+                <div class="info-row">
+                    <div class="info-label">Return Date:</div>
+                    <div class="info-value">
+                        <strong>{{ leave_request.return_date|date:"F d, Y" }} ({{ leave_request.return_date|date:"l" }})</strong>
+                    </div>
+                </div>
+                {% endif %}
+                {% if leave_request.covering_staff %}
+                <div class="info-row">
+                    <div class="info-label">Covering Staff:</div>
+                    <div class="info-value">
+                        {% if leave_request.covering_staff.user %}
+                            {{ leave_request.covering_staff.user.get_full_name|default:leave_request.covering_staff.user.username }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Reason for Leave -->
+            {% if leave_request.reason %}
+            <div class="reason-section">
+                <div class="reason-label">Reason for Leave:</div>
+                <div class="reason-text">{{ leave_request.reason }}</div>
+            </div>
+            {% endif %}
+
+            <!-- Handover Notes -->
+            {% if leave_request.handover_notes %}
+            <div class="reason-section" style="margin-top: 15px;">
+                <div class="reason-label">Handover Notes:</div>
+                <div class="reason-text">{{ leave_request.handover_notes }}</div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Approval Section -->
+        <div class="approval-section">
+            <div class="approval-title">✓ Leave Request Approved</div>
+            <div class="approval-details">
+                <div class="approval-item">
+                    <div class="approval-label">Approved By</div>
+                    <div class="approval-value">
+                        {% if leave_request.approved_by and leave_request.approved_by.user %}
+                            {{ leave_request.approved_by.user.get_full_name|default:leave_request.approved_by.user.username }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="approval-item">
+                    <div class="approval-label">Approval Date</div>
+                    <div class="approval-value">
+                        {{ leave_request.approved_at|date:"F d, Y" }}
+                    </div>
+                </div>
+                <div class="approval-item">
+                    <div class="approval-label">Approval Time</div>
+                    <div class="approval-value">
+                        {{ leave_request.approved_at|date:"g:i A" }}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Signature Section -->
+        <div class="signature-section">
+            <div class="signature-box">
+                <div class="signature-line"></div>
+                <div class="signature-label">Employee Signature</div>
+                <div class="signature-name">{{ leave_request.staff.user.get_full_name|default:leave_request.staff.user.username }}</div>
+            </div>
+            <div class="signature-box">
+                <div class="signature-line"></div>
+                <div class="signature-label">Approver Signature</div>
+                <div class="signature-name">
+                    {% if leave_request.approved_by and leave_request.approved_by.user %}
+                        {{ leave_request.approved_by.user.get_full_name|default:leave_request.approved_by.user.username }}
+                    {% else %}
+                        N/A
+                    {% endif %}
+                </div>
+            </div>
+            <div class="signature-box">
+                <div class="signature-line"></div>
+                <div class="signature-label">HR Department</div>
+                <div class="signature-name">Human Resources</div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="document-footer">
+            <p><strong>This is an official document.</strong> Please keep this document in your employee file.</p>
+            <p style="margin-top: 5px;">Generated on {{ "now"|date:"F d, Y \a\t g:i A" }}</p>
+            {% if settings and settings.report_footer_text %}
+            <p style="margin-top: 10px;">{{ settings.report_footer_text }}</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        // Auto-print when page loads (optional - can be removed if manual print is preferred)
+        // window.onload = function() {
+        //     window.print();
+        // };
+    </script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+

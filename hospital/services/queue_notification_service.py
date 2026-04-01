@@ -20,44 +20,40 @@ class QueueNotificationService:
     TEMPLATES = {
         'check_in': """🏥 {hospital_name}
 
-Welcome! Your queue number is: {queue_number}
+Your visit ticket: {queue_number}
+(Use this code on the queue screen and when called.)
 
-📍 Department: {department}
-👥 Position: {position} in queue
-⏱️ Estimated wait: {wait_time} minutes
-📅 Date: {date}
+📍 {department}
+👥 You are #{position} in line
+⏱️ Est. wait: ~{wait_time} min
+📅 {date}
 
-Please wait in the Reception waiting area.
-You'll receive updates via SMS.""",
+Please wait in the reception area — you will receive SMS when it is your turn.""",
 
-        'progress_update': """🏥 Queue Update
+        'progress_update': """🏥 Queue update
 
-Queue #{queue_number}
-Current position: {position}
-⏱️ Estimated wait: {wait_time} minutes
+Ticket {queue_number}
+You're now #{position} in line
+⏱️ Est. wait: ~{wait_time} min
 
-Thank you for your patience!""",
+Thanks for waiting — we're moving as fast as we can.""",
 
-        'ready': """🏥 READY FOR CONSULTATION
+        'ready': """🏥 It's your turn — {queue_number}
 
-Queue #{queue_number} - It's your turn!
-
-📍 Please proceed to:
+📍 Please go to:
    {room_info}
 
-⚠️ Please arrive within 5 minutes""",
+Please arrive within 5 minutes. Show this ticket if asked.""",
 
-        'no_show': """🏥 ATTENTION REQUIRED
+        'no_show': """🏥 Please come to the desk
 
-Queue #{queue_number}
-You were called but did not respond.
+Ticket {queue_number} — we called you but there was no response.
 
-Please report to reception immediately
-or you may lose your queue position.""",
+Please see reception right away so you don't lose your place.""",
 
         'completed': """🏥 Thank you for visiting!
 
-Queue #{queue_number} - Consultation completed
+Ticket {queue_number} — visit completed
 
 💊 Next steps:
 {next_steps}
@@ -70,14 +66,24 @@ Visit us: {hospital_name}"""
         self.logger = logger
         self.hospital_name = getattr(settings, 'HOSPITAL_NAME', 'General Hospital')
         self.hospital_phone = getattr(settings, 'HOSPITAL_PHONE', '0123456789')
+
+    def _ticket_label(self, queue_entry):
+        """Patient-facing ticket number without internal prefix."""
+        try:
+            ticket = getattr(queue_entry, 'display_ticket_number', None)
+            if ticket is not None:
+                s = str(ticket).strip()
+                if s and s != '---':
+                    return s
+        except Exception:
+            pass
+        return str(getattr(queue_entry, 'queue_number', '') or '')
     
-    def send_check_in_notification(self, queue_entry):
+    def send_check_in_notification(self, queue_entry, consultation_amount=None):
         """
-        Send check-in confirmation SMS
-        
-        Args:
-            queue_entry: QueueEntry object
-        
+        Send check-in confirmation SMS. If consultation_amount is set, reminds patient
+        to pay at Cashier (no amounts in SMS).
+
         Returns:
             bool: Success status
         """
@@ -109,16 +115,50 @@ Visit us: {hospital_name}"""
             from .queue_service import queue_service
             position = queue_service.get_position_in_queue(queue_entry)
             
-            # Format message
+            # Check for pending bills if consultation_amount not provided
+            if consultation_amount is None and queue_entry.encounter:
+                try:
+                    from hospital.models import Invoice, InvoiceLine
+                    from decimal import Decimal
+                    invoice = Invoice.objects.filter(
+                        encounter=queue_entry.encounter,
+                        is_deleted=False,
+                        status__in=['draft', 'pending', 'unpaid']
+                    ).first()
+                    
+                    if invoice:
+                        # Get consultation charge amount
+                        consultation_line = invoice.invoice_lines.filter(
+                            service_code__code__in=['CON001', 'CON002'],
+                            is_deleted=False
+                        ).first()
+                        
+                        if consultation_line:
+                            consultation_amount = consultation_line.unit_price
+                except Exception as e:
+                    self.logger.warning(f"Error checking for consultation amount: {e}")
+            
+            # Format base message
             department_name = queue_entry.department.name if queue_entry.department else 'General'
-            message = self.TEMPLATES['check_in'].format(
+            ticket = self._ticket_label(queue_entry)
+            base_message = self.TEMPLATES['check_in'].format(
                 hospital_name=self.hospital_name,
-                queue_number=queue_entry.queue_number,
+                queue_number=ticket,
                 department=department_name,
                 position=position,
                 wait_time=queue_entry.estimated_wait_minutes or 0,
                 date=queue_entry.queue_date.strftime('%b %d, %Y')
             )
+            
+            # Remind to pay at Cashier (no amounts in SMS — total is confirmed at desk)
+            payment_info = ""
+            if consultation_amount:
+                payment_info = (
+                    "\n\nPlease proceed to the Cashier to make payment before consultation.\n"
+                    "Your correct bill is available at the desk."
+                )
+            
+            message = base_message + payment_info
             
             # Send SMS
             success = self._send_sms(
@@ -195,8 +235,9 @@ Visit us: {hospital_name}"""
             )
             
             # Format message
+            ticket = self._ticket_label(queue_entry)
             message = self.TEMPLATES['progress_update'].format(
-                queue_number=queue_entry.queue_number,
+                queue_number=ticket,
                 position=position,
                 wait_time=estimated_wait
             )
@@ -225,7 +266,7 @@ Visit us: {hospital_name}"""
     
     def send_ready_notification(self, queue_entry):
         """
-        Send "your turn" notification
+        Send "your turn" notification with room and doctor information
         
         Args:
             queue_entry: QueueEntry object
@@ -234,37 +275,98 @@ Visit us: {hospital_name}"""
             bool: Success status
         """
         try:
-            phone = self._get_patient_phone(queue_entry.patient)
-            if not phone:
+            # Log attempt
+            self.logger.info(f"📱 Attempting to send ready notification for queue {queue_entry.queue_number}")
+            
+            # Check if patient exists
+            if not queue_entry.patient:
+                self.logger.error(f"QueueEntry {queue_entry.queue_number} has no patient assigned")
                 return False
             
-            # Format room info
-            room_info = queue_entry.room_number or 'Main Consultation Area'
-            if queue_entry.assigned_doctor:
-                doctor_name = queue_entry.assigned_doctor.get_full_name()
-                room_info = f"{room_info} - {doctor_name}"
+            # Get patient phone number
+            phone = self._get_patient_phone(queue_entry.patient)
+            if not phone:
+                self.logger.warning(
+                    f"⚠️ Cannot send SMS: Patient {queue_entry.patient.full_name} (MRN: {queue_entry.patient.mrn}) "
+                    f"has no valid phone number. Phone field value: '{getattr(queue_entry.patient, 'phone_number', 'None')}'"
+                )
+                return False
             
-            # Format message
-            message = self.TEMPLATES['ready'].format(
-                queue_number=queue_entry.queue_number,
-                room_info=room_info
-            )
+            self.logger.info(f"📱 Phone number found for {queue_entry.patient.full_name}: {phone}")
+            
+            # Format room info with doctor name
+            room_info = queue_entry.room_number or 'Main Consultation Area'
+            doctor_name = ''
+            if queue_entry.assigned_doctor:
+                doctor_name = queue_entry.assigned_doctor.get_full_name() or queue_entry.assigned_doctor.username
+                # Format: "Room 5 - Dr. John Doe" or "Dr. John Doe - Room 5"
+                if room_info and room_info != 'Main Consultation Area':
+                    room_info = f"{room_info} - Dr. {doctor_name}"
+                elif doctor_name:
+                    room_info = f"Dr. {doctor_name} - Main Consultation Area"
+            
+            # Enhanced message with more details
+            ticket = self._ticket_label(queue_entry)
+            if doctor_name and room_info and room_info != 'Main Consultation Area':
+                message = (
+                    f"🏥 It's your turn\n\n"
+                    f"Ticket {ticket}\n\n"
+                    f"👨‍⚕️ Dr. {doctor_name}\n"
+                    f"🚪 Room {queue_entry.room_number}\n\n"
+                    f"Please go to that room now.\n\n"
+                    f"⚠️ Please arrive within 5 minutes.\n\n"
+                    f"— {self.hospital_name}"
+                )
+            elif doctor_name:
+                message = (
+                    f"🏥 It's your turn\n\n"
+                    f"Ticket {ticket}\n\n"
+                    f"👨‍⚕️ Dr. {doctor_name}\n\n"
+                    f"Please go to the consultation area now.\n\n"
+                    f"⚠️ Within 5 minutes please.\n\n"
+                    f"— {self.hospital_name}"
+                )
+            else:
+                # Fallback to template format
+                message = self.TEMPLATES['ready'].format(
+                    queue_number=ticket,
+                    room_info=room_info
+                )
             
             # Send SMS
+            self.logger.info(f"📱 Sending SMS to {phone} for patient {queue_entry.patient.full_name} (Queue: {queue_entry.queue_number})")
+            self.logger.debug(f"Message content (first 300 chars):\n{message[:300]}")
+            self.logger.debug(f"Full message length: {len(message)} characters")
+            
+            # Convert UUID to string for related_object_id
+            related_id = str(queue_entry.id) if queue_entry.id else None
+            
+            self.logger.debug(f"SMS parameters: phone={phone}, recipient={queue_entry.patient.full_name}, type=queue_ready, related_id={related_id}")
+            
             success = self._send_sms(
                 phone, 
                 message, 
                 recipient_name=queue_entry.patient.full_name,
-                message_type='queue_ready'
+                message_type='queue_ready',
+                related_object_id=related_id,
+                related_object_type='QueueEntry'
             )
             
             if success:
-                self._log_notification(queue_entry, 'ready', 'sms', message)
-                queue_entry.notification_count += 1
-                queue_entry.last_notification_sent = timezone.now()
-                queue_entry.save()
-                
-                self.logger.info(f"✅ Ready notification sent to {queue_entry.patient.full_name}")
+                try:
+                    self._log_notification(queue_entry, 'ready', 'sms', message)
+                    queue_entry.notification_count += 1
+                    queue_entry.last_notification_sent = timezone.now()
+                    queue_entry.save(update_fields=['notification_count', 'last_notification_sent', 'modified'])
+                    
+                    self.logger.info(f"✅ Ready notification sent successfully to {queue_entry.patient.full_name} at {phone}")
+                except Exception as save_error:
+                    self.logger.error(f"Error updating queue entry after SMS send: {str(save_error)}")
+            else:
+                self.logger.warning(
+                    f"⚠️ SMS send failed for {queue_entry.patient.full_name} at {phone}. "
+                    f"Queue: {queue_entry.queue_number}"
+                )
             
             return success
             
@@ -288,8 +390,9 @@ Visit us: {hospital_name}"""
                 return False
             
             # Format message
+            ticket = self._ticket_label(queue_entry)
             message = self.TEMPLATES['no_show'].format(
-                queue_number=queue_entry.queue_number
+                queue_number=ticket
             )
             
             # Send SMS
@@ -336,8 +439,9 @@ Visit us: {hospital_name}"""
 - Reception: For follow-up appointment"""
             
             # Format message
+            ticket = self._ticket_label(queue_entry)
             message = self.TEMPLATES['completed'].format(
-                queue_number=queue_entry.queue_number,
+                queue_number=ticket,
                 next_steps=next_steps,
                 hospital_phone=self.hospital_phone,
                 hospital_name=self.hospital_name
@@ -489,7 +593,7 @@ Visit us: {hospital_name}"""
             message: Message content
             recipient_name: Name of recipient (optional)
             message_type: Type of message (optional)
-            related_object_id: Related object UUID (optional)
+            related_object_id: Related object UUID (optional) - will be converted to string
             related_object_type: Related object type (optional)
         
         Returns:
@@ -500,6 +604,11 @@ Visit us: {hospital_name}"""
             from .sms_service import sms_service
             
             self.logger.info(f"📱 Attempting to send SMS to {phone} for {recipient_name}")
+            self.logger.debug(f"SMS Details: type={message_type}, related_id={related_object_id}, related_type={related_object_type}")
+            
+            # Convert UUID to string if needed
+            if related_object_id and not isinstance(related_object_id, str):
+                related_object_id = str(related_object_id)
             
             result = sms_service.send_sms(
                 phone_number=phone,
@@ -510,20 +619,30 @@ Visit us: {hospital_name}"""
                 related_object_type=related_object_type
             )
             
-            is_sent = result.status == 'sent'
+            # Check if result is valid
+            if not result:
+                self.logger.error(f"❌ SMS service returned None/empty result for {phone}")
+                return False
+            
+            is_sent = getattr(result, 'status', None) == 'sent'
             
             if is_sent:
-                self.logger.info(f"✅ SMS sent successfully to {phone}")
+                self.logger.info(f"✅ SMS sent successfully to {phone} for {recipient_name}")
             else:
+                status = getattr(result, 'status', 'unknown')
+                error_msg = getattr(result, 'error_message', getattr(result, 'message', 'No error message'))
                 self.logger.warning(
-                    f"⚠️ SMS send failed to {phone}. Status: {result.status}, "
-                    f"Error: {getattr(result, 'error_message', 'No error message')}"
+                    f"⚠️ SMS send failed to {phone}. Status: {status}, "
+                    f"Error: {error_msg}. "
+                    f"Result object: {result}"
                 )
             
             return is_sent
             
         except Exception as e:
-            self.logger.error(f"❌ Exception sending SMS to {phone}: {str(e)}", exc_info=True)
+            self.logger.error(f"❌ Exception sending SMS to {phone} for {recipient_name}: {str(e)}", exc_info=True)
+            import traceback
+            self.logger.error(f"Full traceback: {traceback.format_exc()}")
             return False
     
     def _log_notification(self, queue_entry, notification_type, channel, message):

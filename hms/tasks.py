@@ -18,14 +18,121 @@ def health_check_task():
         raise
 
 @shared_task
-def cleanup_old_sessions():
-    """Clean up old sessions"""
+def cleanup_expired_sessions_realtime():
+    """Real-time cleanup of expired sessions (runs every 5 minutes)"""
     try:
-        # Delete sessions older than 30 days
+        from django.contrib.sessions.models import Session
+        from hospital.models import UserSession
+        
+        # Close UserSession records for expired Django sessions (real-time cleanup)
+        expired_sessions = Session.objects.filter(expire_date__lt=timezone.now())
+        expired_session_keys = list(expired_sessions.values_list('session_key', flat=True))
+        
+        closed_count = 0
+        if expired_session_keys:
+            # Close UserSession records for expired sessions
+            closed_count = UserSession.objects.filter(
+                session_key__in=expired_session_keys,
+                is_active=True,
+                logout_time__isnull=True
+            ).update(
+                is_active=False,
+                logout_time=timezone.now()
+            )
+            if closed_count > 0:
+                logger.info(f"[REALTIME] Closed {closed_count} expired UserSession records")
+        
+        # Close orphaned UserSession records (no corresponding Django session)
+        all_active_user_sessions = UserSession.objects.filter(
+            is_active=True,
+            logout_time__isnull=True
+        ).select_related('user')[:100]  # Limit to prevent performance issues
+        
+        orphaned_count = 0
+        for user_session in all_active_user_sessions:
+            # Check if Django session still exists
+            try:
+                Session.objects.get(session_key=user_session.session_key)
+            except Session.DoesNotExist:
+                # Django session doesn't exist, close UserSession
+                user_session.end()
+                orphaned_count += 1
+        
+        if orphaned_count > 0:
+            logger.info(f"[REALTIME] Closed {orphaned_count} orphaned UserSession records")
+        
+        total = closed_count + orphaned_count
+        if total > 0:
+            return f"Closed {total} expired/orphaned sessions ({closed_count} expired, {orphaned_count} orphaned)"
+        return "No expired sessions to clean"
+    except Exception as e:
+        logger.error(f"Real-time session cleanup task failed: {e}")
+        raise
+
+@shared_task
+def cleanup_old_sessions():
+    """Clean up old sessions and close expired UserSession records (real-time cleanup)"""
+    try:
+        from django.contrib.sessions.models import Session
+        from hospital.models import UserSession
+        
+        # Delete expired Django sessions (older than 30 days)
         cutoff_date = timezone.now() - timedelta(days=30)
         deleted_count = Session.objects.filter(expire_date__lt=cutoff_date).delete()[0]
-        logger.info(f"Cleaned up {deleted_count} old sessions")
-        return f"Cleaned up {deleted_count} old sessions"
+        logger.info(f"Cleaned up {deleted_count} old Django sessions")
+        
+        # Close UserSession records for expired Django sessions (real-time cleanup)
+        expired_sessions = Session.objects.filter(expire_date__lt=timezone.now())
+        expired_session_keys = list(expired_sessions.values_list('session_key', flat=True))
+        
+        closed_count = 0
+        if expired_session_keys:
+            # Close UserSession records for expired sessions
+            closed_count = UserSession.objects.filter(
+                session_key__in=expired_session_keys,
+                is_active=True,
+                logout_time__isnull=True
+            ).update(
+                is_active=False,
+                logout_time=timezone.now()
+            )
+            if closed_count > 0:
+                logger.info(f"Closed {closed_count} expired UserSession records (real-time cleanup)")
+        
+        # Also close UserSession records that don't have a corresponding Django session (orphaned)
+        all_active_user_sessions = UserSession.objects.filter(
+            is_active=True,
+            logout_time__isnull=True
+        )
+        orphaned_count = 0
+        for user_session in all_active_user_sessions:
+            # Check if Django session still exists
+            try:
+                Session.objects.get(session_key=user_session.session_key)
+            except Session.DoesNotExist:
+                # Django session doesn't exist, close UserSession
+                user_session.end()
+                orphaned_count += 1
+        
+        if orphaned_count > 0:
+            logger.info(f"Closed {orphaned_count} orphaned UserSession records (no Django session)")
+        
+        # Safety net: Close sessions older than 24 hours (should have been caught by timeout)
+        old_cutoff = timezone.now() - timedelta(hours=24)
+        very_old_sessions = UserSession.objects.filter(
+            is_active=True,
+            logout_time__isnull=True,
+            login_time__lt=old_cutoff
+        )
+        very_old_count = very_old_sessions.update(
+            is_active=False,
+            logout_time=timezone.now()
+        )
+        if very_old_count > 0:
+            logger.info(f"Closed {very_old_count} very old UserSession records (safety cleanup - >24h)")
+        
+        total_closed = closed_count + orphaned_count + very_old_count
+        return f"Cleaned up {deleted_count} Django sessions, closed {total_closed} UserSessions ({closed_count} expired, {orphaned_count} orphaned, {very_old_count} old)"
     except Exception as e:
         logger.error(f"Session cleanup task failed: {e}")
         raise
@@ -146,3 +253,52 @@ def verify_database_integrity():
     except Exception as e:
         logger.error(f"Database integrity check failed: {e}")
         raise
+
+
+@shared_task(ignore_result=True)
+def persist_audit_activity_log(
+    user_id,
+    activity_type,
+    description,
+    ip_address=None,
+    user_agent=None,
+    session_key=None,
+    metadata=None,
+):
+    """Write ActivityLog in the background so request threads are not blocked on INSERT."""
+    from django.contrib.auth import get_user_model
+    from hospital.models_audit import ActivityLog
+
+    User = get_user_model()
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        logger.warning('persist_audit_activity_log: user_id=%s not found', user_id)
+        return
+    ActivityLog.log_activity(
+        user=user,
+        activity_type=activity_type,
+        description=(description or '')[:255],
+        ip_address=ip_address,
+        user_agent=user_agent or '',
+        session_key=session_key or '',
+        metadata=metadata or {},
+    )
+
+
+@shared_task
+def refresh_staff_performance_snapshot(staff_id):
+    """Recompute StaffPerformanceSnapshot off the request thread (consultation prescribe / lab order)."""
+    if not staff_id:
+        return
+    try:
+        from hospital.models import Staff
+        from hospital.services.performance_analytics import performance_analytics_service
+
+        if not performance_analytics_service:
+            return
+        staff = Staff.objects.filter(pk=staff_id, is_deleted=False).first()
+        if staff:
+            performance_analytics_service.generate_snapshot(staff)
+    except Exception as e:
+        logger.warning('refresh_staff_performance_snapshot failed for %s: %s', staff_id, e)

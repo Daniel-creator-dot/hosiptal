@@ -1,0 +1,192 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Procurement Request - {{ procurement_request.request_number }}{% endblock %}
+{% block page_title %}Procurement Request: {{ procurement_request.request_number }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <div class="text-muted">Store: {{ procurement_request.requested_by_store.name|default:"N/A" }}</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{% url 'hospital:procurement_approval_dashboard' %}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back
+      </a>
+      {% if procurement_request.status == 'draft' and procurement_request.requested_by and procurement_request.requested_by.user == request.user %}
+        <a href="/hms/procurement/approval/{{ procurement_request.id }}/submit/" class="btn btn-success">
+          <i class="bi bi-send"></i> Submit for Approval
+        </a>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-8">
+      <div class="card">
+        <div class="card-header bg-info text-white">
+          <h5 class="mb-0">Request Information</h5>
+        </div>
+        <div class="card-body">
+          <div class="row">
+            <div class="col-md-6">
+              <p><strong>Request Number:</strong> {{ procurement_request.request_number }}</p>
+              <p><strong>Requested By:</strong>
+                {% if procurement_request.requested_by and procurement_request.requested_by.user %}
+                  {% with u=procurement_request.requested_by.user %}
+                    {% if u.get_full_name %}
+                      {{ u.get_full_name }}
+                    {% elif u.username and u.username != 'INVALID' %}
+                      {{ u.username }}
+                    {% elif u.email %}
+                      {{ u.email }}
+                    {% else %}
+                      N/A
+                    {% endif %}
+                  {% endwith %}
+                {% else %}
+                  N/A
+                {% endif %}
+              </p>
+              <p><strong>Request Date:</strong> {{ procurement_request.request_date|date:"M d, Y" }}</p>
+              <p><strong>Priority:</strong>
+                {% if procurement_request.priority == 'urgent' %}
+                  <span class="badge bg-danger">URGENT</span>
+                {% elif procurement_request.priority == 'high' %}
+                  <span class="badge bg-warning">High</span>
+                {% elif procurement_request.priority == 'normal' %}
+                  <span class="badge bg-info">Normal</span>
+                {% else %}
+                  <span class="badge bg-secondary">Low</span>
+                {% endif %}
+              </p>
+            </div>
+            <div class="col-md-6">
+              <p><strong>Status:</strong>
+                {% if procurement_request.status == 'draft' %}
+                  <span class="badge bg-secondary">Draft</span>
+                {% elif procurement_request.status == 'submitted' %}
+                  <span class="badge bg-warning">Submitted</span>
+                {% elif procurement_request.status == 'admin_approved' %}
+                  <span class="badge bg-info">Admin Approved</span>
+                {% elif procurement_request.status == 'accounts_approved' %}
+                  <span class="badge bg-success">Accounts Approved</span>
+                {% elif procurement_request.status == 'payment_processed' %}
+                  <span class="badge bg-primary">Payment Processed</span>
+                {% elif procurement_request.status == 'ordered' %}
+                  <span class="badge bg-info">Ordered</span>
+                {% elif procurement_request.status == 'received' %}
+                  <span class="badge bg-success">Received</span>
+                {% else %}
+                  <span class="badge bg-danger">Cancelled</span>
+                {% endif %}
+              </p>
+              <p><strong>Total Amount:</strong>
+                <span class="text-success" style="font-size: 24px; font-weight: 700;">
+                  GHS {{ procurement_request.estimated_total|floatformat:2|intcomma }}
+                </span>
+              </p>
+            </div>
+          </div>
+
+          {% if procurement_request.justification %}
+            <div class="mt-3">
+              <p class="mb-1"><strong>Justification:</strong></p>
+              <div class="border-start border-4 border-primary ps-3">{{ procurement_request.justification }}</div>
+            </div>
+          {% endif %}
+
+          {% if procurement_request.notes %}
+            <div class="mt-3">
+              <p class="mb-1"><strong>Notes:</strong></p>
+              <div>{{ procurement_request.notes }}</div>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="card mt-3">
+        <div class="card-header bg-secondary text-white">
+          <h5 class="mb-0">Items ({{ items|length }} items)</h5>
+        </div>
+        <div class="card-body">
+          {% if items %}
+            <div class="table-responsive">
+              <table class="table table-bordered">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Item Name</th>
+                    <th>Qty</th>
+                    <th>Unit</th>
+                    <th>Unit Price</th>
+                    <th>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for item in items %}
+                    <tr>
+                      <td>{{ forloop.counter }}</td>
+                      <td><strong>{{ item.item_name }}</strong></td>
+                      <td>{{ item.quantity|intcomma }}</td>
+                      <td>{{ item.unit_of_measure }}</td>
+                      <td>GHS {{ item.estimated_unit_price|floatformat:2|intcomma }}</td>
+                      <td><strong>GHS {{ item.line_total|floatformat:2|intcomma }}</strong></td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colspan="5" class="text-end"><strong>TOTAL:</strong></td>
+                    <td><strong class="text-success">GHS {{ procurement_request.estimated_total|floatformat:2|intcomma }}</strong></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          {% else %}
+            <div class="text-muted text-center py-4">No items on this request.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card">
+        <div class="card-header bg-dark text-white">
+          <h5 class="mb-0">Accounting Summary</h5>
+        </div>
+        <div class="card-body">
+          {% if accounting_summary and accounting_summary.has_accounting_entries %}
+            <div class="mb-2"><strong>Accounting Entries:</strong> <span class="badge bg-success">Created</span></div>
+            {% if accounting_summary.ap_entry %}
+              <div class="mb-2">
+                <div class="text-muted small">Accounts Payable</div>
+                <div><strong>{{ accounting_summary.ap_entry.bill_number }}</strong></div>
+              </div>
+            {% endif %}
+            {% if accounting_summary.expense_entry %}
+              <div class="mb-2">
+                <div class="text-muted small">Expense</div>
+                <div><strong>{{ accounting_summary.expense_entry.expense_number }}</strong></div>
+              </div>
+            {% endif %}
+            {% if accounting_summary.payment_voucher %}
+              <div class="mb-2">
+                <div class="text-muted small">Payment Voucher</div>
+                <div><strong>{{ accounting_summary.payment_voucher.voucher_number }}</strong></div>
+              </div>
+            {% endif %}
+          {% else %}
+            <div class="mb-2"><strong>Accounting Entries:</strong> <span class="badge bg-secondary">Not yet created</span></div>
+            <div class="text-muted small">
+              Accounting entries are generated after approvals (typically at Accounts approval stage).
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+

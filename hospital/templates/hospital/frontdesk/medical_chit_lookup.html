@@ -1,0 +1,114 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Lookup Medical Chit{% endblock %}
+
+{% block page_title %}Lookup Medical Chit{% endblock %}
+{% block page_subtitle %}Enter chit number to create visit{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="modern-card">
+                <form method="get" class="mb-4">
+                    <div class="input-group">
+                        <input type="text" name="chit_number" class="form-control form-control-lg" placeholder="Enter Chit Number (e.g., CHIT-2024-0001)" value="{{ chit_number }}" required>
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <i class="bi bi-search me-2"></i>Lookup
+                        </button>
+                    </div>
+                </form>
+                
+                {% if chit %}
+                <div class="card {% if chit.can_create_visit %}border-success{% else %}border-warning{% endif %}">
+                    <div class="card-header {% if chit.can_create_visit %}bg-success text-white{% else %}bg-warning{% endif %}">
+                        <h5 class="mb-0">
+                            <i class="bi bi-{% if chit.can_create_visit %}check-circle{% else %}exclamation-triangle{% endif %} me-2"></i>
+                            Chit Number: {{ chit.chit_number }}
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <strong>Staff Name:</strong><br>
+                                {{ chit.staff.user.get_full_name }}
+                            </div>
+                            <div class="col-md-6">
+                                <strong>Employee ID:</strong><br>
+                                {{ chit.staff.employee_id|default:"N/A" }}
+                            </div>
+                        </div>
+                        
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <strong>Department:</strong><br>
+                                {{ chit.staff.department.name|default:"N/A" }}
+                            </div>
+                            <div class="col-md-6">
+                                <strong>Status:</strong><br>
+                                {% if chit.status == 'approved' %}
+                                    <span class="badge bg-success">Approved</span>
+                                {% else %}
+                                    <span class="badge bg-{{ chit.status|default:'secondary' }}">{{ chit.get_status_display }}</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <strong>Reason:</strong><br>
+                            <div class="p-2 bg-light rounded">{{ chit.reason }}</div>
+                        </div>
+                        
+                        {% if chit.valid_until %}
+                        <div class="mb-3">
+                            <strong>Valid Until:</strong> {{ chit.valid_until|date:"d M Y" }}
+                        </div>
+                        {% endif %}
+                        
+                        {% if chit.can_create_visit %}
+                        <div class="alert alert-success">
+                            <i class="bi bi-check-circle me-2"></i>
+                            <strong>This chit is valid and ready to create a visit.</strong>
+                        </div>
+                        
+                        <form method="post" action="{% url 'hospital:frontdesk_medical_chit_create_visit' chit.id %}">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-success btn-lg w-100">
+                                <i class="bi bi-plus-circle me-2"></i>Create Visit for {{ chit.staff.user.get_full_name }}
+                            </button>
+                        </form>
+                        {% else %}
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            <strong>This chit cannot be used to create a visit.</strong>
+                            {% if chit.status != 'approved' %}
+                                <br>Status: {{ chit.get_status_display }}
+                            {% endif %}
+                            {% if chit.valid_until and chit.valid_until < today %}
+                                <br>Chit has expired (valid until {{ chit.valid_until|date:"d M Y" }})
+                            {% endif %}
+                            {% if chit.encounter %}
+                                <br>This chit has already been used to create a visit.
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% elif chit_number %}
+                <div class="alert alert-danger">
+                    <i class="bi bi-x-circle me-2"></i>
+                    Medical chit "{{ chit_number }}" not found.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+

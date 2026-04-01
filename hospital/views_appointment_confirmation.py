@@ -247,11 +247,22 @@ def send_booking_confirmation_sms(appointment, request=None):
     Just confirms the booking was made, asks patient to confirm
     """
     try:
+        logger.info(f"📱 Attempting to send booking confirmation SMS for appointment {appointment.id}")
         patient = appointment.patient
         
-        if not patient.phone_number:
-            logger.warning(f"Cannot send SMS - no phone number for patient {patient.id}")
+        if not patient:
+            logger.error(f"❌ Cannot send SMS - appointment {appointment.id} has no patient assigned")
             return False
+        
+        if not patient.phone_number or not patient.phone_number.strip():
+            logger.warning(
+                f"⚠️ Cannot send SMS - Patient {patient.full_name} (MRN: {patient.mrn}) "
+                f"has no valid phone number. Phone field value: '{getattr(patient, 'phone_number', 'None')}'"
+            )
+            return False
+        
+        phone = patient.phone_number.strip()
+        logger.info(f"📱 Phone number found for {patient.full_name}: {phone}")
         
         # Get proper base URL for confirmation link
         base_url = None
@@ -263,39 +274,140 @@ def send_booking_confirmation_sms(appointment, request=None):
         
         # Shortened message for SMS (SMS has 160 char limit per segment)
         # Try to make it shorter and more actionable
-        provider_name = appointment.provider.user.get_full_name() or appointment.provider.user.username
+        provider_name = appointment.provider.user.get_full_name() if appointment.provider and appointment.provider.user else "Doctor"
         dept_name = appointment.department.name if appointment.department else "General"
+        
+        # Format appointment date
+        appointment_datetime = timezone.localtime(appointment.appointment_date)
+        date_str = appointment_datetime.strftime('%d/%m/%Y')
+        time_str = appointment_datetime.strftime('%I:%M %p')
         
         # Shorter message
         message = (
             f"Appointment Booking\n\n"
             f"Dear {patient.first_name},\n\n"
-            f"Booking received:\n"
-            f"Dr. {provider_name}\n"
-            f"{dept_name}\n\n"
-            f"Confirm here:\n{confirmation_link}\n\n"
-            f"PrimeCare Medical Center"
+            f"Your appointment is scheduled:\n"
+            f"Date: {date_str}\n"
+            f"Time: {time_str}\n"
+            f"Doctor: Dr. {provider_name}\n"
+            f"Dept: {dept_name}\n\n"
+            f"Confirm: {confirmation_link}\n\n"
+            f"Please arrive 15 minutes early.\n"
+            f"- PrimeCare Medical Center"
         )
         
+        logger.info(f"📱 Sending booking confirmation SMS to {phone} for patient {patient.full_name} (Appointment: {appointment.id})")
+        logger.debug(f"Message content (first 300 chars):\n{message[:300]}")
+        logger.debug(f"Full message length: {len(message)} characters")
+        
         # Send SMS
+        related_id = str(appointment.id) if appointment.id else None
+        logger.debug(f"SMS parameters: phone={phone}, recipient={patient.full_name}, type=appointment_booking_confirmation, related_id={related_id}")
+        
         sms_log = sms_service.send_sms(
-            phone_number=patient.phone_number,
+            phone_number=phone,
             message=message,
             message_type='appointment_booking_confirmation',
             recipient_name=patient.full_name,
+            related_object_id=related_id,
+            related_object_type='Appointment'
+        )
+        
+        if not sms_log:
+            logger.error(f"❌ SMS service returned None/empty result for {phone}")
+            return False
+        
+        if sms_log.status == 'sent':
+            logger.info(f"✅ Booking confirmation SMS sent successfully for appointment {appointment.id} to {patient.full_name} at {phone}")
+            return True
+        else:
+            error_msg = sms_log.error_message or 'Unknown error'
+            logger.error(
+                f"❌ Failed to send booking SMS for appointment {appointment.id}. "
+                f"Status: {sms_log.status}, Error: {error_msg}. "
+                f"Phone: {phone}, Patient: {patient.full_name}"
+            )
+            if sms_log.provider_response:
+                logger.debug(f"Provider response: {sms_log.provider_response}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Exception sending booking confirmation SMS: {str(e)}", exc_info=True)
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        return False
+
+
+def send_appointment_notification_to_doctor(appointment):
+    """
+    Send SMS notification to doctor when appointment is created
+    Includes date, time, and patient information
+    """
+    try:
+        if not appointment.provider:
+            logger.warning(f"Cannot send doctor SMS - no provider assigned for appointment {appointment.id}")
+            return False
+        
+        doctor = appointment.provider
+        doctor_user = doctor.user if doctor else None
+        
+        if not doctor_user:
+            logger.warning(f"Cannot send doctor SMS - no user for provider {doctor.id}")
+            return False
+        
+        # Get doctor's phone number from staff record
+        doctor_phone = doctor.phone_number if hasattr(doctor, 'phone_number') and doctor.phone_number else None
+        
+        if not doctor_phone or not doctor_phone.strip():
+            logger.warning(f"Cannot send doctor SMS - no phone number for doctor {doctor_user.get_full_name()}")
+            return False
+        
+        # Get patient and appointment details
+        patient = appointment.patient
+        patient_name = patient.full_name if patient else "Patient"
+        department_name = appointment.department.name if appointment.department else "General"
+        
+        # Format appointment date and time
+        appointment_datetime = timezone.localtime(appointment.appointment_date)
+        date_str = appointment_datetime.strftime('%A, %B %d, %Y')
+        time_str = appointment_datetime.strftime('%I:%M %p')
+        
+        # Build SMS message for doctor
+        message = (
+            f"NEW APPOINTMENT\n\n"
+            f"Dr. {doctor_user.get_full_name()},\n\n"
+            f"You have a new appointment:\n\n"
+            f"👤 PATIENT: {patient_name}\n"
+            f"📅 DATE: {date_str}\n"
+            f"🕐 TIME: {time_str}\n"
+            f"🏥 DEPARTMENT: {department_name}\n"
+        )
+        
+        # Add reason if available
+        if appointment.reason:
+            message += f"📝 REASON: {appointment.reason[:100]}\n"
+        
+        message += f"\n- PrimeCare Medical Center"
+        
+        # Send SMS to doctor
+        sms_log = sms_service.send_sms(
+            phone_number=doctor_phone,
+            message=message,
+            message_type='appointment_doctor_notification',
+            recipient_name=doctor_user.get_full_name(),
             related_object_id=appointment.id,
             related_object_type='Appointment'
         )
         
         if sms_log.status == 'sent':
-            logger.info(f"Booking confirmation SMS sent for appointment {appointment.id}")
+            logger.info(f"Doctor notification SMS sent for appointment {appointment.id} to {doctor_user.get_full_name()}")
             return True
         else:
-            logger.error(f"Failed to send booking SMS: {sms_log.error_message}")
+            logger.error(f"Failed to send doctor SMS: {sms_log.error_message}")
             return False
             
     except Exception as e:
-        logger.error(f"Error sending booking confirmation: {str(e)}")
+        logger.error(f"Error sending doctor appointment notification: {str(e)}", exc_info=True)
         return False
 
 

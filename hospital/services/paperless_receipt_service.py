@@ -121,10 +121,10 @@ class PaperlessReceiptService:
             message = (
                 f"💳 Payment Receipt\n"
                 f"Receipt: {receipt.receipt_number}\n"
-                f"Amount: GHS {receipt.amount_paid}\n"
+                f"Amount Paid: GHS {receipt.amount_paid}\n"
                 f"Date: {receipt.receipt_date.strftime('%b %d, %Y')}\n"
                 f"\n"
-                f"View/Download: {settings.SITE_URL}/hms/receipt/{receipt.id}/\n"
+                f"View details: {settings.SITE_URL}/hms/receipt/{receipt.id}/\n"
                 f"\n"
                 f"PrimeCare Medical Center"
             )

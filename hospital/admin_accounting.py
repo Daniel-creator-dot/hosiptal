@@ -26,7 +26,13 @@ class AccountAdmin(admin.ModelAdmin):
     list_filter = ['account_type', 'is_active']
     search_fields = ['account_code', 'account_name']  # For autocomplete
     ordering = ['account_code']
-    
+
+    def __init__(self, model, admin_site):
+        super().__init__(model, admin_site)
+        # Force display name in admin index and breadcrumbs
+        self.model._meta.verbose_name = 'Chart of Accounts (Account)'
+        self.model._meta.verbose_name_plural = 'Chart of Accounts'
+
     def account_type_badge(self, obj):
         colors = {
             'asset': 'primary',

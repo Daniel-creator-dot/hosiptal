@@ -1,0 +1,216 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Procurement Receiving Dashboard{% endblock %}
+{% block page_title %}Procurement Receiving Dashboard{% endblock %}
+{% block page_subtitle %}Manage receiving of procurement items{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="modern-card text-center">
+                <div class="mb-2">
+                    <i class="bi bi-box-arrow-in-down" style="font-size: 32px; color: var(--primary);"></i>
+                </div>
+                <h3 class="mb-1">{{ stats.ready_for_receiving }}</h3>
+                <p class="text-muted mb-0">Ready for Receiving</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="modern-card text-center">
+                <div class="mb-2">
+                    <i class="bi bi-hourglass-split" style="font-size: 32px; color: var(--warning);"></i>
+                </div>
+                <h3 class="mb-1">{{ stats.partially_received }}</h3>
+                <p class="text-muted mb-0">Partially Received</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="modern-card text-center">
+                <div class="mb-2">
+                    <i class="bi bi-check-circle" style="font-size: 32px; color: var(--success);"></i>
+                </div>
+                <h3 class="mb-1">{{ stats.fully_received_today }}</h3>
+                <p class="text-muted mb-0">Received Today</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="modern-card text-center">
+                <div class="mb-2">
+                    <i class="bi bi-currency-dollar" style="font-size: 32px; color: var(--info);"></i>
+                </div>
+                <h3 class="mb-1">GHS {{ stats.total_value_pending|floatformat:2|intcomma }}</h3>
+                <p class="text-muted mb-0">Pending Value</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ready for Receiving -->
+    <div class="modern-card mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="mb-0">
+                <i class="bi bi-box-arrow-in-down text-primary"></i> Ready for Receiving
+            </h5>
+            <span class="badge bg-primary">{{ ready_for_receiving|length }}</span>
+        </div>
+        
+        {% if ready_for_receiving %}
+        <div class="table-responsive">
+            <table class="table modern-table">
+                <thead>
+                    <tr>
+                        <th>Request Number</th>
+                        <th>Store</th>
+                        <th>Requested By</th>
+                        <th>Request Date</th>
+                        <th>Total Value</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for request in ready_for_receiving %}
+                    <tr>
+                        <td>
+                            <strong>
+                                <a href="{% url 'hospital:procurement_request_detail' request.pk %}" style="text-decoration: none;">
+                                    {{ request.request_number }}
+                                </a>
+                            </strong>
+                        </td>
+                        <td>{{ request.requested_by_store.name|default:"N/A" }}</td>
+                        <td>
+                            {% if request.requested_by and request.requested_by.user %}
+                                {{ request.requested_by.user.get_full_name|default:request.requested_by.user.username }}
+                            {% else %}
+                                N/A
+                            {% endif %}
+                        </td>
+                        <td>{{ request.request_date|date:"M d, Y" }}</td>
+                        <td><strong>GHS {{ request.estimated_total|floatformat:2|intcomma }}</strong></td>
+                        <td>
+                            {% if request.status == 'ordered' %}
+                                <span class="badge bg-warning">Ordered</span>
+                            {% elif request.status == 'payment_processed' %}
+                                <span class="badge bg-info">Payment Processed</span>
+                            {% else %}
+                                <span class="badge bg-secondary">{{ request.status|title }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{% url 'hospital:receive_procurement_modern' request.pk %}" class="btn btn-sm btn-primary">
+                                <i class="bi bi-box-arrow-in-down"></i> Receive
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5">
+            <i class="bi bi-inbox" style="font-size: 48px; color: #ccc;"></i>
+            <p class="text-muted mt-3">No requests ready for receiving</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Partially Received -->
+    {% if partially_received %}
+    <div class="modern-card mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="mb-0">
+                <i class="bi bi-hourglass-split text-warning"></i> Partially Received
+            </h5>
+            <span class="badge bg-warning">{{ partially_received|length }}</span>
+        </div>
+        
+        <div class="table-responsive">
+            <table class="table modern-table">
+                <thead>
+                    <tr>
+                        <th>Request Number</th>
+                        <th>Store</th>
+                        <th>Request Date</th>
+                        <th>Total Value</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for request in partially_received %}
+                    <tr>
+                        <td>
+                            <strong>
+                                <a href="{% url 'hospital:procurement_request_detail' request.pk %}" style="text-decoration: none;">
+                                    {{ request.request_number }}
+                                </a>
+                            </strong>
+                        </td>
+                        <td>{{ request.requested_by_store.name|default:"N/A" }}</td>
+                        <td>{{ request.request_date|date:"M d, Y" }}</td>
+                        <td><strong>GHS {{ request.estimated_total|floatformat:2|intcomma }}</strong></td>
+                        <td>
+                            <a href="{% url 'hospital:receive_procurement_modern' request.pk %}" class="btn btn-sm btn-warning">
+                                <i class="bi bi-box-arrow-in-down"></i> Continue Receiving
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Fully Received (Last 30 Days) -->
+    {% if fully_received %}
+    <div class="modern-card">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="mb-0">
+                <i class="bi bi-check-circle text-success"></i> Fully Received (Last 30 Days)
+            </h5>
+            <span class="badge bg-success">{{ fully_received|length }}</span>
+        </div>
+        
+        <div class="table-responsive">
+            <table class="table modern-table">
+                <thead>
+                    <tr>
+                        <th>Request Number</th>
+                        <th>Store</th>
+                        <th>Request Date</th>
+                        <th>Received Date</th>
+                        <th>Total Value</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for request in fully_received %}
+                    <tr>
+                        <td>
+                            <strong>
+                                <a href="{% url 'hospital:procurement_request_detail' request.pk %}" style="text-decoration: none;">
+                                    {{ request.request_number }}
+                                </a>
+                            </strong>
+                        </td>
+                        <td>{{ request.requested_by_store.name|default:"N/A" }}</td>
+                        <td>{{ request.request_date|date:"M d, Y" }}</td>
+                        <td>{{ request.created|date:"M d, Y" }}</td>
+                        <td><strong>GHS {{ request.estimated_total|floatformat:2|intcomma }}</strong></td>
+                        <td>
+                            <a href="{% url 'hospital:procurement_request_detail' request.pk %}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-eye"></i> View
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

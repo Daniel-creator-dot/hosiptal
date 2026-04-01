@@ -52,6 +52,13 @@
         font-weight: 500;
         transition: all 0.2s;
         border: 2px solid transparent;
+        cursor: pointer;
+        background: inherit;
+        font-size: inherit;
+    }
+    button.filter-tab {
+        font-family: inherit;
+        margin: 0;
     }
     
     .filter-tab.active {
@@ -117,34 +124,43 @@
 
 <!-- Filters and Search -->
 <div class="modern-card mb-4">
-    <div class="row g-3 align-items-end">
-        <div class="col-md-8">
-            <form method="get" action="{% url 'hospital:cashier_bills' %}" class="d-flex gap-2">
-                <input 
-                    type="text" 
-                    name="q" 
-                    value="{{ request.GET.q }}" 
-                    class="form-control form-control-modern" 
-                    placeholder="Search by bill number, patient name, or MRN..."
-                >
-                <input type="hidden" name="status" value="{{ status_filter }}">
-                <button type="submit" class="btn btn-primary-modern">
+    <form method="get" action="{% url 'hospital:cashier_bills' %}">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-4">
+                <label for="searchQuery" class="form-label small text-muted mb-1">Search</label>
+                <input type="text" id="searchQuery" name="q" value="{{ request.GET.q }}" 
+                    class="form-control form-control-modern" placeholder="Bill #, patient name, MRN...">
+            </div>
+            <div class="col-md-2">
+                <label for="filterDate" class="form-label small text-muted mb-1">Date</label>
+                <input type="date" id="filterDate" name="date" value="{{ filter_date }}" class="form-control form-control-modern">
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary-modern w-100">
                     <i class="bi bi-search"></i> Search
                 </button>
-            </form>
-        </div>
-        <div class="col-md-4">
-            <div class="filter-tabs">
-                <a href="?status=" class="filter-tab {% if not status_filter %}active{% endif %}">All</a>
-                <a href="?status=issued" class="filter-tab {% if status_filter == 'issued' %}active{% endif %}">Issued</a>
-                <a href="?status=partially_paid" class="filter-tab {% if status_filter == 'partially_paid' %}active{% endif %}">Partially Paid</a>
-                <a href="?status=paid" class="filter-tab {% if status_filter == 'paid' %}active{% endif %}">Paid</a>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small text-muted mb-1 d-block">Status</label>
+                <div class="filter-tabs">
+                    <button type="submit" name="status" value="" class="filter-tab {% if not status_filter %}active{% endif %}">All</button>
+                    <button type="submit" name="status" value="issued" class="filter-tab {% if status_filter == 'issued' %}active{% endif %}">Issued</button>
+                    <button type="submit" name="status" value="partially_paid" class="filter-tab {% if status_filter == 'partially_paid' %}active{% endif %}">Partially Paid</button>
+                    <button type="submit" name="status" value="paid" class="filter-tab {% if status_filter == 'paid' %}active{% endif %}">Paid</button>
+                </div>
             </div>
         </div>
-    </div>
+        {% if request.GET.q or filter_date or status_filter %}
+        <div class="mt-2">
+            <a href="{% url 'hospital:cashier_bills' %}" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-x-lg"></i> Clear Filters
+            </a>
+        </div>
+        {% endif %}
+    </form>
 </div>
 
-<!-- Bills List -->
+<!-- Bills List (grouped by patient) -->
 <div class="modern-card">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h5 style="font-weight: 600; margin: 0;">
@@ -153,71 +169,90 @@
             {% else %}
                 All Bills
             {% endif %}
-            <span class="badge-modern badge-info ms-2">{{ bills_count }}</span>
+            <span class="badge-modern badge-info ms-2">{{ bills_count }} receipt{{ bills_count|pluralize }}</span>
         </h5>
         <a href="{% url 'hospital:cashier_dashboard' %}" class="btn btn-sm btn-outline-secondary">
             <i class="bi bi-arrow-left"></i> Back to Dashboard
         </a>
     </div>
     
-    {% if bills %}
-        {% for bill in bills %}
-        <div class="bill-card paid">
-            <div class="row align-items-center">
-                <div class="col-md-6">
-                    <h6 style="margin: 0 0 4px 0; font-weight: 600;">
-                        <a href="{% url 'hospital:patient_detail' bill.patient.pk %}" style="text-decoration: none; color: inherit;">
-                            {{ bill.patient.full_name }}
+    {% if bills_by_patient %}
+        {% for group in bills_by_patient %}
+        <div class="border rounded-3 mb-4" style="border-color: var(--border) !important; overflow: hidden;">
+            <!-- Patient header -->
+            <div class="p-3 d-flex justify-content-between align-items-center flex-wrap gap-2" style="background: var(--light); border-bottom: 1px solid var(--border);">
+                <div>
+                    <h6 class="mb-1 fw-bold">
+                        <a href="{% url 'hospital:patient_detail' group.patient.pk %}" class="text-decoration-none text-dark">
+                            {{ group.patient.full_name }}
                         </a>
                     </h6>
-                    <div style="font-size: 13px; color: var(--gray); margin-bottom: 4px;">
-                        <i class="bi bi-receipt"></i> Receipt #{{ bill.receipt_number }} |
-                        MRN: {{ bill.patient.mrn }}
-                        {% if bill.invoice %}
-                        | Invoice: {{ bill.invoice.invoice_number }}
-                        {% endif %}
-                    </div>
-                    <div style="font-size: 12px; color: var(--gray);">
-                        <i class="bi bi-calendar"></i> Paid: {{ bill.receipt_date|date:"M d, Y H:i" }}
-                        {% if bill.service_type %}
-                        | <span class="badge-modern badge-info">{{ bill.get_service_type_display }}</span>
-                        {% endif %}
-                        {% if bill.payment_method == 'cash' %}
-                        | <span class="badge-modern badge-warning">Cash</span>
-                        {% elif bill.payment_method == 'card' %}
-                        | <span class="badge-modern badge-info">Card</span>
-                        {% elif bill.payment_method == 'mobile_money' %}
-                        | <span class="badge-modern badge-success">Mobile Money</span>
-                        {% else %}
-                        | <span class="badge-modern badge-secondary">{{ bill.get_payment_method_display }}</span>
-                        {% endif %}
-                    </div>
+                    <span class="text-muted small">MRN: {{ group.patient.mrn }}</span>
+                    <span class="badge bg-primary ms-2">{{ group.receipts|length }} receipt{{ group.receipts|length|pluralize }}</span>
                 </div>
-                <div class="col-md-3 text-center">
-                    <div style="font-size: 16px; font-weight: 600; color: var(--success);">
-                        Amount: GHS {{ bill.amount_paid|floatformat:2|intcomma }}
-                    </div>
-                    {% if bill.received_by %}
-                    <div style="font-size: 11px; color: var(--gray);">
-                        By: {{ bill.received_by.get_full_name|default:bill.received_by.username }}
-                    </div>
-                    {% endif %}
-                </div>
-                <div class="col-md-3 text-end">
-                    <span class="badge-modern badge-success me-2">
-                        <i class="bi bi-check-circle"></i> PAID
-                    </span>
-                    <a href="{% url 'hospital:receipt_print' bill.pk %}" target="_blank" class="btn btn-sm btn-outline-primary">
-                        <i class="bi bi-printer"></i> Print
+                <div>
+                    <strong class="text-success">Total: GHS {{ group.total_amount|floatformat:2|intcomma }}</strong>
+                    <a href="{% url 'hospital:cashier_patient_invoices' group.patient.pk %}" class="btn btn-sm btn-outline-primary ms-2">
+                        <i class="bi bi-receipt"></i> Patient Invoices
                     </a>
                 </div>
+            </div>
+            <!-- Receipts under this person -->
+            <div class="p-2">
+                {% for bill in group.receipts %}
+                <div class="bill-card paid ms-2 me-2 mb-2">
+                    <div class="row align-items-center">
+                        <div class="col-md-6">
+                            <div style="font-size: 13px; color: var(--gray); margin-bottom: 4px;">
+                                <i class="bi bi-receipt"></i> Receipt #{{ bill.receipt_number }}
+                                {% if bill.invoice %}
+                                | Invoice: {{ bill.invoice.invoice_number }}
+                                {% endif %}
+                            </div>
+                            <div style="font-size: 12px; color: var(--gray);">
+                                <i class="bi bi-calendar"></i> Paid: {{ bill.receipt_date|date:"M d, Y H:i" }}
+                                {% if bill.service_type %}
+                                | <span class="badge-modern badge-info">{{ bill.get_service_type_display }}</span>
+                                {% endif %}
+                                {% if bill.payment_method == 'cash' %}
+                                | <span class="badge-modern badge-warning">Cash</span>
+                                {% elif bill.payment_method == 'card' %}
+                                | <span class="badge-modern badge-info">Card</span>
+                                {% elif bill.payment_method == 'mobile_money' %}
+                                | <span class="badge-modern badge-success">Mobile Money</span>
+                                {% else %}
+                                | <span class="badge-modern badge-secondary">{{ bill.get_payment_method_display }}</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-md-3 text-center">
+                            <div style="font-size: 16px; font-weight: 600; color: var(--success);">
+                                GHS {{ bill.amount_paid|floatformat:2|intcomma }}
+                            </div>
+                            {% if bill.received_by %}
+                            <div style="font-size: 11px; color: var(--gray);">
+                                By: {{ bill.received_by.get_full_name|default:bill.received_by.username }}
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-3 text-end">
+                            <span class="badge-modern badge-success me-2">
+                                <i class="bi bi-check-circle"></i> PAID
+                            </span>
+                            <a href="{% url 'hospital:receipt_print' bill.pk %}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-printer"></i> Print
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
             </div>
         </div>
         {% endfor %}
         
-        {% if bills_count >= 50 %}
+        {% if bills_count >= 500 %}
         <div class="alert alert-info mt-3">
-            <i class="bi bi-info-circle"></i> Showing first 50 results. Use search and filters to narrow down.
+            <i class="bi bi-info-circle"></i> Showing first 500 receipts (grouped by patient). Use search and filters to narrow down.
         </div>
         {% endif %}
     {% else %}

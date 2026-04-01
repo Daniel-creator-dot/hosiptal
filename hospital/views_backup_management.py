@@ -10,10 +10,15 @@ from django.conf import settings
 import os
 import glob
 from datetime import datetime
+from .utils_roles import get_user_role
 
 def is_admin(user):
-    """Check if user is admin or superuser"""
-    return user.is_authenticated and (user.is_staff or user.is_superuser)
+    """Strict admin check (no is_staff fallback)."""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    return get_user_role(user) == 'admin'
 
 
 @login_required

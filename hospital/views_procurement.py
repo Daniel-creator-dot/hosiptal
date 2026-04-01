@@ -23,28 +23,49 @@ from .forms_procurement import (
 from .models import Staff
 
 
+def is_admin_user(user):
+    """Check if user is admin - only admins can edit/change stock levels"""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    return user.groups.filter(name__in=['Admin', 'Administrator']).exists()
+
+
 def is_procurement_staff(user):
     """Check if user has procurement access"""
     if not user.is_authenticated:
         return False
+    if user.is_superuser:
+        return True
     # Check if user is in Procurement group
-    if user.groups.filter(name__in=['Admin', 'Store Manager', 'Procurement', 'Procurement Officer']).exists():
+    if user.groups.filter(name__in=[
+        'Admin', 'Administrator',
+        'Store Manager', 'Inventory Stores Manager',
+        'Procurement', 'Procurement Officer'
+    ]).exists():
         return True
     # Check if user's staff profession is store_manager (procurement officer)
     try:
         if hasattr(user, 'staff'):
-            if user.staff.profession in ['store_manager', 'procurement_officer']:
+            if user.staff.profession in ['store_manager', 'inventory_manager', 'procurement_officer']:
                 return True
+            # Also check department name for procurement/stores
+            if user.staff.department and user.staff.department.name:
+                dept = user.staff.department.name.lower()
+                if 'procurement' in dept or 'store' in dept:
+                    return True
     except:
         pass
-    # Allow staff users
-    return user.is_staff
+    return False
 
 
 def is_pharmacy_staff(user):
     """Check if user is pharmacy staff (can view but not edit inventory)"""
     if not user.is_authenticated:
         return False
+    if user.is_superuser:
+        return True
     # Allow pharmacy staff to view
     try:
         if hasattr(user, 'staff'):
@@ -53,12 +74,21 @@ def is_pharmacy_staff(user):
     except:
         pass
     # Also allow through groups
-    return user.is_staff or user.groups.filter(name__in=['Admin', 'Pharmacy', 'Pharmacist']).exists()
+    return user.groups.filter(name__in=['Admin', 'Administrator', 'Pharmacy', 'Pharmacist']).exists()
 
 
 def can_edit_inventory(user):
-    """Check if user can edit inventory (procurement/admin only)"""
-    return is_procurement_staff(user)
+    """Check if user can edit inventory/stock (admin and procurement/stores staff)."""
+    if not user or not user.is_authenticated:
+        return False
+    return is_admin_user(user) or is_procurement_staff(user)
+
+
+def can_add_pharmacy_stock(user):
+    """Check if user can add pharmacy stock (admin or procurement/stores staff)."""
+    if not user or not user.is_authenticated:
+        return False
+    return is_admin_user(user) or is_procurement_staff(user)
 
 
 @login_required
@@ -187,6 +217,7 @@ def procurement_dashboard(request):
         'pending_transfers': pending_transfers,
         'top_suppliers': top_suppliers,
         'top_suppliers_by_items': top_suppliers_by_items,
+        'can_add_pharmacy_stock': can_add_pharmacy_stock(request.user),
     }
     return render(request, 'hospital/procurement_dashboard.html', context)
 
@@ -194,7 +225,7 @@ def procurement_dashboard(request):
 @login_required
 @user_passes_test(is_procurement_staff, login_url='/admin/login/')
 def stores_list(request):
-    """List all stores"""
+    """List all stores with transfer correlation and stats"""
     stores = Store.objects.filter(is_deleted=False).select_related(
         'department', 'manager__user'
     ).annotate(
@@ -209,10 +240,33 @@ def stores_list(request):
     if store_type_filter:
         stores = stores.filter(store_type=store_type_filter)
     
+    # Get the active pharmacy store for prescriptions
+    active_pharmacy_store = Store.get_pharmacy_store_for_prescriptions()
+    
+    # Pending transfers count (for guidelines/context)
+    pending_transfers_count = StoreTransfer.objects.filter(
+        is_deleted=False, status='pending'
+    ).count()
+    
+    # Total inventory value (from inventory items in active, non-deleted stores)
+    store_ids = list(stores.values_list('pk', flat=True))
+    total_inventory_value = 0
+    if store_ids:
+        total_inventory_value = InventoryItem.objects.filter(
+            store_id__in=store_ids,
+            is_deleted=False
+        ).aggregate(
+            tot=Sum(F('quantity_on_hand') * F('unit_cost'))
+        ).get('tot') or 0
+    
     context = {
         'stores': stores,
         'store_types': Store.STORE_TYPES,
         'store_type_filter': store_type_filter,
+        'active_pharmacy_store': active_pharmacy_store,
+        'pending_transfers_count': pending_transfers_count,
+        'total_inventory_value': total_inventory_value,
+        'can_add_pharmacy_stock': can_add_pharmacy_stock(request.user),
     }
     return render(request, 'hospital/stores_list.html', context)
 
@@ -220,7 +274,7 @@ def stores_list(request):
 @login_required
 @user_passes_test(is_procurement_staff, login_url='/admin/login/')
 def store_detail(request, pk):
-    """Store detail view with inventory"""
+    """Store detail view with inventory and transfer correlation"""
     store = get_object_or_404(Store, pk=pk, is_deleted=False)
     
     inventory_items = InventoryItem.objects.filter(
@@ -246,11 +300,42 @@ def store_detail(request, pk):
             quantity_on_hand__lte=F('reorder_level')
         )
     
+    # Check if this store is the one used for prescriptions/dispensing
+    active_pharmacy_store = Store.get_pharmacy_store_for_prescriptions()
+    is_active_pharmacy_store = active_pharmacy_store and active_pharmacy_store.pk == store.pk
+    
+    # Recent transfers involving this store (from or to)
+    recent_transfers_out = StoreTransfer.objects.filter(
+        from_store=store, is_deleted=False
+    ).select_related('to_store', 'requested_by__user').order_by('-created')[:5]
+    recent_transfers_in = StoreTransfer.objects.filter(
+        to_store=store, is_deleted=False
+    ).select_related('from_store', 'requested_by__user').order_by('-created')[:5]
+    pending_out = StoreTransfer.objects.filter(
+        from_store=store, is_deleted=False, status='pending'
+    ).count()
+    pending_in = StoreTransfer.objects.filter(
+        to_store=store, is_deleted=False, status='pending'
+    ).count()
+    
+    # Other stores for "transfer to" destination (exclude current)
+    other_stores = Store.objects.filter(
+        is_active=True, is_deleted=False
+    ).exclude(pk=store.pk).order_by('store_type', 'name')
+    
     context = {
         'store': store,
         'inventory_items': inventory_items,
         'search_query': search_query,
         'low_stock_only': low_stock_only,
+        'is_active_pharmacy_store': is_active_pharmacy_store,
+        'active_pharmacy_store': active_pharmacy_store,
+        'recent_transfers_out': recent_transfers_out,
+        'recent_transfers_in': recent_transfers_in,
+        'pending_out': pending_out,
+        'pending_in': pending_in,
+        'other_stores': other_stores,
+        'can_edit_stock': is_procurement_staff(request.user),
     }
     return render(request, 'hospital/store_detail.html', context)
 
@@ -348,18 +433,26 @@ def store_transfers_list(request):
     transfers = StoreTransfer.objects.filter(
         is_deleted=False
     ).select_related(
-        'from_store', 'to_store', 'requested_by__user',
-        'approved_by__user', 'received_by__user'
+        'from_store', 'to_store', 'requested_by', 'requested_by__user',
+        'approved_by', 'approved_by__user', 'received_by', 'received_by__user'
     ).prefetch_related('lines').order_by('-transfer_date', '-created')
     
     status_filter = request.GET.get('status', '')
     if status_filter:
         transfers = transfers.filter(status=status_filter)
     
+    # Statistics
+    total_transfers = StoreTransfer.objects.filter(is_deleted=False).count()
+    pending_count = StoreTransfer.objects.filter(is_deleted=False, status='pending').count()
+    completed_count = StoreTransfer.objects.filter(is_deleted=False, status='completed').count()
+    
     context = {
         'transfers': transfers,
         'status_choices': StoreTransfer.STATUS_CHOICES,
         'status_filter': status_filter,
+        'total_transfers': total_transfers,
+        'pending_count': pending_count,
+        'completed_count': completed_count,
     }
     return render(request, 'hospital/store_transfers_list.html', context)
 
@@ -583,11 +676,26 @@ def inventory_item_create(request):
     if request.method == 'POST':
         form = InventoryItemForm(request.POST)
         if form.is_valid():
-            item = form.save()
-            messages.success(request, f'Inventory item "{item.item_name}" created successfully!')
-            if store_id:
-                return redirect('hospital:store_detail', pk=store_id)
-            return redirect('hospital:procurement_dashboard')
+            try:
+                item = form.save()
+                messages.success(request, f'Inventory item "{item.item_name}" created successfully!')
+                if store_id:
+                    return redirect('hospital:store_detail', pk=store_id)
+                return redirect('hospital:procurement_dashboard')
+            except ValueError as e:
+                # Handle duplicate detection from model save
+                messages.error(request, str(e))
+                # Show existing items with similar names
+                item_name = form.cleaned_data.get('item_name', '')
+                store = form.cleaned_data.get('store')
+                if store and item_name:
+                    similar = InventoryItem.objects.filter(
+                        store=store,
+                        item_name__icontains=item_name,
+                        is_deleted=False
+                    )[:5]
+                    if similar.exists():
+                        messages.info(request, f"Similar items found: {', '.join([s.item_name for s in similar])}")
     else:
         form = InventoryItemForm()
         if store_id:
@@ -597,9 +705,12 @@ def inventory_item_create(request):
             except Store.DoesNotExist:
                 pass
     
+    from hospital.models import Drug
+    
     context = {
         'form': form,
         'title': 'Add New Inventory Item',
+        'drug_categories': Drug.CATEGORIES,
     }
     return render(request, 'hospital/procurement_form.html', context)
 
@@ -607,7 +718,7 @@ def inventory_item_create(request):
 @login_required
 @user_passes_test(is_procurement_staff, login_url='/admin/login/')
 def inventory_item_edit(request, pk):
-    """Edit an existing inventory item"""
+    """Edit an existing inventory item (procurement staff can update stock/cost)."""
     item = get_object_or_404(InventoryItem, pk=pk, is_deleted=False)
     
     if request.method == 'POST':
@@ -628,6 +739,32 @@ def inventory_item_edit(request, pk):
 
 
 @login_required
+@user_passes_test(is_procurement_staff, login_url='/admin/login/')
+def inventory_item_delete(request, pk):
+    """Delete (soft delete) an inventory item"""
+    # Require explicit delete permission (so edit-only users can't delete)
+    if not (request.user.is_superuser or request.user.has_perm('hospital.delete_inventoryitem')):
+        messages.error(request, "You do not have permission to delete inventory items.")
+        return redirect('hospital:inventory_management')
+
+    item = get_object_or_404(InventoryItem, pk=pk, is_deleted=False)
+    
+    if request.method == 'POST':
+        item_name = item.item_name
+        item.is_deleted = True
+        item.is_active = False
+        item.save()
+        messages.success(request, f'Inventory item "{item_name}" has been deleted.')
+        return redirect('hospital:inventory_management')
+    
+    context = {
+        'item': item,
+        'title': f'Delete Inventory Item: {item.item_name}',
+    }
+    return render(request, 'hospital/inventory_item_delete_confirm.html', context)
+
+
+@login_required
 def procurement_request_create(request):
     """Create a new procurement request (Pharmacy and Procurement can create)"""
     # Allow pharmacy staff and procurement staff to create requests
@@ -645,25 +782,33 @@ def procurement_request_create(request):
             pass
     
     if request.method == 'POST':
+        action = (request.POST.get('action') or 'save').strip().lower()
+        want_submit = action == 'submit'
         form = ProcurementRequestForm(request.POST, user=request.user)
         # Create formset with instance=None for new requests and prefix='items'
         formset = ProcurementRequestItemFormSet(request.POST, instance=None, prefix='items')
         
-        # Validate formset - check if at least one item has data
-        formset_valid = True
-        if formset.is_valid():
-            # Check if at least one item is filled
-            has_items = False
-            for item_form in formset:
-                if item_form.cleaned_data.get('item_name') and item_form.cleaned_data.get('quantity'):
+        # Validate formset
+        formset_valid = formset.is_valid()
+        has_items = False
+        if formset_valid:
+            # Determine whether at least one line item is actually provided
+            for item_form in formset.forms:
+                cd = getattr(item_form, 'cleaned_data', None) or {}
+                if cd.get('DELETE'):
+                    continue
+                item_name = (cd.get('item_name') or '').strip()
+                quantity = cd.get('quantity')
+                unit_price = cd.get('estimated_unit_price')
+                if item_name and quantity and unit_price is not None:
                     has_items = True
                     break
-            
-            if not has_items:
+
+            # For submit, require at least one completed line item.
+            # For save (draft), allow saving even with zero items.
+            if want_submit and not has_items:
                 formset_valid = False
-                messages.error(request, 'Please add at least one item to the request.')
-        else:
-            formset_valid = False
+                messages.error(request, 'Add at least one item before submitting the request.')
         
         if form.is_valid() and formset_valid:
             procurement_request = form.save(commit=False)
@@ -682,8 +827,12 @@ def procurement_request_create(request):
             
             # Ensure item codes are generated for new items (they should auto-generate via save())
             # Item codes will be auto-generated in the model's save() method
-            
-            messages.success(request, f'Procurement request "{procurement_request.request_number}" created successfully!')
+
+            if want_submit:
+                procurement_request.submit()
+                messages.success(request, f'Procurement request "{procurement_request.request_number}" submitted for approval.')
+            else:
+                messages.success(request, f'Procurement request "{procurement_request.request_number}" saved as draft.')
             return redirect('hospital:procurement_request_detail', pk=procurement_request.pk)
     else:
         form = ProcurementRequestForm(user=request.user)
@@ -739,14 +888,36 @@ def procurement_request_edit(request, pk):
         return redirect('hospital:procurement_request_detail', pk=req.pk)
     
     if request.method == 'POST':
+        action = (request.POST.get('action') or 'save').strip().lower()
+        want_submit = action == 'submit'
         form = ProcurementRequestForm(request.POST, instance=req, user=request.user)
         formset = ProcurementRequestItemFormSet(request.POST, instance=req)
         
         if form.is_valid() and formset.is_valid():
-            procurement_request = form.save()
-            formset.save()
-            messages.success(request, f'Procurement request "{procurement_request.request_number}" updated successfully!')
-            return redirect('hospital:procurement_request_detail', pk=procurement_request.pk)
+            # For submit, require at least one non-deleted line item.
+            has_items = False
+            for item_form in formset.forms:
+                cd = getattr(item_form, 'cleaned_data', None) or {}
+                if cd.get('DELETE'):
+                    continue
+                item_name = (cd.get('item_name') or '').strip()
+                quantity = cd.get('quantity')
+                unit_price = cd.get('estimated_unit_price')
+                if item_name and quantity and unit_price is not None:
+                    has_items = True
+                    break
+
+            if want_submit and not has_items:
+                messages.error(request, 'Add at least one item before submitting the request.')
+            else:
+                procurement_request = form.save()
+                formset.save()
+                if want_submit:
+                    procurement_request.submit()
+                    messages.success(request, f'Procurement request "{procurement_request.request_number}" submitted for approval.')
+                else:
+                    messages.success(request, f'Procurement request "{procurement_request.request_number}" updated successfully!')
+                return redirect('hospital:procurement_request_detail', pk=procurement_request.pk)
     else:
         form = ProcurementRequestForm(instance=req, user=request.user)
         formset = ProcurementRequestItemFormSet(instance=req)
@@ -763,60 +934,15 @@ def procurement_request_edit(request, pk):
 @login_required
 @user_passes_test(is_procurement_staff, login_url='/admin/login/')
 def store_transfer_create(request):
-    """Create a new store transfer"""
-    if request.method == 'POST':
-        form = StoreTransferForm(request.POST)
-        
-        # For POST with new instance, we need to validate differently
-        if form.is_valid():
-            # Create the transfer first
-            transfer = form.save(commit=False)
-            try:
-                staff = request.user.staff
-                transfer.requested_by = staff
-            except:
-                pass
-            transfer.status = 'pending'
-            transfer.save()
-            
-            # Now create formset with the saved instance
-            formset = StoreTransferLineFormSet(request.POST, instance=transfer)
-            
-            if formset.is_valid():
-                # Check if at least one item has data
-                has_items = False
-                for line_form in formset:
-                    if line_form.cleaned_data and not line_form.cleaned_data.get('DELETE', False):
-                        if line_form.cleaned_data.get('item_name') and line_form.cleaned_data.get('quantity'):
-                            has_items = True
-                            break
-                
-                if has_items:
-                    formset.save()
-                    messages.success(request, f'Store transfer "{transfer.transfer_number}" created successfully!')
-                    return redirect('hospital:store_transfer_detail', pk=transfer.pk)
-                else:
-                    transfer.delete()  # Remove the transfer if no items
-                    messages.error(request, 'Please add at least one transfer item.')
-                    form = StoreTransferForm(request.POST)
-                    formset = StoreTransferLineFormSet()
-            else:
-                transfer.delete()  # Remove the transfer if formset invalid
-                messages.error(request, 'Please correct the errors in the transfer items.')
-                form = StoreTransferForm(request.POST)
-                formset = StoreTransferLineFormSet()
-        else:
-            formset = StoreTransferLineFormSet()
-    else:
-        form = StoreTransferForm()
-        formset = StoreTransferLineFormSet()
-    
-    context = {
-        'form': form,
-        'formset': formset,
-        'title': 'Create Store Transfer',
-    }
-    return render(request, 'hospital/store_transfer_form.html', context)
+    """
+    Redirect to the inventory-based transfer form (create_transfer_modern).
+    Transfers must be created from actual store inventory so quantities and items stay in sync.
+    """
+    from django.urls import reverse
+    url = reverse('hospital:create_transfer_modern')
+    if request.GET:
+        url += '?' + request.GET.urlencode()
+    return redirect(url)
 
 
 @login_required
@@ -1076,8 +1202,11 @@ def pharmacy_request_create(request):
         messages.success(request, f'Procurement request {procurement_request.request_number} created successfully!')
         return redirect('hospital:pharmacy_procurement_requests')
     
+    from hospital.models import Drug
+    
     context = {
         'pharmacy_store': pharmacy_store,
+        'drug_categories': Drug.CATEGORIES,
     }
     
     return render(request, 'hospital/pharmacy_request_create.html', context)

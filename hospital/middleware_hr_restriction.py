@@ -40,6 +40,7 @@ HR_ALLOWED_PATTERNS = [
     '/api/hospital/performance',  # Performance API
     '/api/expiring-items',  # Expiring contracts/certificates API
     '/hms/notifications/mark-all-read',  # Allow notification actions
+    '/hms/notifications/clear-all',  # Clear all notifications
     '/hms/notifications/',  # Allow notifications list
 ]
 

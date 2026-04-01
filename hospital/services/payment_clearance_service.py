@@ -147,11 +147,12 @@ class PaymentClearanceService:
     @staticmethod
     def _link_imaging_study(payment_receipt):
         from hospital.models_advanced import ImagingStudy
+        from hospital.models_payment_verification import ImagingRelease
 
         encounter = payment_receipt.invoice.encounter if payment_receipt.invoice else None
         qs = ImagingStudy.objects.filter(
             patient=payment_receipt.patient,
-            is_paid=False,
+            is_deleted=False,
         )
         if encounter:
             qs = qs.filter(encounter=encounter)
@@ -166,11 +167,47 @@ class PaymentClearanceService:
 
         with transaction.atomic():
             for study in studies:
-                study.is_paid = True
-                study.paid_amount = payment_receipt.amount_paid
-                study.paid_at = timezone.now()
-                study.payment_receipt_number = payment_receipt.receipt_number
-                study.save(update_fields=['is_paid', 'paid_amount', 'paid_at', 'payment_receipt_number'])
+                # Update legacy fields if they exist
+                if hasattr(study, 'is_paid'):
+                    study.is_paid = True
+                if hasattr(study, 'paid_amount'):
+                    study.paid_amount = payment_receipt.amount_paid
+                if hasattr(study, 'paid_at'):
+                    study.paid_at = timezone.now()
+                if hasattr(study, 'payment_receipt_number'):
+                    study.payment_receipt_number = payment_receipt.receipt_number
+                    study.save(update_fields=['is_paid', 'paid_amount', 'paid_at', 'payment_receipt_number'])
+                
+                # Create or update ImagingRelease record
+                release_record, created = ImagingRelease.objects.get_or_create(
+                    imaging_study=study,
+                    defaults={
+                        'patient': payment_receipt.patient,
+                        'release_status': 'pending_payment',
+                    }
+                )
+                
+                # Link payment receipt and mark as ready for release
+                release_record.payment_receipt = payment_receipt
+                release_record.payment_verified_at = timezone.now()
+                release_record.payment_verified_by = payment_receipt.received_by
+                release_record.release_status = 'ready_for_release'
+                release_record.save()
+                
+                # Create PaymentVerification record
+                from hospital.models_payment_verification import PaymentVerification
+                PaymentVerification.objects.get_or_create(
+                    receipt=payment_receipt,
+                    imaging_study=study,
+                    defaults={
+                        'service_type': 'imaging_study',
+                        'verification_status': 'verified',
+                        'verified_by': payment_receipt.received_by,
+                        'verified_at': timezone.now(),
+                        'verification_method': 'receipt_number',
+                        'verification_notes': 'Auto-verified via cashier receipt',
+                    }
+                )
 
     @staticmethod
     def _send_receipt_sms(payment_receipt, service_type):

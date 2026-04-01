@@ -1,0 +1,60 @@
+name: Performance budget
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  verify-performance:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: hms_user
+          POSTGRES_PASSWORD: hms_password
+          POSTGRES_DB: hms_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hms_user -d hms_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://hms_user:hms_password@localhost:5432/hms_db
+      REDIS_URL: redis://127.0.0.1:6379/0
+      SECRET_KEY: ci-performance-check-not-for-production
+      DEBUG: "False"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Migrate
+        run: python manage.py migrate --noinput
+
+      - name: Dashboard performance budget
+        run: >
+          python manage.py verify_performance --quiet
+          --target-queries 120
+          --target-ms 15000

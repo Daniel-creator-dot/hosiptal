@@ -17,6 +17,10 @@ from .models_hr import (
     PerformanceReview, TrainingRecord, StaffShift
 )
 from .models_advanced import LeaveRequest, Attendance
+try:
+    from .models_hr import StaffMedicalChit
+except ImportError:
+    StaffMedicalChit = None
 from .models_hr_enhanced import AttendanceCalendar, StaffEmploymentContract
 from .decorators import role_required
 from .utils_roles import get_role_display_info
@@ -127,6 +131,20 @@ def hr_manager_dashboard(request):
     )
     
     pending_leaves_count = len(pending_leave_requests)
+    
+    # Pending Medical Chits
+    pending_medical_chits = []
+    pending_medical_chits_count = 0
+    if StaffMedicalChit:
+        pending_medical_chits = _safe_db_call(
+            [],
+            'pending_medical_chits',
+            lambda: list(StaffMedicalChit.objects.filter(
+                status='pending',
+                is_deleted=False
+            ).select_related('staff', 'staff__user', 'staff__department').order_by('-application_date')[:10])
+        )
+        pending_medical_chits_count = len(pending_medical_chits)
     
     # Leave requests this month
     leave_requests_this_month = _safe_db_call(
@@ -320,10 +338,9 @@ def hr_manager_dashboard(request):
         ).exclude(date_of_joining__year=today.year).select_related('user', 'department').order_by('date_of_joining__day')[:10])
     )
     
-    # Calculate years of service for anniversaries
-    for staff in work_anniversaries:
-        if staff.date_of_joining:
-            staff.years_of_service = today.year - staff.date_of_joining.year
+    # Note: years_of_service is a read-only property on Staff model
+    # It automatically calculates based on date_of_joining
+    # No need to set it manually - the template can access staff.years_of_service directly
     
     # ========== RECENT ACTIVITIES ==========
     # Recent payrolls
@@ -347,6 +364,13 @@ def hr_manager_dashboard(request):
     
     # ========== ALERTS & NOTIFICATIONS ==========
     alerts = []
+    
+    if pending_medical_chits_count > 0:
+        alerts.append({
+            'type': 'danger',
+            'url': 'hospital:hr_medical_chit_list',
+            'message': f'{pending_medical_chits_count} pending medical chit(s) require approval',
+        })
     
     if pending_leaves_count > 0:
         alerts.append({
@@ -393,6 +417,8 @@ def hr_manager_dashboard(request):
         'staff_on_leave': staff_on_leave,
         'pending_leave_requests': pending_leave_requests,
         'pending_leaves_count': pending_leaves_count,
+        'pending_medical_chits': pending_medical_chits,
+        'pending_medical_chits_count': pending_medical_chits_count,
         'leave_requests_this_month': leave_requests_this_month,
         'leave_balance_summary': leave_balance_summary,
         

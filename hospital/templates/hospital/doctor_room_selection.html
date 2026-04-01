@@ -1,0 +1,156 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load hospital_extras %}
+
+{% block title %}Select Consulting Room{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row">
+        <div class="col-md-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2 class="fw-bold mb-1">Select Consulting Room</h2>
+                    <p class="text-muted mb-0">Choose which room you'll be using today</p>
+                </div>
+                <a href="{% url 'hospital:my_consultations' %}#consultations-queue-panel" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left me-2"></i>Back to consultations
+                </a>
+            </div>
+        </div>
+    </div>
+
+    {% if current_assignment %}
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="alert alert-info">
+                <h5><i class="bi bi-info-circle me-2"></i>Current Assignment</h5>
+                <p class="mb-1"><strong>Room:</strong> {{ current_assignment.room.room_number }}
+                    {% if current_assignment.room.room_name %}({{ current_assignment.room.room_name }}){% endif %}</p>
+                <p class="mb-0"><strong>Started:</strong> {{ current_assignment.start_time|time:"g:i A" }}</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="row g-4">
+        {% for room in all_rooms %}
+        <div class="col-md-6 col-lg-3">
+            <div class="card h-100 {% if room.status != 'available' %}border-warning{% elif room.id in today_assignments and today_assignments|length >= room.capacity %}border-danger{% else %}border-success{% endif %}">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <h5 class="card-title mb-0">{{ room.room_number }}</h5>
+                        <span class="badge {% if room.status == 'available' %}bg-success{% elif room.status == 'occupied' %}bg-warning{% elif room.status == 'maintenance' %}bg-danger{% else %}bg-secondary{% endif %}">
+                            {{ room.get_status_display }}
+                        </span>
+                    </div>
+                    
+                    {% if room.room_name %}
+                    <p class="text-muted small mb-2">{{ room.room_name }}</p>
+                    {% endif %}
+                    
+                    {% with assignments=today_assignments|get_item:room.id %}
+                    {% if assignments %}
+                    <div class="mb-2">
+                        <small class="text-muted d-block mb-1"><strong>Current Doctors:</strong></small>
+                        {% for assignment in assignments %}
+                        <div class="small">
+                            <i class="bi bi-person-check"></i> {{ assignment.doctor.get_full_name|default:assignment.doctor.username }}
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    {% endwith %}
+                    
+                    <div class="mb-2">
+                        <small class="text-muted">Capacity: {{ room.capacity }} doctor{{ room.capacity|pluralize }}</small>
+                    </div>
+                    
+                    {% if room.department %}
+                    <div class="mb-3">
+                        <small class="text-muted">{{ room.department.name }}</small>
+                    </div>
+                    {% endif %}
+                    
+                    {% with assignments=today_assignments|get_item:room.id %}
+                    <button class="btn btn-primary w-100 {% if room.status != 'available' or assignments|length >= room.capacity %}disabled{% endif %}" 
+                            onclick="assignToRoom('{{ room.id }}', '{{ room.room_number }}')"
+                            {% if room.status != 'available' or assignments|length >= room.capacity %}disabled{% endif %}>
+                        <i class="bi bi-door-open me-2"></i>Select This Room
+                    </button>
+                    {% endwith %}
+                    
+                    {% if current_assignment and room.id == current_assignment.room.id %}
+                    <button class="btn btn-outline-danger w-100 mt-2" onclick="endAssignment()">
+                        <i class="bi bi-x-circle me-2"></i>End Assignment
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="col-md-12">
+            <div class="alert alert-warning">
+                <i class="bi bi-exclamation-triangle me-2"></i>No consulting rooms available.
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<script>
+function assignToRoom(roomId, roomNumber) {
+    if (confirm(`Assign yourself to ${roomNumber}?`)) {
+        const formData = new FormData();
+        formData.append('room_id', roomId);
+        formData.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
+        
+        fetch('{% url "hospital:assign_doctor_to_room" %}', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(data.message || 'Successfully assigned to room');
+                window.location.reload();
+            } else {
+                alert('Error: ' + (data.error || 'Failed to assign room'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred. Please try again.');
+        });
+    }
+}
+
+function endAssignment() {
+    if (confirm('End your current room assignment?')) {
+        const formData = new FormData();
+        formData.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
+        
+        fetch('{% url "hospital:end_room_assignment" %}', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(data.message || 'Room assignment ended');
+                window.location.reload();
+            } else {
+                alert('Error: ' + (data.error || 'Failed to end assignment'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred. Please try again.');
+        });
+    }
+}
+</script>
+
+<form class="d-none">{% csrf_token %}</form>
+{% endblock %}
+

@@ -71,10 +71,51 @@ class Store(BaseModel):
         result = self.inventory_items.filter(
             is_deleted=False,
             quantity_on_hand__gt=0
+        ).annotate(
+            item_value=F('quantity_on_hand') * F('unit_cost')
         ).aggregate(
-            total=Sum(F('quantity_on_hand') * F('unit_cost'))
+            total=Sum('item_value')
         )
         return result['total'] or Decimal('0.00')
+    
+    @classmethod
+    def get_main_pharmacy_store(cls):
+        """
+        Return the canonical main pharmacy store used for prescription workflows.
+        Never falls back to DRUGS.
+        """
+        # Strategy 1: explicit PHARM code
+        store = cls.objects.filter(
+            store_type='pharmacy',
+            code='PHARM',
+            is_deleted=False,
+        ).first()
+        if store:
+            return store
+
+        # Strategy 2: explicit name match
+        store = cls.objects.filter(
+            store_type='pharmacy',
+            name__icontains='main pharmacy',
+            is_deleted=False,
+        ).first()
+        if store:
+            return store
+
+        # Strategy 3: any pharmacy store except DRUGS
+        return cls.objects.filter(
+            store_type='pharmacy',
+            is_deleted=False,
+        ).exclude(code='DRUGS').first()
+
+    @classmethod
+    def get_pharmacy_store_for_prescriptions(cls):
+        """
+        Get the pharmacy store used for dispensing prescriptions.
+        Prefers 'Main Pharmacy Store' (PHARM) over 'Drugs Store' (DRUGS).
+        Now also checks by name to find the main pharmacy store.
+        """
+        return cls.get_main_pharmacy_store()
 
 
 class InventoryItem(BaseModel):
@@ -153,7 +194,45 @@ class InventoryItem(BaseModel):
         return f"{prefix}-{store_code}-{next_num:06d}"
     
     def save(self, *args, **kwargs):
-        """Auto-generate item code if not provided"""
+        """Auto-generate item code if not provided and check for duplicates"""
+        # Normalize item name for duplicate checking
+        def normalize_name(name):
+            if not name:
+                return ""
+            return " ".join(name.split()).lower().strip()
+        
+        normalized_name = normalize_name(self.item_name)
+        
+        # Check for duplicates by name in the same store (case-insensitive)
+        if self.pk:
+            # Updating existing item
+            duplicates = InventoryItem.objects.filter(
+                store=self.store,
+                is_deleted=False
+            ).exclude(pk=self.pk)
+        else:
+            # Creating new item
+            duplicates = InventoryItem.objects.filter(
+                store=self.store,
+                is_deleted=False
+            )
+        
+        # Check for exact name match (case-insensitive)
+        exact_duplicates = duplicates.filter(
+            item_name__iexact=self.item_name
+        )
+        
+        if exact_duplicates.exists():
+            # If creating new item and exact duplicate exists, raise error
+            if not self.pk:
+                dup = exact_duplicates.first()
+                raise ValueError(
+                    f"Duplicate item detected! An item named '{self.item_name}' already exists "
+                    f"in {self.store.name} (ID: {dup.id}, Code: {dup.item_code}). "
+                    f"Please use the existing item or choose a different name."
+                )
+        
+        # Auto-generate item code if not provided
         if not self.item_code or self.item_code.strip() == '':
             # Generate code
             max_attempts = 10
@@ -246,53 +325,209 @@ class StoreTransfer(BaseModel):
         return f"{prefix}{year}{new_num:06d}"
     
     def complete_transfer(self, staff):
-        """Complete the transfer and update inventory"""
-        if self.status != 'approved':
-            raise ValueError("Transfer must be approved before completion")
+        """
+        Complete the transfer and update inventory with full accountability.
         
-        # Process each line item
+        Proper transfer logic:
+        1. Validates all items exist and have sufficient stock
+        2. Matches items by item_code, then by item_name, then by drug
+        3. Creates destination items if they don't exist
+        4. Uses database transactions for atomicity
+        5. Creates proper audit trail
+        """
+        from django.db import transaction
+        from django.core.exceptions import ValidationError
+        from hospital.services.inventory_accountability_service import InventoryAccountabilityService
+        
+        if self.status not in ['approved', 'in_transit']:
+            raise ValueError(f"Transfer must be approved or in transit before completion. Current status: {self.status}")
+        
+        if not staff:
+            raise ValueError("Staff member is required to complete transfer")
+        
+        # Validate all line items before processing
+        validation_errors = []
+        line_items_data = []
+        
         for line in self.lines.filter(is_deleted=False):
-            # Decrease from_store inventory
-            from_item = InventoryItem.objects.filter(
-                store=self.from_store,
-                item_code=line.item_code,
-                is_deleted=False
-            ).first()
-            
-            if from_item and from_item.quantity_on_hand >= line.quantity:
-                from_item.quantity_on_hand -= line.quantity
-                from_item.save()
-                
-                # Increase to_store inventory
-                lookup_kwargs = {
-                    'store': self.to_store,
-                    'item_code': line.item_code,
-                    'is_deleted': False
-                }
-                to_item = InventoryItem.objects.filter(**lookup_kwargs).first()
-                
-                if to_item:
-                    to_item.quantity_on_hand += line.quantity
-                    to_item.save()
-                else:
-                    InventoryItem.objects.create(
-                        store=self.to_store,
-                        item_name=line.item_name,
-                        item_code=line.item_code,
-                        quantity_on_hand=line.quantity,
-                        unit_cost=line.unit_cost,
-                        unit_of_measure=line.unit_of_measure,
+            # Prefer exact correlation: source item set when transfer was created from inventory
+            from_item = None
+            if line.from_inventory_item_id:
+                from_item = InventoryItem.objects.filter(
+                    pk=line.from_inventory_item_id,
+                    store=self.from_store,
+                    is_deleted=False
+                ).first()
+                if from_item and from_item.quantity_on_hand < line.quantity:
+                    validation_errors.append(
+                        f"Insufficient stock for '{line.item_name}'. "
+                        f"Available: {from_item.quantity_on_hand}, Required: {line.quantity}"
                     )
+                    continue
+                if not from_item:
+                    validation_errors.append(
+                        f"Source item for '{line.item_name}' (Code: {line.item_code or 'N/A'}) "
+                        f"no longer found in {self.from_store.name}. It may have been removed."
+                    )
+                    continue
+            # Fallback: match by item_code / item_name (legacy or manual lines)
+            if not from_item and line.item_code:
+                from_item = InventoryItem.objects.filter(
+                    store=self.from_store,
+                    item_code=line.item_code,
+                    is_deleted=False
+                ).first()
+            if not from_item and line.item_name:
+                from_item = InventoryItem.objects.filter(
+                    store=self.from_store,
+                    item_name__iexact=line.item_name.strip(),
+                    is_deleted=False
+                ).first()
+            if not from_item and line.item_name:
+                from_item = InventoryItem.objects.filter(
+                    store=self.from_store,
+                    item_name__icontains=line.item_name.strip(),
+                    is_deleted=False
+                ).first()
+            
+            if not from_item:
+                validation_errors.append(
+                    f"Source item '{line.item_name}' (Code: {line.item_code or 'N/A'}) "
+                    f"not found in {self.from_store.name}"
+                )
+                continue
+            
+            # Check stock availability
+            if from_item.quantity_on_hand < line.quantity:
+                validation_errors.append(
+                    f"Insufficient stock for '{line.item_name}'. "
+                    f"Available: {from_item.quantity_on_hand}, Required: {line.quantity}"
+                )
+                continue
+            
+            # Find or prepare destination item (prefer explicit link so quantities update the right item)
+            to_item = None
+            if getattr(line, 'to_inventory_item_id', None):
+                to_item = InventoryItem.objects.filter(
+                    pk=line.to_inventory_item_id,
+                    store=self.to_store,
+                    is_deleted=False
+                ).first()
+                if not to_item:
+                    validation_errors.append(
+                        f"Destination item for '{line.item_name}' no longer found in {self.to_store.name}."
+                    )
+                    continue
+            if not to_item and line.item_code:
+                to_item = InventoryItem.objects.filter(
+                    store=self.to_store,
+                    item_code=line.item_code,
+                    is_deleted=False
+                ).first()
+            if not to_item and line.item_name:
+                to_item = InventoryItem.objects.filter(
+                    store=self.to_store,
+                    item_name__iexact=line.item_name.strip(),
+                    is_deleted=False
+                ).first()
+            if not to_item and from_item.drug:
+                to_item = InventoryItem.objects.filter(
+                    store=self.to_store,
+                    drug=from_item.drug,
+                    is_deleted=False
+                ).first()
+            
+            # Store line item data for processing
+            line_items_data.append({
+                'line': line,
+                'from_item': from_item,
+                'to_item': to_item,
+            })
         
-        self.status = 'completed'
-        self.received_by = staff
-        self.received_at = timezone.now()
-        self.save()
+        # If validation errors exist, raise them all at once
+        if validation_errors:
+            error_message = "Transfer validation failed:\n" + "\n".join(f"  - {err}" for err in validation_errors)
+            raise ValueError(error_message)
+        
+        # Process all transfers in a single transaction
+        with transaction.atomic():
+            for item_data in line_items_data:
+                line = item_data['line']
+                from_item = item_data['from_item']
+                to_item = item_data['to_item']
+                
+                # Create destination item if it doesn't exist
+                if not to_item:
+                    to_item = InventoryItem.objects.create(
+                        store=self.to_store,
+                        drug=from_item.drug,
+                        category=from_item.category,
+                        item_name=line.item_name or from_item.item_name,
+                        item_code=line.item_code or from_item.item_code,
+                        description=from_item.description or '',
+                        quantity_on_hand=0,
+                        unit_cost=line.unit_cost or from_item.unit_cost,
+                        unit_of_measure=line.unit_of_measure or from_item.unit_of_measure,
+                        preferred_supplier=from_item.preferred_supplier,
+                        reorder_level=from_item.reorder_level,
+                        reorder_quantity=from_item.reorder_quantity,
+                        is_active=True,  # Ensure item is active so it shows in inventory list
+                    )
+                
+                # Use accountability service for transfer
+                try:
+                    InventoryAccountabilityService.transfer_between_stores(
+                        from_item=from_item,
+                        to_store=self.to_store,
+                        quantity=line.quantity,
+                        staff=staff,
+                        reference_number=self.transfer_number,
+                        notes=f"Store transfer {self.transfer_number}: {self.from_store.name} → {self.to_store.name}. {line.notes or ''}",
+                        to_item=to_item
+                    )
+                except ValidationError as e:
+                    # Rollback transaction on error
+                    raise ValueError(f"Transfer failed for {line.item_name}: {str(e)}")
+                except Exception as e:
+                    # Rollback transaction on error
+                    raise ValueError(f"Unexpected error transferring {line.item_name}: {str(e)}")
+                
+                # Correlate line to destination item for audit and reporting
+                line.to_inventory_item = to_item
+                line.save(update_fields=['to_inventory_item', 'modified'])
+            
+            # Update transfer status
+            self.status = 'completed'
+            self.received_by = staff
+            self.received_at = timezone.now()
+            self.save(update_fields=['status', 'received_by', 'received_at', 'modified'])
 
 
 class StoreTransferLine(BaseModel):
-    """Store transfer line items"""
+    """
+    Store transfer line items.
+    When created from the modern form, from_inventory_item is set so source/destination
+    are correlated exactly for reliable quantity transfer.
+    """
     transfer = models.ForeignKey(StoreTransfer, on_delete=models.CASCADE, related_name='lines')
+    # Exact correlation: source inventory record (set when creating transfer from store inventory)
+    from_inventory_item = models.ForeignKey(
+        InventoryItem,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='transfer_lines_as_source',
+        help_text='Source inventory item; used for exact quantity deduction.'
+    )
+    # Set when transfer is completed: destination inventory record (audit trail)
+    to_inventory_item = models.ForeignKey(
+        InventoryItem,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='transfer_lines_as_dest',
+        help_text='Destination inventory item after completion.'
+    )
     item_code = models.CharField(max_length=50)
     item_name = models.CharField(max_length=200)
     quantity = models.PositiveIntegerField()
@@ -415,6 +650,65 @@ class ProcurementRequest(BaseModel):
         self.admin_approved_by = admin_staff
         self.admin_approved_at = timezone.now()
         self.save()
+        
+        # Send SMS notification to accountants (import here to avoid circular import)
+        try:
+            from .services.sms_service import SMSService
+            from .models import Staff
+            import logging
+            
+            logger = logging.getLogger(__name__)
+            
+            # Get all accountant staff
+            accountant_professions = ['accountant', 'account_officer', 'account_personnel', 'senior_account_officer']
+            accountant_staff = Staff.objects.filter(
+                profession__in=accountant_professions,
+                is_active=True,
+                is_deleted=False
+            ).select_related('user').exclude(phone_number__isnull=True).exclude(phone_number='')
+            
+            if accountant_staff.exists():
+                # Prepare SMS message
+                message = (
+                    f"🔔 Procurement Approval Required\n\n"
+                    f"Request: {self.request_number}\n"
+                    f"Amount: GHS {self.estimated_total:,.2f}\n"
+                    f"Requested by: {self.requested_by.full_name if self.requested_by else 'Unknown'}\n"
+                    f"Status: Pending Accounts Approval\n\n"
+                    f"Please review and approve at:\n"
+                    f"/hms/procurement/accounts/pending/\n\n"
+                    f"PrimeCare Hospital"
+                )
+                
+                # Send SMS to each accountant
+                sms_service = SMSService()
+                for staff in accountant_staff:
+                    if not staff.phone_number:
+                        continue
+                    try:
+                        phone = staff.phone_number.strip()
+                        if phone.startswith('0'):
+                            phone = '+233' + phone[1:]
+                        elif not phone.startswith('+'):
+                            phone = '+233' + phone
+                        
+                        recipient_name = staff.full_name or (staff.user.get_full_name() if staff.user else "Accountant")
+                        
+                        sms_service.send_sms(
+                            phone_number=phone,
+                            message=message,
+                            message_type='procurement_approval',
+                            recipient_name=recipient_name,
+                            related_object_id=str(self.id),
+                            related_object_type='ProcurementRequest'
+                        )
+                    except Exception as e:
+                        logger.error(f"Error sending SMS to accountant {staff.full_name}: {str(e)}", exc_info=True)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error sending SMS notification to accountants for procurement request {self.request_number}: {str(e)}", exc_info=True)
+            # Don't fail the approval if SMS fails
     
     def approve_by_accounts(self, accounts_staff):
         """Accounts approval"""

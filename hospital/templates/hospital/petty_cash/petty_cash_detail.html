@@ -1,0 +1,193 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Petty Cash Transaction {{ transaction.transaction_number }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-lg-10 mx-auto">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2><i class="bi bi-wallet2 me-2"></i>Petty Cash Transaction: {{ transaction.transaction_number }}</h2>
+                <a href="{% url 'hospital:petty_cash_list' %}" class="btn btn-secondary">
+                    <i class="bi bi-arrow-left me-2"></i>Back to List
+                </a>
+            </div>
+
+            <div class="row g-4">
+                <div class="col-md-8">
+                    <div class="card border-0 shadow-sm mb-4">
+                        <div class="card-header bg-white border-0">
+                            <h5 class="mb-0">Transaction Details</h5>
+                        </div>
+                        <div class="card-body">
+                            <dl class="row">
+                                <dt class="col-sm-4">Transaction Number:</dt>
+                                <dd class="col-sm-8"><strong>{{ transaction.transaction_number }}</strong></dd>
+                                
+                                <dt class="col-sm-4">Date:</dt>
+                                <dd class="col-sm-8">{{ transaction.transaction_date|date:"F d, Y" }}</dd>
+                                
+                                <dt class="col-sm-4">Payee:</dt>
+                                <dd class="col-sm-8">
+                                    <strong>{{ transaction.payee_name }}</strong>
+                                    {% if transaction.payee_type %}
+                                        <span class="text-muted">({{ transaction.payee_type }})</span>
+                                    {% endif %}
+                                </dd>
+                                
+                                <dt class="col-sm-4">Amount:</dt>
+                                <dd class="col-sm-8">
+                                    <strong class="text-primary fs-5 {% if transaction.amount > 500 %}text-danger{% endif %}">
+                                        GHS {{ transaction.amount|floatformat:2 }}
+                                    </strong>
+                                    {% if transaction.amount > 500 %}
+                                        <br><small class="text-danger"><i class="bi bi-exclamation-triangle"></i> Amount exceeds GHS 500.00 - requires approval</small>
+                                    {% endif %}
+                                </dd>
+                                
+                                <dt class="col-sm-4">Status:</dt>
+                                <dd class="col-sm-8">
+                                    {% if transaction.status == 'draft' %}
+                                        <span class="badge bg-secondary">Draft</span>
+                                    {% elif transaction.status == 'pending_approval' %}
+                                        <span class="badge bg-warning">Pending Account Officer Approval</span>
+                                    {% elif transaction.status == 'approved' %}
+                                        <span class="badge bg-info">Approved</span>
+                                    {% elif transaction.status == 'paid' %}
+                                        <span class="badge bg-success">Paid</span>
+                                    {% elif transaction.status == 'rejected' %}
+                                        <span class="badge bg-danger">Rejected</span>
+                                    {% endif %}
+                                </dd>
+                                
+                                <dt class="col-sm-4">Description:</dt>
+                                <dd class="col-sm-8">{{ transaction.description }}</dd>
+                                
+                                <dt class="col-sm-4">Created By:</dt>
+                                <dd class="col-sm-8">
+                                    {{ transaction.created_by.get_full_name|default:transaction.created_by.username }} 
+                                    <small class="text-muted">(Account Personnel)</small>
+                                </dd>
+                                
+                                {% if transaction.approved_by %}
+                                <dt class="col-sm-4">Approved By:</dt>
+                                <dd class="col-sm-8">
+                                    {{ transaction.approved_by.get_full_name|default:transaction.approved_by.username }}
+                                    <small class="text-muted">(Account Officer)</small>
+                                    <br><small class="text-muted">{{ transaction.approved_date|date:"F d, Y g:i A" }}</small>
+                                </dd>
+                                {% endif %}
+                                
+                                {% if transaction.rejected_by %}
+                                <dt class="col-sm-4">Rejected By:</dt>
+                                <dd class="col-sm-8">
+                                    {{ transaction.rejected_by.get_full_name|default:transaction.rejected_by.username }}
+                                    <br><small class="text-muted">{{ transaction.rejected_date|date:"F d, Y g:i A" }}</small>
+                                    {% if transaction.rejection_reason %}
+                                        <br><div class="alert alert-danger mt-2 mb-0"><strong>Reason:</strong> {{ transaction.rejection_reason }}</div>
+                                    {% endif %}
+                                </dd>
+                                {% endif %}
+                                
+                                {% if transaction.payment_date %}
+                                <dt class="col-sm-4">Payment Date:</dt>
+                                <dd class="col-sm-8">{{ transaction.payment_date|date:"F d, Y" }}</dd>
+                                {% endif %}
+                                
+                                {% if transaction.receipt_number %}
+                                <dt class="col-sm-4">Receipt Number:</dt>
+                                <dd class="col-sm-8">{{ transaction.receipt_number }}</dd>
+                                {% endif %}
+                                
+                                {% if transaction.invoice_number %}
+                                <dt class="col-sm-4">Invoice Number:</dt>
+                                <dd class="col-sm-8">{{ transaction.invoice_number }}</dd>
+                                {% endif %}
+                                
+                                {% if transaction.notes %}
+                                <dt class="col-sm-4">Notes:</dt>
+                                <dd class="col-sm-8">{{ transaction.notes }}</dd>
+                                {% endif %}
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-4">
+                    <div class="card border-0 shadow-sm mb-4">
+                        <div class="card-header bg-white border-0">
+                            <h5 class="mb-0">Actions</h5>
+                        </div>
+                        <div class="card-body">
+                            {% if can_submit and transaction.status == 'draft' %}
+                                <form method="post" action="{% url 'hospital:petty_cash_submit' transaction.id %}" class="mb-2">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-warning w-100">
+                                        <i class="bi bi-send me-2"></i>Submit for Approval
+                                    </button>
+                                </form>
+                            {% endif %}
+                            
+                            {% if can_approve and transaction.status == 'pending_approval' %}
+                                <form method="post" action="{% url 'hospital:petty_cash_approve' transaction.id %}" class="mb-2">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-success w-100" onclick="return confirm('Approve this petty cash transaction? This will create a journal entry.');">
+                                        <i class="bi bi-check-circle me-2"></i>Approve
+                                    </button>
+                                </form>
+                                
+                                <a href="{% url 'hospital:petty_cash_reject' transaction.id %}" class="btn btn-danger w-100">
+                                    <i class="bi bi-x-circle me-2"></i>Reject
+                                </a>
+                            {% endif %}
+                            
+                            {% if transaction.status == 'approved' %}
+                                {% if user_role == 'account_officer' or user_role == 'accountant' %}
+                                <a href="{% url 'hospital:petty_cash_mark_paid' transaction.id %}" class="btn btn-info w-100">
+                                    <i class="bi bi-check-circle me-2"></i>Mark as Paid
+                                </a>
+                                {% endif %}
+                            {% endif %}
+                                <a href="{% url 'hospital:petty_cash_mark_paid' transaction.id %}" class="btn btn-info w-100">
+                                    <i class="bi bi-check-circle me-2"></i>Mark as Paid
+                                </a>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-header bg-white border-0">
+                            <h5 class="mb-0">Accounting</h5>
+                        </div>
+                        <div class="card-body">
+                            <dl class="row mb-0">
+                                <dt class="col-sm-6">Expense Account:</dt>
+                                <dd class="col-sm-6">{{ transaction.expense_account.account_code }} - {{ transaction.expense_account.account_name }}</dd>
+                                
+                                {% if transaction.cost_center %}
+                                <dt class="col-sm-6">Cost Center:</dt>
+                                <dd class="col-sm-6">{{ transaction.cost_center.code }} - {{ transaction.cost_center.name }}</dd>
+                                {% endif %}
+                                
+                                <dt class="col-sm-6">Payment Account:</dt>
+                                <dd class="col-sm-6">1030 - Petty Cash</dd>
+                                
+                                {% if transaction.journal_entry %}
+                                <dt class="col-sm-6">Journal Entry:</dt>
+                                <dd class="col-sm-6">
+                                    <a href="{% url 'admin:hospital_advancedjournalentry_change' transaction.journal_entry.id %}" target="_blank">
+                                        {{ transaction.journal_entry.entry_number }} <i class="bi bi-box-arrow-up-right"></i>
+                                    </a>
+                                </dd>
+                                {% endif %}
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

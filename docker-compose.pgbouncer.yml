@@ -1,0 +1,24 @@
+# Transaction pooling in front of Postgres to cap DB connections when many Gunicorn threads are in use.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.pgbouncer.yml --profile pgbouncer up -d
+# Then point the app at PgBouncer (not db:5432), e.g. in .env or web/celery environment:
+#   DATABASE_URL=postgresql://hms_user:hms_password@pgbouncer:6432/hms_db
+#
+# Django: keep CONN_MAX_AGE=0 when using transaction pooling (or use short age) so connections
+# return to the pool cleanly between requests.
+
+services:
+  pgbouncer:
+    profiles: ["pgbouncer"]
+    image: edoburu/pgbouncer:v1.24.1-p1
+    environment:
+      DATABASE_URL: postgres://hms_user:hms_password@db:5432/hms_db
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 500
+      DEFAULT_POOL_SIZE: 25
+      RESERVE_POOL_SIZE: 5
+    ports:
+      - "6432:5432"
+    depends_on:
+      db:
+        condition: service_healthy

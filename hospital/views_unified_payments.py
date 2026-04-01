@@ -22,6 +22,7 @@ from .services.unified_receipt_service import (
 )
 from .models import Patient, Encounter, LabResult, Prescription
 from .models_accounting import PaymentReceipt, Transaction
+from .utils_billing import get_drug_price_for_prescription, get_consultation_price_for_encounter
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,10 @@ def lab_payment_process(request, lab_result_id):
                 request,
                 f"✅ Payment received! Receipt {result['receipt'].receipt_number} with QR code generated."
             )
-            return redirect('hospital:receipt_print', receipt_id=result['receipt'].id)
+            # Redirect to POS receipt with auto-print
+            from django.urls import reverse
+            pos_url = reverse('hospital:receipt_pos_print', args=[result['receipt'].id]) + '?auto_print=1'
+            return redirect(pos_url)
         else:
             messages.error(request, f"❌ Payment failed: {result.get('message', 'Unknown error')}")
     
@@ -79,9 +83,9 @@ def pharmacy_payment_process(request, prescription_id):
     """
     prescription = get_object_or_404(Prescription, id=prescription_id, is_deleted=False)
     patient = prescription.order.encounter.patient
-    
-    # Calculate drug cost
-    drug_price = prescription.drug.unit_price if hasattr(prescription.drug, 'unit_price') else Decimal('0.00')
+    payer = getattr(patient, 'primary_insurance', None)
+    # Use main pharmacy dispensary price (same source as cashier)
+    drug_price = get_drug_price_for_prescription(prescription.drug, payer=payer)
     total_cost = drug_price * prescription.quantity
     
     if request.method == 'POST':
@@ -103,7 +107,10 @@ def pharmacy_payment_process(request, prescription_id):
                 request,
                 f"✅ Payment received! Receipt {result['receipt'].receipt_number} with QR code generated."
             )
-            return redirect('hospital:receipt_print', receipt_id=result['receipt'].id)
+            # Redirect to POS receipt with auto-print
+            from django.urls import reverse
+            pos_url = reverse('hospital:receipt_pos_print', args=[result['receipt'].id]) + '?auto_print=1'
+            return redirect(pos_url)
         else:
             messages.error(request, f"❌ Payment failed: {result.get('message', 'Unknown error')}")
     
@@ -156,7 +163,10 @@ def imaging_payment_process(request, imaging_study_id):
                 request,
                 f"✅ Payment received! Receipt {result['receipt'].receipt_number} with QR code generated."
             )
-            return redirect('hospital:receipt_print', receipt_id=result['receipt'].id)
+            # Redirect to POS receipt with auto-print
+            from django.urls import reverse
+            pos_url = reverse('hospital:receipt_pos_print', args=[result['receipt'].id]) + '?auto_print=1'
+            return redirect(pos_url)
         else:
             messages.error(request, f"❌ Payment failed: {result.get('message', 'Unknown error')}")
     
@@ -178,8 +188,8 @@ def consultation_payment_process(request, encounter_id):
     encounter = get_object_or_404(Encounter, id=encounter_id, is_deleted=False)
     patient = encounter.patient
     
-    # Get consultation fee
-    consultation_fee = Decimal('30.00')  # Default or fetch from pricing
+    # Get consultation fee (same as billing: 150 general / 300 specialist / doctor-specific)
+    consultation_fee = get_consultation_price_for_encounter(encounter)
     
     if request.method == 'POST':
         amount = Decimal(request.POST.get('amount', consultation_fee))
@@ -200,7 +210,10 @@ def consultation_payment_process(request, encounter_id):
                 request,
                 f"✅ Payment received! Receipt {result['receipt'].receipt_number} with QR code generated."
             )
-            return redirect('hospital:receipt_print', receipt_id=result['receipt'].id)
+            # Redirect to POS receipt with auto-print
+            from django.urls import reverse
+            pos_url = reverse('hospital:receipt_pos_print', args=[result['receipt'].id]) + '?auto_print=1'
+            return redirect(pos_url)
         else:
             messages.error(request, f"❌ Payment failed: {result.get('message', 'Unknown error')}")
     
@@ -316,6 +329,187 @@ def receipt_print(request, receipt_id):
         'qr_code': qr_code,
     }
     return render(request, 'hospital/receipt_print.html', context)
+
+
+def _receipt_items_paid_for(receipt):
+    """Build list of items paid for for receipt display. Each item: {'description': str, 'amount': Decimal}."""
+    items = []
+    details = getattr(receipt, 'service_details', None) or {}
+    if not isinstance(details, dict):
+        details = {}
+    # Get services list: from receipt.service_details first, then QR code
+    services_list = details.get('services') if isinstance(details.get('services'), list) else None
+    if not services_list:
+        try:
+            qr = getattr(receipt, 'qr_code', None)
+            if qr and getattr(qr, 'qr_code_data', None):
+                qr_data = json.loads(qr.qr_code_data) if isinstance(qr.qr_code_data, str) else (qr.qr_code_data or {})
+                inner = qr_data.get('service_details')
+                if isinstance(inner, dict) and isinstance(inner.get('services'), list):
+                    services_list = inner['services']
+                elif isinstance(qr_data.get('services'), list):
+                    services_list = qr_data['services']
+        except Exception:
+            pass
+    # Show line items if we have a services list (combined) or receipt is marked combined
+    is_combined = (
+        getattr(receipt, 'service_type', None) == 'combined'
+        or (getattr(receipt, 'notes', None) or '').strip().lower().find('combined') >= 0
+        or (details.get('combined_bill') in (True, 'true', 1))
+    )
+    if services_list and (is_combined or len(services_list) > 1):
+        for svc in services_list:
+            if not isinstance(svc, dict):
+                continue
+            # Prescribe Sale (and any service with breakdown): show each line on receipt/invoice
+            breakdown = svc.get('breakdown') if isinstance(svc.get('breakdown'), list) else None
+            if breakdown:
+                for row in breakdown:
+                    if row.get('is_waived'):
+                        continue
+                    try:
+                        amt = Decimal(str(row.get('amount', 0)))
+                    except Exception:
+                        amt = Decimal('0.00')
+                    if amt <= 0:
+                        continue
+                    desc = (row.get('description') or 'Item').strip()
+                    qty = row.get('quantity', 1)
+                    if qty != 1:
+                        desc = f"{desc} x{qty}"
+                    items.append({'description': desc, 'amount': amt})
+            else:
+                name = svc.get('name') or 'Service'
+                try:
+                    amt = Decimal(str(svc.get('price', 0)))
+                except Exception:
+                    amt = Decimal('0.00')
+                items.append({'description': name, 'amount': amt})
+    if not items:
+        # Single line: deposit applied, invoice, or service type
+        desc = None
+        if details.get('deposit_applied'):
+            desc = details.get('description') or 'Deposit applied to bill'
+        if not desc and getattr(receipt, 'invoice_id', None):
+            try:
+                desc = f"Invoice: {receipt.invoice.invoice_number}"
+            except Exception:
+                desc = "Invoice payment"
+        if not desc and getattr(receipt, 'service_type', None):
+            desc = receipt.get_service_type_display() or "Payment"
+        if not desc:
+            desc = "Payment"
+        items.append({'description': desc, 'amount': receipt.amount_paid or Decimal('0.00')})
+    return items
+
+
+@login_required
+def receipt_pos_print(request, receipt_id):
+    """
+    Print POS receipt (thermal printer format)
+    Auto-prints if auto_print=1 in query string
+    """
+    from django.shortcuts import get_object_or_404
+    from .models_accounting import PaymentReceipt
+    from .models_payment_verification import ReceiptQRCode
+    from .services.unified_receipt_service import UnifiedReceiptService
+    
+    receipt = get_object_or_404(PaymentReceipt, id=receipt_id, is_deleted=False)
+    
+    # Get hospital settings
+    from .models_settings import HospitalSettings
+    hospital_settings = HospitalSettings.get_settings()
+    
+    # Printer preferences from settings — default 80 (78) × 810 mm for full horizontal fit
+    width_mm = getattr(hospital_settings, 'pos_receipt_width_mm', 80)
+    printable_mm = getattr(hospital_settings, 'pos_receipt_printable_width_mm', 78)
+    length_mm = getattr(hospital_settings, 'pos_receipt_length_mm', 810)
+    receipt_config = {
+        'width_mm': width_mm,
+        'printable_width_mm': min(float(printable_mm), width_mm),  # content width so it fits (avoids "half cut off")
+        'length_mm': length_mm,
+        'font_body': max(12, getattr(hospital_settings, 'pos_receipt_font_size_body', 12)),
+        'font_header': max(14, getattr(hospital_settings, 'pos_receipt_font_size_header', 14)),
+        'font_footer': max(10, getattr(hospital_settings, 'pos_receipt_font_size_footer', 10)),
+        'margin_mm': getattr(hospital_settings, 'pos_receipt_margin_mm', 4),
+        'padding_mm': getattr(hospital_settings, 'pos_receipt_padding_mm', 3),
+        'show_qr': getattr(hospital_settings, 'pos_receipt_show_qr', True),
+        'qr_size_px': max(56, getattr(hospital_settings, 'pos_receipt_qr_size_px', 64)),
+    }
+    
+    # Get QR code (only if settings say show)
+    qr_code = None
+    if receipt_config['show_qr']:
+        try:
+            qr_code = receipt.qr_code
+        except Exception:
+            qr_data = UnifiedReceiptService._generate_qr_data(receipt)
+            qr_code = ReceiptQRCode.objects.create(
+                receipt=receipt,
+                qr_code_data=qr_data
+            )
+            qr_code.generate_qr_code()
+            qr_code.save()
+    
+    receipt_items = _receipt_items_paid_for(receipt)
+    service_details = getattr(receipt, 'service_details', None) or {}
+    is_deposit_applied = service_details.get('deposit_applied', False) if isinstance(service_details, dict) else False
+    context = {
+        'title': f'POS Receipt - {receipt.receipt_number}',
+        'receipt': receipt,
+        'receipt_items': receipt_items,
+        'qr_code': qr_code,
+        'hospital_settings': hospital_settings,
+        'receipt_config': receipt_config,
+        'is_deposit_applied': is_deposit_applied,
+    }
+    return render(request, 'hospital/receipt_pos.html', context)
+
+
+@login_required
+def receipt_pos_print_preview(request, receipt_id):
+    """
+    Minimal standalone receipt page for print preview.
+    Renders only the receipt (no nav/sidebar) so the browser can show print preview.
+    """
+    from django.shortcuts import get_object_or_404
+    from .models_accounting import PaymentReceipt
+    from .models_payment_verification import ReceiptQRCode
+    from .services.unified_receipt_service import UnifiedReceiptService
+    from .models_settings import HospitalSettings
+
+    receipt = get_object_or_404(PaymentReceipt, id=receipt_id, is_deleted=False)
+    hospital_settings = HospitalSettings.get_settings()
+    width_mm = getattr(hospital_settings, 'pos_receipt_width_mm', 80)
+    printable_mm = getattr(hospital_settings, 'pos_receipt_printable_width_mm', 78)
+    length_mm = getattr(hospital_settings, 'pos_receipt_length_mm', 810)
+    receipt_config = {
+        'width_mm': width_mm,
+        'printable_width_mm': min(float(printable_mm), width_mm),
+        'length_mm': length_mm,
+        'margin_mm': getattr(hospital_settings, 'pos_receipt_margin_mm', 4),
+    }
+    qr_code = None
+    if getattr(hospital_settings, 'pos_receipt_show_qr', True):
+        try:
+            qr_code = receipt.qr_code
+        except Exception:
+            qr_data = UnifiedReceiptService._generate_qr_data(receipt)
+            qr_code = ReceiptQRCode.objects.create(receipt=receipt, qr_code_data=qr_data)
+            qr_code.generate_qr_code()
+            qr_code.save()
+    receipt_items = _receipt_items_paid_for(receipt)
+    service_details = getattr(receipt, 'service_details', None) or {}
+    is_deposit_applied = service_details.get('deposit_applied', False) if isinstance(service_details, dict) else False
+    context = {
+        'receipt': receipt,
+        'receipt_items': receipt_items,
+        'qr_code': qr_code,
+        'hospital_settings': hospital_settings,
+        'receipt_config': receipt_config,
+        'is_deposit_applied': is_deposit_applied,
+    }
+    return render(request, 'hospital/receipt_pos_print_only.html', context)
 
 
 # ========== API ENDPOINTS ==========

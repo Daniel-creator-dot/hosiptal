@@ -26,13 +26,17 @@ echo.
 
 echo [3/6] Rebuilding containers with latest code changes...
 echo    This may take a few minutes...
+echo    Including recent changes:
+echo      - Lab result notifications (doctors, nurses, front desk)
+echo      - Notification popup and topbar bell UI
+echo      - Role dashboard and template updates
 docker-compose build --no-cache web celery celery-beat
 if %errorlevel% neq 0 (
     echo    ❌ ERROR: Build failed!
     pause
     exit /b 1
 )
-echo    ✅ Containers rebuilt
+echo    ✅ Containers rebuilt with latest code
 echo.
 
 echo [4/6] Starting database and waiting for it to be ready...
@@ -41,12 +45,17 @@ timeout /t 10 /nobreak >nul
 echo    ✅ Database started
 echo.
 
-echo [5/6] Running database migrations...
+echo [5/6] Running database migrations and collecting static files...
 docker-compose run --rm web python manage.py migrate --noinput
 if %errorlevel% neq 0 (
     echo    ⚠️  WARNING: Some migrations may have failed
 )
+docker-compose run --rm web python manage.py collectstatic --no-input --clear
+if %errorlevel% neq 0 (
+    echo    ⚠️  WARNING: Static files collection had issues
+)
 echo    ✅ Migrations completed
+echo    ✅ Static files collected
 echo.
 
 echo [6/6] Starting all services with single PostgreSQL database...

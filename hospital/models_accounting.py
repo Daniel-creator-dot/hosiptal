@@ -42,6 +42,8 @@ class Account(BaseModel):
     
     class Meta:
         ordering = ['account_code']
+        verbose_name = 'Chart of Accounts (Account)'
+        verbose_name_plural = 'Chart of Accounts'
     
     def __str__(self):
         return f"{self.account_code} - {self.account_name}"
@@ -64,6 +66,7 @@ class Transaction(BaseModel):
         ('mobile_money', 'Mobile Money'),
         ('cheque', 'Cheque'),
         ('insurance', 'Insurance'),
+        ('deposit', 'Deposit (from patient account)'),
     ]
     
     transaction_number = models.CharField(max_length=50, unique=True)
@@ -117,6 +120,7 @@ class PaymentReceipt(BaseModel):
         ('imaging_study', 'Imaging Study'),
         ('consultation', 'Consultation'),
         ('admission', 'Admission'),
+        ('detainment', 'Detainment'),
         ('procedure', 'Procedure'),
         ('combined', 'Combined Services'),
         ('other', 'Other'),
@@ -213,16 +217,8 @@ class PaymentAllocation(BaseModel):
                 allocated_amount=amount,
                 notes=f'Payment allocation from transaction {transaction.transaction_number}'
             )
-            
-            # Update invoice balance
-            invoice.balance -= Decimal(str(amount))
-            if invoice.balance <= 0:
-                invoice.balance = Decimal('0.00')
-                invoice.status = 'paid'
-            elif invoice.status == 'issued':
-                invoice.status = 'partially_paid'
-            invoice.save(update_fields=['balance', 'status'])
-            
+            # Single source of truth: invoice totals/balance from lines + receipts (caller must create per-invoice receipt for this allocation; see plan §3)
+            invoice.update_totals()
             allocations.append(allocation)
         
         return allocations
@@ -296,6 +292,30 @@ class GeneralLedger(BaseModel):
     def save(self, *args, **kwargs):
         if not self.entry_number:
             self.entry_number = self.generate_entry_number()
+        
+        # Calculate running balance if not explicitly set or if balance is 0
+        update_fields = kwargs.get('update_fields', [])
+        if 'balance' not in update_fields or self.balance == 0:
+            # Get previous balance from last entry for this account (excluding this entry)
+            previous_entry = GeneralLedger.objects.filter(
+                account=self.account,
+                is_deleted=False
+            ).exclude(pk=self.pk if self.pk else None).order_by('transaction_date', 'created', 'id').last()
+            
+            previous_balance = previous_entry.balance if previous_entry else Decimal('0.00')
+            
+            # Calculate balance change based on account type
+            if self.account.account_type in ['asset', 'expense']:
+                # Assets and Expenses: Debit increases, Credit decreases
+                # Balance = previous_balance + debit - credit
+                balance_change = self.debit_amount - self.credit_amount
+            else:
+                # Liabilities, Equity, Revenue: Credit increases, Debit decreases
+                # Balance = previous_balance + credit - debit
+                balance_change = self.credit_amount - self.debit_amount
+            
+            # Update running balance
+            self.balance = previous_balance + balance_change
         
         # Retry logic to handle race conditions
         max_retries = 5

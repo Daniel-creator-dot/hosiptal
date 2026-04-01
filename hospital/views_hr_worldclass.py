@@ -135,10 +135,9 @@ def hr_worldclass_dashboard(request):
         date_of_joining__month=current_month
     ).exclude(date_of_joining__year=today.year).distinct().order_by('date_of_joining__day')[:10]
     
-    # Calculate years for each anniversary
-    for staff in work_anniversaries:
-        if staff.date_of_joining:
-            staff.years_of_service = today.year - staff.date_of_joining.year
+    # Note: years_of_service is a read-only property on Staff model
+    # It automatically calculates based on date_of_joining
+    # No need to set it manually - the template can access staff.years_of_service directly
     
     # Probation period tracking (staff within first 90 days)
     probation_cutoff = today - timedelta(days=90)

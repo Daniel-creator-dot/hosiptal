@@ -103,13 +103,28 @@
 {% block content %}
 <!-- Search and Filter -->
 <div class="modern-card mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 class="mb-0"><i class="bi bi-funnel"></i> Filter & Search</h6>
+        <a href="{% url 'hospital:drug_classification_guide' %}" target="_blank" class="btn btn-sm btn-outline-info">
+            <i class="bi bi-book"></i> Browse Drug Classification Guide
+        </a>
+    </div>
     <form method="get" class="mb-0">
         <div class="row g-3">
-            <div class="col-md-4">
-                <input type="text" name="q" value="{{ search_query }}" class="form-control form-control-modern" placeholder="Search drug name, generic name, ATC code..." autofocus>
+            <div class="col-md-3">
+                <input type="text" name="q" value="{{ search_query }}" class="form-control form-control-modern" placeholder="Search drug name, generic name, ATC code..." autofocus title="Enter text" placeholder="Enter text">
+            </div>
+            <div class="col-md-3">
+                <select name="category" class="form-select form-control-modern" title="Select option" aria-label="Select option">
+                    <option value="">All Categories</option>
+                    {% for code, desc in drug_categories %}
+                    <option value="{{ code }}" {% if category_filter == code %}selected{% endif %}>{{ desc|truncatewords:8 }}</option>
+                    {% endfor %}
+                </select>
+                <small class="form-text text-muted">Categories from Drug Classification Guide</small>
             </div>
             <div class="col-md-2">
-                <select name="form" class="form-select form-control-modern">
+                <select name="form" class="form-select form-control-modern" title="Select option" aria-label="Select option">
                     <option value="">All Forms</option>
                     {% for form in forms %}
                     <option value="{{ form }}" {% if form_filter == form %}selected{% endif %}>{{ form }}</option>
@@ -117,23 +132,28 @@
                 </select>
             </div>
             <div class="col-md-2">
-                <select name="status" class="form-select form-control-modern">
+                <select name="status" class="form-select form-control-modern" title="Select option" aria-label="Select option">
                     <option value="">All Status</option>
                     <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Active</option>
                     <option value="inactive" {% if status_filter == 'inactive' %}selected{% endif %}>Inactive</option>
                 </select>
             </div>
             <div class="col-md-2">
-                <select name="controlled" class="form-select form-control-modern">
+                <select name="controlled" class="form-select form-control-modern" title="Select option" aria-label="Select option">
                     <option value="">All Types</option>
                     <option value="yes" {% if controlled_filter == 'yes' %}selected{% endif %}>Controlled</option>
                     <option value="no" {% if controlled_filter == 'no' %}selected{% endif %}>Regular</option>
                 </select>
             </div>
-            <div class="col-md-2">
-                <button type="submit" class="btn btn-primary-modern w-100">
-                    <i class="bi bi-search"></i> Search
+        </div>
+        <div class="row g-3 mt-2">
+            <div class="col-md-12">
+                <button type="submit" class="btn btn-primary-modern">
+                    <i class="bi bi-search"></i> Search & Filter
                 </button>
+                <a href="{% url 'hospital:drug_formulary_list' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-x-circle"></i> Clear Filters
+                </a>
             </div>
         </div>
     </form>
@@ -155,11 +175,22 @@
 </div>
 
 <!-- Actions -->
-<div class="d-flex justify-content-between align-items-center mb-4">
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
     <h5 class="mb-0">Drug List</h5>
-    <a href="{% url 'hospital:drug_create' %}" class="btn btn-primary-modern">
-        <i class="bi bi-plus-circle"></i> Add New Drug
-    </a>
+    <div class="d-flex flex-wrap gap-2">
+        <a href="{% url 'hospital:drug_formulary_print' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-outline-primary" target="_blank" rel="noopener noreferrer" title="Opens a printable page with all matching drugs (use browser Print or Save as PDF)">
+            <i class="bi bi-printer"></i> Print / PDF (browser)
+        </a>
+        <a href="{% url 'hospital:drug_formulary_pdf' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-outline-secondary" title="Download formulary as a PDF file">
+            <i class="bi bi-file-earmark-pdf"></i> Download PDF
+        </a>
+        <a href="{% url 'hospital:drug_formulary_excel' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-success" title="Download Excel (.xlsx): includes Total stock qty and No. of batches from pharmacy batch stock (PharmacyStock)">
+            <i class="bi bi-file-earmark-excel"></i> Download Excel
+        </a>
+        <a href="{% url 'hospital:drug_create' %}" class="btn btn-primary-modern">
+            <i class="bi bi-plus-circle"></i> Add New Drug
+        </a>
+    </div>
 </div>
 
 <!-- Drugs List -->
@@ -180,6 +211,7 @@
                     <div class="drug-meta">
                         {% if drug.generic_name %}Generic: {{ drug.generic_name }} | {% endif %}
                         Strength: {{ drug.strength }} | Form: {{ drug.form }}
+                        {% if drug.category %} | <strong>Category:</strong> {{ drug.get_category_display }}{% endif %}
                         {% if drug.atc_code %} | ATC: {{ drug.atc_code }}{% endif %}
                     </div>
                 </div>
@@ -198,12 +230,19 @@
                 <div class="price-tag">GHS {{ drug.unit_price }}</div>
             </div>
             <div class="col-auto">
-                <a href="{% url 'hospital:drug_detail' drug.pk %}" class="btn btn-sm btn-outline-primary">
-                    <i class="bi bi-eye"></i> View
-                </a>
-                <a href="{% url 'hospital:drug_edit' drug.pk %}" class="btn btn-sm btn-outline-secondary">
-                    <i class="bi bi-pencil"></i> Edit
-                </a>
+                <div class="btn-group" role="group">
+                    <a href="{% url 'hospital:drug_detail' drug.pk %}" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-eye"></i> View
+                    </a>
+                    <a href="{% url 'hospital:drug_audit_trail' drug.pk %}" class="btn btn-sm btn-outline-success" title="View Audit Trail">
+                        <i class="bi bi-clock-history"></i>
+                    </a>
+                    {% if can_edit_stock %}
+                    <a href="{% url 'hospital:drug_edit' drug.pk %}" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-pencil"></i> Edit
+                    </a>
+                    {% endif %}
+                </div>
             </div>
         </div>
     </div>

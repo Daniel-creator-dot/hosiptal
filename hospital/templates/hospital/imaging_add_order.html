@@ -1,0 +1,107 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Add Imaging Order{% endblock %}
+{% block page_title %}🩻 Add Imaging Order{% endblock %}
+{% block page_subtitle %}Select encounter and imaging studies (with prices). Bills are auto-created.{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-10 mx-auto">
+        <div class="card shadow-sm border-0">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-plus-circle me-2"></i>Add Imaging Order
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Encounter <span class="text-danger">*</span></label>
+                        <select name="encounter_id" class="form-select form-select-lg" required id="encounterSelect">
+                            <option value="">-- Select patient encounter --</option>
+                            {% for enc in encounters %}
+                            <option value="{{ enc.id }}"
+                                    data-patient="{{ enc.patient.full_name }}"
+                                    data-mrn="{{ enc.patient.mrn }}">
+                                {{ enc.patient.full_name }} (MRN: {{ enc.patient.mrn }}) – {{ enc.started_at|date:"M d, Y H:i" }}
+                            </option>
+                            {% empty %}
+                            <option value="" disabled>No active encounters in the last 7 days</option>
+                            {% endfor %}
+                        </select>
+                        <small class="text-muted">Active encounters from the last 7 days</small>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Imaging Studies <span class="text-danger">*</span></label>
+                        <p class="text-muted small mb-2">Select one or more studies. Cash, Corporate, and Insurance prices from catalog.</p>
+                        <div class="border rounded p-3" style="max-height: 380px; overflow-y: auto;">
+                            {% for item in catalog_items %}
+                            <div class="form-check mb-2 py-2 border-bottom border-light">
+                                <input class="form-check-input catalog-check" type="checkbox" name="imaging_catalog_ids" value="{{ item.id }}" id="cat{{ item.id }}">
+                                <label class="form-check-label w-100 d-flex justify-content-between align-items-center flex-wrap gap-1" for="cat{{ item.id }}">
+                                    <span class="flex-grow-1">
+                                        <strong>{{ item.name }}</strong>
+                                        {% if item.body_part %}<span class="text-muted"> – {{ item.body_part }}</span>{% endif %}
+                                        <br>
+                                        <small class="text-muted">{{ item.get_modality_display|default:item.modality }} · {{ item.code|default:"—" }}</small>
+                                    </span>
+                                    <span class="d-flex flex-wrap gap-1 justify-content-end">
+                                        <span class="badge bg-success">Cash GHS {{ item.price|default:0|floatformat:2|intcomma }}</span>
+                                        <span class="badge {% if item.corporate_price is not None %}bg-info{% else %}bg-secondary bg-opacity-50{% endif %}">Corp {% if item.corporate_price is not None %}GHS {{ item.corporate_price|floatformat:2|intcomma }}{% else %}—{% endif %}</span>
+                                        <span class="badge {% if item.insurance_price is not None %}bg-warning text-dark{% else %}bg-secondary bg-opacity-50{% endif %}">Ins {% if item.insurance_price is not None %}GHS {{ item.insurance_price|floatformat:2|intcomma }}{% else %}—{% endif %}</span>
+                                    </span>
+                                </label>
+                            </div>
+                            {% empty %}
+                            <p class="text-muted mb-0">No imaging studies in catalog. <a href="{% url 'hospital:imaging_catalog_list' %}">Manage catalog</a>.</p>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold">Priority</label>
+                            <select name="priority" class="form-select">
+                                {% for value, label in priority_choices %}
+                                <option value="{{ value }}" {% if value == 'routine' %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold">Notes</label>
+                            <input type="text" name="notes" class="form-control" placeholder="Optional clinical notes" maxlength="500">
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2 flex-wrap">
+                        <button type="submit" class="btn btn-primary btn-lg" id="submitBtn" disabled>
+                            <i class="bi bi-check-circle me-1"></i>Create Imaging Order
+                        </button>
+                        <a href="{% url 'hospital:imaging_dashboard' %}" class="btn btn-outline-secondary btn-lg">Cancel</a>
+                        <a href="{% url 'hospital:imaging_catalog_list' %}" class="btn btn-outline-info btn-lg">
+                            <i class="bi bi-pencil me-1"></i>Catalog & Prices
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const checks = document.querySelectorAll('.catalog-check');
+    const submitBtn = document.getElementById('submitBtn');
+    function toggleSubmit() {
+        const any = Array.from(checks).some(function(c) { return c.checked; });
+        submitBtn.disabled = !any;
+    }
+    checks.forEach(function(c) { c.addEventListener('change', toggleSubmit); });
+    toggleSubmit();
+});
+</script>
+{% endblock %}

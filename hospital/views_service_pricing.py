@@ -12,6 +12,7 @@ from decimal import Decimal
 import logging
 
 from .models import LabTest, Drug, Department
+from .utils_roles import get_user_role
 from .models_service_pricing import (
     ServicePriceList,
     ConsultationPrice,
@@ -26,8 +27,12 @@ logger = logging.getLogger(__name__)
 
 
 def is_admin(user):
-    """Check if user is admin"""
-    return user.is_staff or user.is_superuser
+    """Strict admin check (no is_staff fallback)."""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    return get_user_role(user) == 'admin'
 
 
 @login_required
@@ -89,22 +94,136 @@ def pricing_dashboard(request):
 @login_required
 @user_passes_test(is_admin)
 def lab_pricing_list(request):
-    """Manage lab test prices"""
-    search = request.GET.get('search', '')
+    """Manage lab test prices - Catalog with add/delete functionality"""
+    from django.core.paginator import Paginator
+    from decimal import Decimal
+    
+    # Handle POST actions: add, delete, update prices
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        
+        if action == 'add_lab_item':
+            # Add new lab test
+            try:
+                code = request.POST.get('code', '').strip()
+                name = request.POST.get('name', '').strip()
+                specimen_type = request.POST.get('specimen_type', '').strip()
+                tat_minutes = int(request.POST.get('tat_minutes', 60) or 60)
+                price = Decimal(request.POST.get('price', '0') or '0')
+                
+                if not code or not name:
+                    messages.error(request, 'Code and name are required.')
+                else:
+                    # Check if code already exists
+                    if LabTest.objects.filter(code=code, is_deleted=False).exists():
+                        messages.error(request, f'Lab test with code "{code}" already exists.')
+                    else:
+                        lab_test = LabTest.objects.create(
+                            code=code,
+                            name=name,
+                            specimen_type=specimen_type,
+                            tat_minutes=tat_minutes,
+                            price=price,
+                            is_active=True
+                        )
+                        messages.success(request, f'Lab test "{lab_test.name}" added successfully.')
+            except Exception as e:
+                messages.error(request, f'Error adding lab test: {str(e)}')
+            return redirect('hospital:lab_pricing_list')
+        
+        elif action == 'delete_lab_item':
+            # Delete lab test (soft delete)
+            try:
+                lab_id = request.POST.get('lab_id')
+                if lab_id:
+                    lab = LabTest.objects.filter(pk=lab_id, is_deleted=False).first()
+                    if lab:
+                        lab.is_deleted = True
+                        lab.save()
+                        messages.success(request, f'Lab test "{lab.name}" deleted successfully.')
+                    else:
+                        messages.error(request, 'Lab test not found.')
+            except Exception as e:
+                messages.error(request, f'Error deleting lab test: {str(e)}')
+            return redirect('hospital:lab_pricing_list')
+        
+        elif action == 'update_prices':
+            # Update prices (and optionally TAT) for an existing lab test
+            lab_id = request.POST.get('lab_id')
+
+            def _decimal(val, default=None):
+                try:
+                    s = (val or '').strip()
+                    if s == '':
+                        return None
+                    v = Decimal(s)
+                    return v if v >= 0 else (default or Decimal('0.00'))
+                except Exception:
+                    return default or Decimal('0.00')
+
+            def _int(val, default=None):
+                try:
+                    s = (val or '').strip()
+                    if s == '':
+                        return None
+                    v = int(s)
+                    return v if v >= 0 else default
+                except Exception:
+                    return default
+
+            price_val = _decimal(request.POST.get('price'), Decimal('0.00')) or Decimal('0.00')
+            tat_val = _int(request.POST.get('tat_minutes'), None)
+
+            if lab_id:
+                lab = LabTest.objects.filter(pk=lab_id, is_deleted=False).first()
+                if lab:
+                    fields_to_update = []
+                    if lab.price != price_val:
+                        lab.price = price_val
+                        fields_to_update.append('price')
+                    # Only update TAT when a value is explicitly provided in the form;
+                    # leave existing value untouched when field is left blank.
+                    if tat_val is not None and lab.tat_minutes != tat_val:
+                        lab.tat_minutes = tat_val
+                        fields_to_update.append('tat_minutes')
+
+                    if fields_to_update:
+                        lab.save(update_fields=fields_to_update)
+                        messages.success(
+                            request,
+                            f'Updated {lab.name}: '
+                            f'price {"& TAT " if "tat_minutes" in fields_to_update and "price" in fields_to_update else ""}'
+                            f'{"price" if "price" in fields_to_update and "tat_minutes" not in fields_to_update else ""}'
+                            f'{"TAT" if "tat_minutes" in fields_to_update and "price" not in fields_to_update else ""}.'
+                        )
+                    else:
+                        messages.info(request, f'No changes detected for {lab.name}.')
+
+            return redirect('hospital:lab_pricing_list')
+    
+    # GET request - list lab tests
+    search = request.GET.get('search', '').strip()
     
     labs = LabTest.objects.filter(is_deleted=False)
     
     if search:
         labs = labs.filter(
             Q(code__icontains=search) |
-            Q(name__icontains=search)
+            Q(name__icontains=search) |
+            Q(specimen_type__icontains=search)
         )
     
     labs = labs.order_by('name')
     
+    # Pagination
+    paginator = Paginator(labs, 25)
+    page = request.GET.get('page', 1)
+    labs_page = paginator.get_page(page)
+    
     context = {
-        'title': 'Lab Test Pricing',
-        'labs': labs,
+        'title': 'Lab Test Catalog & Prices',
+        'labs': labs_page,
+        'labs_page': labs_page,  # For pagination
         'search': search,
     }
     return render(request, 'hospital/lab_pricing_list.html', context)

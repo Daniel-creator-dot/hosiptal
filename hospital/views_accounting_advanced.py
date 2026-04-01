@@ -22,6 +22,7 @@ from .models_accounting_advanced import (
     AdvancedAccountsReceivable, AccountsPayable,
     BankAccount, BankTransaction, Budget, BudgetLine
 )
+from .decorators import role_required
 
 
 def is_accountant(user):
@@ -82,12 +83,43 @@ def accounting_dashboard(request):
     # Revenue Statistics (Current Month)
     start_of_month = today.replace(day=1)
     try:
+        # Try Revenue model first (advanced accounting)
         total_revenue = Revenue.objects.filter(
             revenue_date__gte=start_of_month,
-            revenue_date__lte=today
-        ).aggregate(total=Sum('amount'))['total'] or 0
-    except:
-        total_revenue = 0
+            revenue_date__lte=today,
+            is_deleted=False
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+        
+        # Fallback to General Ledger if Revenue model is empty
+        if total_revenue == 0:
+            from .models_accounting import GeneralLedger, Account
+            total_revenue = GeneralLedger.objects.filter(
+                account__account_type='revenue',
+                transaction_date__gte=start_of_month,
+                transaction_date__lte=today,
+                is_deleted=False
+            ).aggregate(total=Sum('credit_amount'))['credit_amount__sum'] or Decimal('0.00')
+            
+            # If still 0, try PaymentReceipts
+            if total_revenue == 0:
+                from .models_accounting import PaymentReceipt
+                total_revenue = PaymentReceipt.objects.filter(
+                    receipt_date__date__gte=start_of_month,
+                    receipt_date__date__lte=today,
+                    is_deleted=False
+                ).aggregate(total=Sum('amount_paid'))['amount_paid__sum'] or Decimal('0.00')
+    except Exception as e:
+        # Fallback to General Ledger
+        try:
+            from .models_accounting import GeneralLedger, Account
+            total_revenue = GeneralLedger.objects.filter(
+                account__account_type='revenue',
+                transaction_date__gte=start_of_month,
+                transaction_date__lte=today,
+                is_deleted=False
+            ).aggregate(total=Sum('credit_amount'))['credit_amount__sum'] or Decimal('0.00')
+        except:
+            total_revenue = Decimal('0.00')
     
     # Expense Statistics (Current Month)
     try:
@@ -113,12 +145,41 @@ def accounting_dashboard(request):
         overdue_receivable = 0
     
     # Accounts Payable
+    # Priority: Use General Ledger (Excel imported balances) if available, otherwise use AccountsPayable model
+    total_payable = Decimal('0.00')
     try:
-        total_payable = AccountsPayable.objects.filter(
-            balance_due__gt=0
-        ).aggregate(total=Sum('balance_due'))['total'] or 0
-    except:
-        total_payable = 0
+        # First, check General Ledger for AP accounts (Excel imported balances)
+        # For Excel imports: debit amounts ARE the balances (independent, different companies)
+        ap_accounts = Account.objects.filter(
+            account_type='liability',
+            account_name__icontains='payable',
+            is_deleted=False
+        )
+        
+        for ap_account in ap_accounts:
+            # Sum all debit amounts (each is an independent balance from Excel import)
+            ap_gl_total = AdvancedGeneralLedger.objects.filter(
+                account=ap_account,
+                is_voided=False,
+                is_deleted=False
+            ).aggregate(total=Sum('debit_amount'))['total'] or Decimal('0.00')
+            total_payable += ap_gl_total
+        
+        # If General Ledger has no AP data, fall back to AccountsPayable model
+        if total_payable == 0:
+            total_payable = AccountsPayable.objects.filter(
+                balance_due__gt=0,
+                is_deleted=False
+            ).aggregate(total=Sum('balance_due'))['total'] or Decimal('0.00')
+    except Exception as e:
+        # Fallback to AccountsPayable model
+        try:
+            total_payable = AccountsPayable.objects.filter(
+                balance_due__gt=0,
+                is_deleted=False
+            ).aggregate(total=Sum('balance_due'))['total'] or Decimal('0.00')
+        except:
+            total_payable = Decimal('0.00')
     
     # Payment Vouchers
     try:
@@ -519,83 +580,323 @@ def balance_sheet(request):
     else:
         as_of_date = datetime.strptime(as_of_date, '%Y-%m-%d').date()
     
-    # Assets
-    asset_accounts = Account.objects.filter(account_type='asset')
-    assets = []
-    total_assets = Decimal('0.00')
-    
-    for account in asset_accounts:
-        balance = AdvancedGeneralLedger.objects.filter(
+    def get_account_balance(account_code, account_type='asset', as_of_date=None):
+        """Get balance for a specific account"""
+        try:
+            account = Account.objects.get(account_code=account_code, is_deleted=False)
+        except Account.DoesNotExist:
+            return Decimal('0.00')
+        
+        ledger_sum = AdvancedGeneralLedger.objects.filter(
             account=account,
             transaction_date__lte=as_of_date,
             is_voided=False
         ).aggregate(
-            total=Sum('debit_amount') - Sum('credit_amount')
-        )['total'] or Decimal('0.00')
+            debits=Sum('debit_amount'),
+            credits=Sum('credit_amount')
+        )
         
-        if balance != 0:
-            assets.append({'account': account, 'amount': balance})
-            total_assets += balance
+        # Handle None values from aggregate
+        debits = Decimal(str(ledger_sum['debits'])) if ledger_sum['debits'] is not None else Decimal('0.00')
+        credits = Decimal(str(ledger_sum['credits'])) if ledger_sum['credits'] is not None else Decimal('0.00')
+        
+        if account_type in ['asset', 'expense']:
+            balance = debits - credits
+        else:
+            balance = credits - debits
+        
+        # Ensure we return a Decimal
+        return Decimal(str(balance)) if balance is not None else Decimal('0.00')
     
-    # Liabilities
-    liability_accounts = Account.objects.filter(account_type='liability')
-    liabilities = []
-    total_liabilities = Decimal('0.00')
+    # ASSETS - Build dictionary structure
+    assets = {
+        'cash': Decimal('0.00'),
+        'bank': Decimal('0.00'),
+        'accounts_receivable': Decimal('0.00'),
+        'inventory': Decimal('0.00'),
+        'prepaid': Decimal('0.00'),
+        'equipment': Decimal('0.00'),
+        'building': Decimal('0.00'),
+        'depreciation': Decimal('0.00'),
+    }
     
-    for account in liability_accounts:
-        balance = AdvancedGeneralLedger.objects.filter(
+    # Map account codes to asset categories
+    # Cash accounts (1000-1099)
+    cash_accounts = Account.objects.filter(
+        account_type='asset',
+        account_code__startswith='10',
+        is_deleted=False
+    )
+    for account in cash_accounts:
+        balance = get_account_balance(account.account_code, 'asset', as_of_date)
+        # Ensure balance is Decimal
+        try:
+            balance = Decimal(str(balance)) if balance is not None else Decimal('0.00')
+        except (TypeError, ValueError):
+            balance = Decimal('0.00')
+        
+        account_name_lower = (account.account_name or '').lower()
+        account_code = account.account_code or ''
+        
+        if account_code in ['1000', '1010'] or 'cash' in account_name_lower:
+            assets['cash'] += balance
+        elif account_code.startswith('102') or 'bank' in account_name_lower:
+            assets['bank'] += balance
+        else:
+            # Default to cash if not specifically bank
+            assets['cash'] += balance
+    
+    # Accounts Receivable (1200-1299)
+    ar_accounts = Account.objects.filter(
+        account_type='asset',
+        account_code__startswith='12',
+        is_deleted=False
+    )
+    for account in ar_accounts:
+        balance = get_account_balance(account.account_code, 'asset', as_of_date)
+        balance = Decimal(str(balance)) if balance is not None else Decimal('0.00')
+        assets['accounts_receivable'] += balance
+    
+    # Inventory (1300-1399)
+    inventory_accounts = Account.objects.filter(
+        account_type='asset',
+        account_code__startswith='13',
+        is_deleted=False
+    )
+    for account in inventory_accounts:
+        balance = get_account_balance(account.account_code, 'asset', as_of_date)
+        balance = Decimal(str(balance)) if balance is not None else Decimal('0.00')
+        assets['inventory'] += balance
+    
+    # Prepaid (1400-1499)
+    prepaid_accounts = Account.objects.filter(
+        account_type='asset',
+        account_code__startswith='14',
+        is_deleted=False
+    )
+    for account in prepaid_accounts:
+        balance = get_account_balance(account.account_code, 'asset', as_of_date)
+        balance = Decimal(str(balance)) if balance is not None else Decimal('0.00')
+        assets['prepaid'] += balance
+    
+    # Fixed Assets (1500-1599) - Enhanced categorization
+    fixed_asset_accounts = Account.objects.filter(
+        account_type='asset',
+        account_code__startswith='15',
+        is_deleted=False
+    )
+    
+    # Separate fixed assets by category
+    land_buildings = Decimal('0.00')
+    equipment_total = Decimal('0.00')
+    vehicles_total = Decimal('0.00')
+    accumulated_depreciation = Decimal('0.00')
+    construction = Decimal('0.00')
+    intangible = Decimal('0.00')
+    
+    for account in fixed_asset_accounts:
+        balance = get_account_balance(account.account_code, 'asset', as_of_date)
+        balance = Decimal(str(balance)) if balance is not None else Decimal('0.00')
+        account_name_lower = account.account_name.lower() if account.account_name else ''
+        account_code = int(account.account_code) if account.account_code.isdigit() else 0
+        
+        # Categorize by account code range
+        if 1500 <= account_code <= 1509:
+            # Land and Buildings
+            if 'depreciation' not in account_name_lower:
+                land_buildings += balance
+            else:
+                accumulated_depreciation += balance
+        elif 1510 <= account_code <= 1529:
+            # Equipment
+            if 'depreciation' not in account_name_lower:
+                equipment_total += balance
+            else:
+                accumulated_depreciation += balance
+        elif 1530 <= account_code <= 1539:
+            # Vehicles
+            if 'depreciation' not in account_name_lower:
+                vehicles_total += balance
+            else:
+                accumulated_depreciation += balance
+        elif 1540 <= account_code <= 1559:
+            # Accumulated Depreciation (contra-asset, reduces asset value)
+            accumulated_depreciation += balance
+        elif 1560 <= account_code <= 1569:
+            # Construction in Progress
+            construction += balance
+        elif 1570 <= account_code <= 1579:
+            # Intangible Assets
+            intangible += balance
+        else:
+            # Fallback: check by name
+            if 'depreciation' not in account_name_lower:
+                equipment_total += balance
+            else:
+                accumulated_depreciation += balance
+    
+    # Add to equipment and building totals
+    assets['equipment'] += equipment_total
+    assets['building'] += land_buildings
+    assets['depreciation'] += accumulated_depreciation
+    
+    # Store detailed fixed asset breakdown for template
+    fixed_assets_detail = {
+        'land_buildings': land_buildings,
+        'equipment': equipment_total,
+        'vehicles': vehicles_total,
+        'accumulated_depreciation': accumulated_depreciation,
+        'construction': construction,
+        'intangible': intangible,
+        'net_fixed_assets': land_buildings + equipment_total + vehicles_total + construction + intangible - accumulated_depreciation
+    }
+    
+    # Building (1600-1699)
+    building_accounts = Account.objects.filter(
+        account_type='asset',
+        account_code__startswith='16',
+        is_deleted=False
+    )
+    for account in building_accounts:
+        balance = get_account_balance(account.account_code, 'asset', as_of_date)
+        balance = Decimal(str(balance)) if balance is not None else Decimal('0.00')
+        account_name_lower = account.account_name.lower() if account.account_name else ''
+        if 'depreciation' not in account_name_lower:
+            assets['building'] += balance
+        else:
+            assets['depreciation'] += balance
+    
+    # Initialize fixed_assets_detail if not already set
+    if 'fixed_assets_detail' not in locals():
+        fixed_assets_detail = {
+            'land_buildings': Decimal('0.00'),
+            'equipment': Decimal('0.00'),
+            'vehicles': Decimal('0.00'),
+            'accumulated_depreciation': Decimal('0.00'),
+            'construction': Decimal('0.00'),
+            'intangible': Decimal('0.00'),
+            'net_fixed_assets': Decimal('0.00')
+        }
+    
+    # Calculate total assets
+    total_assets = (
+        assets['cash'] + assets['bank'] + assets['accounts_receivable'] +
+        assets['inventory'] + assets['prepaid'] + assets['equipment'] +
+        assets['building'] - assets['depreciation']
+    )
+    
+    # LIABILITIES - Build dictionary structure
+    liabilities = {
+        'accounts_payable': Decimal('0.00'),
+        'accrued': Decimal('0.00'),
+        'short_term_loans': Decimal('0.00'),
+        'long_term_loans': Decimal('0.00'),
+        'mortgages': Decimal('0.00'),
+    }
+    
+    # Accounts Payable (2000-2099)
+    # For Excel imports: debit amounts ARE the balances (independent, different companies)
+    # Sum all debit amounts directly, don't calculate running balance
+    ap_accounts = Account.objects.filter(
+        account_type='liability',
+        account_name__icontains='payable',
+        is_deleted=False
+    )
+    for account in ap_accounts:
+        # For Excel imports: sum debit amounts (each is an independent balance)
+        ap_gl_entries = AdvancedGeneralLedger.objects.filter(
             account=account,
             transaction_date__lte=as_of_date,
-            is_voided=False
-        ).aggregate(
-            total=Sum('credit_amount') - Sum('debit_amount')
-        )['total'] or Decimal('0.00')
-        
-        if balance != 0:
-            liabilities.append({'account': account, 'amount': balance})
-            total_liabilities += balance
+            is_voided=False,
+            is_deleted=False
+        )
+        # Sum debit amounts (each debit IS the balance for that entry)
+        ap_debit_total = ap_gl_entries.aggregate(total=Sum('debit_amount'))['total'] or Decimal('0.00')
+        if ap_debit_total > 0:
+            # Use debit amounts as balances (Excel import format)
+            liabilities['accounts_payable'] += ap_debit_total
+        else:
+            # Fallback to normal calculation if no GL entries
+            balance = get_account_balance(account.account_code, 'liability', as_of_date)
+            balance = Decimal(str(balance)) if balance is not None else Decimal('0.00')
+            liabilities['accounts_payable'] += balance
     
-    # Equity
-    equity_accounts = Account.objects.filter(account_type='equity')
-    equity = []
+    # If no AP from GL, fall back to AccountsPayable model
+    if liabilities['accounts_payable'] == 0:
+        try:
+            ap_model_total = AccountsPayable.objects.filter(
+                balance_due__gt=0,
+                is_deleted=False
+            ).aggregate(total=Sum('balance_due'))['total'] or Decimal('0.00')
+            liabilities['accounts_payable'] = ap_model_total
+        except:
+            pass
+    
+    # Accrued Expenses (2100-2199)
+    accrued_accounts = Account.objects.filter(
+        account_type='liability',
+        account_code__startswith='21',
+        is_deleted=False
+    )
+    for account in accrued_accounts:
+        balance = get_account_balance(account.account_code, 'liability', as_of_date)
+        balance = Decimal(str(balance)) if balance is not None else Decimal('0.00')
+        liabilities['accrued'] += balance
+    
+    # Short-term Loans (2200-2299)
+    short_term_accounts = Account.objects.filter(
+        account_type='liability',
+        account_code__startswith='22',
+        is_deleted=False
+    )
+    for account in short_term_accounts:
+        balance = get_account_balance(account.account_code, 'liability', as_of_date)
+        balance = Decimal(str(balance)) if balance is not None else Decimal('0.00')
+        liabilities['short_term_loans'] += balance
+    
+    # Long-term Loans (2300-2399)
+    long_term_accounts = Account.objects.filter(
+        account_type='liability',
+        account_code__startswith='23',
+        is_deleted=False
+    )
+    for account in long_term_accounts:
+        balance = get_account_balance(account.account_code, 'liability', as_of_date)
+        balance = Decimal(str(balance)) if balance is not None else Decimal('0.00')
+        account_name_lower = account.account_name.lower() if account.account_name else ''
+        if 'mortgage' in account_name_lower:
+            liabilities['mortgages'] += balance
+        else:
+            liabilities['long_term_loans'] += balance
+    
+    # Calculate total liabilities
+    total_liabilities = (
+        liabilities['accounts_payable'] + liabilities['accrued'] +
+        liabilities['short_term_loans'] + liabilities['long_term_loans'] +
+        liabilities['mortgages']
+    )
+    
+    # EQUITY
+    equity_accounts = Account.objects.filter(account_type='equity', is_deleted=False)
     total_equity = Decimal('0.00')
-    
     for account in equity_accounts:
-        balance = AdvancedGeneralLedger.objects.filter(
-            account=account,
-            transaction_date__lte=as_of_date,
-            is_voided=False
-        ).aggregate(
-            total=Sum('credit_amount') - Sum('debit_amount')
-        )['total'] or Decimal('0.00')
-        
-        if balance != 0:
-            equity.append({'account': account, 'amount': balance})
-            total_equity += balance
+        balance = get_account_balance(account.account_code, 'equity', as_of_date)
+        balance = Decimal(str(balance)) if balance is not None else Decimal('0.00')
+        total_equity += balance
     
     # Calculate Net Income (Revenue - Expenses) for current year
-    revenue_accounts = Account.objects.filter(account_type='revenue')
+    revenue_accounts = Account.objects.filter(account_type='revenue', is_deleted=False)
     total_revenue = Decimal('0.00')
     for account in revenue_accounts:
-        balance = AdvancedGeneralLedger.objects.filter(
-            account=account,
-            transaction_date__lte=as_of_date,
-            is_voided=False
-        ).aggregate(
-            total=Sum('credit_amount') - Sum('debit_amount')
-        )['total'] or Decimal('0.00')
+        balance = get_account_balance(account.account_code, 'revenue', as_of_date)
+        balance = Decimal(str(balance)) if balance is not None else Decimal('0.00')
         total_revenue += balance
     
-    expense_accounts = Account.objects.filter(account_type='expense')
+    expense_accounts = Account.objects.filter(account_type='expense', is_deleted=False)
     total_expenses = Decimal('0.00')
     for account in expense_accounts:
-        balance = AdvancedGeneralLedger.objects.filter(
-            account=account,
-            transaction_date__lte=as_of_date,
-            is_voided=False
-        ).aggregate(
-            total=Sum('debit_amount') - Sum('credit_amount')
-        )['total'] or Decimal('0.00')
+        balance = get_account_balance(account.account_code, 'expense', as_of_date)
+        balance = Decimal(str(balance)) if balance is not None else Decimal('0.00')
         total_expenses += balance
     
     # Net Income = Revenue - Expenses
@@ -604,20 +905,51 @@ def balance_sheet(request):
     # Total Equity includes Net Income
     total_equity_with_income = total_equity + net_income
     
+    # Ensure all values are properly formatted as Decimal for template
+    # Convert all asset values to float for template compatibility
+    assets_formatted = {
+        'cash': float(assets['cash']),
+        'bank': float(assets['bank']),
+        'accounts_receivable': float(assets['accounts_receivable']),
+        'inventory': float(assets['inventory']),
+        'prepaid': float(assets['prepaid']),
+        'equipment': float(assets['equipment']),
+        'building': float(assets['building']),
+        'depreciation': float(assets['depreciation']),
+    }
+    
+    # Convert all liability values to float for template compatibility
+    liabilities_formatted = {
+        'accounts_payable': float(liabilities['accounts_payable']),
+        'accrued': float(liabilities['accrued']),
+        'short_term_loans': float(liabilities['short_term_loans']),
+        'long_term_loans': float(liabilities['long_term_loans']),
+        'mortgages': float(liabilities['mortgages']),
+    }
+    
     context = {
         'as_of_date': as_of_date,
-        'assets': assets,
-        'liabilities': liabilities,
-        'equity': equity,
-        'total_assets': total_assets,
-        'total_liabilities': total_liabilities,
-        'total_equity': total_equity,
-        'total_revenue': total_revenue,
-        'total_expenses': total_expenses,
-        'net_income': net_income,
-        'total_equity_with_income': total_equity_with_income,
-        'total_liab_equity': total_liabilities + total_equity_with_income,
-        'is_balanced': total_assets == (total_liabilities + total_equity_with_income),
+        'today': timezone.now(),
+        'assets': assets_formatted,
+        'liabilities': liabilities_formatted,
+        'total_assets': float(total_assets),
+        'total_liabilities': float(total_liabilities),
+        'fixed_assets_detail': {
+            'land_buildings': float(fixed_assets_detail.get('land_buildings', 0)),
+            'equipment': float(fixed_assets_detail.get('equipment', 0)),
+            'vehicles': float(fixed_assets_detail.get('vehicles', 0)),
+            'accumulated_depreciation': float(fixed_assets_detail.get('accumulated_depreciation', 0)),
+            'construction': float(fixed_assets_detail.get('construction', 0)),
+            'intangible': float(fixed_assets_detail.get('intangible', 0)),
+            'net_fixed_assets': float(fixed_assets_detail.get('net_fixed_assets', 0))
+        },
+        'total_equity': float(total_equity),
+        'total_revenue': float(total_revenue),
+        'total_expenses': float(total_expenses),
+        'net_income': float(net_income),
+        'total_equity_with_income': float(total_equity_with_income),
+        'total_liab_equity': float(total_liabilities + total_equity_with_income),
+        'is_balanced': abs(total_assets - (total_liabilities + total_equity_with_income)) < Decimal('0.01'),
         'report_title': f'Balance Sheet as of {as_of_date}',
     }
     
@@ -802,7 +1134,8 @@ def general_ledger_report(request):
     ledger_entries = AdvancedGeneralLedger.objects.filter(
         transaction_date__gte=start_date,
         transaction_date__lte=end_date,
-        is_voided=False
+        is_voided=False,
+        is_deleted=False
     ).select_related('account', 'journal_entry').order_by('account', 'transaction_date')
     
     if account_id:
@@ -829,20 +1162,26 @@ def general_ledger_report(request):
         accounts_data[account_code]['total_credit'] += entry.credit_amount
         accounts_data[account_code]['balance'] = accounts_data[account_code]['total_debit'] - accounts_data[account_code]['total_credit']
     
-    # Calculate running balances for display
+    # For Excel imports: debit/credit amounts ARE the balances (not transaction amounts)
+    # Each entry represents a different company's balance - they are INDEPENDENT
+    # Always use debit/credit amount directly as balance (don't use stored balance which may be cumulative)
     ledger_with_balance = []
-    running_balances = {}
     
     for entry in ledger_entries:
-        account_code = entry.account.account_code
-        if account_code not in running_balances:
-            running_balances[account_code] = Decimal('0.00')
+        # For Excel entries: debit/credit amounts ARE the balances
+        # Each entry is independent (different companies) - don't calculate running balance
+        if entry.debit_amount and entry.debit_amount > 0:
+            # Debit amount IS the balance (for asset accounts like AR, or AP balances)
+            entry.running_balance = entry.debit_amount
+        elif entry.credit_amount and entry.credit_amount > 0:
+            # Credit amount IS the balance (for liability accounts)
+            entry.running_balance = entry.credit_amount
+        elif entry.balance and entry.balance != 0:
+            # Fallback to stored balance if no debit/credit
+            entry.running_balance = entry.balance
+        else:
+            entry.running_balance = Decimal('0.00')
         
-        # Update running balance
-        running_balances[account_code] += entry.debit_amount - entry.credit_amount
-        
-        # Add to display list with running balance
-        entry.running_balance = running_balances[account_code]
         ledger_with_balance.append(entry)
     
     # Calculate totals
@@ -868,12 +1207,19 @@ def general_ledger_report(request):
 @login_required
 @user_passes_test(is_accountant)
 def accounts_receivable_aging(request):
-    """Accounts Receivable Aging Report"""
+    """Accounts Receivable Aging Report - Includes both AdvancedAccountsReceivable and InsuranceReceivableEntry"""
+    from .models_primecare_accounting import InsuranceReceivableEntry
     
     # Get all AR with balances
     receivables = AdvancedAccountsReceivable.objects.filter(
         balance_due__gt=0
     ).select_related('invoice', 'patient').order_by('due_date')
+    
+    # Also include InsuranceReceivableEntry records - EXCLUDE CORPORATE PAYERS
+    insurance_receivables = InsuranceReceivableEntry.objects.filter(
+        outstanding_amount__gt=0,
+        is_deleted=False
+    ).exclude(payer__payer_type='corporate').select_related('payer').order_by('entry_date')  # Only insurance, not corporate
     
     # Group by aging bucket
     aging_summary = {
@@ -884,11 +1230,47 @@ def accounts_receivable_aging(request):
         '90+': {'items': [], 'total': Decimal('0.00')},
     }
     
+    # Process AdvancedAccountsReceivable
     for ar in receivables:
         bucket = ar.aging_bucket
         if bucket in aging_summary:
             aging_summary[bucket]['items'].append(ar)
             aging_summary[bucket]['total'] += ar.balance_due
+    
+    # Process InsuranceReceivableEntry - calculate aging
+    from datetime import timedelta
+    today = timezone.now().date()
+    
+    for entry in insurance_receivables:
+        days_old = (today - entry.entry_date).days
+        
+        if days_old <= 0:
+            bucket = 'current'
+        elif days_old <= 30:
+            bucket = '0-30'
+        elif days_old <= 60:
+            bucket = '31-60'
+        elif days_old <= 90:
+            bucket = '61-90'
+        else:
+            bucket = '90+'
+        
+        if bucket in aging_summary:
+            # Create a wrapper object for template compatibility
+            class InsuranceARWrapper:
+                def __init__(self, entry):
+                    self.id = entry.id
+                    self.invoice = None
+                    self.patient = None
+                    self.insurance_company = entry.payer
+                    self.balance_due = entry.outstanding_amount
+                    self.total_amount = entry.total_amount
+                    self.due_date = entry.entry_date
+                    self.entry_number = entry.entry_number
+                    self.is_insurance_entry = True
+            
+            aging_summary[bucket]['items'].append(InsuranceARWrapper(entry))
+            aging_summary[bucket]['total'] += entry.outstanding_amount
     
     grand_total = sum(bucket['total'] for bucket in aging_summary.values())
     
@@ -917,6 +1299,161 @@ def accounts_receivable_aging(request):
         'grand_total': grand_total,
         'total_ar': grand_total,  # FIXED: Template expects this too
         'report_title': 'Accounts Receivable Aging Report',
+    }
+    
+    return render(request, 'hospital/ar_aging_report.html', context)
+
+
+@login_required
+@user_passes_test(is_accountant)
+def corporate_receivables(request):
+    """Corporate Receivables Report - Shows only receivables from corporate payers"""
+    from .models_primecare_accounting import InsuranceReceivableEntry
+    from .models import Payer
+    from datetime import timedelta
+    
+    # Get filter parameters
+    payer_id = request.GET.get('payer', '')
+    aging_bucket = request.GET.get('aging', '')
+    
+    # Get corporate AR with balances (filter by invoice payer type)
+    receivables = AdvancedAccountsReceivable.objects.filter(
+        balance_due__gt=0,
+        invoice__payer__payer_type='corporate'
+    ).select_related('invoice', 'invoice__payer', 'patient').order_by('due_date')
+    
+    # Also get InsuranceReceivableEntry records for corporate payers
+    # Handle case where table doesn't exist (migration not run)
+    try:
+        insurance_receivables = InsuranceReceivableEntry.objects.filter(
+            outstanding_amount__gt=0,
+            is_deleted=False,
+            payer__payer_type='corporate'
+        ).select_related('payer').order_by('entry_date')
+    except Exception as e:
+        # Table doesn't exist or other database error - use empty queryset
+        from django.db import connection
+        from django.core.exceptions import ImproperlyConfigured
+        insurance_receivables = InsuranceReceivableEntry.objects.none()
+    
+    # Filter by specific payer if provided
+    if payer_id:
+        receivables = receivables.filter(invoice__payer_id=payer_id)
+        insurance_receivables = insurance_receivables.filter(payer_id=payer_id)
+    
+    # Group by aging bucket
+    aging_summary = {
+        'current': {'items': [], 'total': Decimal('0.00')},
+        '0-30': {'items': [], 'total': Decimal('0.00')},
+        '31-60': {'items': [], 'total': Decimal('0.00')},
+        '61-90': {'items': [], 'total': Decimal('0.00')},
+        '90+': {'items': [], 'total': Decimal('0.00')},
+    }
+    
+    # Process AdvancedAccountsReceivable
+    for ar in receivables:
+        bucket = ar.aging_bucket
+        if bucket in aging_summary:
+            aging_summary[bucket]['items'].append(ar)
+            aging_summary[bucket]['total'] += ar.balance_due
+    
+    # Process InsuranceReceivableEntry - calculate aging
+    today = timezone.now().date()
+    
+    # Only process if table exists and has data - wrap in try-except to handle missing table
+    try:
+        if insurance_receivables.exists():
+            for entry in insurance_receivables:
+                days_old = (today - entry.entry_date).days
+                
+                if days_old <= 0:
+                    bucket = 'current'
+                elif days_old <= 30:
+                    bucket = '0-30'
+                elif days_old <= 60:
+                    bucket = '31-60'
+                elif days_old <= 90:
+                    bucket = '61-90'
+                else:
+                    bucket = '90+'
+                
+                # Apply aging bucket filter if provided
+                if aging_bucket and bucket != aging_bucket:
+                    continue
+                
+                if bucket in aging_summary:
+                    # Create a wrapper object for template compatibility
+                    class CorporateARWrapper:
+                        def __init__(self, entry, days_old, bucket):
+                            self.id = entry.id
+                            # Create a fake invoice object for template compatibility
+                            fake_invoice = SimpleNamespace()
+                            fake_invoice.invoice_number = entry.entry_number
+                            fake_invoice.created = entry.entry_date
+                            self.invoice = fake_invoice
+                            
+                            self.patient = None  # No patient for corporate receivables
+                            self.payer = entry.payer  # Store payer for company name
+                            self.insurance_company = entry.payer  # For compatibility
+                            self.balance_due = entry.outstanding_amount
+                            self.invoice_amount = entry.total_amount
+                            self.amount_paid = entry.amount_received
+                            self.due_date = entry.entry_date
+                            self.entry_number = entry.entry_number
+                            self.is_insurance_entry = True
+                            self.aging_bucket = bucket
+                            self.days_overdue = days_old if days_old > 0 else 0
+                            self.is_overdue = days_old > 0
+                    
+                    aging_summary[bucket]['items'].append(CorporateARWrapper(entry, days_old, bucket))
+                    aging_summary[bucket]['total'] += entry.outstanding_amount
+    except Exception:
+        # Table doesn't exist or error accessing it - skip processing
+        pass
+    
+    # Apply aging bucket filter to AdvancedAccountsReceivable if provided
+    if aging_bucket:
+        filtered_receivables = []
+        for ar in receivables:
+            if ar.aging_bucket == aging_bucket:
+                filtered_receivables.append(ar)
+        receivables = filtered_receivables
+    
+    grand_total = sum(bucket['total'] for bucket in aging_summary.values())
+    
+    # Get all corporate payers for filter dropdown
+    corporate_payers = Payer.objects.filter(
+        payer_type='corporate',
+        is_active=True,
+        is_deleted=False
+    ).order_by('name')
+    
+    # Create ar_aging dict for template
+    ar_aging_dict = {
+        'current': aging_summary['current']['total'],
+        '0_30': aging_summary['0-30']['total'],
+        '31_60': aging_summary['31-60']['total'],
+        '61_90': aging_summary['61-90']['total'],
+        '90_plus': aging_summary['90+']['total'],
+    }
+    
+    # Combine all receivables for the list view
+    all_receivables_list = list(receivables)
+    for bucket_data in aging_summary.values():
+        all_receivables_list.extend(bucket_data['items'])
+    
+    context = {
+        'aging_summary': aging_summary,
+        'ar_aging': ar_aging_dict,
+        'ar_list': all_receivables_list,
+        'ar_count': len(all_receivables_list),  # Add count for template
+        'grand_total': grand_total,
+        'total_ar': grand_total,
+        'report_title': 'Corporate Receivables Aging Report',
+        'corporate_payers': corporate_payers,
+        'selected_payer_id': payer_id,
+        'selected_aging': aging_bucket,
+        'is_corporate': True,  # Flag to indicate this is corporate receivables
     }
     
     return render(request, 'hospital/ar_aging_report.html', context)
@@ -969,6 +1506,142 @@ def accounts_payable_report(request):
     }
     
     return render(request, 'hospital/accounts_payable_report.html', context)
+
+
+@login_required
+@user_passes_test(is_accountant)
+def record_ap_payment(request, ap_id):
+    """Record payment for a specific Accounts Payable entry"""
+    from django.contrib import messages
+    from django.db import transaction as db_transaction
+    from .models_accounting_advanced import PaymentVoucher, Journal, AdvancedJournalEntry, AdvancedJournalEntryLine
+    from .models_accounting import Account
+    
+    ap = get_object_or_404(AccountsPayable, pk=ap_id, is_deleted=False)
+    
+    if request.method == 'POST':
+        payment_amount = Decimal(request.POST.get('payment_amount', '0'))
+        payment_date = request.POST.get('payment_date')
+        payment_method = request.POST.get('payment_method', 'bank_transfer')
+        bank_account_id = request.POST.get('bank_account')
+        payment_reference = request.POST.get('payment_reference', '')
+        notes = request.POST.get('notes', '')
+        
+        if payment_amount <= 0:
+            messages.error(request, 'Payment amount must be greater than zero.')
+            return redirect('hospital:record_ap_payment', ap_id=ap.id)
+        
+        if payment_amount > ap.balance_due:
+            messages.error(request, f'Payment amount (GHS {payment_amount:,.2f}) cannot exceed balance due (GHS {ap.balance_due:,.2f}).')
+            return redirect('hospital:record_ap_payment', ap_id=ap.id)
+        
+        try:
+            with db_transaction.atomic():
+                # Update AP balance - refresh from DB first to ensure we have latest values
+                ap.refresh_from_db()
+                ap.amount_paid += payment_amount
+                # balance_due will be auto-calculated in save() method
+                # Force recalculation to ensure accuracy
+                ap.balance_due = ap.amount - ap.amount_paid
+                ap.save()
+                
+                # Get or create payment account based on payment method
+                if bank_account_id:
+                    from .models_accounting_advanced import BankAccount
+                    try:
+                        bank_account = BankAccount.objects.get(pk=bank_account_id, is_deleted=False)
+                        payment_account = bank_account.gl_account
+                    except BankAccount.DoesNotExist:
+                        # Fallback to method-based account
+                        payment_account = None
+                else:
+                    payment_account = None
+                
+                # If no bank account selected, use payment method to determine account
+                if not payment_account:
+                    account_map = {
+                        'cash': ('1010', 'Cash on Hand', 'asset'),
+                        'bank_transfer': ('1020', 'Bank Account', 'asset'),
+                        'cheque': ('1020', 'Bank Account', 'asset'),
+                        'mobile_money': ('1030', 'Mobile Money', 'asset'),
+                    }
+                    code, name, acc_type = account_map.get(payment_method, ('1010', 'Cash on Hand', 'asset'))
+                    payment_account, _ = Account.objects.get_or_create(
+                        account_code=code,
+                        defaults={'account_name': name, 'account_type': acc_type}
+                    )
+                
+                # Get AP account
+                ap_account, _ = Account.objects.get_or_create(
+                    account_code='2100',
+                    defaults={'account_name': 'Accounts Payable', 'account_type': 'liability'}
+                )
+                
+                # Create journal entry
+                payment_journal, _ = Journal.objects.get_or_create(
+                    journal_type='payment',
+                    defaults={'name': 'Payment Journal', 'code': 'PJ'}
+                )
+                
+                je = AdvancedJournalEntry.objects.create(
+                    journal=payment_journal,
+                    entry_date=datetime.strptime(payment_date, '%Y-%m-%d').date() if payment_date else timezone.now().date(),
+                    description=f"Payment to {ap.vendor_name} - {ap.bill_number}",
+                    reference=payment_reference or ap.bill_number,
+                    created_by=request.user,
+                    status='posted'
+                )
+                
+                # Debit Accounts Payable (decreases liability)
+                AdvancedJournalEntryLine.objects.create(
+                    journal_entry=je,
+                    line_number=1,
+                    account=ap_account,
+                    debit_amount=payment_amount,
+                    credit_amount=Decimal('0.00'),
+                    description=f"Payment to {ap.vendor_name}"
+                )
+                
+                # Credit Payment Account (decreases asset - cash/bank)
+                AdvancedJournalEntryLine.objects.create(
+                    journal_entry=je,
+                    line_number=2,
+                    account=payment_account,
+                    debit_amount=Decimal('0.00'),
+                    credit_amount=payment_amount,
+                    description=f"Payment for {ap.bill_number}"
+                )
+                
+                # Update journal entry totals
+                je.total_debit = payment_amount
+                je.total_credit = payment_amount
+                je.save()
+                
+                # Post journal entry to GL
+                je.post(request.user)
+                
+                messages.success(
+                    request,
+                    f'Payment of GHS {payment_amount:,.2f} recorded successfully. '
+                    f'Balance due: GHS {ap.balance_due:,.2f}'
+                )
+                return redirect('hospital:ap_report')
+        
+        except Exception as e:
+            messages.error(request, f'Error recording payment: {str(e)}')
+            import traceback
+            traceback.print_exc()
+    
+    # GET request - show payment form
+    from .models_accounting_advanced import BankAccount
+    bank_accounts = BankAccount.objects.filter(is_active=True, is_deleted=False)
+    
+    context = {
+        'ap': ap,
+        'bank_accounts': bank_accounts,
+    }
+    
+    return render(request, 'hospital/record_ap_payment.html', context)
 
 
 @login_required
@@ -1326,7 +1999,7 @@ def expense_report(request):
 
 
 @login_required
-@user_passes_test(is_accountant)
+@role_required('accountant', 'senior_account_officer', 'admin')
 def payment_voucher_list(request):
     """World-Class Payment Voucher Management"""
     

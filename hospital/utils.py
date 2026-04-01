@@ -2,7 +2,9 @@
 Utility functions for Hospital Management System
 """
 from django.db.models import Count, Sum, Avg, Q, F
+from django.db.models.expressions import RawSQL
 from django.utils import timezone
+from django.core.cache import cache
 from datetime import timedelta, date
 from decimal import Decimal
 from .models import (
@@ -12,8 +14,14 @@ from .models import (
 
 
 def get_dashboard_stats():
-    """Get dashboard statistics"""
+    """Get dashboard statistics - AGGRESSIVELY CACHED for 300+ users"""
     today = timezone.now().date()
+    cache_key = f'hms:dashboard_stats_{today}'
+    
+    # Try to get from cache first (15 minute cache for high concurrency)
+    cached_stats = cache.get(cache_key)
+    if cached_stats is not None:
+        return cached_stats
     
     # Patient stats
     # Include both new Django patients AND imported legacy patients
@@ -151,7 +159,7 @@ def get_dashboard_stats():
     elif revenue_this_month > 0 and revenue_last_month == 0:
         revenue_growth = 100.0  # New revenue
     
-    # Generate monthly trends data for chart
+    # Generate monthly trends data for chart - OPTIMIZED with single queries
     monthly_patients = []
     monthly_encounters = []
     month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -159,52 +167,37 @@ def get_dashboard_stats():
     current_month = today.month
     current_year = today.year
     
+    # OPTIMIZATION: Get all monthly data in fewer queries using date extraction
+    # Get all patients for current year grouped by month
+    from django.db.models.functions import ExtractMonth
+    patients_by_month = dict(
+        Patient.objects.filter(
+            created__year=current_year,
+            is_deleted=False
+        ).annotate(
+            month=ExtractMonth('created')
+        ).values('month').annotate(count=Count('id')).values_list('month', 'count')
+    )
+    
+    encounters_by_month = dict(
+        Encounter.objects.filter(
+            started_at__year=current_year,
+            is_deleted=False
+        ).annotate(
+            month=ExtractMonth('started_at')
+        ).values('month').annotate(count=Count('id')).values_list('month', 'count')
+    )
+    
+    # Build monthly arrays (use existing monthly dicts; no extra queries for current month)
     for month_num in range(1, 13):
-        if month_num == current_month:
-            # Current month - use actual data from start of month to today
-            month_start = today.replace(day=1)
-            month_patients = Patient.objects.filter(
-                created__date__gte=month_start,
-                created__date__lte=today,
-                is_deleted=False
-            ).count()
-            
-            month_encounters = Encounter.objects.filter(
-                started_at__date__gte=month_start,
-                started_at__date__lte=today,
-                is_deleted=False
-            ).count()
-            
-            monthly_patients.append(month_patients)
-            monthly_encounters.append(month_encounters)
-        elif month_num < current_month:
-            # Past months in current year - get actual data
-            month_start = today.replace(month=month_num, day=1)
-            if month_num == 12:
-                month_end = today.replace(year=current_year + 1, month=1, day=1) - timedelta(days=1)
-            else:
-                month_end = today.replace(month=month_num + 1, day=1) - timedelta(days=1)
-            
-            month_patients = Patient.objects.filter(
-                created__date__gte=month_start,
-                created__date__lte=month_end,
-                is_deleted=False
-            ).count()
-            
-            month_encounters = Encounter.objects.filter(
-                started_at__date__gte=month_start,
-                started_at__date__lte=month_end,
-                is_deleted=False
-            ).count()
-            
-            monthly_patients.append(month_patients)
-            monthly_encounters.append(month_encounters)
+        if month_num <= current_month:
+            monthly_patients.append(patients_by_month.get(month_num, 0))
+            monthly_encounters.append(encounters_by_month.get(month_num, 0))
         else:
-            # Future months - zero
             monthly_patients.append(0)
             monthly_encounters.append(0)
     
-    return {
+    stats = {
         # Flattened for template access
         'total_patients': total_patients,
         'patients_today': new_patients_today,
@@ -266,67 +259,214 @@ def get_dashboard_stats():
         'revenue_today': revenue_today,  # Add today's revenue
         'month_labels': month_labels,  # Add month labels for chart
     }
+    
+    # Cache for 15 minutes (900 seconds) for high concurrency - reduces DB load significantly
+    cache.set(cache_key, stats, 900)
+    return stats
 
 
 def get_patient_demographics():
-    """Get patient demographics statistics"""
-    patients = Patient.objects.filter(is_deleted=False).only('gender', 'date_of_birth')
-    
-    gender_counts = patients.values('gender').annotate(count=Count('id'))
+    """Get patient demographics statistics - CACHED for performance.
+    Age bucketing is done in the database (no Python loop over all patients).
+    """
+    cache_key = 'patient_demographics'
+    cached_demographics = cache.get(cache_key)
+    if cached_demographics is not None:
+        return cached_demographics
+
+    base = Patient.objects.filter(is_deleted=False)
+
+    # Gender: single aggregated query
+    gender_counts = base.values('gender').annotate(count=Count('id'))
     gender_data = {item['gender']: item['count'] for item in gender_counts}
-    
-    # Age groups - optimized calculation
-    from datetime import date
-    today = date.today()
+
+    # Age groups: database-level age and bucketing (PostgreSQL AGE + conditional Count)
+    # Exclude null DOB so we don't compute age for them (matches previous behavior)
+    patients_with_dob = base.exclude(date_of_birth__isnull=True)
+    table = Patient._meta.db_table
+    age_sql = f"EXTRACT(YEAR FROM AGE(CURRENT_DATE, {table}.date_of_birth))::integer"
+    age_agg = patients_with_dob.annotate(
+        age=RawSQL(age_sql, [])
+    ).aggregate(
+        g_0_18=Count('id', filter=Q(age__lte=18)),
+        g_19_35=Count('id', filter=Q(age__gte=19, age__lte=35)),
+        g_36_50=Count('id', filter=Q(age__gte=36, age__lte=50)),
+        g_51_65=Count('id', filter=Q(age__gte=51, age__lte=65)),
+        g_65_plus=Count('id', filter=Q(age__gt=65)),
+    )
     age_groups = {
-        '0-18': 0,
-        '19-35': 0,
-        '36-50': 0,
-        '51-65': 0,
-        '65+': 0,
+        '0-18': age_agg['g_0_18'],
+        '19-35': age_agg['g_19_35'],
+        '36-50': age_agg['g_36_50'],
+        '51-65': age_agg['g_51_65'],
+        '65+': age_agg['g_65_plus'],
     }
-    
-    # Use database-level filtering instead of Python iteration
-    for patient in patients.values('date_of_birth'):
-        if not patient['date_of_birth']:
-            continue
-        try:
-            age = (today - patient['date_of_birth']).days // 365
-            if age <= 18:
-                age_groups['0-18'] += 1
-            elif age <= 35:
-                age_groups['19-35'] += 1
-            elif age <= 50:
-                age_groups['36-50'] += 1
-            elif age <= 65:
-                age_groups['51-65'] += 1
-            else:
-                age_groups['65+'] += 1
-        except (ValueError, TypeError):
-            continue
-    
-    return {
+
+    demographics = {
         'gender': gender_data,
         'age_groups': age_groups,
-        'total': patients.count(),
+        'total': base.count(),
     }
+
+    # Cache for 30 minutes - demographics change slowly
+    cache.set(cache_key, demographics, 1800)
+    return demographics
 
 
 def get_encounter_statistics():
-    """Get encounter type statistics"""
-    encounters = Encounter.objects.filter(is_deleted=False)
-    
-    type_counts = encounters.values('encounter_type').annotate(count=Count('id'))
+    """Get encounter type statistics - CACHED for performance. Two queries only."""
+    cache_key = 'encounter_statistics'
+    cached_stats = cache.get(cache_key)
+    if cached_stats is not None:
+        return cached_stats
+
+    base = Encounter.objects.filter(is_deleted=False)
+    type_counts = base.values('encounter_type').annotate(count=Count('id'))
     type_data = {item['encounter_type']: item['count'] for item in type_counts}
-    
-    status_counts = encounters.values('status').annotate(count=Count('id'))
+    status_counts = base.values('status').annotate(count=Count('id'))
     status_data = {item['status']: item['count'] for item in status_counts}
-    
-    return {
+    total = sum(type_data.values())  # avoid third query (encounters.count())
+
+    stats = {
         'by_type': type_data,
         'by_status': status_data,
-        'total': encounters.count(),
+        'total': total,
     }
+    cache.set(cache_key, stats, 300)
+    return stats
+
+
+def get_dashboard_extra_stats(today_date):
+    """Cached dashboard extra stats (financial, department, alerts counts).
+    Keyed by date, TTL 5 min, to cut per-request queries on the main dashboard.
+    """
+    cache_key = f'hms:dashboard_extra_{today_date}'
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    from .models import Prescription, Staff
+    from .models_accounting import PaymentReceipt
+
+    month_start = today_date.replace(day=1)
+    today_payments = PaymentReceipt.objects.filter(
+        receipt_date__date=today_date,
+        is_deleted=False
+    )
+    today_revenue = today_payments.aggregate(Sum('amount_paid'))['amount_paid__sum'] or Decimal('0')
+    today_payment_count = today_payments.count()
+    month_payments = PaymentReceipt.objects.filter(
+        receipt_date__date__gte=month_start,
+        receipt_date__date__lte=today_date,
+        is_deleted=False
+    )
+    month_revenue = month_payments.aggregate(Sum('amount_paid'))['amount_paid__sum'] or Decimal('0')
+
+    prescriptions_today = Prescription.objects.filter(
+        created__date=today_date,
+        is_deleted=False
+    ).count()
+    active_orders = Order.objects.filter(
+        status__in=['pending', 'in_progress'],
+        is_deleted=False
+    ).count()
+    discharges_today = Admission.objects.filter(
+        discharge_date__date=today_date,
+        status='discharged',
+        is_deleted=False
+    ).count()
+    staff_on_duty = Staff.objects.filter(
+        is_active=True,
+        is_deleted=False
+    ).count()
+
+    pending_bills_count = 0
+    try:
+        from .models_advanced import ImagingStudy
+        pending_lab = LabResult.objects.filter(status='completed', is_deleted=False).count()
+        pending_pharmacy = Prescription.objects.filter(is_deleted=False).count()
+        pending_imaging = ImagingStudy.objects.filter(status='completed', is_deleted=False).count()
+        pending_bills_count = pending_lab + pending_pharmacy + pending_imaging
+    except Exception:
+        pass
+
+    lab_pending = LabResult.objects.filter(
+        status__in=['pending', 'in_progress'],
+        is_deleted=False
+    ).count()
+    lab_completed_today = LabResult.objects.filter(
+        status='completed',
+        created__date=today_date,
+        is_deleted=False
+    ).count()
+
+    pharmacy_pending = Prescription.objects.filter(is_deleted=False).count()
+    pharmacy_dispensed_today = 0
+    try:
+        from .models_advanced import PharmacyDispensing
+        pharmacy_pending = Prescription.objects.filter(is_deleted=False).exclude(
+            id__in=PharmacyDispensing.objects.values_list('prescription_id', flat=True)
+        ).count()
+        pharmacy_dispensed_today = PharmacyDispensing.objects.filter(
+            dispensed_at__date=today_date,
+            is_deleted=False
+        ).count()
+    except Exception:
+        pass
+
+    imaging_pending = 0
+    imaging_completed_today = 0
+    try:
+        from .models_advanced import ImagingStudy
+        imaging_pending = ImagingStudy.objects.filter(
+            status__in=['pending', 'in_progress'],
+            is_deleted=False
+        ).count()
+        imaging_completed_today = ImagingStudy.objects.filter(
+            status='completed',
+            created_at__date=today_date,
+            is_deleted=False
+        ).count()
+    except Exception:
+        pass
+
+    expiring_contracts = 0
+    expiring_certs = 0
+    try:
+        from .models_contracts import Contract, Certificate
+        expiring_contracts = Contract.objects.filter(
+            end_date__gte=today_date,
+            end_date__lte=today_date + timedelta(days=30),
+            is_deleted=False
+        ).count()
+        expiring_certs = Certificate.objects.filter(
+            expiry_date__gte=today_date,
+            expiry_date__lte=today_date + timedelta(days=60),
+            is_deleted=False
+        ).count()
+    except Exception:
+        pass
+
+    result = {
+        'today_revenue': today_revenue,
+        'today_payment_count': today_payment_count,
+        'month_revenue': month_revenue,
+        'prescriptions_today': prescriptions_today,
+        'active_orders': active_orders,
+        'discharges_today': discharges_today,
+        'staff_on_duty': staff_on_duty,
+        'pending_bills_count': pending_bills_count,
+        'lab_pending': lab_pending,
+        'lab_completed_today': lab_completed_today,
+        'pharmacy_pending': pharmacy_pending,
+        'pharmacy_dispensed_today': pharmacy_dispensed_today,
+        'imaging_pending': imaging_pending,
+        'imaging_completed_today': imaging_completed_today,
+        'expiring_contracts': expiring_contracts,
+        'expiring_certs': expiring_certs,
+    }
+    cache.set(cache_key, result, 300)  # 5 min
+    return result
 
 
 def search_patients(query):
@@ -342,10 +482,14 @@ def search_patients(query):
 
 
 def generate_daily_report(report_date=None):
-    """Generate daily activity report"""
+    """Generate daily activity report with real-time data"""
+    from django.db.models import Q, Sum, Count
+    from decimal import Decimal
+    
     if not report_date:
         report_date = timezone.now().date()
     
+    # Use date filtering instead of datetime for better performance and accuracy
     start_datetime = timezone.make_aware(
         timezone.datetime.combine(report_date, timezone.datetime.min.time())
     )
@@ -353,65 +497,142 @@ def generate_daily_report(report_date=None):
         timezone.datetime.combine(report_date, timezone.datetime.max.time())
     )
     
-    # New patients
-    new_patients = Patient.objects.filter(
-        created__gte=start_datetime,
-        created__lte=end_datetime,
-        is_deleted=False
-    ).count()
-    
-    # New encounters
-    new_encounters = Encounter.objects.filter(
-        started_at__gte=start_datetime,
-        started_at__lte=end_datetime,
-        is_deleted=False
-    ).count()
-    
-    # New admissions
-    new_admissions = Admission.objects.filter(
-        admit_date__gte=start_datetime,
-        admit_date__lte=end_datetime,
-        is_deleted=False
-    ).count()
-    
-    # Discharges
-    discharges = Admission.objects.filter(
-        discharge_date__gte=start_datetime,
-        discharge_date__lte=end_datetime,
-        status='discharged',
-        is_deleted=False
-    ).count()
-    
-    # Revenue
-    revenue = Invoice.objects.filter(
-        issued_at__gte=start_datetime,
-        issued_at__lte=end_datetime,
-        status='paid',
-        is_deleted=False
-    ).aggregate(Sum('total_amount'))['total_amount__sum'] or Decimal('0.00')
-    
-    # Appointments
-    appointments = Appointment.objects.filter(
-        appointment_date__gte=start_datetime,
-        appointment_date__lte=end_datetime,
-        is_deleted=False
-    ).count()
-    
-    # Lab tests ordered
-    lab_orders = Order.objects.filter(
-        created__gte=start_datetime,
-        created__lte=end_datetime,
-        order_type='lab',
-        is_deleted=False
-    ).count()
-    
-    return {
-        'date': report_date,
-        'new_patients': new_patients,
-        'new_encounters': new_encounters,
-        'new_admissions': new_admissions,
-        'discharges': discharges,
-        'revenue': revenue,
-        'appointments': appointments,
-        'lab_orders': lab_orders,
-    }
+    try:
+        # New patients - use datetime range for compatibility
+        new_patients = Patient.objects.filter(
+            created__gte=start_datetime,
+            created__lte=end_datetime,
+            is_deleted=False
+        ).count()
+        
+        # New encounters - use datetime range
+        new_encounters = Encounter.objects.filter(
+            started_at__gte=start_datetime,
+            started_at__lte=end_datetime,
+            is_deleted=False
+        ).count()
+        
+        # Completed encounters (encounters that ended on this date)
+        completed_encounters = Encounter.objects.filter(
+            ended_at__gte=start_datetime,
+            ended_at__lte=end_datetime,
+            ended_at__isnull=False,
+            status__in=['completed', 'discharged', 'closed'],
+            is_deleted=False
+        ).count()
+        
+        # New admissions
+        new_admissions = 0
+        try:
+            from .models_advanced import Admission
+            new_admissions = Admission.objects.filter(
+                admit_date__gte=start_datetime.date() if hasattr(start_datetime, 'date') else report_date,
+                admit_date__lte=end_datetime.date() if hasattr(end_datetime, 'date') else report_date,
+                is_deleted=False
+            ).count()
+        except (ImportError, AttributeError, Exception) as e:
+            # Admission model might not exist or field might be datetime
+            try:
+                from .models_advanced import Admission
+                new_admissions = Admission.objects.filter(
+                    admit_date__gte=start_datetime,
+                    admit_date__lte=end_datetime,
+                    is_deleted=False
+                ).count()
+            except:
+                pass
+        
+        # Discharges
+        discharges = 0
+        try:
+            from .models_advanced import Admission
+            discharges = Admission.objects.filter(
+                discharge_date__gte=start_datetime.date() if hasattr(start_datetime, 'date') else report_date,
+                discharge_date__lte=end_datetime.date() if hasattr(end_datetime, 'date') else report_date,
+                status='discharged',
+                is_deleted=False
+            ).count()
+        except (ImportError, AttributeError, Exception):
+            # Try datetime filtering
+            try:
+                from .models_advanced import Admission
+                discharges = Admission.objects.filter(
+                    discharge_date__gte=start_datetime,
+                    discharge_date__lte=end_datetime,
+                    status='discharged',
+                    is_deleted=False
+                ).count()
+            except:
+                pass
+        
+        # Invoices issued (not just paid) - use datetime range
+        invoices_issued = 0
+        try:
+            invoices_issued = Invoice.objects.filter(
+                issued_at__gte=start_datetime,
+                issued_at__lte=end_datetime,
+                is_deleted=False
+            ).count()
+        except (AttributeError, Exception):
+            # Try alternative field names
+            try:
+                invoices_issued = Invoice.objects.filter(
+                    created__gte=start_datetime,
+                    created__lte=end_datetime,
+                    is_deleted=False
+                ).count()
+            except:
+                pass
+        
+        # Revenue (from payment receipts for real-time accuracy)
+        revenue = Decimal('0.00')
+        try:
+            from .models_accounting import PaymentReceipt
+            revenue_result = PaymentReceipt.objects.filter(
+                receipt_date__gte=start_datetime,
+                receipt_date__lte=end_datetime,
+                is_deleted=False
+            ).aggregate(Sum('amount_paid'))['amount_paid__sum']
+            if revenue_result:
+                revenue = revenue_result
+        except (ImportError, AttributeError, Exception):
+            # Fallback to Invoice if PaymentReceipt not available
+            try:
+                revenue_result = Invoice.objects.filter(
+                    issued_at__gte=start_datetime,
+                    issued_at__lte=end_datetime,
+                    status='paid',
+                    is_deleted=False
+                ).aggregate(Sum('total_amount'))['total_amount__sum']
+                if revenue_result:
+                    revenue = revenue_result
+            except:
+                pass
+        
+        return {
+            'date': report_date,
+            'new_patients': new_patients,
+            'new_encounters': new_encounters,
+            'completed_encounters': completed_encounters,
+            'admissions': new_admissions,  # Template expects 'admissions'
+            'new_admissions': new_admissions,  # Keep for backward compatibility
+            'discharges': discharges,
+            'invoices_issued': invoices_issued,
+            'revenue': revenue,
+        }
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error generating daily report: {e}", exc_info=True)
+        # Return safe defaults on error
+        return {
+            'date': report_date,
+            'new_patients': 0,
+            'new_encounters': 0,
+            'completed_encounters': 0,
+            'admissions': 0,
+            'new_admissions': 0,
+            'discharges': 0,
+            'invoices_issued': 0,
+            'revenue': Decimal('0.00'),
+        }

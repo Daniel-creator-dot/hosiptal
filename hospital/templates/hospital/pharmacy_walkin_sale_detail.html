@@ -9,7 +9,7 @@
         <div class="col-md-12">
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
-                    <li class="breadcrumb-item"><a href="{% url 'hospital:pharmacy_walkin_sales_list' %}">Walk-in Sales</a></li>
+                    <li class="breadcrumb-item"><a href="{% url 'hospital:pharmacy_walkin_sales_list' %}">Prescribe Sales</a></li>
                     <li class="breadcrumb-item active">{{ sale.sale_number }}</li>
                 </ol>
             </nav>
@@ -36,6 +36,7 @@
                         <div class="col-md-6">
                             <h6>Sale Information</h6>
                             <p class="mb-1"><strong>Date:</strong> {{ sale.sale_date|date:"d M Y H:i" }}</p>
+                            <p class="mb-1"><strong>Payer:</strong> {% if sale.payer %}{{ sale.payer.name }} ({{ sale.payer.get_payer_type_display }}){% else %}Cash{% endif %}</p>
                             <p class="mb-1"><strong>Served By:</strong> {{ sale.served_by.get_full_name|default:"—" }}</p>
                             <p class="mb-1">
                                 <strong>Payment Status:</strong> 
@@ -65,8 +66,7 @@
                                 <tr>
                                     <th>Medication</th>
                                     <th>Quantity</th>
-                                    <th>Unit Price</th>
-                                    <th>Total</th>
+                                    {% if show_prices %}<th>Unit Price</th><th>Total</th>{% endif %}
                                 </tr>
                             </thead>
                             <tbody>
@@ -80,11 +80,14 @@
                                         {% endif %}
                                     </td>
                                     <td>{{ item.quantity }}</td>
+                                    {% if show_prices %}
                                     <td>GHS {{ item.unit_price }}</td>
                                     <td><strong>GHS {{ item.line_total }}</strong></td>
+                                    {% endif %}
                                 </tr>
                                 {% endfor %}
                             </tbody>
+                            {% if show_prices %}
                             <tfoot>
                                 <tr>
                                     <td colspan="3" class="text-end"><strong>Subtotal:</strong></td>
@@ -111,6 +114,7 @@
                                 </tr>
                                 {% endif %}
                             </tfoot>
+                            {% endif %}
                         </table>
                     </div>
 
@@ -129,23 +133,30 @@
                 <div class="card-body">
                     <h6 class="mb-3">Actions</h6>
                     
-                    {% if sale.payment_status != 'paid' %}
-                        {% if can_record_payment %}
-                            <a href="{% url 'hospital:pharmacy_walkin_record_payment' sale.id %}" 
-                               class="btn btn-success w-100 mb-2" target="_blank">
-                                <i class="bi bi-cash-coin"></i> Cashier: Record Payment
-                            </a>
-                            <small class="text-muted d-block mb-3 text-center">Opens cashier payment form in a new tab</small>
-                        {% else %}
-                            <div class="alert alert-warning">
-                                <i class="bi bi-info-circle"></i>
-                                Payment must be processed at the <strong>Cashier Desk</strong>. Provide sale number 
-                                <strong>{{ sale.sale_number }}</strong> so cashier can locate it in the pending walk-in queue.
+                    {% if not sale.is_billed_to_company and sale.payment_status != 'paid' %}
+                        <div class="alert alert-warning mb-3">
+                            <i class="bi bi-cash-coin"></i>
+                            <strong>Pay at Cashier</strong> – All payments must go through the Cashier Desk.
+                        </div>
+                        <div class="card bg-light border-warning mb-3">
+                            <div class="card-body py-3">
+                                <p class="mb-1"><strong>Tell customer:</strong></p>
+                                <p class="mb-0">"Please go to the <strong>Cashier</strong> to pay{% if show_prices %} <strong>GHS {{ sale.amount_due|floatformat:2 }}</strong>{% endif %}. Use Sale # <strong>{{ sale.sale_number }}</strong>."</p>
                             </div>
-                        {% endif %}
+                        </div>
+                        <a href="{% url 'hospital:cashier_all_pending_bills' %}?search={{ sale.sale_number }}&service_type=pharmacy_walkin" 
+                           class="btn btn-outline-primary w-100 mb-2" target="_blank" title="Open Cashier Pending Bills (cashier login required)">
+                            <i class="bi bi-bank"></i> Open Cashier Pending Bills
+                        </a>
+                        <small class="text-muted d-block mb-3 text-center">Cashier searches for {{ sale.sale_number }} to process payment</small>
+                    {% elif sale.is_billed_to_company and sale.payment_status != 'paid' %}
+                        <div class="alert alert-info mb-3">
+                            <i class="bi bi-building"></i>
+                            <strong>Billed to {{ sale.payer.name|default:"Company" }}</strong> – Invoice sent to company. You can dispense now; stock will move.
+                        </div>
                     {% endif %}
                     
-                    {% if sale.payment_status == 'paid' and not sale.is_dispensed %}
+                    {% if not sale.is_dispensed and sale.payment_status == 'paid' or not sale.is_dispensed and sale.is_billed_to_company %}
                         <a href="{% url 'hospital:pharmacy_walkin_dispense' sale.id %}" 
                            class="btn btn-primary w-100 mb-2">
                             <i class="bi bi-capsule"></i> Dispense Medication
@@ -166,7 +177,7 @@
                         {% for receipt in receipts %}
                             <div class="mb-2 p-2 border rounded">
                                 <strong>{{ receipt.receipt_number }}</strong><br>
-                                <small>GHS {{ receipt.amount_paid|floatformat:2 }} - {{ receipt.get_payment_method_display }}</small><br>
+                                {% if show_prices %}<small>GHS {{ receipt.amount_paid|floatformat:2 }} - {{ receipt.get_payment_method_display }}</small><br>{% endif %}
                                 <small class="text-muted">{{ receipt.receipt_date|date:"d M Y H:i" }}</small>
                             </div>
                         {% endfor %}

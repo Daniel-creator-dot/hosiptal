@@ -47,25 +47,28 @@ ENV GUNICORN_MAX_REQUESTS=1000
 ENV GUNICORN_MAX_REQUESTS_JITTER=100
 ENV GUNICORN_TIMEOUT=120
 
-# Collect static files
-RUN python manage.py collectstatic --no-input --clear || true
+# Latest features included:
+# - Clinical consumables billing system (pharmacy can add consumables to patient bills)
+# - Print functionality for cashier sessions
+# - Accountant access to cashier history
+# - Performance optimizations and duplicate prevention
+# - Duplicate prevention system (MedicalRecord, ClinicalNote, LabResult, ImagingStudy, Transaction, PaymentReceipt)
+# - Front desk enhancements (doctor assignment, consultation charges, patient deposits)
+# - Performance optimizations (database indexes, query optimization)
+# - Price import from legacy billing data
+# - Lab test code display improvements
+
+# Don't collect static files here - do it at runtime in docker-compose
+# This ensures static files are always up-to-date on restart
+# RUN python manage.py collectstatic --no-input --clear || true
 
 # Expose port (configurable via PORT env var)
 EXPOSE $PORT
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+# Health check (will be overridden by docker-compose healthcheck)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
     CMD curl -f http://localhost:${PORT}/health/ || exit 1
 
-# Use gunicorn for production (not Django runserver)
-CMD ["/bin/sh", "-c", "gunicorn hms.wsgi:application \
-    --bind 0.0.0.0:${PORT} \
-    --worker-class gthread \
-    --workers ${GUNICORN_WORKERS:-6} \
-    --threads ${GUNICORN_THREADS:-4} \
-    --max-requests ${GUNICORN_MAX_REQUESTS:-1000} \
-    --max-requests-jitter ${GUNICORN_MAX_REQUESTS_JITTER:-100} \
-    --timeout ${GUNICORN_TIMEOUT:-120} \
-    --access-logfile - \
-    --error-logfile - \
-    --log-level info"]
+# Default command (will be overridden by docker-compose)
+# This ensures the container can start even without docker-compose
+CMD ["/bin/sh", "-c", "echo 'Waiting for docker-compose command override...' && sleep infinity"]

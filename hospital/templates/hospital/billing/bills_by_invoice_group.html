@@ -1,0 +1,254 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}{{ title|default:"Bills by Invoice Group" }} - HMS{% endblock %}
+{% block page_title %}{{ title|default:"Bills by Invoice Group" }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <h5 class="mb-0">{{ title|default:"Bills by Invoice Group (Cover Page Format)" }}</h5>
+            <a href="{% url 'hospital:claims_bills_hub' %}" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Claims Bills Hub
+            </a>
+        </div>
+        <div class="card-body">
+            <p class="text-muted small mb-3">
+                Each row is one <strong>invoice</strong>. If your site uses workflow <strong>Bill</strong> records linked to the invoice, they are listed underneath; otherwise you still see the invoice here when it has <strong>line items</strong> (common when billing is invoice-only). <strong>Cover</strong> prints invoice summary, any linked bills, and lines by category.
+            </p>
+
+            <form method="get" class="mb-4">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <input type="text" name="search" class="form-control" placeholder="Invoice #, patient, MRN…" value="{% if search and search|lower != 'invalid' %}{{ search }}{% endif %}">
+                    </div>
+                    <div class="col-md-2">
+                        <select name="status" class="form-select">
+                            <option value="">All invoice status</option>
+                            <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Draft</option>
+                            <option value="issued" {% if status_filter == 'issued' %}selected{% endif %}>Issued</option>
+                            <option value="partially_paid" {% if status_filter == 'partially_paid' %}selected{% endif %}>Partially paid</option>
+                            <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid</option>
+                            <option value="overdue" {% if status_filter == 'overdue' %}selected{% endif %}>Overdue</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <select name="bill_type" class="form-select">
+                            <option value="">All payer / bill types</option>
+                            <option value="corporate" {% if bill_type_filter == 'corporate' %}selected{% endif %}>Corporate (payer)</option>
+                            <option value="cash" {% if bill_type_filter == 'cash' %}selected{% endif %}>Cash (payer)</option>
+                            <option value="insurance" {% if bill_type_filter == 'insurance' %}selected{% endif %}>Insurance (payer)</option>
+                            <option value="mixed" {% if bill_type_filter == 'mixed' %}selected{% endif %}>Mixed bill (workflow)</option>
+                        </select>
+                    </div>
+                    {% if bill_type_filter == 'corporate' %}
+                    <div class="col-md-2">
+                        <select name="payer" class="form-select">
+                            <option value="">All corporate payers</option>
+                            {% for p in corporate_payers %}
+                            <option value="{{ p.id }}" {% if payer_filter == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% elif insurance_payers %}
+                    <div class="col-md-2">
+                        <select name="payer" class="form-select">
+                            <option value="">All insurance payers</option>
+                            {% for p in insurance_payers %}
+                            <option value="{{ p.id }}" {% if payer_filter == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endif %}
+                    <div class="col-md-2">
+                        <input type="date" name="date_from" class="form-control" value="{% if date_from and date_from|lower != 'invalid' %}{{ date_from }}{% endif %}" title="Invoice issued from">
+                    </div>
+                    <div class="col-md-2">
+                        <input type="date" name="date_to" class="form-control" value="{% if date_to and date_to|lower != 'invalid' %}{{ date_to }}{% endif %}" title="Invoice issued to">
+                    </div>
+                    <div class="col-md-1">
+                        <button type="submit" class="btn btn-primary w-100">Filter</button>
+                    </div>
+                </div>
+            </form>
+
+            <div class="alert alert-light border small mb-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <span class="mb-0"><strong>{{ invoices.paginator.count }}</strong> invoice(s) match (excluding cancelled). Showing up to 50 per page.</span>
+                {% if request.GET %}
+                <a class="btn btn-sm btn-outline-secondary" href="{{ request.path }}">Clear all filters</a>
+                {% endif %}
+            </div>
+
+            {% if invoices.paginator.count > 0 %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Invoice #</th>
+                            <th>Patient</th>
+                            <th>Payer</th>
+                            <th>Status</th>
+                            <th>Issued</th>
+                            <th>Due</th>
+                            <th class="text-end">Total</th>
+                            <th class="text-end">Balance</th>
+                            <th class="text-end">Paid</th>
+                            <th class="text-center" title="Workflow bills linked to this invoice">Bills</th>
+                            <th class="text-center" title="Invoice line rows">Lines</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for invoice in invoices %}
+                        <tr>
+                            <td><strong>{{ invoice.invoice_number }}</strong></td>
+                            <td>
+                                {{ invoice.patient.full_name }}
+                                {% if invoice.patient.mrn %}<span class="text-muted small d-block">MRN {{ invoice.patient.mrn }}</span>{% endif %}
+                            </td>
+                            <td>{% if invoice.payer %}{{ invoice.payer.name }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                            <td>
+                                <span class="badge bg-{% if invoice.status == 'paid' %}success{% elif invoice.status == 'issued' or invoice.status == 'partially_paid' %}warning text-dark{% elif invoice.status == 'overdue' %}danger{% elif invoice.status == 'draft' %}secondary{% else %}secondary{% endif %}">
+                                    {{ invoice.get_status_display }}
+                                </span>
+                            </td>
+                            <td>{{ invoice.issued_at|date:"Y-m-d" }}</td>
+                            <td>{% if invoice.due_at %}{{ invoice.due_at|date:"Y-m-d" }}{% else %}—{% endif %}</td>
+                            <td class="text-end">GHS {{ invoice.total_amount|floatformat:2|intcomma }}</td>
+                            <td class="text-end">GHS {{ invoice.balance|floatformat:2|intcomma }}</td>
+                            <td class="text-end">GHS {{ invoice.amount_paid|floatformat:2|intcomma }}</td>
+                            <td class="text-center"><span class="badge bg-{% if invoice.active_bill_count %}info{% else %}secondary{% endif %}">{{ invoice.active_bill_count }}</span></td>
+                            <td class="text-center"><span class="badge bg-light text-dark border">{{ invoice.active_line_count }}</span></td>
+                            <td>
+                                <div class="d-flex flex-wrap gap-1">
+                                    <a href="{% url 'hospital:invoice_detail' invoice.pk %}" class="btn btn-sm btn-outline-primary">Invoice</a>
+                                    <a href="{% url 'hospital:invoice_print' invoice.pk %}?cover_page=1" target="_blank" rel="noopener" class="btn btn-sm btn-outline-success" title="Printable cover + bills + lines">
+                                        <i class="bi bi-printer"></i> Cover
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                        <tr class="table-borderless">
+                            <td colspan="12" class="pt-0 pb-3 bg-light">
+                                <div class="px-2 py-2 rounded border small">
+                                    <strong class="text-muted">Workflow bills linked to this invoice</strong>
+                                    {% if invoice.encounter %}
+                                    <span class="text-muted ms-2">· Encounter: {{ invoice.encounter }}</span>
+                                    {% endif %}
+                                    {% if invoice.active_bill_count > 0 %}
+                                    <div class="table-responsive mt-2">
+                                        <table class="table table-sm table-bordered mb-0 bg-white">
+                                            <thead>
+                                                <tr>
+                                                    <th>Bill #</th>
+                                                    <th>Type</th>
+                                                    <th>Status</th>
+                                                    <th class="text-end">Total</th>
+                                                    <th class="text-end">Insurance</th>
+                                                    <th class="text-end">Patient</th>
+                                                    <th>Issued</th>
+                                                    <th>Due</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for bill in invoice.bills.all %}
+                                                <tr>
+                                                    <td><strong>{{ bill.bill_number }}</strong></td>
+                                                    <td>{{ bill.get_bill_type_display }}</td>
+                                                    <td><span class="badge bg-{% if bill.status == 'paid' %}success{% elif bill.status == 'issued' or bill.status == 'partially_paid' %}warning text-dark{% else %}secondary{% endif %}">{{ bill.get_status_display }}</span></td>
+                                                    <td class="text-end">GHS {{ bill.total_amount|floatformat:2|intcomma }}</td>
+                                                    <td class="text-end">GHS {{ bill.insurance_covered|floatformat:2|intcomma }}</td>
+                                                    <td class="text-end">GHS {{ bill.patient_portion|floatformat:2|intcomma }}</td>
+                                                    <td>{{ bill.issued_at|date:"Y-m-d" }}</td>
+                                                    <td>{{ bill.due_date|date:"Y-m-d" }}</td>
+                                                    <td>
+                                                        <a href="{% url 'hospital:process_payment_bill' bill.pk %}" class="btn btn-sm btn-outline-secondary py-0">Payment</a>
+                                                    </td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    {% else %}
+                                    <p class="text-muted mt-2 mb-0">No workflow <strong>Bill</strong> rows linked ({{ invoice.active_line_count }} invoice line item(s)). Use <strong>Invoice</strong> or <strong>Cover</strong> for charges and printout.</p>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% if invoices.has_other_pages %}
+            <nav aria-label="Page navigation" class="mt-3">
+                <ul class="pagination justify-content-center">
+                    {% if invoices.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ invoices.previous_page_number }}{% if filter_querystring %}&amp;{{ filter_querystring }}{% endif %}">Previous</a>
+                    </li>
+                    {% endif %}
+                    <li class="page-item active"><span class="page-link">Page {{ invoices.number }} of {{ invoices.paginator.num_pages }}</span></li>
+                    {% if invoices.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ invoices.next_page_number }}{% if filter_querystring %}&amp;{{ filter_querystring }}{% endif %}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox" style="font-size: 48px; color: #ccc;"></i>
+                <p class="text-muted mt-3">No invoices match the current filters.</p>
+                <p class="small text-muted mb-3">Try widening the date range, clearing search, or resetting bill type / payer.</p>
+                <a href="{{ request.path }}" class="btn btn-primary">Show all (clear filters)</a>
+            </div>
+            {% endif %}
+
+            {% if bills_without_invoice %}
+            <hr class="my-4">
+            <h6 class="mb-2">Bills not linked to an invoice</h6>
+            <p class="text-muted small">Typical for some auto-generated lab or pharmacy bills. Filters above (status, dates, search, bill type) apply here where applicable; payer filter does not.</p>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover">
+                    <thead>
+                        <tr>
+                            <th>Bill #</th>
+                            <th>Patient</th>
+                            <th>Type</th>
+                            <th>Date</th>
+                            <th class="text-end">Amount</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for bill in bills_without_invoice %}
+                        <tr>
+                            <td><strong>{{ bill.bill_number }}</strong></td>
+                            <td>
+                                <a href="{% url 'hospital:patient_detail' bill.patient.pk %}">{{ bill.patient.full_name }}</a>
+                                {% if bill.patient.mrn %}<span class="text-muted small"> · MRN {{ bill.patient.mrn }}</span>{% endif %}
+                            </td>
+                            <td>{{ bill.get_bill_type_display }}</td>
+                            <td>{{ bill.issued_at|date:"Y-m-d" }}</td>
+                            <td class="text-end">GHS {{ bill.total_amount|floatformat:2|intcomma }}</td>
+                            <td><span class="badge bg-{% if bill.status == 'paid' %}success{% elif bill.status == 'issued' or bill.status == 'partially_paid' %}warning text-dark{% else %}secondary{% endif %}">{{ bill.get_status_display }}</span></td>
+                            <td>
+                                <a href="{% url 'hospital:process_payment_bill' bill.pk %}" class="btn btn-sm btn-outline-primary py-0">Payment</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <p class="small text-muted">Showing up to 100 most recent. Use <a href="{% url 'hospital:bills_list' %}">All Bills</a> for the full filtered list.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,6 +1,6 @@
 """
 Automatic Attendance Tracking
-Tracks staff attendance automatically upon login (password or biometric)
+Tracks staff attendance automatically upon login (password)
 """
 
 from django.db import models
@@ -25,8 +25,6 @@ class StaffAttendance(BaseModel):
     
     LOGIN_METHOD = [
         ('password', 'Password Login'),
-        ('biometric', 'Biometric (Face Recognition)'),
-        ('biometric_fingerprint', 'Biometric (Fingerprint)'),
         ('manual', 'Manual Entry'),
     ]
     

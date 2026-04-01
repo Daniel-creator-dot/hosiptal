@@ -178,7 +178,7 @@ def sync_all_payments():
                             invoice_amount=payment.invoice.total_amount,
                             amount_paid=payment.amount,
                             balance_due=payment.invoice.balance,
-                            due_date=payment.invoice.due_date or payment.invoice.created.date(),
+                            due_date=payment.invoice.due_at.date() if payment.invoice.due_at else payment.invoice.created.date(),
                         )
                 
                 synced_count += 1

@@ -1,0 +1,472 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Combined Bill - {{ patient.full_name }} - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    @media print {
+        /* Print full bill content (do not use visibility:hidden on body - it prevents items table from rendering) */
+        .no-print { display: none !important; }
+        .sidebar, .sidebar-overlay { display: none !important; }
+        .invoice-print-area .table-responsive { overflow: visible !important; }
+        .invoice-print-area .card-body { overflow: visible !important; }
+        .invoice-print-header,
+        .invoice-info-grid { page-break-after: avoid; }
+        body { padding: 0; background: #fff; }
+        .container-fluid { max-width: 100%; padding: 8px; }
+        .invoice-print-header .hospital-logo { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+    .invoice-print-header { border-bottom: 2px solid #dee2e6; padding-bottom: 12px; margin-bottom: 12px; }
+    .invoice-print-header .hospital-name { font-size: 1.25rem; font-weight: 700; color: #1f2937; }
+    .invoice-print-header .bill-number { font-size: 0.9rem; font-weight: 700; font-family: 'Courier New', monospace; }
+    .invoice-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+    .invoice-info-block { border: 1px solid #e5e7eb; border-radius: 4px; padding: 10px; background: #f9fafb; }
+    .invoice-info-block .label { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; color: #6b7280; }
+    .invoice-info-block .value { font-size: 0.9rem; font-weight: 600; color: #111827; }
+    .combined-totals-table { width: 100%; max-width: 360px; margin-left: auto; border-collapse: collapse; }
+    .combined-totals-table td { padding: 6px 8px; border-bottom: 1px solid #e5e7eb; font-size: 0.9rem; }
+    .combined-totals-table tr.outstanding-row { background: #fef2f2; font-weight: 700; }
+    .combined-totals-table tr.outstanding-row td { color: #b91c1c; font-size: 1rem; border: none; }
+    .invoice-print-header .hospital-logo {
+        width: 56px;
+        height: 56px;
+        object-fit: contain;
+        margin-right: 12px;
+        border-radius: 4px;
+        flex-shrink: 0;
+    }
+    .invoice-print-header .header-brand { display: flex; align-items: flex-start; }
+    .invoice-print-header .header-brand-text { flex: 1; }
+    .invoice-print-header .hospital-more-info { font-size: 0.75rem; color: #6b7280; margin-top: 4px; line-height: 1.3; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4 no-print">
+        <div>
+            <h1 class="h4 mb-1">Combined Bill</h1>
+            <p class="mb-0 text-muted">{{ patient.full_name }} (MRN: {{ patient.mrn }})</p>
+        </div>
+        <a href="{% url 'hospital:invoice_list' %}?view=combined" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Invoices
+        </a>
+    </div>
+
+    <div class="invoice-print-area">
+    {% if can_waive and total_balance > 0 %}
+    <div class="alert alert-info mb-3 no-print">
+        <i class="bi bi-info-circle me-2"></i>
+        Use <strong>Waive</strong> to remove items (e.g. already paid). Enter a reason for audit.
+    </div>
+    {% endif %}
+
+    <!-- Invoice-style header for print (like Primecare bill) - logo and more info -->
+    <div class="invoice-print-header">
+        <div class="d-flex justify-content-between align-items-start">
+            <div class="header-brand">
+                {% if hospital_settings.logo %}
+                <img src="{{ hospital_settings.logo.url }}" alt="{{ hospital_settings.hospital_name|default:'Hospital' }}" class="hospital-logo">
+                {% endif %}
+                <div class="header-brand-text">
+                    <div class="hospital-name">{{ hospital_settings.hospital_name|default:"Primecare Medical Center" }}</div>
+                    <div class="text-muted small">{{ hospital_settings.hospital_tagline|default:"Quality Healthcare for All" }}</div>
+                    {% if hospital_settings.address or hospital_settings.phone or hospital_settings.email %}
+                    <div class="hospital-more-info">
+                        {% if hospital_settings.address %}{{ hospital_settings.address }}{% endif %}
+                        {% if hospital_settings.phone %}{% if hospital_settings.address %} · {% endif %}{{ hospital_settings.phone }}{% endif %}
+                        {% if hospital_settings.email %}{% if hospital_settings.address or hospital_settings.phone %} · {% endif %}{{ hospital_settings.email }}{% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="text-end">
+                <div class="label text-uppercase text-muted small">Combined Bill</div>
+                <div class="bill-number">BILL-{{ patient.mrn|default:patient.id|slice:":8" }}-{% now "Ymd" %}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Patient & Invoice details (like second picture) -->
+    <div class="invoice-info-grid">
+        <div class="invoice-info-block">
+            <div class="label mb-1">Patient</div>
+            <div class="value">FULL NAME: {{ patient.full_name }}</div>
+            <div class="value">MRN: {{ patient.mrn|default:"—" }}</div>
+            <div class="value">PHONE: {{ patient.phone_number|default:"—" }}</div>
+        </div>
+        <div class="invoice-info-block">
+            <div class="label mb-1">Bill details</div>
+            <div class="value">ISSUE DATE: {% now "M d, Y" %}</div>
+            <div class="value">DUE DATE: {% if unpaid_invoices and unpaid_invoices.0.due_at %}{{ unpaid_invoices.0.due_at|date:"M d, Y" }}{% else %}{% now "M d, Y" %}{% endif %}</div>
+            <div class="value">PAYER: {% if unpaid_invoices %}{{ unpaid_invoices.0.payer.name|default:"Cash" }}{% else %}Cash{% endif %}</div>
+            <div class="value">DEPOSIT APPLIED: <strong>GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }}</strong></div>
+            <div class="value">STATUS: <span class="badge bg-warning text-dark">OUTSTANDING</span></div>
+        </div>
+    </div>
+
+    <!-- Outstanding by invoice – so "same person has 2 outstanding" is visible -->
+    {% if unpaid_invoices %}
+    <div class="card border-0 shadow-sm mt-3">
+        <div class="card-header bg-white py-2">
+            <h6 class="mb-0"><i class="bi bi-receipt me-2"></i>Outstanding invoices ({{ unpaid_invoices|length }})</h6>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>#</th>
+                            <th>Invoice</th>
+                            <th class="text-end">Total (GHS)</th>
+                            <th class="text-end">Outstanding (GHS)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for inv in unpaid_invoices %}
+                        <tr>
+                            <td>{{ forloop.counter }}</td>
+                            <td>{{ inv.invoice_number }}</td>
+                            <td class="text-end">{{ inv.total_amount|floatformat:2|intcomma }}</td>
+                            <td class="text-end fw-bold text-danger">{{ inv.balance|floatformat:2|intcomma }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="card border-0 shadow-sm invoice-print-charges">
+        <div class="card-header bg-white py-3">
+            <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>Charges by Category</h5>
+        </div>
+        <div class="card-body p-0">
+            {% if lines_by_category %}
+            {% for category, num_items in numbered_by_category %}
+            <div class="border-bottom">
+                <div class="px-3 py-2 bg-light fw-bold text-primary small text-uppercase">{{ category }}</div>
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="text-center" style="width: 40px;">#</th>
+                                <th>CODE</th>
+                                <th>DESCRIPTION</th>
+                                <th class="text-center">DATE</th>
+                                <th class="text-center">QTY</th>
+                                <th class="text-end">UNIT</th>
+                                <th class="text-end">DISCOUNT</th>
+                                <th class="text-end">TOTAL</th>
+                                {% if can_waive %}<th class="text-center no-print">Action</th>{% endif %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {% for num, item in num_items %}
+                        <tr>
+                            <td class="text-center">{{ num }}</td>
+                            <td>{% if item.line.service_code %}<code class="small">{{ item.line.service_code.code }}</code>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                            <td>{% if item.line.description %}{{ item.line.description }}{% elif item.line.service_code %}{{ item.line.service_code.description }}{% else %}—{% endif %} <span class="text-muted small">({{ item.invoice.invoice_number }})</span></td>
+                            <td class="text-center text-nowrap">{% if item.line.created %}{{ item.line.created|date:"d M Y" }}{% elif item.invoice.issued_at %}{{ item.invoice.issued_at|date:"d M Y" }}{% else %}—{% endif %}</td>
+                            <td class="text-center">{{ item.line.quantity }}</td>
+                            <td class="text-end">GHS {{ item.line.display_unit_price|floatformat:2|intcomma }}</td>
+                            <td class="text-end">{% if item.line.discount_amount and item.line.discount_amount > 0 %}GHS {{ item.line.discount_amount|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+                            <td class="text-end">
+                                {% if item.line.waived_at %}
+                                <span class="text-success">GHS 0.00</span>
+                                <span class="badge bg-success">Waived</span>
+                                {% else %}
+                                <strong>GHS {{ item.line.display_line_total|floatformat:2|intcomma }}</strong>
+                                {% endif %}
+                            </td>
+                            {% if can_waive %}
+                            <td class="text-center no-print">
+                                {% if item.line.waived_at %}
+                                <small class="text-muted">—</small>
+                                {% elif total_balance > 0 %}
+                                <button type="button" class="btn btn-sm btn-outline-warning"
+                                        data-bs-toggle="modal" data-bs-target="#waiveModal"
+                                        data-line-id="{{ item.line.id }}"
+                                        data-line-desc="{{ item.line.description }}"
+                                        data-redirect="{{ request.build_absolute_uri }}">
+                                    <i class="bi bi-dash-circle"></i> Waive
+                                </button>
+                                {% endif %}
+                            </td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endfor %}
+            <div class="p-3 border-top bg-light">
+                <table class="combined-totals-table ms-auto">
+                    <tr>
+                        <td class="text-end">Initial (total from items)</td>
+                        <td class="text-end">GHS {{ total_amount|floatformat:2|intcomma }}</td>
+                    </tr>
+                    <tr>
+                        <td class="text-end">Amount paid to date</td>
+                        <td class="text-end">GHS {{ total_paid|default:0|floatformat:2|intcomma }}</td>
+                    </tr>
+                    <tr>
+                        <td class="text-end">Deposit (applied)</td>
+                        <td class="text-end">{% if deposit_applied_to_bill > 0 %}- GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }}{% else %}GHS 0.00{% endif %}</td>
+                    </tr>
+                    <tr class="outstanding-row">
+                        <td class="text-end">Outstanding balance</td>
+                        <td class="text-end">GHS {{ total_balance|floatformat:2|intcomma }}</td>
+                    </tr>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5 text-muted">
+                <i class="bi bi-check-circle" style="font-size: 3rem;"></i>
+                <p class="mt-2 mb-0">No outstanding line items</p>
+                <p class="mt-2 mb-0 small">If you just waived or paid the last charge, the balance is cleared—refresh was applied. Use <strong>Invoices</strong> to view history.</p>
+            </div>
+            <div class="p-3 border-top bg-light">
+                <table class="combined-totals-table ms-auto">
+                    <tr>
+                        <td class="text-end">Initial (total from items)</td>
+                        <td class="text-end">GHS {{ total_amount|floatformat:2|intcomma }}</td>
+                    </tr>
+                    <tr>
+                        <td class="text-end">Amount paid to date</td>
+                        <td class="text-end">GHS {{ total_paid|default:0|floatformat:2|intcomma }}</td>
+                    </tr>
+                    <tr>
+                        <td class="text-end">Deposit (applied)</td>
+                        <td class="text-end">{% if deposit_applied_to_bill > 0 %}- GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }}{% else %}GHS 0.00{% endif %}</td>
+                    </tr>
+                    <tr class="outstanding-row">
+                        <td class="text-end">Outstanding balance</td>
+                        <td class="text-end">GHS {{ total_balance|floatformat:2|intcomma }}</td>
+                    </tr>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Deposits on account – every deposit made in the patient's account -->
+    {% if patient_deposits %}
+    <div class="card border-0 shadow-sm mt-4">
+        <div class="card-header bg-white py-3">
+            <h5 class="mb-0"><i class="bi bi-wallet2 me-2"></i>Deposits on account</h5>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Deposit No</th>
+                            <th>Date</th>
+                            <th class="text-end">Amount (GHS)</th>
+                            <th class="text-end">Available (GHS)</th>
+                            <th class="text-end">Used (GHS)</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for dep in patient_deposits %}
+                        <tr>
+                            <td>{{ dep.deposit_number }}</td>
+                            <td>{{ dep.deposit_date|date:"d M Y H:i" }}</td>
+                            <td class="text-end">{{ dep.deposit_amount|floatformat:2|intcomma }}</td>
+                            <td class="text-end">{{ dep.display_available_balance|floatformat:2|intcomma }}</td>
+                            <td class="text-end">{{ dep.used_amount|floatformat:2|intcomma }}</td>
+                            <td>{{ dep.get_status_display|default:dep.status }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Pharmacy / Prescription (pending – not yet on invoice) -->
+    {% if pending_pharmacy_prescriptions or pending_prescribe_sales %}
+    <div class="card border-0 shadow-sm mt-4">
+        <div class="card-header bg-success bg-opacity-10 py-3 border-bottom">
+            <h5 class="mb-0 text-success"><i class="bi bi-capsule me-2"></i>Pharmacy / Prescription (pending)</h5>
+            <small class="text-muted">From consultation – pharmacy must verify, edit (drug/qty), then Send to Payer or Cancel. They appear here until pharmacy sends to cashier/insurance.</small>
+        </div>
+        <div class="card-body p-0">
+            {% if pending_pharmacy_prescriptions %}
+            <div class="border-bottom">
+                <div class="px-3 py-2 bg-light fw-bold small text-uppercase text-primary">Prescription (from doctor)</div>
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Drug</th>
+                                <th class="text-center">Qty</th>
+                                <th class="text-end">Unit (GHS)</th>
+                                <th class="text-end">Total (GHS)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in pending_pharmacy_prescriptions %}
+                            <tr>
+                                <td><strong>{{ row.description }}</strong></td>
+                                <td class="text-center">{{ row.quantity }}</td>
+                                <td class="text-end">{{ row.unit_price|floatformat:2 }}</td>
+                                <td class="text-end"><strong>{{ row.amount|floatformat:2 }}</strong></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endif %}
+            {% if pending_prescribe_sales %}
+            {% for sale in pending_prescribe_sales %}
+            <div class="border-bottom">
+                <div class="px-3 py-2 bg-light fw-bold small text-uppercase text-success d-flex justify-content-between align-items-center">
+                    <span>Prescribe Sale {{ sale.sale_number }}</span>
+                    {% if can_waive %}
+                    <button type="button" class="btn btn-sm btn-outline-warning no-print"
+                            data-bs-toggle="modal" data-bs-target="#waivePrescribeSaleModal"
+                            data-sale-id="{{ sale.sale_id }}"
+                            data-sale-number="{{ sale.sale_number }}"
+                            data-redirect="{{ request.build_absolute_uri }}">
+                        <i class="bi bi-dash-circle"></i> Waive
+                    </button>
+                    {% endif %}
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Item</th>
+                                <th class="text-center">Qty</th>
+                                <th class="text-end">Unit (GHS)</th>
+                                <th class="text-end">Total (GHS)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in sale.breakdown %}
+                            <tr>
+                                <td>{{ row.description|default:"—" }}</td>
+                                <td class="text-center">{{ row.quantity|default:1 }}</td>
+                                <td class="text-end">{{ row.unit_price|floatformat:2 }}</td>
+                                <td class="text-end"><strong>{{ row.amount|floatformat:2 }}</strong></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot class="table-light">
+                            <tr>
+                                <th colspan="3" class="text-end">Prescribe Sale total:</th>
+                                <th class="text-end">GHS {{ sale.total|floatformat:2 }}</th>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+            {% endfor %}
+            {% endif %}
+            <div class="p-3 bg-light border-top">
+                <p class="mb-0 small text-muted"><i class="bi bi-info-circle me-1"></i>Prescriptions: pharmacy edits then sends to payer; after that they appear on the bill and can be paid at cashier. Prescribe sales: pay at cashier.</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    </div><!-- end .invoice-print-area -->
+
+    {% if unpaid_invoices or pending_pharmacy_prescriptions or pending_prescribe_sales %}
+    <div class="mt-3 d-flex flex-wrap gap-2 no-print">
+        <button type="button" class="btn btn-outline-primary" onclick="window.print();">
+            <i class="bi bi-printer"></i> Print Statement
+        </button>
+        {% if unpaid_invoices %}
+        <a href="{% url 'hospital:process_payment_invoice' unpaid_invoices.0.pk %}" class="btn btn-success">
+            <i class="bi bi-credit-card"></i> Record Payment (invoice)
+        </a>
+        {% endif %}
+        {% if pending_pharmacy_prescriptions or pending_prescribe_sales %}
+        <a href="{% url 'hospital:cashier_patient_total_bill' patient.id %}" class="btn btn-success">
+            <i class="bi bi-cash-coin"></i> Pay full bill (including pharmacy)
+        </a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<div class="modal fade no-print" id="waiveModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'hospital:waive_invoice_line' %}">
+                {% csrf_token %}
+                <input type="hidden" name="line_id" id="waive_line_id">
+                <input type="hidden" name="redirect_url" id="waive_redirect_url">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-dash-circle me-2"></i>Waive Item</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p><strong>Item:</strong> <span id="waive_line_desc" class="text-primary"></span></p>
+                    <label for="waiver_reason" class="form-label">Reason (required)</label>
+                    <textarea name="waiver_reason" id="waiver_reason" class="form-control" rows="2" required
+                              placeholder="e.g. Migrated from old system - already paid"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning">Waive</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade no-print" id="waivePrescribeSaleModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'hospital:waive_prescribe_sale' %}">
+                {% csrf_token %}
+                <input type="hidden" name="sale_id" id="waive_sale_id">
+                <input type="hidden" name="redirect_url" id="waive_prescribe_redirect_url">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-dash-circle me-2"></i>Waive Prescribe Sale</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p><strong>Prescribe Sale:</strong> <span id="waive_sale_number" class="text-primary"></span></p>
+                    <label for="waiver_reason_prescribe" class="form-label">Reason (required)</label>
+                    <textarea name="waiver_reason" id="waiver_reason_prescribe" class="form-control" rows="2" required
+                              placeholder="e.g. Patient did not pay; already paid elsewhere"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning">Waive</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    var wm = document.getElementById('waiveModal');
+    if (wm) wm.addEventListener('show.bs.modal', function(e) {
+        var btn = e.relatedTarget;
+        document.getElementById('waive_line_id').value = btn && btn.getAttribute ? (btn.getAttribute('data-line-id') || '') : '';
+        document.getElementById('waive_line_desc').textContent = btn && btn.getAttribute ? (btn.getAttribute('data-line-desc') || '') : '';
+        document.getElementById('waive_redirect_url').value = btn && btn.getAttribute ? (btn.getAttribute('data-redirect') || '') : '';
+    });
+    var pm = document.getElementById('waivePrescribeSaleModal');
+    if (pm) pm.addEventListener('show.bs.modal', function(e) {
+        var btn = e.relatedTarget;
+        document.getElementById('waive_sale_id').value = btn && btn.getAttribute ? (btn.getAttribute('data-sale-id') || '') : '';
+        document.getElementById('waive_sale_number').textContent = btn && btn.getAttribute ? (btn.getAttribute('data-sale-number') || '') : '';
+        document.getElementById('waive_prescribe_redirect_url').value = btn && btn.getAttribute ? (btn.getAttribute('data-redirect') || '') : '';
+    });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,783 @@
+{% extends 'hospital/base.html' %}
+{% load hospital_extras %}
+{% load static humanize hospital_extras %}
+
+{% block title %}Total Bill - {{ patient.full_name }} - Cashier - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    @media print {
+        body * { visibility: hidden; }
+        .invoice-print-area, .invoice-print-area * { visibility: visible; }
+        .invoice-print-area { position: absolute; left: 0; top: 0; width: 100%; }
+        .no-print { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #dee2e6; }
+        .card-header.bg-primary, .card.bg-primary, .card.bg-success, .card.bg-info {
+            -webkit-print-color-adjust: exact; print-color-adjust: exact;
+        }
+    }
+    .bill-print-title { display: none; }
+    .bill-print-summary { display: none; }
+    @media print {
+        .bill-print-title {
+            display: block !important;
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid #333;
+        }
+        .bill-print-summary {
+            display: block !important;
+            font-size: 1rem;
+            margin-bottom: 1rem;
+            padding: 0.5rem 0;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4 no-print">
+        <div>
+            <h2>{{ patient.full_name }}</h2>
+            <p class="text-muted mb-0">MRN: {{ patient.mrn }} | Phone: {{ patient.phone_number|default:"N/A" }}</p>
+            {% if patient.primary_insurance %}
+            <p class="text-muted mb-0">Payer: {{ patient.primary_insurance.name }}</p>
+            {% endif %}
+        </div>
+        <div class="d-flex flex-wrap gap-2 align-items-center no-print">
+            <a href="{% url 'hospital:cashier_patient_bills' %}{{ bills_list_query|default:'' }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to All Bills
+            </a>
+            <a href="{% url 'hospital:record_patient_deposit' patient.id %}" class="btn btn-warning" title="Record a new deposit for this patient">
+                <i class="bi bi-wallet2"></i> Record Deposit
+            </a>
+            {% if patient_deposit_balance > 0 %}
+            <form method="post" action="{% url 'hospital:cashier_apply_deposit_to_bill' patient.id %}" class="d-inline">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-success" title="Apply deposit to this total bill as payment and generate receipts">
+                    <i class="bi bi-check-circle"></i> Apply deposit to total bill
+                </button>
+            </form>
+            {% else %}
+            <button type="button" class="btn btn-outline-secondary" disabled title="Record a deposit first, then apply it here">
+                <i class="bi bi-check-circle"></i> Apply deposit to total bill
+            </button>
+            {% endif %}
+            <a href="{% url 'hospital:cashier_patient_total_bill' patient.id %}?print=1{% if total_bill_preserve_query %}&{{ total_bill_preserve_query }}{% endif %}" class="btn btn-outline-primary" target="_blank" rel="noopener" title="Open proper invoice with logo for printing">
+                <i class="bi bi-file-earmark-text"></i> Generate Bill
+            </a>
+            <a href="{% url 'hospital:cashier_process_patient_combined_payment' patient.id %}" class="btn btn-success">
+                <i class="bi bi-cash-coin"></i> {% if credit_balance > 0 %}Process Payment{% elif patient_deposit_balance > 0 %}Process Payment (Outstanding GHS {{ total_outstanding|floatformat:2 }}){% else %}Process Payment{% endif %}
+            </a>
+            {% if show_refund_credit %}
+            <a href="{% url 'hospital:cashier_refund_credit' patient.id %}" class="btn btn-outline-warning" title="Refund credit to patient">
+                <i class="bi bi-cash-stack"></i> Refund credit (GHS {{ credit_balance|floatformat:2 }})
+            </a>
+            {% endif %}
+        </div>
+    </div>
+    {% if credit_balance > 0 and show_refund_credit %}
+    <div class="alert alert-info no-print mb-3" role="alert">
+        <i class="bi bi-info-circle me-2"></i>
+        <strong>Credit:</strong> GHS {{ credit_balance|floatformat:2|intcomma }}. Click <strong>Refund credit</strong> to issue a refund to the patient (until discharge).
+    </div>
+    {% endif %}
+    {% if patient_deposit_balance > 0 %}
+    <div class="alert alert-success no-print mb-3 d-flex align-items-start" role="alert" style="font-size: 1rem;">
+        <span class="me-3" style="font-size: 1.5rem;"><i class="bi bi-wallet2"></i></span>
+        <div class="flex-grow-1">
+            <strong class="d-block mb-1">Deposit available on account</strong>
+            <div class="mb-1">Deposit balance: <strong>GHS {{ patient_deposit_balance|floatformat:2|intcomma }}</strong> — if you apply it, amount due becomes <strong>GHS {{ amount_due_after_deposit|floatformat:2|intcomma }}</strong> (full account).</div>
+            <div class="mb-2 small">Click <strong>Apply deposit to total bill</strong> when the patient is ready to pay — it records the deposit as payment and reduces invoice balances. Then use <strong>Collect Payment</strong> for any remaining cash or MoMo. Deposits are not applied automatically when you process payment.</div>
+            <form method="post" action="{% url 'hospital:cashier_apply_deposit_to_bill' patient.id %}" class="d-inline">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-success btn-sm">
+                    <i class="bi bi-check-circle"></i> Apply deposit to total bill
+                </button>
+            </form>
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-secondary no-print mb-3 d-flex align-items-center" role="alert">
+        <i class="bi bi-wallet2 me-2"></i>
+        <span>
+            {% if patient_deposits %}
+            No available deposit balance. All deposits have been applied to the bill.
+            {% else %}
+            No deposit on account.
+            {% endif %}
+            <a href="{% url 'hospital:record_patient_deposit' patient.id %}" class="alert-link fw-bold">Record deposit</a> if the patient is paying in advance.
+        </span>
+    </div>
+    {% endif %}
+    <div class="alert alert-light border border-success no-print mb-3 py-2" role="alert">
+        <i class="bi bi-receipt-cutoff text-success me-2"></i>
+        <strong>Reception prices:</strong> Antenatal = 235 GHS &nbsp;|&nbsp; Gynae / Special = 260 GHS
+    </div>
+
+    {% if today_pending or filter_date or service_filter %}
+    <div class="alert alert-info no-print mb-3" role="alert">
+        <i class="bi bi-funnel me-1"></i>
+        {% if today_pending %}Showing <strong>today's pending</strong> only — same as Combined Payment list.
+        {% elif filter_date %}Showing pending from <strong>{{ filter_date|date:"M d, Y" }}</strong> only.
+        {% endif %}
+        {% if service_filter %}Filtered by: <strong>{{ service_filter|title }}</strong>.{% endif %}
+        <a href="{% url 'hospital:cashier_patient_total_bill' patient.id %}" class="alert-link ms-2">Show all pending</a>
+    </div>
+    {% endif %}
+    <div class="card border-secondary no-print mb-3">
+        <div class="card-body py-2">
+            <form method="get" action="{% url 'hospital:cashier_patient_total_bill' patient.id %}" class="row g-2 align-items-end">
+                {% if today_pending %}
+                <input type="hidden" name="today_pending" value="1">
+                {% elif filter_date_str %}
+                <input type="hidden" name="filter_date" value="{{ filter_date_str }}">
+                {% endif %}
+                {% if service_filter %}
+                <input type="hidden" name="service_filter" value="{{ service_filter }}">
+                {% endif %}
+                <div class="col-auto">
+                    <label class="form-label small mb-0 text-muted">Total payment — receipts from</label>
+                    <input type="date" name="payment_date_from" class="form-control form-control-sm" value="{{ payment_date_from_str }}">
+                </div>
+                <div class="col-auto">
+                    <label class="form-label small mb-0 text-muted">to</label>
+                    <input type="date" name="payment_date_to" class="form-control form-control-sm" value="{{ payment_date_to_str }}">
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-sm btn-primary">Apply</button>
+                    {% if payment_filter_active %}
+                    <a href="{% url 'hospital:cashier_patient_total_bill' patient.id %}{% if total_bill_clear_payment_query %}?{{ total_bill_clear_payment_query }}{% endif %}" class="btn btn-sm btn-outline-secondary">Clear dates</a>
+                    {% endif %}
+                </div>
+            </form>
+            <p class="small text-muted mb-0 mt-2">Filters the <strong>Total payment</strong> figure to receipts in this date range. <strong>Amount due</strong> stays the full account balance.</p>
+        </div>
+    </div>
+    {% if payment_filter_active %}
+    <div class="alert alert-secondary no-print mb-3" role="alert">
+        <i class="bi bi-calendar-range me-1"></i>
+        Total payment shows receipts from <strong>{{ payment_date_from_str }}</strong> to <strong>{{ payment_date_to_str }}</strong> (GHS {{ total_paid|floatformat:2|intcomma }}). All-time payments: GHS {{ total_paid_all_time|floatformat:2|intcomma }}. Amount due is for the full account.
+    </div>
+    {% endif %}
+    {% if added_items_display %}
+    <div class="alert alert-info no-print mb-3" role="alert">
+        <strong><i class="bi bi-check-circle me-1"></i>Items added to bill:</strong>
+        <ul class="mb-0 mt-2 list-unstyled">
+            {% for item in added_items_display %}
+            <li><strong>{{ item.name }}</strong> — GHS {{ item.amount }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    {% if reception_visit_info %}
+    <div class="alert alert-success no-print mb-3 d-flex align-items-center" role="alert">
+        <i class="bi bi-receipt-cutoff me-3" style="font-size: 1.5rem;"></i>
+        <div>
+            <strong>Reception set this visit:</strong>
+            <span class="ms-2">{{ reception_visit_info.label }} — <strong>GHS {{ reception_visit_info.amount|floatformat:2 }}</strong></span>
+            {% if reception_visit_info.standard and reception_visit_info.amount != reception_visit_info.standard %}
+            <span class="text-muted small ms-2">(override; standard {{ reception_visit_info.label }} = GHS {{ reception_visit_info.standard|floatformat:2 }})</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+    
+    <div class="invoice-print-area">
+    <div class="bill-print-title">Generated Bill – {{ patient.full_name }} (MRN: {{ patient.mrn }})</div>
+    <div class="bill-print-summary">
+        <strong>Amount billed:</strong> GHS {{ initial_total|default:total|floatformat:2|intcomma }}
+        &nbsp;|&nbsp; <strong>Deposit taken:</strong> {% if deposit_applied_to_bill > 0 %}GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }}{% else %}GHS 0.00{% endif %}
+        &nbsp;|&nbsp; <strong>{% if credit_balance > 0 %}Credit{% else %}Outstanding on this bill{% endif %}:</strong> {% if credit_balance > 0 %}GHS {{ credit_balance|floatformat:2|intcomma }}{% else %}GHS {{ bill_outstanding|floatformat:2|intcomma }}{% endif %}
+        &nbsp;|&nbsp; <strong>{% if payment_filter_active %}Payments in range{% else %}Payments (all){% endif %}:</strong> GHS {{ total_paid|default:0|floatformat:2|intcomma }}{% if payment_filter_active %} <span class="text-muted">(all-time GHS {{ total_paid_all_time|floatformat:2|intcomma }})</span>{% endif %}
+    </div>
+    <!-- Total Bill Summary -->
+    <div class="row mb-4">
+        <div class="col-md-3 col-6 mb-3 mb-md-0">
+            <div class="card bg-success text-white">
+                <div class="card-body">
+                    {% if credit_balance > 0 %}
+                    <h6>Credit on account</h6>
+                    <h2>GHS {{ credit_balance|floatformat:2 }}</h2>
+                    <small>Patient has overpaid. Use <strong>Refund credit</strong> to issue a refund.</small>
+                    {% else %}
+                    <h6>Outstanding on this bill (before deposit)</h6>
+                    <h2>GHS {{ bill_outstanding|floatformat:2 }}</h2>
+                    <small>{% if patient_deposit_balance > 0 %}Deposit available: applying it to these invoices will reduce this combined bill when you use <strong>Apply deposit to total bill</strong>.{% else %}To be paid for this combined bill{% endif %}</small>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-6 mb-3 mb-md-0">
+            <div class="card text-white" style="background-color: #0d6efd;">
+                <div class="card-body">
+                    <h6>Total Payment</h6>
+                    <h2>GHS {{ total_paid|default:0|floatformat:2|intcomma }}</h2>
+                    <small>{% if payment_filter_active %}Receipts in selected date range{% else %}Amount paid to date (all receipts){% endif %}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-6 mb-3 mb-md-0">
+            <div class="card bg-primary text-white">
+                <div class="card-body">
+                    <h6>Total Services</h6>
+                    <h2>{{ services_count }}</h2>
+                    <small>Pending services</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-6 mb-3 mb-md-0">
+            <div class="card bg-info text-white">
+                <div class="card-body">
+                    <h6>Patient</h6>
+                    <h5>{{ patient.full_name }} {% patient_payer_badges patient %}</h5>
+                    <small>{{ patient.mrn }}</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Services Breakdown -->
+    {% if services %}
+    <div class="card shadow">
+        <div class="card-header bg-light">
+            <h5 class="mb-0"><i class="bi bi-list-check"></i> Services Breakdown</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Service</th>
+                            <th>Date</th>
+                            <th class="text-end">Amount</th>
+                            <th class="text-end" style="width: 120px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for service in services %}
+                        <tr class="service-row" role="button" tabindex="0" data-service-index="{{ forloop.counter0 }}" style="cursor: pointer;" title="Click for breakdown">
+                            <td>
+                                {% if service.type == 'lab' %}
+                                    <span class="badge bg-info">🧪 Lab</span>
+                                {% elif service.type == 'pharmacy' %}
+                                    <span class="badge bg-success">💊 Pharmacy</span>
+                                {% elif service.type == 'pharmacy_walkin' %}
+                                    <span class="badge bg-success">🛒 Prescribe</span>
+                                {% elif service.type == 'imaging' %}
+                                    <span class="badge" style="background: linear-gradient(135deg, #6f42c1 0%, #8e44ad 100%); color: white;">📷 Imaging</span>
+                                {% elif service.type == 'consultation' %}
+                                    <span class="badge bg-primary">👨‍⚕️ Consultation</span>
+                                {% elif service.type == 'bed' %}
+                                    <span class="badge bg-warning text-dark">🛏️ Bed</span>
+                                {% elif service.type == 'invoice' or service.type == 'invoice_line' %}
+                                    <span class="badge bg-secondary">📄 Invoice</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ service.type|title }}</span>
+                                {% endif %}
+                            </td>
+                            <td><strong>{{ service.name }}</strong></td>
+                            <td>{{ service.date|date:"M d, Y H:i" }}</td>
+                            <td class="text-end"><strong>GHS {{ service.price|floatformat:2 }}</strong></td>
+                            <td class="text-end" onclick="event.stopPropagation();">
+                                {% if service.type == 'invoice' or service.type == 'invoice_line' %}
+                                    {% if remove_invoice_from_bill_url and can_remove_invoice_from_bill %}
+                                    <form method="post" action="{{ remove_invoice_from_bill_url }}" style="display:inline;" onsubmit="return confirm('Remove this invoice from the bill? Any deposit paid on it will be returned to the patient deposit balance; other payments (cash/MoMo) cannot be removed here. Remaining lines will add up to the new total.');">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="invoice_id" value="{% if service.invoice_id %}{{ service.invoice_id }}{% else %}{{ service.id }}{% endif %}">
+                                        <input type="hidden" name="redirect_url" value="{% url 'hospital:cashier_patient_total_bill' patient.id %}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove from bill (Accountant only)"><i class="bi bi-x-circle"></i> Remove</button>
+                                    </form>
+                                    {% endif %}
+                                {% elif service.type == 'pharmacy_walkin' %}
+                                    {% if can_waive %}
+                                    <form method="post" action="{% url 'hospital:waive_prescribe_sale' %}" style="display:inline;" onsubmit="return confirm('Remove this Prescribe Sale from the bill? It will no longer appear here.');">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="sale_id" value="{{ service.id }}">
+                                        <input type="hidden" name="waiver_reason" value="Removed from bill by administrator">
+                                        <input type="hidden" name="redirect_url" value="{% url 'hospital:cashier_patient_total_bill' patient.id %}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove from bill (administrators only)"><i class="bi bi-x-circle"></i> Remove</button>
+                                    </form>
+                                    {% endif %}
+                                {% else %}
+                                    <i class="bi bi-chevron-right text-muted"></i>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% if service.breakdown %}
+                        <tr class="table-light detail-row">
+                            <td colspan="5" class="py-1 pt-0">
+                                <table class="table table-sm table-bordered mb-0 ms-4" style="max-width: 90%; background: #fff;">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th class="py-1">Description</th>
+                                            <th class="text-center py-1" style="width: 60px;">Qty</th>
+                                            <th class="text-end py-1" style="width: 90px;">Unit (GHS)</th>
+                                            <th class="text-end py-1" style="width: 90px;">Amount (GHS)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for row in service.breakdown %}
+                                        {% if not row.is_waived %}
+                                        <tr>
+                                            <td class="py-1">{{ row.description|default:"—" }}</td>
+                                            <td class="text-center py-1">{{ row.quantity|default:1 }}</td>
+                                            <td class="text-end py-1">{{ row.unit_price|floatformat:2 }}</td>
+                                            <td class="text-end py-1"><strong>{{ row.amount|floatformat:2 }}</strong></td>
+                                        </tr>
+                                        {% endif %}
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr class="table-light">
+                            <th colspan="4" class="text-end">Sum of amounts in rows above:</th>
+                            <th class="text-end">GHS {{ total|floatformat:2|intcomma }}</th>
+                        </tr>
+                        <tr>
+                            <th colspan="4" class="text-end">Initial (face value incl. deposit already on invoice):</th>
+                            <th class="text-end" style="font-size: 1.2rem;">GHS {{ initial_total|default:total|floatformat:2|intcomma }}</th>
+                        </tr>
+                        <tr class="{% if deposit_applied_to_bill > 0 or patient_deposit_balance > 0 %}table-info{% endif %}">
+                            <th colspan="4" class="text-end">Deposit {% if deposit_applied_to_bill > 0 %}(applied){% elif patient_deposit_balance > 0 %}(available){% endif %}:</th>
+                            <th class="text-end">{% if deposit_applied_to_bill > 0 %}-GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }}{% elif patient_deposit_balance > 0 %}-GHS {{ patient_deposit_balance|floatformat:2|intcomma }}{% else %}GHS 0.00{% endif %}</th>
+                        </tr>
+                        <tr class="table-light">
+                            <th colspan="4" class="text-end">{% if payment_filter_active %}Total payment (receipts in range){% else %}Total payment (paid to date, all receipts){% endif %}:</th>
+                            <th class="text-end">GHS {{ total_paid|default:0|floatformat:2|intcomma }}</th>
+                        </tr>
+                        <tr style="border-top: 2px solid #dee2e6; font-size: 1.15rem;">
+                            <th colspan="4" class="text-end"><strong>Outstanding on this combined bill</strong></th>
+                            <th class="text-end text-success" style="font-size: 1.2rem;"><strong>GHS {{ bill_outstanding|floatformat:2|intcomma }}</strong></th>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            <div class="alert alert-secondary mb-0 mt-3 rounded" style="border: 1px solid #dee2e6;">
+                <h6 class="mb-2"><strong>Statement for patient</strong></h6>
+                <p class="mb-1"><strong>Sum of rows on this bill:</strong> GHS {{ total|floatformat:2|intcomma }}</p>
+                <p class="mb-1"><strong>Initial (face value incl. deposit on invoice):</strong> GHS {{ initial_total|default:total|floatformat:2|intcomma }}</p>
+                <p class="mb-1"><strong>Deposit {% if deposit_applied_to_bill > 0 %}(applied){% elif patient_deposit_balance > 0 %}(available){% endif %}:</strong> {% if deposit_applied_to_bill > 0 %}- GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }}{% elif patient_deposit_balance > 0 %}- GHS {{ patient_deposit_balance|floatformat:2|intcomma }}{% else %}GHS 0.00{% endif %}</p>
+                <p class="mb-1"><strong>{% if payment_filter_active %}Total payment (receipts in range){% else %}Total payment (paid to date, all receipts){% endif %}:</strong> GHS {{ total_paid|default:0|floatformat:2|intcomma }}{% if payment_filter_active %} <span class="text-muted">(all-time GHS {{ total_paid_all_time|floatformat:2|intcomma }})</span>{% endif %}</p>
+                <p class="mb-0"><strong>Outstanding on this combined bill:</strong> GHS {{ bill_outstanding|floatformat:2|intcomma }}</p>
+            </div>
+            <!-- Itemized bill: all invoiced items in detail (visible on screen and when printing) -->
+            <div class="card mt-4 border-primary">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0"><i class="bi bi-receipt"></i> Itemized bill – all invoiced items</h5>
+                </div>
+                <div class="card-body">
+                    {% for service in services %}
+                    <div class="mb-4">
+                        <h6 class="text-dark border-bottom pb-1 mb-2">
+                            {% if service.type == 'lab' %}<span class="badge bg-info">Lab</span>
+                            {% elif service.type == 'pharmacy' %}<span class="badge bg-success">Pharmacy</span>
+                            {% elif service.type == 'pharmacy_walkin' %}<span class="badge bg-success">Prescribe</span>
+                            {% elif service.type == 'imaging' %}<span class="badge" style="background: #6f42c1; color: white;">Imaging</span>
+                            {% elif service.type == 'invoice' or service.type == 'invoice_line' %}<span class="badge bg-secondary">Invoice</span>
+                            {% elif service.type == 'bed' %}<span class="badge bg-warning text-dark">Bed</span>
+                            {% else %}<span class="badge bg-secondary">{{ service.type|title }}</span>{% endif %}
+                            {% if service.is_paid %}<span class="badge bg-success ms-1">Paid</span>{% endif %}
+                            {{ service.name }} — GHS {{ service.price|floatformat:2 }}
+                        </h6>
+                        {% if service.breakdown %}
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Description</th>
+                                        <th class="text-center">Qty</th>
+                                        <th class="text-end">Unit price (GHS)</th>
+                                        <th class="text-end">Amount (GHS)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in service.breakdown %}
+                                    {% if not row.is_waived %}
+                                    <tr>
+                                        <td>{{ row.description|default:"—" }}{% if row.is_paid %} <span class="badge bg-success">Paid</span>{% endif %}</td>
+                                        <td class="text-center">{{ row.quantity|default:1 }}</td>
+                                        <td class="text-end">{{ row.unit_price|floatformat:2 }}</td>
+                                        <td class="text-end"><strong>{{ row.amount|floatformat:2 }}</strong></td>
+                                    </tr>
+                                    {% endif %}
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <p class="text-muted small mb-0">Single item — GHS {{ service.price|floatformat:2 }}</p>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% if patient_deposits %}
+            <div class="mt-3">
+                <h6 class="mb-2"><strong>Deposits on account</strong></h6>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered mb-0 table-hover">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Deposit No</th>
+                                <th>Date</th>
+                                <th class="text-end">Amount (GHS)</th>
+                                <th class="text-end">Available (GHS)</th>
+                                <th class="text-end">Used (GHS)</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for dep in patient_deposits %}
+                            <tr class="deposit-usage-row"
+                                role="button"
+                                tabindex="0"
+                                style="cursor: pointer;"
+                                title="Click to see which invoices this deposit was applied to"
+                                data-deposit-usage-url="{% url 'hospital:cashier_patient_deposit_usage_json' patient.id dep.id %}">
+                                <td>{{ dep.deposit_number }} <i class="bi bi-info-circle text-primary ms-1" aria-hidden="true"></i></td>
+                                <td>{{ dep.deposit_date|date:"d M Y H:i" }}</td>
+                                <td class="text-end">{{ dep.deposit_amount|floatformat:2 }}</td>
+                                <td class="text-end">{{ dep.display_available_balance|floatformat:2 }}</td>
+                                <td class="text-end">{{ dep.used_amount|floatformat:2 }}</td>
+                                <td>{{ dep.get_status_display|default:dep.status }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="text-muted small mb-0 mt-1"><i class="bi bi-hand-index-thumb"></i> Click a deposit row to see where it was applied.</p>
+            </div>
+            {% endif %}
+        </div>
+        <div class="card-footer no-print">
+            <div class="d-grid gap-2">
+                {% if services_count > 0 %}
+                <a href="{% url 'hospital:cashier_process_patient_combined_payment' patient.id %}" class="btn btn-success btn-lg">
+                    <i class="bi bi-cash-coin"></i> Process Combined Payment (GHS {{ total|floatformat:2 }})
+                </a>
+                <div class="row g-2 mt-1">
+                    <div class="{% if patient_deposit_balance > 0 %}col-md-4{% else %}col-md-6{% endif %}">
+                        <a href="{% url 'hospital:cashier_add_services_select' patient.id %}" class="btn btn-primary btn-lg w-100">
+                            <i class="bi bi-search"></i> Add/Search Charges
+                        </a>
+                    </div>
+                    <div class="{% if patient_deposit_balance > 0 %}col-md-4{% else %}col-md-6{% endif %}">
+                        <a href="{% url 'hospital:record_patient_deposit' patient.id %}" class="btn btn-warning btn-lg w-100">
+                            <i class="bi bi-wallet2"></i> Record Deposit
+                        </a>
+                    </div>
+                    {% if patient_deposit_balance > 0 %}
+                    <div class="col-md-4">
+                        <form method="post" action="{% url 'hospital:cashier_apply_deposit_to_bill' patient.id %}" class="w-100">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-success btn-lg w-100">
+                                <i class="bi bi-check-circle"></i> Apply deposit to total bill
+                            </button>
+                        </form>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    </div><!-- end .invoice-print-area -->
+    {% else %}
+    <div class="card shadow">
+        <div class="card-body text-center py-5">
+            <i class="bi bi-check-circle" style="font-size: 4em; color: #28a745;"></i>
+            <h4 class="mt-3">No Pending Bills</h4>
+            <p class="text-muted">This patient has no outstanding services.</p>
+            
+            {% if diagnostic_info %}
+            <div class="alert alert-info mt-4 text-start" style="max-width: 600px; margin: 0 auto;">
+                <h6><i class="bi bi-info-circle"></i> Database Records Found:</h6>
+                <ul class="mb-0">
+                    {% if diagnostic_info.labs_found > 0 %}
+                    <li>Lab Results: {{ diagnostic_info.labs_found }} (may be paid or not verified)</li>
+                    {% endif %}
+                    {% if diagnostic_info.prescriptions_found > 0 %}
+                    <li>Prescriptions: {{ diagnostic_info.prescriptions_found }} (may be paid or not dispensed)</li>
+                    {% endif %}
+                    {% if diagnostic_info.imaging_found > 0 %}
+                    <li>Imaging Studies: {{ diagnostic_info.imaging_found }} (may be paid)</li>
+                    {% endif %}
+                    {% if diagnostic_info.invoices_found > 0 %}
+                    <li>Invoices: {{ diagnostic_info.invoices_found }} (check if they have services)</li>
+                    {% endif %}
+                </ul>
+                <p class="mb-0 mt-2"><small>If services exist but aren't showing, they may already be paid or need to be added to an invoice.</small></p>
+            </div>
+            {% endif %}
+            
+            <div class="mt-4 no-print">
+                <a href="{% url 'hospital:record_patient_deposit' patient.id %}" class="btn btn-warning btn-lg me-2">
+                    <i class="bi bi-wallet2"></i> Record Deposit
+                </a>
+                <a href="{% url 'hospital:cashier_add_services_select' patient.id %}" class="btn btn-primary btn-lg me-2">
+                    <i class="bi bi-search"></i> Add/Search Charges (Services, Labs, Scans)
+                </a>
+                <a href="{% url 'hospital:cashier_patient_invoices' patient.id %}" class="btn btn-outline-primary me-2">
+                    <i class="bi bi-receipt"></i> View All Invoices
+                </a>
+                <a href="{% url 'hospital:patient_detail' patient.id %}" class="btn btn-outline-info">
+                    <i class="bi bi-person"></i> View Patient Details
+                </a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Service breakdown modal (click a service row to view details and optionally waive) -->
+    <div class="modal fade no-print" id="serviceBreakdownModal" tabindex="-1" aria-labelledby="serviceBreakdownModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header bg-light">
+                    <h5 class="modal-title" id="serviceBreakdownModalLabel"><i class="bi bi-list-ul me-2"></i>Service breakdown</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="serviceBreakdownModalBody">
+                    <!-- Filled by JS from data below -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Deposit usage detail (which invoices received this deposit) -->
+    <div class="modal fade no-print" id="depositUsageModal" tabindex="-1" aria-labelledby="depositUsageModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header bg-light">
+                    <h5 class="modal-title" id="depositUsageModalLabel"><i class="bi bi-wallet2 me-2"></i>Deposit usage</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="depositUsageModalBody">
+                    <p class="text-muted mb-0">Loading…</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Hidden breakdown content per service (one per row for JS to show in modal) -->
+    {% for service in services %}
+    <template id="breakdown-{{ forloop.counter0 }}">
+        <div class="service-breakdown-detail">
+            <p class="mb-2"><strong>{{ service.name }}</strong> &middot; <span class="text-success">GHS {{ service.price|floatformat:2 }}</span></p>
+            <table class="table table-sm table-bordered">
+                <thead class="table-light">
+                    <tr>
+                        <th>Description</th>
+                        <th class="text-center">Qty</th>
+                        <th class="text-end">Unit price</th>
+                        <th class="text-end">Amount</th>
+                        {% if can_waive %}<th style="width: 90px;"></th>{% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in service.breakdown %}
+                    <tr class="{% if row.is_waived %}table-secondary{% endif %}">
+                        <td>{{ row.description|default:"—" }}{% if row.is_waived %} <span class="badge bg-secondary">Waived</span>{% endif %}</td>
+                        <td class="text-center">{{ row.quantity|default:1 }}</td>
+                        <td class="text-end">GHS {{ row.unit_price|floatformat:2 }}</td>
+                        <td class="text-end"><strong>GHS {{ row.amount|floatformat:2 }}</strong></td>
+                        {% if can_waive and row.line_id %}
+                        <td class="text-end">
+                            <form method="post" action="{% url 'hospital:waive_invoice_line' %}" style="display:inline;" onsubmit="return confirm('Waive this line? Amount will be set to zero.');">
+                                {% csrf_token %}
+                                <input type="hidden" name="line_id" value="{{ row.line_id }}">
+                                <input type="hidden" name="redirect_url" value="{% url 'hospital:cashier_patient_total_bill' patient.id %}">
+                                <button type="submit" class="btn btn-sm btn-outline-warning">Waive</button>
+                            </form>
+                        </td>
+                        {% elif can_waive and row.sale_item_id and not row.is_waived %}
+                        <td class="text-end">
+                            <form method="post" action="{% url 'hospital:waive_prescribe_sale_line' %}" style="display:inline;" onsubmit="return confirm('Waive this line? Amount will be set to zero.');">
+                                {% csrf_token %}
+                                <input type="hidden" name="sale_item_id" value="{{ row.sale_item_id }}">
+                                <input type="hidden" name="waiver_reason" value="Line waived (administrator)">
+                                <input type="hidden" name="redirect_url" value="{% url 'hospital:cashier_patient_total_bill' patient.id %}">
+                                <button type="submit" class="btn btn-sm btn-outline-warning">Waive</button>
+                            </form>
+                        </td>
+                        {% elif can_waive and row.sale_item_id and row.is_waived %}
+                        <td class="text-end text-muted small">Waived</td>
+                        {% elif can_waive %}<td></td>{% endif %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <p class="text-muted small mb-0">{% if can_waive %}You can waive a line above if needed (administrators only).{% endif %}</p>
+            {% if can_waive and service.type == 'pharmacy_walkin' %}
+            <div class="mt-2 pt-2 border-top">
+                <form method="post" action="/hms/cashier/waive-prescribe-sale/" onsubmit="return confirm('Waive this entire Prescribe Sale? Patient will not be charged. Stock is not reversed.');">
+                    {% csrf_token %}
+                    <input type="hidden" name="sale_id" value="{{ service.id }}">
+                    <input type="hidden" name="redirect_url" value="{% url 'hospital:cashier_patient_total_bill' patient.id %}">
+                    <label for="waiver_reason_ps_{{ forloop.counter0 }}" class="form-label small">Reason (required):</label>
+                    <input type="text" name="waiver_reason" id="waiver_reason_ps_{{ forloop.counter0 }}" class="form-control form-control-sm" placeholder="e.g. Patient did not pay" required maxlength="255">
+                    <button type="submit" class="btn btn-sm btn-outline-warning mt-1"><i class="bi bi-dash-circle"></i> Waive this Prescribe Sale</button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+    </template>
+    {% endfor %}
+    
+    <!-- Debug Info (for troubleshooting) -->
+    {% if user.is_staff %}
+    <div class="card mt-3 no-print" style="background-color: #f8f9fa; border-left: 4px solid #6c757d;">
+        <div class="card-body">
+            <h6 style="color: #6c757d;"><i class="bi bi-info-circle"></i> Diagnostic Information</h6>
+            {% if service_counts %}
+            <div class="mb-3">
+                <strong>Services Included:</strong>
+                <div class="row mt-2">
+                    {% for type, count in service_counts.items %}
+                    <div class="col-md-3 mb-2">
+                        <span class="badge bg-secondary">{{ type|title }}: {{ count }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+            {% if diagnostic_info %}
+            <div>
+                <strong>Records Found in Database:</strong>
+                <ul class="mb-0" style="font-size: 0.9rem;">
+                    <li>Lab Results: {{ diagnostic_info.labs_found }}</li>
+                    <li>Prescriptions: {{ diagnostic_info.prescriptions_found }}</li>
+                    <li>Imaging Studies: {{ diagnostic_info.imaging_found }}</li>
+                    <li>Invoices: {{ diagnostic_info.invoices_found }}</li>
+                    <li>Prescribe Sales: {{ diagnostic_info.walkin_sales_found }}</li>
+                    <li>Active Admissions: {{ diagnostic_info.admissions_found }}</li>
+                </ul>
+            </div>
+            {% endif %}
+            <small class="text-muted d-block mt-2">Total Services in Bill: {{ services_count }} | Total Amount: GHS {{ total|floatformat:2 }}</small>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+(function() {
+    var depositModalEl = document.getElementById('depositUsageModal');
+    var depositModalBody = document.getElementById('depositUsageModalBody');
+    var depositTitleEl = document.getElementById('depositUsageModalLabel');
+    function showDepositUsageModal() {
+        if (typeof bootstrap !== 'undefined' && bootstrap.Modal && depositModalEl) {
+            bootstrap.Modal.getOrCreateInstance(depositModalEl).show();
+        } else if (depositModalEl) {
+            depositModalEl.classList.add('show');
+            depositModalEl.style.display = 'block';
+        }
+    }
+    function escapeHtml(s) {
+        if (!s) return '';
+        var d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+    if (depositModalEl && depositModalBody) {
+        document.querySelectorAll('tr.deposit-usage-row[data-deposit-usage-url]').forEach(function(row) {
+            function openDepositUsage() {
+                var url = row.getAttribute('data-deposit-usage-url');
+                if (!url) return;
+                depositModalBody.innerHTML = '<p class="text-muted mb-0">Loading…</p>';
+                if (depositTitleEl) depositTitleEl.innerHTML = '<i class="bi bi-wallet2 me-2"></i>Deposit usage';
+                showDepositUsageModal();
+                fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+                    .then(function(r) {
+                        if (!r.ok) throw new Error('Request failed');
+                        return r.json();
+                    })
+                    .then(function(data) {
+                        if (depositTitleEl) {
+                            depositTitleEl.innerHTML = '<i class="bi bi-wallet2 me-2"></i>' + escapeHtml(data.deposit_number || 'Deposit');
+                        }
+                        var parts = [];
+                        parts.push('<p class="mb-2"><strong>Deposit</strong> ' + escapeHtml(data.deposit_number || '') +
+                            ' &middot; Total <strong>GHS ' + escapeHtml(data.deposit_amount) + '</strong>' +
+                            ' &middot; Used <strong>GHS ' + escapeHtml(data.used_amount) + '</strong></p>');
+                        var apps = data.applications || [];
+                        if (apps.length === 0) {
+                            parts.push('<p class="text-muted mb-0">No invoice applications are recorded for this deposit yet. If the deposit was just recorded, apply it to the bill first.</p>');
+                        } else {
+                            parts.push('<div class="table-responsive"><table class="table table-sm table-bordered mb-0"><thead class="table-light"><tr>');
+                            parts.push('<th>Invoice</th><th class="text-end">Applied (GHS)</th><th>When</th><th>Status</th><th></th>');
+                            parts.push('</tr></thead><tbody>');
+                            apps.forEach(function(a) {
+                                parts.push('<tr>');
+                                parts.push('<td>Invoice ' + escapeHtml(a.invoice_number) + (a.line_count ? ' <span class="text-muted">(' + a.line_count + ' line' + (a.line_count === 1 ? '' : 's') + ')</span>' : '') + '</td>');
+                                parts.push('<td class="text-end"><strong>' + escapeHtml(a.applied_amount) + '</strong></td>');
+                                parts.push('<td>' + escapeHtml(a.applied_date) + '</td>');
+                                parts.push('<td>' + escapeHtml(a.invoice_status || '—') + '</td>');
+                                parts.push('<td class="text-nowrap">');
+                                if (a.invoice_url) {
+                                    parts.push('<a href="' + escapeHtml(a.invoice_url) + '" class="btn btn-sm btn-outline-primary">Open invoice</a>');
+                                }
+                                parts.push('</td></tr>');
+                            });
+                            parts.push('</tbody></table></div>');
+                            parts.push('<p class="text-muted small mb-0 mt-2">Amounts show deposit applied to each invoice (patient liability reduced per application).</p>');
+                        }
+                        depositModalBody.innerHTML = parts.join('');
+                    })
+                    .catch(function() {
+                        depositModalBody.innerHTML = '<p class="text-danger mb-0">Could not load deposit usage. Try again.</p>';
+                    });
+            }
+            row.addEventListener('click', openDepositUsage);
+            row.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    openDepositUsage();
+                }
+            });
+        });
+    }
+})();
+</script>
+<script>
+(function() {
+    var modalEl = document.getElementById('serviceBreakdownModal');
+    var modalBody = document.getElementById('serviceBreakdownModalBody');
+    if (!modalEl || !modalBody) return;
+    document.querySelectorAll('.service-row[data-service-index]').forEach(function(row) {
+        row.addEventListener('click', function() {
+            var index = this.getAttribute('data-service-index');
+            var template = document.getElementById('breakdown-' + index);
+            if (template && template.content) {
+                modalBody.innerHTML = '';
+                modalBody.appendChild(template.content.cloneNode(true));
+            } else {
+                modalBody.innerHTML = '<p class="text-muted">No breakdown for this service.</p>';
+            }
+            if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+                bootstrap.Modal.getOrCreateInstance(modalEl).show();
+            } else {
+                modalEl.classList.add('show');
+                modalEl.style.display = 'block';
+            }
+        });
+        row.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                this.click();
+            }
+        });
+    });
+})();
+</script>
+{% endblock %}

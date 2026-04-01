@@ -254,9 +254,42 @@ class AccountingSyncService:
         )
         
         # 🔥 POST TO GENERAL LEDGER (THIS IS THE KEY!)
-        # Debit entry to General Ledger
+        # Check for existing entries to prevent duplicates
         transaction_date = payment_receipt.receipt_date.date() if hasattr(payment_receipt.receipt_date, 'date') else payment_receipt.receipt_date
         
+        # Check if debit entry already exists
+        existing_debit = GeneralLedger.objects.filter(
+            account=debit_account,
+            reference_number=payment_receipt.receipt_number,
+            reference_type='payment',
+            reference_id=str(payment_receipt.pk),
+            debit_amount=amount,
+            is_deleted=False
+        ).first()
+        
+        # Check if credit entry already exists
+        existing_credit = GeneralLedger.objects.filter(
+            account=credit_account,
+            reference_number=payment_receipt.receipt_number,
+            reference_type='payment',
+            reference_id=str(payment_receipt.pk),
+            credit_amount=amount,
+            is_deleted=False
+        ).first()
+        
+        if existing_debit or existing_credit:
+            logger.warning(
+                f"⚠️ Duplicate GL entries detected for receipt {payment_receipt.receipt_number}. "
+                f"Skipping creation to prevent duplicates."
+            )
+            # Return existing journal entry if found
+            existing_journal = JournalEntry.objects.filter(
+                reference_number=payment_receipt.receipt_number
+            ).first()
+            if existing_journal:
+                return existing_journal
+        
+        # Debit entry to General Ledger
         GeneralLedger.objects.create(
             account=debit_account,
             transaction_date=transaction_date,

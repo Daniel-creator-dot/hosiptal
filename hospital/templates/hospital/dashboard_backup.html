@@ -768,6 +768,16 @@
 <script>
     // Wait for DOM to be fully loaded
     document.addEventListener('DOMContentLoaded', function() {
+        const isDark = document.body.classList.contains('theme-dark');
+        const gridColor = isDark ? 'rgba(226,232,240,0.08)' : 'rgba(0,0,0,0.05)';
+        const tickColor = isDark ? '#cbd5e1' : '#64748b';
+        const tooltipBg = isDark ? 'rgba(15,23,42,0.92)' : 'rgba(0,0,0,0.8)';
+        const tooltipBorder = isDark ? 'rgba(226,232,240,0.08)' : 'rgba(255,255,255,0.1)';
+        const bgPatients = isDark ? 'rgba(129, 140, 248, 0.18)' : 'rgba(99, 102, 241, 0.1)';
+        const bgEncounters = isDark ? 'rgba(45, 212, 191, 0.18)' : 'rgba(16, 185, 129, 0.1)';
+        const borderPatients = isDark ? '#818cf8' : '#6366f1';
+        const borderEncounters = isDark ? '#22c55e' : '#10b981';
+
         // Trends Chart
         const trendsCtx = document.getElementById('trendsChart');
         if (trendsCtx) {
@@ -813,15 +823,15 @@
                     monthlyTrends.encounters = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
                 }
                 
-                new Chart(trendsCtx, {
+                const chartInstance = new Chart(trendsCtx, {
                     type: 'line',
                     data: {
                         labels: monthlyTrends.labels,
                         datasets: [{
                             label: 'Patients',
                             data: monthlyTrends.patients,
-                            borderColor: '#6366f1',
-                            backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                            borderColor: borderPatients,
+                            backgroundColor: bgPatients,
                             tension: 0.4,
                             fill: true,
                             borderWidth: 3,
@@ -830,8 +840,8 @@
                         }, {
                             label: 'Encounters',
                             data: monthlyTrends.encounters,
-                            borderColor: '#10b981',
-                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            borderColor: borderEncounters,
+                            backgroundColor: bgEncounters,
                             tension: 0.4,
                             fill: true,
                             borderWidth: 3,
@@ -860,7 +870,7 @@
                                 }
                             },
                             tooltip: {
-                                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                                backgroundColor: tooltipBg,
                                 padding: 12,
                                 titleFont: {
                                     size: 14,
@@ -869,7 +879,7 @@
                                 bodyFont: {
                                     size: 13
                                 },
-                                borderColor: 'rgba(255, 255, 255, 0.1)',
+                                borderColor: tooltipBorder,
                                 borderWidth: 1
                             }
                         },
@@ -877,14 +887,14 @@
                             y: {
                                 beginAtZero: true,
                                 grid: {
-                                    color: 'rgba(0,0,0,0.05)',
+                                    color: gridColor,
                                     drawBorder: false
                                 },
                                 ticks: {
                                     font: {
                                         size: 11
                                     },
-                                    color: '#64748b'
+                                    color: tickColor
                                 }
                             },
                             x: {
@@ -896,7 +906,7 @@
                                     font: {
                                         size: 11
                                     },
-                                    color: '#64748b'
+                                    color: tickColor
                                 }
                             }
                         },
@@ -906,6 +916,30 @@
                         }
                     }
                 });
+
+                // Listen for theme changes to update chart colors live
+                const observer = new MutationObserver((mutations) => {
+                    mutations.forEach((mutation) => {
+                        if (mutation.attributeName === 'class') {
+                            const nowDark = document.body.classList.contains('theme-dark');
+                            const grid = nowDark ? 'rgba(226,232,240,0.08)' : 'rgba(0,0,0,0.05)';
+                            const tick = nowDark ? '#cbd5e1' : '#64748b';
+                            const tBg = nowDark ? 'rgba(15,23,42,0.92)' : 'rgba(0,0,0,0.8)';
+                            const tBorder = nowDark ? 'rgba(226,232,240,0.08)' : 'rgba(255,255,255,0.1)';
+                            chartInstance.data.datasets[0].borderColor = nowDark ? '#818cf8' : '#6366f1';
+                            chartInstance.data.datasets[0].backgroundColor = nowDark ? 'rgba(129, 140, 248, 0.18)' : 'rgba(99, 102, 241, 0.1)';
+                            chartInstance.data.datasets[1].borderColor = nowDark ? '#22c55e' : '#10b981';
+                            chartInstance.data.datasets[1].backgroundColor = nowDark ? 'rgba(45, 212, 191, 0.18)' : 'rgba(16, 185, 129, 0.1)';
+                            chartInstance.options.scales.x.ticks.color = tick;
+                            chartInstance.options.scales.y.ticks.color = tick;
+                            chartInstance.options.scales.y.grid.color = grid;
+                            chartInstance.options.plugins.tooltip.backgroundColor = tBg;
+                            chartInstance.options.plugins.tooltip.borderColor = tBorder;
+                            chartInstance.update();
+                        }
+                    });
+                });
+                observer.observe(document.body, { attributes: true });
             } catch (error) {
                 console.error('Error initializing chart:', error);
                 // Show error message in chart container

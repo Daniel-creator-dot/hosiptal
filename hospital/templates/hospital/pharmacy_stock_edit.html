@@ -1,0 +1,158 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'hospital/css/pharmacy_ui.css' %}">
+{% endblock %}
+
+{% block title %}Edit Pharmacy Stock - HMS{% endblock %}
+{% block page_title %}Edit Pharmacy Stock{% endblock %}
+{% block page_subtitle %}{{ stock.drug.name }} — Batch {{ stock.batch_number }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid pharmacy-ui rx-form-page pb-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8 col-xl-7 rx-form-shell">
+            <div class="rx-form-section">
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Drug</label>
+                        <div class="form-control form-control-modern bg-light" readonly>
+                            <strong>{{ stock.drug.name }}</strong>
+                            <span class="text-muted"> — {{ stock.drug.strength }} {{ stock.drug.form }}</span>
+                        </div>
+                        <small class="form-text text-muted">Drug cannot be changed when editing a batch.</small>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Batch number</label>
+                            <input type="text" name="batch_number" class="form-control form-control-modern"
+                                   value="{{ stock.batch_number }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Expiry date <span class="text-danger">*</span></label>
+                            <input type="date" name="expiry_date" class="form-control form-control-modern"
+                                   value="{{ stock.expiry_date|date:'Y-m-d' }}" required>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Location</label>
+                            <input type="text" name="location" class="form-control form-control-modern"
+                                   value="{{ stock.location }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Quantity on hand</label>
+                            <input type="number" name="quantity_on_hand" id="quantityInput" class="form-control form-control-modern"
+                                   value="{{ stock.quantity_on_hand }}" min="-999999">
+                            <small class="form-text text-muted">Can be negative for shortfall batches. Total cost ÷ quantity applies only when quantity is positive.</small>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-12">
+                            <label class="form-label">Supplier cost</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="stock_cost_mode" id="costModeManual" value="manual" checked>
+                                <label class="form-check-label" for="costModeManual">Enter <strong>unit cost</strong> manually (below)</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="stock_cost_mode" id="costModeFromTotal" value="from_total">
+                                <label class="form-check-label" for="costModeFromTotal">Enter <strong>total</strong> for this batch — unit cost = total ÷ quantity</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Reorder level</label>
+                            <input type="number" name="reorder_level" class="form-control form-control-modern"
+                                   value="{{ stock.reorder_level }}" min="0">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Total cost for batch (GHS)</label>
+                            <input type="number" name="total_cost" id="totalCostInput" class="form-control form-control-modern"
+                                   value="" min="0" step="0.01" placeholder="Select batch-total mode above first">
+                            <small class="form-text text-muted">Used only when “total for batch” is selected; otherwise type unit cost only.</small>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Unit cost (GHS)</label>
+                            <input type="number" name="unit_cost" id="costPriceInput" class="form-control form-control-modern"
+                                   value="{{ stock.unit_cost }}" min="0" step="0.01" placeholder="Type unit cost here">
+                            <small class="form-text text-muted">Editable in manual mode; filled from total ÷ quantity in batch-total mode.</small>
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2 mt-4">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-lg"></i> Save changes
+                        </button>
+                        <a href="{% url 'hospital:pharmacy_stock_list' %}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+(function() {
+    var quantityInput = document.getElementById('quantityInput');
+    var totalCostInput = document.getElementById('totalCostInput');
+    var costPriceInput = document.getElementById('costPriceInput');
+    var costModeManual = document.getElementById('costModeManual');
+    var costModeFromTotal = document.getElementById('costModeFromTotal');
+    var form = document.querySelector('form[method="post"]');
+
+    function isFromTotalMode() {
+        return costModeFromTotal && costModeFromTotal.checked;
+    }
+
+    function syncCostModeUi() {
+        if (!totalCostInput) return;
+        var fromTotal = isFromTotalMode();
+        totalCostInput.disabled = !fromTotal;
+        if (!fromTotal) {
+            totalCostInput.value = '';
+        } else {
+            totalCostInput.placeholder = 'Invoice total for current quantity';
+        }
+        if (costPriceInput) {
+            costPriceInput.readOnly = fromTotal;
+            costPriceInput.classList.toggle('bg-light', fromTotal);
+        }
+    }
+
+    function recalcUnitCostFromTotal() {
+        if (!isFromTotalMode() || !quantityInput || !totalCostInput || !costPriceInput) return;
+        var q = parseFloat(quantityInput.value, 10);
+        var t = parseFloat(totalCostInput.value, 10);
+        if (!isNaN(t) && t > 0 && !isNaN(q) && q > 0) {
+            costPriceInput.value = (Math.round((t / q) * 100) / 100).toFixed(2);
+        }
+    }
+
+    function onCostModeChange() {
+        syncCostModeUi();
+        if (isFromTotalMode()) {
+            recalcUnitCostFromTotal();
+        }
+    }
+
+    if (costModeManual) costModeManual.addEventListener('change', onCostModeChange);
+    if (costModeFromTotal) costModeFromTotal.addEventListener('change', onCostModeChange);
+    syncCostModeUi();
+
+    if (totalCostInput) {
+        totalCostInput.addEventListener('input', recalcUnitCostFromTotal);
+        totalCostInput.addEventListener('blur', recalcUnitCostFromTotal);
+    }
+    if (quantityInput) {
+        quantityInput.addEventListener('input', recalcUnitCostFromTotal);
+        quantityInput.addEventListener('blur', recalcUnitCostFromTotal);
+    }
+    if (form) {
+        form.addEventListener('submit', recalcUnitCostFromTotal);
+    }
+})();
+</script>
+{% endblock %}

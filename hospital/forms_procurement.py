@@ -89,7 +89,7 @@ class StoreForm(forms.ModelForm):
 
 
 class InventoryItemForm(forms.ModelForm):
-    """Inventory item creation/edit form"""
+    """Inventory item creation/edit form with duplicate detection"""
     class Meta:
         model = InventoryItem
         fields = [
@@ -117,11 +117,18 @@ class InventoryItemForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.fields['store'].queryset = Store.objects.filter(is_active=True, is_deleted=False)
         self.fields['category'].queryset = InventoryCategory.objects.filter(is_active=True, is_deleted=False)
-        self.fields['drug'].queryset = Drug.objects.filter(is_deleted=False)
+        self.fields['drug'].queryset = Drug.objects.filter(is_deleted=False).order_by('name')
         self.fields['preferred_supplier'].queryset = Supplier.objects.filter(is_active=True, is_deleted=False)
         self.fields['drug'].required = False
         self.fields['category'].required = False
         self.fields['preferred_supplier'].required = False
+        
+        # Add help text with link to classification guide
+        self.fields['drug'].help_text = 'Select a drug from the formulary. If the drug has a category, it will be auto-filled. <a href="/hms/drug-classification-guide/" target="_blank" class="btn btn-sm btn-outline-info ms-2"><i class="bi bi-book"></i> Browse Categories</a>'
+        self.fields['drug'].widget.attrs.update({
+            'class': 'form-select drug-select',
+            'onchange': 'updateCategoryFromDrug(this)'
+        })
         self.helper = FormHelper()
         self.helper.layout = Layout(
             Fieldset('Item Information',
@@ -166,6 +173,11 @@ class ProcurementRequestForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.fields['requested_by_store'].queryset = Store.objects.filter(is_active=True, is_deleted=False)
         self.helper = FormHelper()
+        # This form is rendered inside a <form> tag in the template.
+        # If we let crispy render its own <form>, the browser ends up with nested forms,
+        # and the inline formset management fields (items-TOTAL_FORMS/INITIAL_FORMS)
+        # won't be submitted — causing "ManagementForm data is missing" errors.
+        self.helper.form_tag = False
         self.helper.layout = Layout(
             Fieldset('Request Information',
                 Row(Column('requested_by_store', css_class='form-group col-md-6'),
@@ -173,8 +185,7 @@ class ProcurementRequestForm(forms.ModelForm):
                 'justification',
                 'notes',
             ),
-            HTML('<p class="text-muted small">After saving, you can add items to this request.</p>'),
-            Submit('submit', 'Create Request', css_class='btn btn-primary btn-modern')
+            HTML('<p class="text-muted small">Add request items below, then click <strong>Save Request</strong>.</p>'),
         )
 
 
@@ -187,30 +198,74 @@ class ProcurementRequestItemForm(forms.ModelForm):
             'unit_of_measure', 'estimated_unit_price', 'preferred_supplier', 'specifications'
         ]
         widgets = {
-            'item_name': forms.TextInput(attrs={'class': 'form-control', 'required': True}),
+            'item_name': forms.TextInput(attrs={'class': 'form-control'}),
             'item_code': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Auto-generated if blank'}),
             'description': forms.Textarea(attrs={'class': 'form-control', 'rows': 2}),
             'drug': forms.Select(attrs={'class': 'form-select'}),
-            'quantity': forms.NumberInput(attrs={'class': 'form-control', 'min': 1, 'step': 1, 'required': True}),
+            'quantity': forms.NumberInput(attrs={'class': 'form-control', 'min': 1, 'step': 1}),
             'unit_of_measure': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'e.g., units, boxes'}),
-            'estimated_unit_price': forms.NumberInput(attrs={'class': 'form-control', 'min': 0, 'step': 0.01, 'required': True}),
+            'estimated_unit_price': forms.NumberInput(attrs={'class': 'form-control', 'min': 0, 'step': 0.01}),
             'preferred_supplier': forms.Select(attrs={'class': 'form-select'}),
             'specifications': forms.Textarea(attrs={'class': 'form-control', 'rows': 2}),
         }
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['drug'].queryset = Drug.objects.filter(is_deleted=False)
+        self.fields['drug'].queryset = Drug.objects.filter(is_deleted=False).order_by('name')
         self.fields['preferred_supplier'].queryset = Supplier.objects.filter(is_active=True, is_deleted=False)
         self.fields['drug'].required = False
         self.fields['preferred_supplier'].required = False
+        # Important UX: this form is used in a 20-row formset.
+        # If these are required at the HTML level, the browser forces users to fill ALL rows.
+        # We validate "completeness" in clean() only for rows the user started filling.
+        self.fields['item_name'].required = False
+        self.fields['quantity'].required = False
+        self.fields['estimated_unit_price'].required = False
+        
+        # Add help text with link to classification guide
+        self.fields['drug'].help_text = 'Select a drug from the formulary. <a href="/hms/drug-classification-guide/" target="_blank" class="btn btn-sm btn-outline-info ms-2"><i class="bi bi-book"></i> Browse Categories</a>'
+        self.fields['drug'].widget.attrs.update({
+            'class': 'form-select drug-select',
+            'onchange': 'updateItemNameFromDrug(this)'
+        })
+
+    def clean(self):
+        cleaned_data = super().clean()
+
+        item_name = (cleaned_data.get('item_name') or '').strip()
+        quantity = cleaned_data.get('quantity')
+        unit_price = cleaned_data.get('estimated_unit_price')
+        delete = cleaned_data.get('DELETE', False)
+
+        # If user marks the row for deletion, skip completeness validation.
+        if delete:
+            return cleaned_data
+
+        # Treat the row as "started" if any of the key fields has a value.
+        started = bool(item_name) or bool(quantity) or (unit_price is not None and unit_price != '')
+
+        if started:
+            errors = {}
+            if not item_name:
+                errors['item_name'] = 'Item name is required for this line.'
+            if not quantity:
+                errors['quantity'] = 'Quantity is required for this line.'
+            if unit_price is None:
+                errors['estimated_unit_price'] = 'Unit price is required for this line.'
+
+            for field, msg in errors.items():
+                self.add_error(field, msg)
+
+        return cleaned_data
 
 
 ProcurementRequestItemFormSet = forms.inlineformset_factory(
     ProcurementRequest,
     ProcurementRequestItem,
     form=ProcurementRequestItemForm,
-    extra=3,
+    extra=20,
+    max_num=20,
+    validate_max=True,
     can_delete=True,
     min_num=1,
     validate_min=False  # Set to False to allow saving draft requests without items

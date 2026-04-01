@@ -1,0 +1,68 @@
+{% comment %}
+Activity reminder banner - include on any page. Uses global_next_activity from context processor.
+{% endcomment %}
+{% if global_next_activity %}
+<div class="activity-reminder-banner" style="background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%); color: white; border-radius: 16px; padding: 20px 24px; margin-bottom: 20px; box-shadow: 0 8px 32px rgba(139, 92, 246, 0.3);">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+        <div>
+            <h5 class="mb-2">
+                <i class="bi bi-bell-fill me-2"></i>Upcoming: {{ global_next_activity.title }}
+                {% if global_next_activity.is_mandatory %}
+                <span class="badge bg-danger ms-2">MANDATORY</span>
+                {% endif %}
+            </h5>
+            <p class="mb-0" style="opacity: 0.95; font-size: 14px;">
+                <i class="bi bi-calendar3 me-1"></i>{{ global_next_activity.start_date|date:"l, M d, Y" }}
+                {% if global_next_activity.start_time %}
+                    <i class="bi bi-clock ms-2 me-1"></i>{{ global_next_activity.start_time|time:"g:i A" }}
+                {% else %}
+                    <i class="bi bi-clock ms-2 me-1"></i>All day
+                {% endif %}
+                {% if global_next_activity.location %}
+                    <i class="bi bi-geo-alt ms-2 me-1"></i>{{ global_next_activity.location }}
+                {% endif %}
+            </p>
+        </div>
+        <div class="text-center">
+            <div style="font-size: 12px; opacity: 0.9; margin-bottom: 4px;">Time until event</div>
+            <div class="activity-countdown" data-date="{{ global_next_activity.start_date|date:'Y-m-d' }}" data-time="{% if global_next_activity.start_time %}{{ global_next_activity.start_time|time:'H:i' }}{% else %}09:00{% endif %}" style="font-size: 22px; font-weight: 700; font-family: monospace;">
+                <span class="countdown-days">--</span>d <span class="countdown-hours">--</span>h <span class="countdown-mins">--</span>m
+            </div>
+        </div>
+        <div>
+            <a href="{% url 'hospital:activity_detail' global_next_activity.id %}" class="btn btn-light btn-sm">
+                <i class="bi bi-eye me-1"></i>View Details
+            </a>
+            <a href="{% url 'hospital:staff_dashboard' %}" class="btn btn-outline-light btn-sm ms-2">
+                <i class="bi bi-calendar-event me-1"></i>Staff Dashboard
+            </a>
+        </div>
+    </div>
+</div>
+<script>
+(function() {
+    var el = document.querySelector('.activity-reminder-banner .activity-countdown');
+    if (!el) return;
+    var dateStr = el.dataset.date;
+    var timeStr = el.dataset.time || '09:00';
+    function update() {
+        var target = new Date(dateStr + 'T' + timeStr + ':00');
+        var now = new Date();
+        var diff = target - now;
+        var daysEl = el.querySelector('.countdown-days');
+        var hoursEl = el.querySelector('.countdown-hours');
+        var minsEl = el.querySelector('.countdown-mins');
+        if (!daysEl || !hoursEl || !minsEl) return;
+        if (diff <= 0) { daysEl.textContent = '0'; hoursEl.textContent = '00'; minsEl.textContent = '00'; return; }
+        var days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        var hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        var mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        daysEl.textContent = days;
+        hoursEl.textContent = String(hours).padStart(2, '0');
+        minsEl.textContent = String(mins).padStart(2, '0');
+    }
+    update();
+    setInterval(update, 60000);
+})();
+</script>
+{% endif %}

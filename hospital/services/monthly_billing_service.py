@@ -139,10 +139,21 @@ class MonthlyBillingService:
                     return None
                 
                 # Get all invoices for enrolled employees in period
+                # IMPORTANT: Only get invoices where payer matches the corporate account
                 patient_ids = [emp.patient.id for emp in employees]
+                
+                # Get the payer for this corporate account
+                from hospital.models import Payer
+                corporate_payer = Payer.objects.filter(
+                    name=corporate_account.company_name,
+                    payer_type='corporate',
+                    is_active=True,
+                    is_deleted=False
+                ).first()
                 
                 invoices = Invoice.objects.filter(
                     patient_id__in=patient_ids,
+                    payer=corporate_payer,  # Ensure invoice is billed to corporate account
                     issued_at__date__gte=period_start,
                     issued_at__date__lte=period_end,
                     is_deleted=False

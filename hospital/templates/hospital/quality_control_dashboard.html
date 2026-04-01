@@ -1,0 +1,223 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Quality Control Dashboard - HMS{% endblock %}
+{% block page_title %}🛡️ Quality Control Dashboard{% endblock %}
+{% block page_subtitle %}QC test results, violations, and equipment status{% endblock %}
+
+{% block extra_css %}
+<style>
+    .qc-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 15px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        border-left: 4px solid #e0e0e0;
+        transition: all 0.3s;
+    }
+    .qc-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    }
+    .qc-card.passed { border-left-color: #4CAF50; }
+    .qc-card.failed { border-left-color: #f44336; }
+    .qc-card.warning { border-left-color: #FF9800; }
+    .qc-card.pending { border-left-color: #9E9E9E; }
+    
+    .stat-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+    }
+    .stat-value {
+        font-size: 36px;
+        font-weight: 700;
+        margin: 10px 0;
+    }
+    .stat-label {
+        font-size: 14px;
+        opacity: 0.9;
+    }
+    
+    .violation-badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        margin: 2px;
+        background: #f44336;
+        color: white;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Statistics Row -->
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="stat-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+            <div class="stat-label">Total Tests (Week)</div>
+            <div class="stat-value">{{ stats.total_tests }}</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card" style="background: linear-gradient(135deg, #4CAF50 0%, #388E3C 100%);">
+            <div class="stat-label">Passed</div>
+            <div class="stat-value">{{ stats.passed }}</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card" style="background: linear-gradient(135deg, #f44336 0%, #D32F2F 100%);">
+            <div class="stat-label">Failed</div>
+            <div class="stat-value">{{ stats.failed }}</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card" style="background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);">
+            <div class="stat-label">With Violations</div>
+            <div class="stat-value">{{ stats.with_violations }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- Alerts -->
+{% if active_alerts %}
+<div class="alert alert-danger mb-4">
+    <h5><i class="bi bi-exclamation-triangle-fill me-2"></i>Active QC Alerts ({{ active_alerts|length }})</h5>
+    <ul class="mb-0">
+        {% for alert in active_alerts %}
+        <li>
+            <strong>{{ alert.get_priority_display }}:</strong> {{ alert.title }}
+            <a href="{% url 'hospital:resolve_alert' alert.id %}" class="btn btn-sm btn-outline-primary ms-2">Resolve</a>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<div class="row mb-4">
+    <div class="col-12">
+        <a href="{% url 'hospital:create_qc_test' %}" class="btn btn-primary">
+            <i class="bi bi-plus-circle me-2"></i>Create New QC Test
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Recent QC Tests -->
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-clipboard-check me-2"></i>Recent QC Tests (Last 30 Days)</h5>
+            </div>
+            <div class="card-body">
+                {% for test in recent_tests %}
+                <div class="qc-card {{ test.status }}">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <h6 class="mb-1">
+                                <a href="{% url 'hospital:qc_test_detail' test.id %}" style="text-decoration: none; color: inherit;">
+                                    {{ test.equipment.name }} - {{ test.test_name }}
+                                </a>
+                                <span class="badge bg-{% if test.status == 'passed' %}success{% elif test.status == 'failed' %}danger{% elif test.status == 'warning' %}warning{% else %}secondary{% endif %} ms-2">
+                                    {{ test.get_status_display }}
+                                </span>
+                                <span class="badge bg-secondary ms-1">{{ test.get_qc_type_display }}</span>
+                            </h6>
+                            <p class="text-muted small mb-1">
+                                <strong>Date:</strong> {{ test.test_date }} {{ test.test_time|time:"H:i" }} |
+                                {% if test.expected_value and test.observed_value %}
+                                <strong>Expected:</strong> {{ test.expected_value }} | 
+                                <strong>Observed:</strong> {{ test.observed_value }} {{ test.units }}
+                                {% endif %}
+                            </p>
+                            {% if test.has_violations %}
+                            <div class="mt-2">
+                                <strong class="text-danger">Violations:</strong>
+                                {% if test.rule_1_2s %}<span class="violation-badge">1-2s</span>{% endif %}
+                                {% if test.rule_1_3s %}<span class="violation-badge">1-3s</span>{% endif %}
+                                {% if test.rule_2_2s %}<span class="violation-badge">2-2s</span>{% endif %}
+                                {% if test.rule_r_4s %}<span class="violation-badge">R-4s</span>{% endif %}
+                                {% if test.rule_4_1s %}<span class="violation-badge">4-1s</span>{% endif %}
+                                {% if test.rule_10x %}<span class="violation-badge">10x</span>{% endif %}
+                            </div>
+                            {% endif %}
+                            {% if test.performed_by %}
+                            <small class="text-muted">Performed by: {{ test.performed_by.user.get_full_name|default:test.performed_by.user.username }}</small>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="text-center py-5 text-muted">
+                    <i class="bi bi-shield-check" style="font-size: 48px;"></i>
+                    <p class="mt-3">No QC tests recorded yet.</p>
+                    <a href="{% url 'hospital:create_qc_test' %}" class="btn btn-primary">Create First QC Test</a>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Sidebar -->
+    <div class="col-lg-4">
+        <!-- Failed Tests -->
+        {% if failed_tests %}
+        <div class="card mb-4">
+            <div class="card-header bg-danger text-white">
+                <h6 class="mb-0"><i class="bi bi-x-circle me-2"></i>Failed Tests</h6>
+            </div>
+            <div class="card-body">
+                {% for test in failed_tests %}
+                <div class="mb-3 pb-3 border-bottom">
+                    <strong>{{ test.equipment.name }}</strong><br>
+                    <small class="text-muted">{{ test.test_name }} - {{ test.test_date }}</small>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Equipment QC Status -->
+        {% if equipment_qc_status %}
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-gear me-2"></i>Equipment QC Status</h6>
+            </div>
+            <div class="card-body">
+                {% for eq_status in equipment_qc_status %}
+                <div class="mb-3 pb-3 border-bottom">
+                    <strong>{{ eq_status.equipment.name }}</strong><br>
+                    {% if eq_status.last_qc %}
+                    <small class="text-muted">
+                        Last QC: {{ eq_status.last_qc.test_date }}
+                        ({{ eq_status.days_since_qc }} days ago)
+                    </small>
+                    {% else %}
+                    <small class="text-warning">No QC recorded</small>
+                    {% endif %}
+                    {% if eq_status.needs_qc %}
+                    <span class="badge bg-warning ms-2">QC Due</span>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+

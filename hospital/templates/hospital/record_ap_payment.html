@@ -1,0 +1,114 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Record Payment - Accounts Payable{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="card">
+        <div class="card-header bg-success text-white">
+            <h5 class="mb-0">
+                <i class="bi bi-cash-coin"></i> Record Payment - Accounts Payable
+            </h5>
+        </div>
+        <div class="card-body">
+            <!-- AP Details -->
+            <div class="alert alert-info">
+                <h6><strong>Bill Details:</strong></h6>
+                <p class="mb-1"><strong>Bill Number:</strong> {{ ap.bill_number }}</p>
+                <p class="mb-1"><strong>Vendor:</strong> {{ ap.vendor_name }}</p>
+                <p class="mb-1"><strong>Invoice:</strong> {{ ap.vendor_invoice }}</p>
+                <p class="mb-1"><strong>Total Amount:</strong> GHS {{ ap.amount|floatformat:2|intcomma }}</p>
+                <p class="mb-1"><strong>Amount Paid:</strong> GHS {{ ap.amount_paid|floatformat:2|intcomma }}</p>
+                <p class="mb-0"><strong>Balance Due:</strong> <span class="text-danger fw-bold">GHS {{ ap.balance_due|floatformat:2|intcomma }}</span></p>
+            </div>
+            
+            <form method="post">
+                {% csrf_token %}
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label">Payment Amount (GHS) <span class="text-danger">*</span></label>
+                            <input type="number" step="0.01" min="0.01" max="{{ ap.balance_due }}" 
+                                   class="form-control" name="payment_amount" 
+                                   value="{{ ap.balance_due }}" required>
+                            <small class="text-muted">Maximum: GHS {{ ap.balance_due|floatformat:2|intcomma }}</small>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label">Payment Date <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" name="payment_date" 
+                                   value="{% now 'Y-m-d' %}" required>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label">Payment Method <span class="text-danger">*</span></label>
+                            <select class="form-select" name="payment_method" required>
+                                <option value="bank_transfer">Bank Transfer</option>
+                                <option value="cheque">Cheque</option>
+                                <option value="cash">Cash</option>
+                                <option value="mobile_money">Mobile Money</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label">Bank Account <span class="text-muted">(Optional)</span></label>
+                            <select class="form-select" name="bank_account" id="bank_account_select">
+                                <option value="">-- Select Bank Account (Optional) --</option>
+                                {% for bank in bank_accounts %}
+                                <option value="{{ bank.id }}">{{ bank.bank_name }} - {{ bank.account_number }}</option>
+                                {% endfor %}
+                            </select>
+                            {% if not bank_accounts %}
+                            <small class="text-muted">
+                                <i class="bi bi-info-circle"></i> No bank accounts configured. 
+                                System will use default account based on payment method.
+                            </small>
+                            {% else %}
+                            <small class="text-muted">Leave blank to use default account for selected payment method</small>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label">Payment Reference</label>
+                            <input type="text" class="form-control" name="payment_reference" 
+                                   placeholder="Bank reference, cheque number, etc.">
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label">Notes</label>
+                            <textarea class="form-control" name="notes" rows="2" 
+                                      placeholder="Additional payment notes..."></textarea>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="d-flex justify-content-between">
+                    <a href="{% url 'hospital:ap_report' %}" class="btn btn-secondary">
+                        <i class="bi bi-arrow-left"></i> Cancel
+                    </a>
+                    <button type="submit" class="btn btn-success">
+                        <i class="bi bi-check-circle"></i> Record Payment
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

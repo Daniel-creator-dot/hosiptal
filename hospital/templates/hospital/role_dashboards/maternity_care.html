@@ -1,0 +1,326 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}{{ care_type }} Care - Midwife Dashboard{% endblock %}
+
+{% block page_title %}{{ care_type }} Care{% endblock %}
+{% block page_subtitle %}Manage {{ care_type|lower }} visits and patients{% endblock %}
+
+{% block extra_css %}
+<style>
+    .maternity-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        border-left: 4px solid {% if care_type == 'Antenatal' %}#3b82f6{% else %}#f59e0b{% endif %};
+    }
+    
+    .stat-card {
+        background: linear-gradient(135deg, {% if care_type == 'Antenatal' %}#3b82f6{% else %}#f59e0b{% endif %} 0%, {% if care_type == 'Antenatal' %}#2563eb{% else %}#d97706{% endif %} 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    
+    .stat-number {
+        font-size: 2.5rem;
+        font-weight: bold;
+        margin-bottom: 8px;
+    }
+    
+    .stat-label {
+        font-size: 0.9rem;
+        opacity: 0.9;
+    }
+    
+    .encounter-row {
+        background: white;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        transition: all 0.3s ease;
+    }
+    
+    .encounter-row:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transform: translateY(-2px);
+    }
+    
+    .patient-card {
+        background: white;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        transition: all 0.3s ease;
+    }
+    
+    .patient-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transform: translateY(-2px);
+    }
+    
+    .badge-antenatal {
+        background: #3b82f6;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+    
+    .badge-postnatal {
+        background: #f59e0b;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+    
+    .action-btn {
+        background: {% if care_type == 'Antenatal' %}#3b82f6{% else %}#f59e0b{% endif %};
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        text-decoration: none;
+        display: inline-block;
+        margin: 4px;
+        transition: all 0.3s ease;
+    }
+    
+    .action-btn:hover {
+        background: {% if care_type == 'Antenatal' %}#2563eb{% else %}#d97706{% endif %};
+        color: white;
+        text-decoration: none;
+        transform: translateY(-1px);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    {% if care_type == 'Antenatal' %}
+    <!-- Prominent Antenatal Items Billing Banner -->
+    <a href="{% url 'hospital:antenatal_items_billing' %}" class="text-decoration-none d-block mb-4">
+        <div class="alert alert-success border-2 border-success shadow-sm d-flex align-items-center justify-content-between flex-wrap gap-3" style="background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); border-left: 6px solid #059669;">
+            <div class="d-flex align-items-center">
+                <i class="bi bi-capsule-fill me-3" style="font-size: 2rem; color: #059669;"></i>
+                <div>
+                    <h5 class="mb-1 fw-bold text-dark">Bill Antenatal Items</h5>
+                    <p class="mb-0 text-dark opacity-75">Select patient and pharmacy items (vitamins, supplements) to create a bill</p>
+                </div>
+            </div>
+            <span class="btn btn-success">
+                <i class="bi bi-arrow-right-circle me-2"></i>Open
+            </span>
+        </div>
+    </a>
+    {% endif %}
+    <!-- Statistics Cards -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-3 col-sm-6">
+            <div class="stat-card">
+                <div class="stat-number">
+                    {% if care_type == 'Antenatal' %}
+                        {{ stats.total_antenatal_visits }}
+                    {% else %}
+                        {{ stats.total_postnatal_visits }}
+                    {% endif %}
+                </div>
+                <div class="stat-label">Total {{ care_type }} Visits</div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="stat-card">
+                <div class="stat-number">
+                    {% if care_type == 'Antenatal' %}
+                        {{ stats.total_antenatal_patients }}
+                    {% else %}
+                        {{ stats.total_postnatal_patients }}
+                    {% endif %}
+                </div>
+                <div class="stat-label">Total {{ care_type }} Patients</div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="stat-card">
+                <div class="stat-number">{{ stats.visits_today }}</div>
+                <div class="stat-label">Visits Today</div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="stat-card">
+                <div class="stat-number">{{ stats.visits_this_week }}</div>
+                <div class="stat-label">Visits This Week</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="maternity-card">
+        <h5 class="mb-3">
+            <i class="bi bi-lightning-charge-fill me-2" style="color: {% if care_type == 'Antenatal' %}#3b82f6{% else %}#f59e0b{% endif %};"></i>Quick Actions
+        </h5>
+        <div class="row g-3">
+            <div class="col-md-3 col-sm-6">
+                <a href="{% url 'hospital:encounter_create' %}" class="action-btn w-100 text-center d-block">
+                    <i class="bi bi-plus-circle me-2"></i>New {{ care_type }} Visit
+                </a>
+            </div>
+            {% if care_type == 'Antenatal' %}
+            <div class="col-md-3 col-sm-6">
+                <a href="{% url 'hospital:antenatal_items_billing' %}" class="action-btn w-100 text-center d-block" style="background: #10b981;">
+                    <i class="bi bi-capsule me-2"></i>Bill Antenatal Items
+                </a>
+            </div>
+            {% endif %}
+            <div class="col-md-3 col-sm-6">
+                <a href="{% url 'hospital:midwife_dashboard' %}" class="action-btn w-100 text-center d-block" style="background: #ec4899;">
+                    <i class="bi bi-speedometer2 me-2"></i>Midwife Dashboard
+                </a>
+            </div>
+            {% if care_type == 'Antenatal' %}
+            <div class="col-md-3 col-sm-6">
+                <a href="{% url 'hospital:postnatal_care' %}" class="action-btn w-100 text-center d-block" style="background: #f59e0b;">
+                    <i class="bi bi-heart-pulse me-2"></i>Postnatal Care
+                </a>
+            </div>
+            {% else %}
+            <div class="col-md-3 col-sm-6">
+                <a href="{% url 'hospital:antenatal_care' %}" class="action-btn w-100 text-center d-block" style="background: #3b82f6;">
+                    <i class="bi bi-heart-pulse me-2"></i>Antenatal Care
+                </a>
+            </div>
+            {% endif %}
+            <div class="col-md-3 col-sm-6">
+                <a href="{% url 'hospital:patient_list' %}?gender=F" class="action-btn w-100 text-center d-block" style="background: #10b981;">
+                    <i class="bi bi-people-fill me-2"></i>All Maternity Patients
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Encounters -->
+    <div class="maternity-card">
+        <h5 class="mb-3">
+            <i class="bi bi-clipboard-pulse me-2" style="color: {% if care_type == 'Antenatal' %}#3b82f6{% else %}#f59e0b{% endif %};"></i>Recent {{ care_type }} Visits
+        </h5>
+        {% if encounters %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Patient</th>
+                        <th>MRN</th>
+                        <th>Date</th>
+                        <th>Provider</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for encounter in encounters %}
+                    <tr class="encounter-row">
+                        <td>
+                            <strong>{{ encounter.patient.full_name }}</strong>
+                            <br>
+                            <small class="text-muted">{{ encounter.patient.age }} years</small>
+                        </td>
+                        <td>{{ encounter.patient.mrn }}</td>
+                        <td>{{ encounter.started_at|date:"M d, Y H:i" }}</td>
+                        <td>
+                            {% if encounter.provider %}
+                                {{ encounter.provider.user.get_full_name|default:encounter.provider.user.username }}
+                            {% else %}
+                                <span class="text-muted">Not assigned</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="badge {% if encounter.status == 'active' %}bg-success{% elif encounter.status == 'completed' %}bg-secondary{% else %}bg-warning{% endif %}">
+                                {{ encounter.get_status_display }}
+                            </span>
+                        </td>
+                        <td>
+                            <a href="{% url 'hospital:encounter_detail' pk=encounter.pk %}" class="btn btn-sm btn-primary">
+                                <i class="bi bi-eye"></i> View
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle me-2"></i>No {{ care_type|lower }} visits found.
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Patients -->
+    <div class="maternity-card">
+        <h5 class="mb-3">
+            <i class="bi bi-people-fill me-2" style="color: {% if care_type == 'Antenatal' %}#3b82f6{% else %}#f59e0b{% endif %};"></i>{{ care_type }} Patients
+        </h5>
+        {% if patients %}
+        <div class="row g-3">
+            {% for patient in patients %}
+            <div class="col-md-4 col-sm-6">
+                <div class="patient-card">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h6 class="mb-1">{{ patient.full_name }}</h6>
+                            <small class="text-muted">MRN: {{ patient.mrn }}</small>
+                        </div>
+                        <span class="badge {% if care_type == 'Antenatal' %}badge-antenatal{% else %}badge-postnatal{% endif %}">
+                            {{ care_type }}
+                        </span>
+                    </div>
+                    <div class="mb-2">
+                        <small class="text-muted">
+                            <i class="bi bi-calendar3 me-1"></i>{{ patient.age }} years old
+                            <br>
+                            <i class="bi bi-telephone me-1"></i>{{ patient.phone_number|default:"No phone" }}
+                        </small>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <a href="{% url 'hospital:patient_detail' pk=patient.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                        <a href="{% url 'hospital:encounter_create' %}?patient={{ patient.id }}" class="btn btn-sm btn-outline-success">
+                            <i class="bi bi-plus-circle"></i> New Visit
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle me-2"></i>No {{ care_type|lower }} patients found.
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+
+
+
+

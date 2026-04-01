@@ -1,0 +1,922 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}{{ title }}{% endblock %}
+{% block page_title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .transfer-form-container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+    
+    .form-section {
+        background: white;
+        border-radius: 12px;
+        padding: 25px;
+        margin-bottom: 25px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .section-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 20px;
+        padding-bottom: 15px;
+        border-bottom: 2px solid #e5e7eb;
+    }
+    
+    .section-header h5 {
+        margin: 0;
+        color: #1f2937;
+        font-weight: 600;
+    }
+    
+    .store-select-card {
+        border: 2px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 15px;
+        transition: all 0.3s;
+        cursor: pointer;
+    }
+    
+    .store-select-card:hover {
+        border-color: #3b82f6;
+        background: #eff6ff;
+    }
+    
+    .store-select-card.selected {
+        border-color: #3b82f6;
+        background: #dbeafe;
+    }
+    
+    .item-search-container {
+        position: relative;
+        margin-bottom: 20px;
+    }
+    
+    .item-search-input {
+        width: 100%;
+        padding: 12px 45px 12px 15px;
+        border: 2px solid #e5e7eb;
+        border-radius: 8px;
+        font-size: 15px;
+    }
+    
+    .item-search-input:focus {
+        outline: none;
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+    
+    .search-icon {
+        position: absolute;
+        right: 15px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: #6b7280;
+    }
+    
+    .items-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 15px;
+        max-height: 400px;
+        overflow-y: auto;
+        padding: 10px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        background: #f9fafb;
+    }
+    
+    .item-card {
+        background: white;
+        border: 2px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 15px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .item-card:hover {
+        border-color: #3b82f6;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+        transform: translateY(-2px);
+    }
+    
+    .item-card.selected {
+        border-color: #10b981;
+        background: #ecfdf5;
+    }
+    
+    .item-card.low-stock {
+        border-left: 4px solid #f59e0b;
+    }
+    
+    .item-card.out-of-stock {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    
+    .item-name {
+        font-weight: 600;
+        color: #1f2937;
+        margin-bottom: 5px;
+    }
+    
+    .item-meta {
+        font-size: 13px;
+        color: #6b7280;
+        margin-bottom: 8px;
+    }
+    
+    .item-stock {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px solid #e5e7eb;
+    }
+    
+    .stock-badge {
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    
+    .stock-available {
+        background: #d1fae5;
+        color: #065f46;
+    }
+    
+    .stock-low {
+        background: #fef3c7;
+        color: #92400e;
+    }
+    
+    .selected-items-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+    }
+    
+    .selected-items-table th {
+        background: #f3f4f6;
+        padding: 12px;
+        text-align: left;
+        font-weight: 600;
+        font-size: 13px;
+        color: #374151;
+        border-bottom: 2px solid #e5e7eb;
+    }
+    
+    .selected-items-table td {
+        padding: 15px 12px;
+        border-bottom: 1px solid #e5e7eb;
+    }
+    
+    .selected-items-table tr:hover {
+        background: #f9fafb;
+    }
+    
+    .quantity-input {
+        width: 80px;
+        padding: 6px 10px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        text-align: center;
+    }
+    
+    .quantity-input:focus {
+        outline: none;
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+    
+    .remove-item-btn {
+        background: #fee2e2;
+        color: #991b1b;
+        border: none;
+        padding: 6px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 12px;
+        transition: all 0.2s;
+    }
+    
+    .remove-item-btn:hover {
+        background: #fecaca;
+    }
+    
+    .total-summary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 20px;
+        border-radius: 12px;
+        margin-top: 20px;
+    }
+    
+    .total-summary h4 {
+        margin: 0 0 10px 0;
+        color: white;
+    }
+    
+    .total-value {
+        font-size: 32px;
+        font-weight: 700;
+        margin: 10px 0;
+    }
+    
+    .filter-badge {
+        display: inline-block;
+        padding: 4px 10px;
+        background: #e5e7eb;
+        border-radius: 12px;
+        font-size: 12px;
+        margin-right: 8px;
+        margin-bottom: 8px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .filter-badge.active {
+        background: #3b82f6;
+        color: white;
+    }
+    
+    .filter-badge:hover {
+        background: #d1d5db;
+    }
+    
+    .filter-badge.active:hover {
+        background: #2563eb;
+    }
+    
+    .no-items-message {
+        text-align: center;
+        padding: 40px;
+        color: #6b7280;
+    }
+    
+    .no-items-message i {
+        font-size: 48px;
+        margin-bottom: 15px;
+        color: #d1d5db;
+    }
+    
+    /* Prevent flash/flicker: stable layout for transfer sections */
+    #itemSelectionSection,
+    #selectedItemsSection,
+    #submitSection {
+        min-height: 0;
+        contain: layout style;
+    }
+    #itemSelectionSection .items-grid {
+        min-height: 120px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="transfer-form-container">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2><i class="bi bi-arrow-left-right"></i> {{ title }}</h2>
+            <p class="text-muted">Intelligent transfer creation with real-time inventory selection</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:stores_list' %}" class="btn btn-outline-secondary me-2">
+                <i class="bi bi-shop"></i> Stores
+            </a>
+            <a href="{% url 'hospital:transfer_dashboard' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Dashboard
+            </a>
+        </div>
+    </div>
+
+    <!-- Guidelines for end users -->
+    <div class="guidelines-card mb-4" style="background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 12px; padding: 20px;">
+        <h6 class="mb-3"><i class="bi bi-lightbulb text-primary me-2"></i>How to create a transfer</h6>
+        <ol class="mb-2 ps-3" style="font-size: 14px; color: #0f766e;">
+            <li><strong>Choose stores:</strong> Select <strong>From store</strong> (where the stock is) and <strong>To store</strong> (where it should go). They must be different.</li>
+            <li><strong>Pick items:</strong> After the source store loads, select items from the list. Each item shows <em>available quantity</em> — you can only transfer up to that amount.</li>
+            <li><strong>Set quantities:</strong> Enter how many units to transfer for each item. Quantities are checked against real inventory; you cannot exceed available stock.</li>
+            <li><strong>Submit:</strong> Click <strong>Create Transfer</strong>. The transfer is created as <strong>Pending</strong>. An approver can then approve it; when someone <strong>completes</strong> the transfer, stock is deducted from the source store and added to the destination store.</li>
+        </ol>
+        <p class="mb-0 small text-muted" style="border-top: 1px solid #99f6e4; padding-top: 12px; margin-top: 12px;">
+            <i class="bi bi-info-circle me-1"></i> Items and quantities are linked to the source store’s inventory, so completion updates the correct stock. If the destination store does not have the item, it is created automatically when the transfer is completed.
+        </p>
+    </div>
+
+    {% if replenish_item %}
+    <div class="alert alert-success mb-4 d-flex align-items-center" role="region">
+        <i class="bi bi-box-arrow-in-down me-2" style="font-size: 1.25rem;"></i>
+        <div>
+            <strong>Replenishing:</strong> {{ replenish_item.item_name }} ({{ replenish_item.item_code|default:"—" }}) in <strong>{{ replenish_item.store.name }}</strong>.
+            Add the same item from the source store so the transfer updates this item’s quantity.
+        </div>
+    </div>
+    {% endif %}
+
+    <form method="post" id="transferForm">
+        {% csrf_token %}
+        {% if replenish_item %}
+        <input type="hidden" name="for_item_id" value="{{ replenish_item_id_str }}">
+        {% endif %}
+        
+        <!-- Store Selection Section -->
+        <div class="form-section">
+            <div class="section-header">
+                <i class="bi bi-shop" style="font-size: 24px; color: #3b82f6;"></i>
+                <h5>Store Selection</h5>
+            </div>
+            
+            <div class="row">
+                <div class="col-md-6 mb-4">
+                    <label class="form-label fw-bold mb-3">
+                        <i class="bi bi-box-arrow-up"></i> From Store (Source)
+                    </label>
+                    <select name="from_store" id="fromStore" class="form-select form-select-lg" required>
+                        <option value="">-- Select Source Store --</option>
+                        {% for store_type, stores in stores_by_type.items %}
+                        <optgroup label="{{ store_type }}">
+                            {% for store in stores %}
+                            <option value="{{ store.pk_str }}" {% if store.pk_str == initial_from_pk_str %}selected{% endif %}>{{ store.name }} ({{ store.code }})</option>
+                            {% endfor %}
+                        </optgroup>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">Source store — items are loaded from this store’s inventory. Pick the store that has the stock.</div>
+                </div>
+                
+                <div class="col-md-6 mb-4">
+                    <label class="form-label fw-bold mb-3">
+                        <i class="bi bi-box-arrow-down"></i> To Store (Destination)
+                    </label>
+                    <select name="to_store" id="toStore" class="form-select form-select-lg" required>
+                        <option value="">-- Select Destination Store --</option>
+                        {% for store_type, stores in stores_by_type.items %}
+                        <optgroup label="{{ store_type }}">
+                            {% for store in stores %}
+                            <option value="{{ store.pk_str }}" {% if store.pk_str == initial_to_pk_str %}selected{% endif %}>{{ store.name }} ({{ store.code }})</option>
+                            {% endfor %}
+                        </optgroup>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">Destination store — items will be added to this store’s inventory when the transfer is completed.</div>
+                </div>
+            </div>
+            
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label fw-bold">Transfer Date</label>
+                    <input type="date" name="transfer_date" class="form-control" 
+                           value="{% now 'Y-m-d' %}" required>
+                </div>
+            </div>
+            
+            <div class="mb-3">
+                <label class="form-label fw-bold">Notes (Optional)</label>
+                <textarea name="notes" class="form-control" rows="3" 
+                          placeholder="Add any notes about this transfer..."></textarea>
+            </div>
+        </div>
+
+        <!-- Item Selection Section -->
+        <div class="form-section" id="itemSelectionSection" style="display: none;">
+            <div class="section-header">
+                <i class="bi bi-box-seam" style="font-size: 24px; color: #10b981;"></i>
+                <h5>Select Items to Transfer (from source store inventory)</h5>
+            </div>
+            <p class="text-muted small mb-3">Items below are from the source store’s inventory. Only available quantities can be transferred.</p>
+            
+            <!-- Search and Filter -->
+            <div class="item-search-container">
+                <input type="text" id="itemSearch" class="item-search-input" 
+                       placeholder="Search items by name, code, or description...">
+                <i class="bi bi-search search-icon"></i>
+            </div>
+            
+            <!-- Category Filters -->
+            <div id="categoryFilters" class="mb-3" style="display: none;">
+                <label class="form-label fw-bold mb-2">Filter by Category:</label>
+                <div id="categoryFilterContainer"></div>
+            </div>
+            
+            <!-- Items Grid -->
+            <div id="itemsContainer">
+                <div class="no-items-message">
+                    <i class="bi bi-inbox"></i>
+                    <p>Please select a source store to view available items</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Selected Items Section -->
+        <div class="form-section" id="selectedItemsSection" style="display: none;">
+            <div class="section-header">
+                <i class="bi bi-list-check" style="font-size: 24px; color: #f59e0b;"></i>
+                <h5>Selected Items</h5>
+                <span class="badge bg-primary ms-2" id="selectedCount">0</span>
+            </div>
+            
+            <div class="table-responsive">
+                <table class="selected-items-table">
+                    <thead>
+                        <tr>
+                            <th>Item Code</th>
+                            <th>Item Name</th>
+                            <th>Available</th>
+                            <th>Quantity</th>
+                            <th>Unit</th>
+                            <th>Unit Cost</th>
+                            <th>Line Total</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="selectedItemsBody">
+                        <!-- Items will be added here dynamically -->
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Total Summary -->
+            <div class="total-summary">
+                <h4>Transfer Summary</h4>
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="text-white-50">Total Items</div>
+                        <div class="total-value" id="totalItems">0</div>
+                    </div>
+                    <div>
+                        <div class="text-white-50">Total Quantity</div>
+                        <div class="total-value" id="totalQuantity">0</div>
+                    </div>
+                    <div>
+                        <div class="text-white-50">Total Value</div>
+                        <div class="total-value" id="totalValue">GHS 0.00</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Submit Button -->
+        <div class="form-section" id="submitSection" style="display: none;">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <button type="submit" class="btn btn-primary btn-lg">
+                        <i class="bi bi-check-circle"></i> Create Transfer
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary btn-lg ms-2" onclick="clearAll()">
+                        <i class="bi bi-x-circle"></i> Clear All
+                    </button>
+                </div>
+                <div class="text-muted">
+                    <i class="bi bi-info-circle"></i> Review all items before submitting
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+<script type="application/json" id="transfer-initial-ids">{{ initial_store_ids_json }}</script>
+<script>
+// Global state
+let selectedItems = {};
+let currentStoreId = null;
+let allItems = [];
+let filteredItems = [];
+let currentCategoryFilter = null;
+let loadStoreItemsInProgress = false;
+
+// Pre-fill from URL (Stores list / Store detail). Use JSON from server so we never get "INVALID" from template vars.
+function isValidStoreId(s) {
+    if (!s || typeof s !== 'string') return false;
+    s = s.trim();
+    if (s.toUpperCase() === 'INVALID' || s === '' || s === 'None' || s === 'null') return false;
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+}
+var initialFromStoreId = '';
+var initialToStoreId = '';
+try {
+    var el = document.getElementById('transfer-initial-ids');
+    var raw = el ? el.textContent : '';
+    if (raw && raw.trim().toUpperCase() !== 'INVALID') {
+        var initialData = JSON.parse(raw);
+        initialFromStoreId = isValidStoreId(initialData.from) ? String(initialData.from).trim() : '';
+        initialToStoreId = isValidStoreId(initialData.to) ? String(initialData.to).trim() : '';
+    }
+} catch (e) {
+    console.warn('Transfer initial IDs not found or invalid', e);
+}
+
+function syncStoreDropdowns() {
+    const fromStoreSelect = document.getElementById('fromStore');
+    const toStoreSelect = document.getElementById('toStore');
+    const fromId = fromStoreSelect.value;
+    const toId = toStoreSelect.value;
+    Array.from(toStoreSelect.options).forEach(opt => {
+        opt.disabled = (opt.value && opt.value === fromId);
+    });
+    Array.from(fromStoreSelect.options).forEach(opt => {
+        opt.disabled = (opt.value && opt.value === toId);
+    });
+}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+    const fromStoreSelect = document.getElementById('fromStore');
+    const toStoreSelect = document.getElementById('toStore');
+    
+    // Pre-fill from query params
+    if (initialFromStoreId) {
+        fromStoreSelect.value = initialFromStoreId;
+        syncStoreDropdowns();
+        loadStoreItems(initialFromStoreId);
+    }
+    if (initialToStoreId) {
+        toStoreSelect.value = initialToStoreId;
+        syncStoreDropdowns();
+    }
+    
+    // Prevent same store selection (debounce to avoid double-load flash)
+    fromStoreSelect.addEventListener('change', function() {
+        const fromId = this.value;
+        if (fromId && isValidStoreId(fromId)) {
+            syncStoreDropdowns();
+            if (!loadStoreItemsInProgress) loadStoreItems(fromId);
+        } else {
+            hideItemSelection();
+        }
+    });
+    
+    toStoreSelect.addEventListener('change', function() {
+        const toId = this.value;
+        const fromId = fromStoreSelect.value;
+        if (toId === fromId) {
+            alert('Source and destination stores cannot be the same!');
+            this.value = '';
+            return;
+        }
+        syncStoreDropdowns();
+    });
+    
+    // Item search
+    const itemSearch = document.getElementById('itemSearch');
+    let searchTimeout;
+    if (itemSearch) {
+        itemSearch.addEventListener('input', function() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                filterItems(this.value);
+            }, 300);
+        });
+    }
+});
+
+// Load items from selected store
+function loadStoreItems(storeId) {
+    const itemSection = document.getElementById('itemSelectionSection');
+    const itemsContainer = document.getElementById('itemsContainer');
+    
+    if (!storeId || !isValidStoreId(storeId)) {
+        hideItemSelection();
+        return;
+    }
+    
+    if (loadStoreItemsInProgress) return;
+    loadStoreItemsInProgress = true;
+    
+    currentStoreId = storeId;
+    selectedItems = {};
+    updateSelectedItemsDisplay();
+    
+    itemsContainer.innerHTML = '<div class="text-center py-5"><i class="bi bi-hourglass-split" style="font-size: 32px;"></i><p class="mt-2">Loading items...</p></div>';
+    itemSection.style.display = 'block';
+    
+    var apiUrl = '{{ api_store_items_url|default:"/hms/procurement/api/store-items/" }}';
+    if (apiUrl.indexOf('?') !== -1) apiUrl = apiUrl.split('?')[0];
+    fetch(apiUrl + '?store_id=' + encodeURIComponent(storeId), { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function(response) {
+            if (!response.ok) throw new Error('Network response was not ok');
+            return response.json();
+        })
+        .then(function(data) {
+            loadStoreItemsInProgress = false;
+            if (currentStoreId !== storeId) return;
+            if (data.error) {
+                var msg = typeof data.error === 'string' ? data.error : (Array.isArray(data.error) && data.error.length ? data.error[0] : 'Please try again.');
+                if (String(msg).toUpperCase().indexOf('INVALID') !== -1 || String(msg).indexOf('UUID') !== -1) msg = 'Please select a store from the list.';
+                itemsContainer.innerHTML = '<div class="alert alert-warning">' + escapeHtml(msg) + '</div>';
+                return;
+            }
+            allItems = data.items || [];
+            filteredItems = allItems;
+            loadCategories(storeId);
+            displayItems(filteredItems);
+        })
+        .catch(function(error) {
+            loadStoreItemsInProgress = false;
+            if (currentStoreId !== storeId) return;
+            console.error('Error:', error);
+            itemsContainer.innerHTML = '<div class="alert alert-danger">Error loading items. Check the console or try again.</div>';
+        });
+}
+
+// Load categories for filtering
+function loadCategories(storeId) {
+    fetch(`/hms/procurement/api/categories/?store_id=${storeId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.categories && data.categories.length > 0) {
+                const container = document.getElementById('categoryFilterContainer');
+                container.innerHTML = '<span class="filter-badge active" data-category="" onclick="filterByCategory(\'\')">All Categories</span>';
+                
+                data.categories.forEach(cat => {
+                    const badge = document.createElement('span');
+                    badge.className = 'filter-badge';
+                    badge.textContent = cat.name;
+                    badge.setAttribute('data-category', cat.id);
+                    badge.onclick = () => filterByCategory(cat.id);
+                    container.appendChild(badge);
+                });
+                
+                document.getElementById('categoryFilters').style.display = 'block';
+            }
+        })
+        .catch(error => console.error('Error loading categories:', error));
+}
+
+// Display items in grid
+function displayItems(items) {
+    const container = document.getElementById('itemsContainer');
+    
+    if (items.length === 0) {
+        container.innerHTML = '<div class="no-items-message"><i class="bi bi-inbox"></i><p>No items found</p></div>';
+        return;
+    }
+    
+    const grid = document.createElement('div');
+    grid.className = 'items-grid';
+    
+    items.forEach(item => {
+        const card = createItemCard(item);
+        grid.appendChild(card);
+    });
+    
+    container.innerHTML = '';
+    container.appendChild(grid);
+}
+
+// Create item card
+function createItemCard(item) {
+    const card = document.createElement('div');
+    card.className = 'item-card';
+    if (item.is_low_stock) {
+        card.classList.add('low-stock');
+    }
+    if (item.available_quantity === 0) {
+        card.classList.add('out-of-stock');
+    }
+    
+    const isSelected = selectedItems[item.id] !== undefined;
+    if (isSelected) {
+        card.classList.add('selected');
+    }
+    
+    card.innerHTML = `
+        <div class="item-name">${escapeHtml(item.item_name)}</div>
+        <div class="item-meta">
+            <div><strong>Code:</strong> ${escapeHtml(item.item_code)}</div>
+            <div><strong>Category:</strong> ${escapeHtml(item.category)}</div>
+            ${item.description ? `<div class="mt-1 text-muted small">${escapeHtml(item.description.substring(0, 50))}${item.description.length > 50 ? '...' : ''}</div>` : ''}
+        </div>
+        <div class="item-stock">
+            <div>
+                <span class="stock-badge ${item.is_low_stock ? 'stock-low' : 'stock-available'}">
+                    ${item.available_quantity} ${item.unit_of_measure}
+                </span>
+            </div>
+            <div>
+                <strong>GHS ${parseFloat(item.unit_cost).toFixed(2)}</strong>
+            </div>
+        </div>
+    `;
+    
+    if (item.available_quantity > 0) {
+        card.onclick = () => toggleItemSelection(item);
+    }
+    
+    return card;
+}
+
+// Toggle item selection
+function toggleItemSelection(item) {
+    if (selectedItems[item.id]) {
+        // Remove from selection
+        delete selectedItems[item.id];
+    } else {
+        // Add to selection with default quantity of 1
+        selectedItems[item.id] = {
+            ...item,
+            selectedQuantity: 1
+        };
+    }
+    
+    updateSelectedItemsDisplay();
+    refreshItemsDisplay();
+}
+
+// Update selected items table
+function updateSelectedItemsDisplay() {
+    const tbody = document.getElementById('selectedItemsBody');
+    const count = Object.keys(selectedItems).length;
+    
+    document.getElementById('selectedCount').textContent = count;
+    
+    if (count === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No items selected</td></tr>';
+        document.getElementById('selectedItemsSection').style.display = 'none';
+        document.getElementById('submitSection').style.display = 'none';
+        return;
+    }
+    
+    document.getElementById('selectedItemsSection').style.display = 'block';
+    document.getElementById('submitSection').style.display = 'block';
+    
+    tbody.innerHTML = '';
+    let totalItems = 0;
+    let totalQuantity = 0;
+    let totalValue = 0;
+    
+    Object.values(selectedItems).forEach((item, index) => {
+        const quantity = item.selectedQuantity || 1;
+        const lineTotal = parseFloat(item.unit_cost) * quantity;
+        
+        totalItems++;
+        totalQuantity += quantity;
+        totalValue += lineTotal;
+        
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${escapeHtml(item.item_code)}</td>
+            <td>
+                <strong>${escapeHtml(item.item_name)}</strong>
+                ${item.is_low_stock ? '<span class="badge bg-warning ms-2">Low Stock</span>' : ''}
+            </td>
+            <td>${item.available_quantity} ${item.unit_of_measure}</td>
+            <td>
+                <input type="number" 
+                       class="quantity-input" 
+                       min="1" 
+                       max="${item.available_quantity}"
+                       value="${quantity}"
+                       data-item-id="${item.id}"
+                       onchange="updateQuantity('${item.id}', this.value)"
+                       required>
+            </td>
+            <td>${escapeHtml(item.unit_of_measure)}</td>
+            <td>GHS ${parseFloat(item.unit_cost).toFixed(2)}</td>
+            <td><strong>GHS ${lineTotal.toFixed(2)}</strong></td>
+            <td>
+                <button type="button" class="remove-item-btn" onclick="removeItem('${item.id}')">
+                    <i class="bi bi-trash"></i> Remove
+                </button>
+            </td>
+        `;
+        tbody.appendChild(row);
+    });
+    
+    // Update totals
+    document.getElementById('totalItems').textContent = totalItems;
+    document.getElementById('totalQuantity').textContent = totalQuantity;
+    document.getElementById('totalValue').textContent = 'GHS ' + totalValue.toFixed(2);
+}
+
+// Update quantity
+function updateQuantity(itemId, quantity) {
+    const qty = parseInt(quantity);
+    if (selectedItems[itemId]) {
+        const maxQty = selectedItems[itemId].available_quantity;
+        if (qty > maxQty) {
+            alert(`Maximum available quantity is ${maxQty}`);
+            quantity = maxQty;
+        }
+        if (qty < 1) {
+            quantity = 1;
+        }
+        selectedItems[itemId].selectedQuantity = parseInt(quantity);
+        updateSelectedItemsDisplay();
+    }
+}
+
+// Remove item
+function removeItem(itemId) {
+    delete selectedItems[itemId];
+    updateSelectedItemsDisplay();
+    refreshItemsDisplay();
+}
+
+// Filter items by search
+function filterItems(searchQuery) {
+    if (!searchQuery.trim()) {
+        filteredItems = currentCategoryFilter ? 
+            allItems.filter(item => item.category_id === currentCategoryFilter) : 
+            allItems;
+    } else {
+        const query = searchQuery.toLowerCase();
+        filteredItems = allItems.filter(item => {
+            const matchesSearch = 
+                item.item_name.toLowerCase().includes(query) ||
+                item.item_code.toLowerCase().includes(query) ||
+                (item.description && item.description.toLowerCase().includes(query));
+            
+            const matchesCategory = !currentCategoryFilter || item.category_id === currentCategoryFilter;
+            
+            return matchesSearch && matchesCategory;
+        });
+    }
+    displayItems(filteredItems);
+}
+
+// Filter by category
+function filterByCategory(categoryId) {
+    currentCategoryFilter = categoryId || null;
+    
+    // Update badge states
+    document.querySelectorAll('.filter-badge').forEach(badge => {
+        badge.classList.remove('active');
+        if (badge.getAttribute('data-category') === (categoryId || '')) {
+            badge.classList.add('active');
+        }
+    });
+    
+    // Apply filter
+    const searchQuery = document.getElementById('itemSearch').value;
+    filterItems(searchQuery);
+}
+
+// Refresh items display (to show selected state)
+function refreshItemsDisplay() {
+    displayItems(filteredItems);
+}
+
+// Hide item selection
+function hideItemSelection() {
+    document.getElementById('itemSelectionSection').style.display = 'none';
+    document.getElementById('selectedItemsSection').style.display = 'none';
+    document.getElementById('submitSection').style.display = 'none';
+}
+
+// Clear all
+function clearAll() {
+    if (confirm('Are you sure you want to clear all selected items?')) {
+        selectedItems = {};
+        updateSelectedItemsDisplay();
+        refreshItemsDisplay();
+    }
+}
+
+// Escape HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Form submission
+document.getElementById('transferForm').addEventListener('submit', function(e) {
+    const itemIds = Object.keys(selectedItems);
+    const quantities = Object.values(selectedItems).map(item => item.selectedQuantity);
+    
+    if (itemIds.length === 0) {
+        e.preventDefault();
+        alert('Please select at least one item to transfer.');
+        return false;
+    }
+    
+    // Add hidden inputs for items
+    itemIds.forEach((itemId, index) => {
+        const inputId = document.createElement('input');
+        inputId.type = 'hidden';
+        inputId.name = 'item_id[]';
+        inputId.value = itemId;
+        this.appendChild(inputId);
+        
+        const inputQty = document.createElement('input');
+        inputQty.type = 'hidden';
+        inputQty.name = 'quantity[]';
+        inputQty.value = quantities[index];
+        this.appendChild(inputQty);
+    });
+    
+    return true;
+});
+</script>
+{% endblock %}

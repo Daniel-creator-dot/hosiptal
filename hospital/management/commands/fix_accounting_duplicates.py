@@ -68,8 +68,67 @@ class Command(BaseCommand):
                     f'DR:{entry.debit_amount} CR:{entry.credit_amount}'
                 )
         
-        # Step 2: Remove artificial reclassification entries
-        self.stdout.write('\n2. Removing artificial revenue reclassifications...')
+        # Step 2: Find and remove duplicate entries with same reference number
+        self.stdout.write('\n2. Checking for duplicate entries with same reference number...')
+        
+        from collections import defaultdict
+        from django.db.models import Q
+        
+        # Group entries by reference number, account, and amount
+        duplicate_groups = defaultdict(list)
+        
+        entries_with_ref = GeneralLedger.objects.filter(
+            ~Q(reference_number=''),
+            reference_number__isnull=False,
+            is_deleted=False
+        )
+        
+        for entry in entries_with_ref:
+            # Create a key based on reference_number, account, and amount
+            key = (entry.reference_number, entry.account_id, entry.debit_amount, entry.credit_amount)
+            duplicate_groups[key].append(entry)
+        
+        # Find groups with more than one entry (duplicates)
+        duplicates = {key: entries for key, entries in duplicate_groups.items() if len(entries) > 1}
+        
+        dup_count = sum(len(entries) - 1 for entries in duplicates.values())  # Keep one, remove rest
+        self.stdout.write(f'   Found {len(duplicates)} groups with {dup_count} duplicate entries')
+        
+        if duplicates:
+            for (ref_num, acc_id, debit, credit), entries in list(duplicates.items())[:20]:  # Show first 20
+                account = entries[0].account
+                self.stdout.write(
+                    f'\n   Reference: {ref_num}, Account: {account.account_code} - {account.account_name}'
+                )
+                self.stdout.write(f'   Amount: DR {debit} / CR {credit}')
+                self.stdout.write(f'   Found {len(entries)} entries (keeping oldest, removing {len(entries) - 1})')
+                
+                # Sort by created date, keep the oldest
+                sorted_entries = sorted(entries, key=lambda e: e.created)
+                keep_entry = sorted_entries[0]
+                remove_entries = sorted_entries[1:]
+                
+                if not dry_run:
+                    for entry in remove_entries:
+                        self.stdout.write(
+                            self.style.WARNING(
+                                f'   ✗ Removing duplicate: {entry.entry_number} (created: {entry.created})'
+                            )
+                        )
+                        entry.is_deleted = True
+                        entry.save()
+                        deleted_count += 1
+                else:
+                    for entry in remove_entries:
+                        self.stdout.write(
+                            f'   Would remove: {entry.entry_number} (created: {entry.created})'
+                        )
+                    self.stdout.write(
+                        f'   Would keep: {keep_entry.entry_number} (created: {keep_entry.created})'
+                    )
+        
+        # Step 3: Remove artificial reclassification entries
+        self.stdout.write('\n3. Removing artificial revenue reclassifications...')
         
         recl_entries = GeneralLedger.objects.filter(
             reference_type='reclassification',
@@ -111,16 +170,17 @@ class Command(BaseCommand):
         if dry_run:
             self.stdout.write(f'\nWould remove:')
             self.stdout.write(f'  - {old_count} old duplicate entries (GHS {total_old_debits} debits)')
+            self.stdout.write(f'  - {dup_count} duplicate entries with same reference')
             self.stdout.write(f'  - {recl_count} artificial reclassification entries')
-            self.stdout.write(f'\nTotal: {old_count + recl_count} entries would be removed')
+            self.stdout.write(f'\nTotal: {old_count + dup_count + recl_count} entries would be removed')
             self.stdout.write(self.style.WARNING('\nThis was a DRY RUN. Run without --dry-run to apply.'))
         else:
             self.stdout.write(self.style.SUCCESS(f'\n✅ Removed {deleted_count} erroneous entries!'))
             self.stdout.write('\nResults:')
-            self.stdout.write('  ✓ Cash balance should now match receipts (GHS 8,370)')
-            self.stdout.write('  ✓ Revenue restored to original distribution')
+            self.stdout.write('  ✓ Removed duplicate entries')
+            self.stdout.write('  ✓ Revenue figures should now be correct')
             self.stdout.write('  ✓ All artificial adjustments removed')
-            self.stdout.write('\nRefresh dashboard: http://127.0.0.1:8000/hms/accounting/')
+            self.stdout.write('\nRefresh trial balance to see corrected figures!')
 
 
 

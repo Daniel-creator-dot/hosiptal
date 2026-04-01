@@ -1,0 +1,183 @@
+{% extends 'hospital/base.html' %}
+{% load humanize static %}
+
+{% block title %}Screening – Pre-employment & Pre-admission – HMS{% endblock %}
+{% block page_title %}Pre-employment & Pre-admission Screening{% endblock %}
+{% block page_subtitle %}One-click templates → Lab & Imaging → Structured report{% endblock %}
+
+{% block extra_css %}
+<style>
+    .screening-hero {
+        background: linear-gradient(135deg, #0d9488 0%, #0f766e 50%, #115e59 100%);
+        color: white;
+        border-radius: 20px;
+        padding: 36px;
+        margin-bottom: 28px;
+        box-shadow: 0 10px 40px rgba(13, 148, 136, 0.35);
+    }
+    .screening-hero h2 { font-size: 26px; font-weight: 700; margin-bottom: 8px; }
+    .screening-hero p { opacity: 0.95; margin-bottom: 0; }
+    .screening-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+        border-left: 4px solid #0d9488;
+        transition: all 0.25s;
+    }
+    .screening-card:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
+    .screening-card.pre-admission { border-left-color: #7c3aed; }
+    .screening-card h3 { font-size: 18px; font-weight: 700; margin-bottom: 12px; color: #1e293b; }
+    .screening-card .meta { font-size: 13px; color: #64748b; margin-bottom: 12px; }
+    .screening-card .btn { border-radius: 10px; font-weight: 600; }
+    .recent-list { list-style: none; padding: 0; margin: 0; }
+    .recent-list li {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        background: #f8fafc;
+        border-radius: 10px;
+        margin-bottom: 8px;
+    }
+    .recent-list li:hover { background: #f1f5f9; }
+    .recent-list a { text-decoration: none; color: inherit; font-weight: 500; }
+    .badge-fit { background: #10b981; color: white; }
+    .badge-unfit { background: #ef4444; color: white; }
+    .badge-pending { background: #f59e0b; color: white; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="screening-hero">
+        <h2><i class="bi bi-clipboard2-pulse me-2"></i>Pre-employment & Pre-admission Checks</h2>
+        <p>Use templates to send lab and imaging requests in one click, then complete a structured report for employers or schools.</p>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-md-6">
+            <div class="screening-card">
+                <h3><i class="bi bi-briefcase me-2 text-teal"></i>Pre-employment (Company)</h3>
+                <p class="meta">Templates for company pre-employment medical checks.</p>
+                <a href="{% url 'hospital:screening_dashboard' %}#templates" class="btn btn-outline-success">
+                    <i class="bi bi-list-ul me-1"></i> View templates
+                </a>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="screening-card pre-admission">
+                <h3><i class="bi bi-mortarboard me-2 text-violet"></i>Pre-admission (School)</h3>
+                <p class="meta">Templates for school pre-admission medical checks.</p>
+                <a href="{% url 'hospital:screening_dashboard' %}#templates" class="btn btn-outline-primary">
+                    <i class="bi bi-list-ul me-1"></i> View templates
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div id="templates" class="mb-4">
+        <h4 class="mb-3"><i class="bi bi-clipboard2-check me-2"></i>All templates</h4>
+        <p class="text-muted small mb-3">To use a template: open a patient encounter, then click <strong>Apply screening template</strong> on the encounter page and choose a template.</p>
+        <form method="get" action="{% url 'hospital:screening_dashboard' %}#templates" class="mb-3 d-flex gap-2 align-items-center flex-wrap">
+            <label class="form-label mb-0">Filter by company:</label>
+            <input type="text" name="company" value="{{ company_filter|default:'' }}" placeholder="e.g. Acme Corp (leave blank for all)" class="form-control form-control-sm" style="max-width: 280px;">
+            <button type="submit" class="btn btn-sm btn-outline-secondary">Apply</button>
+            {% if company_filter %}<a href="{% url 'hospital:screening_dashboard' %}#templates" class="btn btn-sm btn-link">Clear</a>{% endif %}
+        </form>
+        <p class="text-muted small mb-2">General templates (no company) are shown to everyone. Add company-specific templates in <a href="{% url 'admin:hospital_screeningchecktemplate_changelist' %}">Admin → Screening check templates</a> and set &quot;For company&quot;.</p>
+        <div id="pre-employment" class="mb-4">
+            <h5 class="text-teal mb-2">Pre-employment (Company)</h5>
+            {% if pre_employment_all|default:None %}
+            <div class="row g-3">
+                {% for t in pre_employment_all %}
+                <div class="col-md-6 col-lg-4">
+                    <div class="screening-card">
+                        <h3 class="h6 mb-1">{{ t.name }}{% if t.code %} <span class="text-muted small">({{ t.code }})</span>{% endif %}</h3>
+                        <p class="meta small mb-2">{{ t.lab_test_count }} lab · {{ t.imaging_count }} imaging</p>
+                        {% if t.description %}<p class="small text-muted mb-2">{{ t.description }}</p>{% endif %}
+                        <a href="{% url 'hospital:encounter_list' %}" class="btn btn-sm btn-success">Open encounter to apply</a>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted">No pre-employment templates. Add templates in Admin → Screening check templates.</p>
+            {% endif %}
+        </div>
+        <div id="pre-admission" class="mb-4">
+            <h5 class="text-primary mb-2">Pre-admission (School)</h5>
+            {% if pre_admission_all|default:None %}
+            <div class="row g-3">
+                {% for t in pre_admission_all %}
+                <div class="col-md-6 col-lg-4">
+                    <div class="screening-card pre-admission">
+                        <h3 class="h6 mb-1">{{ t.name }}{% if t.code %} <span class="text-muted small">({{ t.code }})</span>{% endif %}</h3>
+                        <p class="meta small mb-2">{{ t.lab_test_count }} lab · {{ t.imaging_count }} imaging</p>
+                        {% if t.description %}<p class="small text-muted mb-2">{{ t.description }}</p>{% endif %}
+                        <a href="{% url 'hospital:encounter_list' %}" class="btn btn-sm btn-primary">Open encounter to apply</a>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted">No pre-admission templates. Add templates in Admin → Screening check templates.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if pre_employment_templates|default:None or pre_admission_templates|default:None %}
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <h4 class="mb-3">Quick template links</h4>
+        </div>
+        {% for t in pre_employment_templates %}
+        <div class="col-md-4">
+            <div class="screening-card">
+                <h3>{{ t.name }}</h3>
+                <p class="meta">{{ t.lab_test_count }} lab · {{ t.imaging_count }} imaging</p>
+                <a href="{% url 'hospital:screening_dashboard' %}#templates" class="btn btn-sm btn-success">Use template</a>
+            </div>
+        </div>
+        {% endfor %}
+        {% for t in pre_admission_templates %}
+        <div class="col-md-4">
+            <div class="screening-card pre-admission">
+                <h3>{{ t.name }}</h3>
+                <p class="meta">{{ t.lab_test_count }} lab · {{ t.imaging_count }} imaging</p>
+                <a href="{% url 'hospital:screening_dashboard' %}#templates" class="btn btn-sm btn-primary">Use template</a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if recent_screening_encounters|default:None %}
+    <div class="row">
+        <div class="col-12">
+            <div class="screening-card">
+                <h3><i class="bi bi-clock-history me-2"></i>Recent screening encounters</h3>
+                <ul class="recent-list">
+                    {% for enc in recent_screening_encounters %}
+                    <li>
+                        <a href="{% url 'hospital:encounter_detail' pk=enc.pk %}">
+                            {{ enc.patient.full_name }} · {{ enc.get_encounter_type_display }} · {{ enc.started_at|date:"M d, Y H:i" }}
+                        </a>
+                        <span>
+                            <a href="{% url 'hospital:screening_report_form' encounter_id=enc.pk %}" class="btn btn-sm btn-outline-secondary me-1">Report</a>
+                            <a href="{% url 'hospital:encounter_detail' pk=enc.pk %}" class="btn btn-sm btn-outline-primary">Encounter → Apply template</a>
+                        </span>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="screening-card text-center py-5">
+        <i class="bi bi-clipboard2-check" style="font-size: 56px; color: #cbd5e1;"></i>
+        <p class="text-muted mt-3 mb-0">No recent screening encounters. Start by creating a pre-employment or pre-admission encounter, then apply a template.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,363 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}My Profile - HMS{% endblock %}
+{% block page_title %}<i class="bi bi-person-badge me-2"></i>My Profile{% endblock %}
+{% block page_subtitle %}View your staff information and records{% endblock %}
+
+{% block extra_css %}
+<style>
+    .profile-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 12px;
+        margin-bottom: 2rem;
+    }
+    .info-card {
+        background: white;
+        border-radius: 12px;
+        padding: 1.5rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        margin-bottom: 1.5rem;
+    }
+    .info-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.75rem 0;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    .info-row:last-child {
+        border-bottom: none;
+    }
+    .info-label {
+        font-weight: 600;
+        color: #666;
+    }
+    .info-value {
+        color: #333;
+    }
+    .badge-custom {
+        padding: 0.4rem 0.8rem;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        font-weight: 500;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Profile Header -->
+    <div class="profile-header">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h3 class="mb-2">
+                    <i class="bi bi-person-circle me-2"></i>
+                    {% if staff.user %}{{ staff.user.get_full_name|default:staff.user.username }}{% else %}Staff Member{% endif %}
+                </h3>
+                <p class="mb-0 opacity-75">
+                    <i class="bi bi-briefcase me-2"></i>{{ staff.get_profession_display|default:"Staff" }}
+                    {% if staff.department %}
+                    <span class="ms-3"><i class="bi bi-building me-2"></i>{{ staff.department.name }}</span>
+                    {% endif %}
+                </p>
+            </div>
+            <div class="col-md-4 text-md-end">
+                {% if staff.employee_id %}
+                <div class="mb-2">
+                    <strong>Employee ID:</strong> {{ staff.employee_id }}
+                </div>
+                {% endif %}
+                {% if staff.is_active %}
+                <span class="badge bg-success">Active</span>
+                {% else %}
+                <span class="badge bg-secondary">Inactive</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Left Column: Basic Information -->
+        <div class="col-lg-4">
+            <!-- Personal Information -->
+            <div class="info-card">
+                <h6 class="mb-3"><i class="bi bi-person me-2 text-primary"></i>Personal Information</h6>
+                <div class="info-row">
+                    <span class="info-label">Full Name:</span>
+                    <span class="info-value">{% if staff.user %}{{ staff.user.get_full_name|default:staff.user.username }}{% else %}N/A{% endif %}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Email:</span>
+                    <span class="info-value">{% if staff.user %}{{ staff.user.email|default:"-" }}{% else %}-{% endif %}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Phone:</span>
+                    <span class="info-value">{{ staff.phone_number|default:"-" }}</span>
+                </div>
+                {% if staff.date_of_birth %}
+                <div class="info-row">
+                    <span class="info-label">Date of Birth:</span>
+                    <span class="info-value">{{ staff.date_of_birth|date:"M d, Y" }} (Age: {{ staff.age|default:"-" }})</span>
+                </div>
+                {% endif %}
+                {% if staff.gender %}
+                <div class="info-row">
+                    <span class="info-label">Gender:</span>
+                    <span class="info-value">{{ staff.get_gender_display }}</span>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Employment Information -->
+            <div class="info-card">
+                <h6 class="mb-3"><i class="bi bi-briefcase me-2 text-success"></i>Employment Information</h6>
+                <div class="info-row">
+                    <span class="info-label">Employee ID:</span>
+                    <span class="info-value">{{ staff.employee_id|default:"-" }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Profession:</span>
+                    <span class="info-value">{{ staff.get_profession_display|default:"-" }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Department:</span>
+                    <span class="info-value">{% if staff.department %}{{ staff.department.name }}{% else %}-{% endif %}</span>
+                </div>
+                {% if staff.date_of_joining %}
+                <div class="info-row">
+                    <span class="info-label">Date of Joining:</span>
+                    <span class="info-value">{{ staff.date_of_joining|date:"M d, Y" }}</span>
+                </div>
+                {% if years_of_service %}
+                <div class="info-row">
+                    <span class="info-label">Years of Service:</span>
+                    <span class="info-value">{{ years_of_service|floatformat:1 }} years</span>
+                </div>
+                {% endif %}
+                {% endif %}
+                <div class="info-row">
+                    <span class="info-label">Status:</span>
+                    <span class="info-value">
+                        {% if staff.is_active %}
+                        <span class="badge-custom bg-success text-white">Active</span>
+                        {% else %}
+                        <span class="badge-custom bg-secondary text-white">Inactive</span>
+                        {% endif %}
+                    </span>
+                </div>
+            </div>
+
+            <!-- Contract Information -->
+            {% if contract %}
+            <div class="info-card">
+                <h6 class="mb-3"><i class="bi bi-file-earmark-text me-2 text-info"></i>Contract</h6>
+                <div class="info-row">
+                    <span class="info-label">Type:</span>
+                    <span class="info-value">{{ contract.get_contract_type_display }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Job Title:</span>
+                    <span class="info-value">{{ contract.job_title }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Start Date:</span>
+                    <span class="info-value">{{ contract.start_date|date:"M d, Y" }}</span>
+                </div>
+                {% if contract.end_date %}
+                <div class="info-row">
+                    <span class="info-label">End Date:</span>
+                    <span class="info-value">{{ contract.end_date|date:"M d, Y" }}</span>
+                </div>
+                {% endif %}
+                <div class="info-row">
+                    <span class="info-label">Basic Salary:</span>
+                    <span class="info-value">GHS {{ contract.basic_salary|floatformat:2|intcomma }}</span>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Leave Balance -->
+            {% if leave_balance %}
+            <div class="info-card">
+                <h6 class="mb-3"><i class="bi bi-calendar-check me-2 text-warning"></i>Leave Balance</h6>
+                <div class="info-row">
+                    <span class="info-label">Annual Leave:</span>
+                    <span class="info-value">{{ leave_balance.annual_leave_balance|default:0 }} days</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Sick Leave:</span>
+                    <span class="info-value">{{ leave_balance.sick_leave_balance|default:0 }} days</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Casual Leave:</span>
+                    <span class="info-value">{{ leave_balance.casual_leave_balance|default:0 }} days</span>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Right Column: Records -->
+        <div class="col-lg-8">
+            <!-- Recent Payrolls -->
+            {% if payrolls %}
+            <div class="info-card">
+                <h6 class="mb-3"><i class="bi bi-cash-coin me-2 text-success"></i>Recent Payroll (Last 6 Months)</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Period</th>
+                                <th>Basic Salary</th>
+                                <th>Total Earnings</th>
+                                <th>Total Deductions</th>
+                                <th>Net Pay</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for payroll in payrolls %}
+                            <tr>
+                                <td>{{ payroll.period.start_date|date:"M Y" }}</td>
+                                <td>GHS {{ payroll.basic_salary|floatformat:2|intcomma }}</td>
+                                <td>GHS {{ payroll.total_earnings|floatformat:2|intcomma }}</td>
+                                <td>GHS {{ payroll.total_deductions|floatformat:2|intcomma }}</td>
+                                <td><strong>GHS {{ payroll.net_pay|floatformat:2|intcomma }}</strong></td>
+                                <td>
+                                    {% if payroll.payment_status == 'paid' %}
+                                    <span class="badge bg-success">Paid</span>
+                                    {% elif payroll.payment_status == 'pending' %}
+                                    <span class="badge bg-warning">Pending</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">{{ payroll.get_payment_status_display }}</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Performance Reviews -->
+            {% if performance_reviews %}
+            <div class="info-card">
+                <h6 class="mb-3"><i class="bi bi-star me-2 text-warning"></i>Recent Performance Reviews</h6>
+                <div class="list-group">
+                    {% for review in performance_reviews %}
+                    <div class="list-group-item">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">{{ review.review_date|date:"M d, Y" }}</h6>
+                                <p class="mb-1"><small class="text-muted">Reviewed by: {{ review.reviewed_by.user.get_full_name|default:review.reviewed_by.user.username }}</small></p>
+                                {% if review.overall_rating %}
+                                <p class="mb-0">
+                                    <strong>Rating:</strong> 
+                                    {% for i in "12345"|make_list %}
+                                        {% if forloop.counter <= review.overall_rating %}
+                                        <i class="bi bi-star-fill text-warning"></i>
+                                        {% else %}
+                                        <i class="bi bi-star text-muted"></i>
+                                        {% endif %}
+                                    {% endfor %}
+                                    ({{ review.overall_rating }}/5)
+                                </p>
+                                {% endif %}
+                            </div>
+                            <span class="badge bg-info">{{ review.get_review_type_display }}</span>
+                        </div>
+                        {% if review.comments %}
+                        <p class="mt-2 mb-0"><small>{{ review.comments|truncatewords:30 }}</small></p>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Training Records -->
+            {% if training_records %}
+            <div class="info-card">
+                <h6 class="mb-3"><i class="bi bi-book me-2 text-primary"></i>Training Records</h6>
+                <div class="list-group">
+                    {% for training in training_records %}
+                    <div class="list-group-item">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">{{ training.training_name }}</h6>
+                                <p class="mb-1"><small class="text-muted">{{ training.start_date|date:"M d, Y" }} - {{ training.end_date|date:"M d, Y" }}</small></p>
+                                {% if training.provider %}
+                                <p class="mb-0"><small><strong>Provider:</strong> {{ training.provider }}</small></p>
+                                {% endif %}
+                            </div>
+                            {% if training.status %}
+                            <span class="badge bg-{% if training.status == 'completed' %}success{% elif training.status == 'in_progress' %}warning{% else %}secondary{% endif %}">
+                                {{ training.get_status_display }}
+                            </span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Recent Leave Requests -->
+            {% if recent_leaves %}
+            <div class="info-card">
+                <h6 class="mb-3"><i class="bi bi-calendar-x me-2 text-danger"></i>Recent Leave Requests</h6>
+                <div class="list-group">
+                    {% for leave in recent_leaves %}
+                    <div class="list-group-item">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">{{ leave.get_leave_type_display }}</h6>
+                                <p class="mb-1"><small class="text-muted">{{ leave.start_date|date:"M d, Y" }} - {{ leave.end_date|date:"M d, Y" }} ({{ leave.days_requested }} days)</small></p>
+                                {% if leave.reason %}
+                                <p class="mb-0"><small>{{ leave.reason|truncatewords:20 }}</small></p>
+                                {% endif %}
+                            </div>
+                            <span class="badge bg-{% if leave.status == 'approved' %}success{% elif leave.status == 'rejected' %}danger{% else %}warning{% endif %}">
+                                {{ leave.get_status_display }}
+                            </span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Quick Actions -->
+            <div class="info-card">
+                <h6 class="mb-3"><i class="bi bi-lightning me-2 text-primary"></i>Quick Actions</h6>
+                <div class="d-grid gap-2">
+                    <a href="{% url 'hospital:staff_portal' %}" class="btn btn-outline-primary">
+                        <i class="bi bi-speedometer2 me-2"></i>Staff Portal
+                    </a>
+                    <a href="{% url 'hospital:staff_leave_request' %}" class="btn btn-outline-success">
+                        <i class="bi bi-calendar-plus me-2"></i>Apply for Leave
+                    </a>
+                    <a href="{% url 'hospital:staff_leave_history' %}" class="btn btn-outline-info">
+                        <i class="bi bi-calendar-check me-2"></i>Leave History
+                    </a>
+                    <a href="{% url 'hospital:staff_performance_reviews' %}" class="btn btn-outline-warning">
+                        <i class="bi bi-star me-2"></i>Performance Reviews
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+

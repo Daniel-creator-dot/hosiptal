@@ -1,0 +1,644 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize hospital_extras %}
+
+{% block title %}Administrator Dashboard - HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+    .admin-dashboard {padding: 24px 12px 48px; background: #f8fafc;}
+    .stat-card {
+        background: white; 
+        border-radius: 18px; 
+        border: 1px solid rgba(15,23,42,0.08); 
+        box-shadow: 0 4px 16px rgba(0,0,0,0.08); 
+        padding: 24px; 
+        transition: transform 0.2s, box-shadow 0.2s;
+        position: relative;
+        overflow: hidden;
+    }
+    .stat-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: linear-gradient(90deg, var(--card-color), transparent);
+    }
+    .stat-card:hover {transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,0.12);}
+    .stat-value {font-size: 42px; font-weight: 800; line-height: 1; margin-bottom: 8px;}
+    .stat-label {color: #6b7280; font-size: 14px; margin-top: 8px; font-weight: 500;}
+    .stat-change {font-size: 12px; margin-top: 4px;}
+    .stat-change.positive {color: #10b981;}
+    .stat-change.negative {color: #ef4444;}
+    
+    .chart-container {
+        background: white;
+        border-radius: 18px;
+        border: 1px solid rgba(15,23,42,0.08);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+        padding: 28px;
+        margin-bottom: 24px;
+        position: relative;
+    }
+    .chart-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 2px solid #f1f5f9;
+    }
+    .chart-title {
+        font-size: 18px;
+        font-weight: 700;
+        color: #0f172a;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .gradient-header {
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); 
+        color: white; 
+        border-radius: 20px; 
+        padding: 40px; 
+        margin-bottom: 32px; 
+        box-shadow: 0 10px 40px rgba(239, 68, 68, 0.3);
+    }
+    
+    .quick-access-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+    }
+    
+    .quick-access-btn {
+        background: white;
+        border: 1px solid rgba(15,23,42,0.08);
+        border-radius: 12px;
+        padding: 16px;
+        text-decoration: none;
+        color: #0f172a;
+        transition: all 0.2s;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+    }
+    .quick-access-btn:hover {
+        border-color: #3b82f6;
+        background: #eff6ff;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(59,130,246,0.15);
+    }
+    .quick-access-btn i {
+        font-size: 24px;
+        color: #3b82f6;
+    }
+    
+    .metric-card {
+        background: linear-gradient(135deg, var(--bg-start), var(--bg-end));
+        border-radius: 16px;
+        padding: 24px;
+        color: white;
+        position: relative;
+        overflow: hidden;
+    }
+    .metric-card::before {
+        content: '';
+        position: absolute;
+        top: -50%;
+        right: -50%;
+        width: 200%;
+        height: 200%;
+        background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+        pointer-events: none;
+    }
+    .metric-icon {
+        font-size: 48px;
+        opacity: 0.9;
+        margin-bottom: 12px;
+    }
+    .metric-value {
+        font-size: 36px;
+        font-weight: 800;
+        margin-bottom: 4px;
+    }
+    .metric-label {
+        font-size: 14px;
+        opacity: 0.9;
+    }
+    
+    .activity-feed {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    .activity-item {
+        padding: 16px;
+        border-left: 3px solid #e2e8f0;
+        margin-bottom: 12px;
+        background: #f8fafc;
+        border-radius: 8px;
+        transition: all 0.2s;
+    }
+    .activity-item:hover {
+        border-left-color: #3b82f6;
+        background: #eff6ff;
+    }
+    
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .fade-in {
+        animation: fadeIn 0.5s ease-out;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-dashboard">
+    <!-- Header -->
+    <div class="gradient-header fade-in">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+            <div>
+                <h1 class="mb-2" style="font-size: 2.5rem; font-weight: 800;">
+                    <i class="bi bi-shield-fill-check me-3"></i>Administrator Command Center
+                </h1>
+                <p class="mb-0" style="font-size: 1.1rem; opacity: 0.95;">Complete Hospital Management & Oversight Dashboard</p>
+                <p class="mb-0 mt-2" style="opacity: 0.85;">
+                    <i class="bi bi-person-badge me-2"></i>Welcome, {{ request.user.get_full_name|default:request.user.username }}
+                </p>
+            </div>
+            <div class="text-end">
+                <div style="font-size: 1.5rem; font-weight: 700;">{{ today|date:"l" }}</div>
+                <div style="font-size: 1.1rem; opacity: 0.9;">{{ today|date:"F d, Y" }}</div>
+                <div style="font-size: 0.9rem; opacity: 0.8;">
+                    <i class="bi bi-clock"></i> 
+                    {% now "g:i A" %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Key Metrics Row -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-3">
+            <div class="metric-card fade-in" style="--bg-start: #3b82f6; --bg-end: #2563eb;">
+                <div class="metric-icon"><i class="bi bi-people-fill"></i></div>
+                <div class="metric-value">{{ total_patients|intcomma }}</div>
+                <div class="metric-label">Total Patients</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="metric-card fade-in" style="--bg-start: #10b981; --bg-end: #059669;">
+                <div class="metric-icon"><i class="bi bi-hospital"></i></div>
+                <div class="metric-value">{{ active_encounters }}</div>
+                <div class="metric-label">Active Encounters</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="metric-card fade-in" style="--bg-start: #8b5cf6; --bg-end: #7c3aed;">
+                <div class="metric-icon"><i class="bi bi-person-badge"></i></div>
+                <div class="metric-value">{{ total_staff }}</div>
+                <div class="metric-label">Total Staff</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="metric-card fade-in" style="--bg-start: #f59e0b; --bg-end: #d97706;">
+                <div class="metric-icon"><i class="bi bi-calendar-check"></i></div>
+                <div class="metric-value">{{ appointments_today }}</div>
+                <div class="metric-label">Appointments Today</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Financial Metrics Row -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-4">
+            <div class="stat-card fade-in" style="--card-color: #10b981;">
+                <div class="stat-value" style="color: #10b981;">GHS {{ total_revenue_today|floatformat:2|intcomma }}</div>
+                <div class="stat-label">Revenue Today</div>
+                <div class="stat-change positive">
+                    <i class="bi bi-arrow-up"></i> Today's earnings
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stat-card fade-in" style="--card-color: #3b82f6;">
+                <div class="stat-value" style="color: #3b82f6;">GHS {{ total_revenue_month|floatformat:2|intcomma }}</div>
+                <div class="stat-label">Revenue This Month</div>
+                <div class="stat-change positive">
+                    <i class="bi bi-arrow-up"></i> Monthly total
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stat-card fade-in" style="--card-color: #f59e0b;">
+                <div class="stat-value" style="color: #f59e0b;">GHS {{ outstanding_invoices|floatformat:2|intcomma }}</div>
+                <div class="stat-label">Outstanding Invoices</div>
+                <div class="stat-change">
+                    <i class="bi bi-info-circle"></i> Pending payments
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Charts Row -->
+    <div class="row g-4 mb-4">
+        <!-- Revenue Trend Chart -->
+        <div class="col-md-8">
+            <div class="chart-container fade-in">
+                <div class="chart-header">
+                    <div class="chart-title">
+                        <i class="bi bi-graph-up-arrow" style="color: #10b981;"></i>
+                        Revenue Trends (Last 30 Days)
+                    </div>
+                </div>
+                <canvas id="revenueChart" height="80"></canvas>
+            </div>
+        </div>
+        
+        <!-- Patient Demographics -->
+        <div class="col-md-4">
+            <div class="chart-container fade-in">
+                <div class="chart-header">
+                    <div class="chart-title">
+                        <i class="bi bi-pie-chart" style="color: #3b82f6;"></i>
+                        Patient Demographics
+                    </div>
+                </div>
+                <canvas id="patientGenderChart"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Second Charts Row -->
+    <div class="row g-4 mb-4">
+        <!-- Monthly Revenue Comparison -->
+        <div class="col-md-6">
+            <div class="chart-container fade-in">
+                <div class="chart-header">
+                    <div class="chart-title">
+                        <i class="bi bi-bar-chart" style="color: #8b5cf6;"></i>
+                        Monthly Revenue (Last 6 Months)
+                    </div>
+                </div>
+                <canvas id="monthlyRevenueChart"></canvas>
+            </div>
+        </div>
+        
+        <!-- Staff by Profession -->
+        <div class="col-md-6">
+            <div class="chart-container fade-in">
+                <div class="chart-header">
+                    <div class="chart-title">
+                        <i class="bi bi-people" style="color: #f59e0b;"></i>
+                        Staff Distribution by Profession
+                    </div>
+                </div>
+                <canvas id="staffProfessionChart"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Department Stats & Recent Activity -->
+    <div class="row g-4 mb-4">
+        <!-- Department Statistics -->
+        <div class="col-md-6">
+            <div class="chart-container fade-in">
+                <div class="chart-header">
+                    <div class="chart-title">
+                        <i class="bi bi-building" style="color: #ef4444;"></i>
+                        Department Overview
+                    </div>
+                </div>
+                <div class="activity-feed">
+                    {% for dept in department_stats|slice:":10" %}
+                    <div class="activity-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>{{ dept.name }}</strong>
+                                <div class="text-muted small">
+                                    <i class="bi bi-people"></i> {{ dept.staff_count }} staff
+                                    <span class="ms-3"><i class="bi bi-person"></i> {{ dept.patient_count }} patients</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% empty %}
+                    <p class="text-muted text-center py-4">No department data available</p>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Recent Activity -->
+        <div class="col-md-6">
+            <div class="chart-container fade-in">
+                <div class="chart-header">
+                    <div class="chart-title">
+                        <i class="bi bi-clock-history" style="color: #06b6d4;"></i>
+                        Recent Encounters
+                    </div>
+                </div>
+                <div class="activity-feed">
+                    {% for encounter in recent_encounters %}
+                    <div class="activity-item">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <strong>{{ encounter.patient.get_full_name|default:encounter.patient.mrn }}</strong>
+                                <div class="text-muted small">
+                                    <i class="bi bi-calendar"></i> {{ encounter.started_at|date:"M d, Y" }}
+                                    <span class="ms-2"><i class="bi bi-clock"></i> {{ encounter.started_at|time }}</span>
+                                </div>
+                                {% if encounter.provider %}
+                                <div class="text-muted small mt-1">
+                                    <i class="bi bi-person-badge"></i> {{ encounter.provider.user.get_full_name|default:encounter.provider.user.username }}
+                                </div>
+                                {% endif %}
+                            </div>
+                            <span class="badge bg-primary">{{ encounter.encounter_type|default:"Visit" }}</span>
+                        </div>
+                    </div>
+                    {% empty %}
+                    <p class="text-muted text-center py-4">No recent encounters</p>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- HR & Bed Statistics -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-4">
+            <div class="stat-card fade-in" style="--card-color: #8b5cf6;">
+                <div class="stat-value" style="color: #8b5cf6;">{{ total_staff }}</div>
+                <div class="stat-label">Total Staff</div>
+                <a href="{% url 'hospital:hr_worldclass_dashboard' %}" class="btn btn-sm btn-outline-primary mt-2 w-100">
+                    <i class="bi bi-arrow-right"></i> HR Portal
+                </a>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stat-card fade-in" style="--card-color: #f59e0b;">
+                <div class="stat-value" style="color: #f59e0b;">{{ staff_on_leave }}</div>
+                <div class="stat-label">Staff on Leave</div>
+                <div class="stat-change">
+                    <i class="bi bi-info-circle"></i> {{ pending_leaves }} pending requests
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stat-card fade-in" style="--card-color: #06b6d4;">
+                <div class="stat-value" style="color: #06b6d4;">{{ bed_stats.occupied|default:0 }}/{{ bed_stats.total|default:0 }}</div>
+                <div class="stat-label">Beds Occupied</div>
+                <div class="stat-change">
+                    <i class="bi bi-bed"></i> {{ bed_stats.available|default:0 }} available
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quick Access Section -->
+    <div class="section-card fade-in" style="background: white; border-radius: 18px; border: 1px solid rgba(15,23,42,0.08); box-shadow: 0 4px 16px rgba(0,0,0,0.08); padding: 28px; margin-bottom: 24px;">
+        <h5 class="mb-4"><i class="bi bi-grid-3x3-gap me-2"></i>Quick Access</h5>
+        
+        <div class="row g-3 mb-3">
+            <div class="col-md-3"><a href="{% url 'hospital:contracts_dashboard' %}" class="btn btn-outline-primary w-100"><i class="bi bi-file-text me-2"></i>Contracts</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:insurance_management_dashboard' %}" class="btn btn-outline-info w-100"><i class="bi bi-shield-check me-2"></i>Insurance</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:active_sessions' %}" class="btn btn-outline-warning w-100"><i class="bi bi-person-x me-2"></i>Active Sessions</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:user_management' %}" class="btn btn-outline-danger w-100"><i class="bi bi-people me-2"></i>User Management</a></div>
+            {% if user|is_it_or_admin %}
+            <div class="col-md-3"><a href="{% url 'hospital:it_operations_dashboard' %}" class="btn btn-outline-primary w-100"><i class="bi bi-motherboard me-2"></i>IT Ops Center</a></div>
+            {% endif %}
+            <div class="col-md-3"><a href="{% url 'hospital:system_health' %}" class="btn btn-outline-info w-100"><i class="bi bi-heart-pulse me-2"></i>System Health</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:audit_logs' %}" class="btn btn-outline-secondary w-100"><i class="bi bi-shield-check me-2"></i>Audit Logs</a></div>
+            <div class="col-md-3"><a href="{% url 'hospital:backup_list' %}" class="btn btn-outline-success w-100"><i class="bi bi-database me-2"></i>Backups</a></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<!-- Chart.js Library -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Revenue Trend Chart
+    const revenueCtx = document.getElementById('revenueChart');
+    if (revenueCtx) {
+        new Chart(revenueCtx, {
+            type: 'line',
+            data: {
+                labels: {{ revenue_labels|safe }},
+                datasets: [{
+                    label: 'Daily Revenue (GHS)',
+                    data: {{ revenue_data|safe }},
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    borderWidth: 3,
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        padding: 12,
+                        titleFont: { size: 14, weight: 'bold' },
+                        bodyFont: { size: 13 },
+                        callbacks: {
+                            label: function(context) {
+                                return 'GHS ' + context.parsed.y.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return 'GHS ' + value.toLocaleString();
+                            }
+                        },
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    // Patient Gender Chart
+    const patientGenderCtx = document.getElementById('patientGenderChart');
+    if (patientGenderCtx) {
+        new Chart(patientGenderCtx, {
+            type: 'doughnut',
+            data: {
+                labels: {{ patient_gender_labels|safe }},
+                datasets: [{
+                    data: {{ patient_gender_data|safe }},
+                    backgroundColor: [
+                        'rgba(59, 130, 246, 0.8)',
+                        'rgba(236, 72, 153, 0.8)',
+                        'rgba(16, 185, 129, 0.8)',
+                        'rgba(245, 158, 11, 0.8)'
+                    ],
+                    borderWidth: 2,
+                    borderColor: '#fff'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            padding: 15,
+                            font: { size: 12 }
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        padding: 12
+                    }
+                }
+            }
+        });
+    }
+    
+    // Monthly Revenue Chart
+    const monthlyRevenueCtx = document.getElementById('monthlyRevenueChart');
+    if (monthlyRevenueCtx) {
+        new Chart(monthlyRevenueCtx, {
+            type: 'bar',
+            data: {
+                labels: {{ monthly_revenue_labels|safe }},
+                datasets: [{
+                    label: 'Monthly Revenue (GHS)',
+                    data: {{ monthly_revenue_data|safe }},
+                    backgroundColor: 'rgba(139, 92, 246, 0.8)',
+                    borderColor: '#8b5cf6',
+                    borderWidth: 2,
+                    borderRadius: 8
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        padding: 12,
+                        callbacks: {
+                            label: function(context) {
+                                return 'GHS ' + context.parsed.y.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return 'GHS ' + value.toLocaleString();
+                            }
+                        },
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    // Staff Profession Chart
+    const staffProfessionCtx = document.getElementById('staffProfessionChart');
+    if (staffProfessionCtx) {
+        new Chart(staffProfessionCtx, {
+            type: 'bar',
+            data: {
+                labels: {{ staff_profession_labels|safe }},
+                datasets: [{
+                    label: 'Staff Count',
+                    data: {{ staff_profession_data|safe }},
+                    backgroundColor: 'rgba(245, 158, 11, 0.8)',
+                    borderColor: '#f59e0b',
+                    borderWidth: 2,
+                    borderRadius: 8
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        padding: 12
+                    }
+                },
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        ticks: {
+                            stepSize: 1
+                        },
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        }
+                    },
+                    y: {
+                        grid: {
+                            display: false
+                        }
+                    }
+                }
+            }
+        });
+    }
+});
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+
+

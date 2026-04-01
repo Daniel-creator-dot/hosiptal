@@ -6,11 +6,40 @@ import os
 import requests
 import json
 import logging
+import re
 from django.conf import settings
 from django.utils import timezone
+from datetime import timedelta
 from ..models_advanced import SMSLog
 
 logger = logging.getLogger(__name__)
+
+# Patient SMS: only official payment receipts should show money (paid amount). Everything else
+# gets currency stripped so draft/pending totals never go out by SMS. Staff procurement alerts
+# may legitimately include estimated totals — keep those exempt.
+_MESSAGE_TYPES_ALLOW_GHS_IN_SMS = frozenset({
+    'payment_receipt',
+    'procurement_approval',
+})
+
+
+def _should_strip_payment_amounts_from_sms(message_type: str) -> bool:
+    return (message_type or '') not in _MESSAGE_TYPES_ALLOW_GHS_IN_SMS
+
+
+def _strip_payment_amounts_from_sms_text(text: str) -> str:
+    """Remove GHS/cedi amount patterns so patients never get wrong figures via SMS."""
+    if not text:
+        return text
+    out = text
+    out = re.sub(r'\bGHS\s*[\d,]+(?:\.\d{1,4})?\b', '', out, flags=re.IGNORECASE)
+    out = re.sub(r'\bGH[₵c]\s*[\d,]+(?:\.\d{1,4})?\b', '', out, flags=re.IGNORECASE)
+    out = re.sub(r'(?<![\d-])₵\s*[\d,]+(?:\.\d{1,4})?\b', '', out)
+    out = re.sub(r'(?i)\boutstanding\s+balance\s+of\s+', 'outstanding balance — ', out)
+    out = re.sub(r'[ \t]{2,}', ' ', out)
+    out = re.sub(r' *\n *', '\n', out)
+    out = re.sub(r'\n{3,}', '\n\n', out)
+    return out.strip()
 
 
 class SMSService:
@@ -25,9 +54,9 @@ class SMSService:
         self.sender_id = getattr(settings, 'SMS_SENDER_ID', None) or os.environ.get('SMS_SENDER_ID', 'PrimeCare')
         self.base_url = getattr(settings, 'SMS_API_URL', None) or os.environ.get('SMS_API_URL', 'https://sms.smsnotifygh.com/smsapi')
         
-        # Warn if using default API key
-        if self.api_key == default_key:
-            logger.warning("Using default SMS API key. This may be invalid. Set SMS_API_KEY in settings or environment.")
+        # Track if using default key (warn only when actually sending SMS)
+        self._using_default_key = (self.api_key == default_key)
+        self._default_key_warned = False
     
     def send_sms(self, phone_number, message, message_type='general', recipient_name='', 
                  related_object_id=None, related_object_type=''):
@@ -45,73 +74,102 @@ class SMSService:
         Returns:
             SMSLog instance
         """
-        # Create SMS log entry
-        sms_log = SMSLog.objects.create(
-            recipient_phone=phone_number,
-            recipient_name=recipient_name,
-            message=message,
-            message_type=message_type,
-            status='pending',
-            related_object_id=related_object_id,
-            related_object_type=related_object_type
-        )
-        
+        # Warn if using default API key (only once per service instance)
+        if self._using_default_key and not self._default_key_warned:
+            logger.warning("Using default SMS API key. This may be invalid. Set SMS_API_KEY in settings or environment.")
+            self._default_key_warned = True
+
+        original_phone = (phone_number or '').strip()
+        message_original = message or ''
+        if _should_strip_payment_amounts_from_sms(message_type):
+            message_original = _strip_payment_amounts_from_sms_text(message_original)
+        normalized_phone = self._normalize_phone(original_phone)
+        normalized_message = self._normalize_message(message_original)
+
+        # Fail fast if phone is missing (still log once)
+        if not original_phone:
+            return SMSLog.objects.create(
+                recipient_phone='',
+                recipient_name=recipient_name,
+                message=message_original,
+                message_type=message_type,
+                status='failed',
+                error_message="Phone number is required",
+                related_object_id=related_object_id,
+                related_object_type=related_object_type
+            )
+
+        # Deduplicate by normalized phone + message_type + normalized message within a short window
+        dedup_window = timezone.now() - timedelta(minutes=10)
         try:
-            # Validate phone number
-            if not phone_number or not phone_number.strip():
-                sms_log.status = 'failed'
-                sms_log.error_message = "Phone number is required"
-                sms_log.save()
-                return sms_log
-            
-            # Format phone number for Ghana (233XXXXXXXXX format)
-            original_phone = phone_number
-            phone = phone_number.replace('+', '').replace(' ', '').replace('-', '').replace('(', '').replace(')', '').replace('.', '').strip()
-            
-            # Remove leading zeros or country code prefix
-            if phone.startswith('0'):
-                phone = '233' + phone[1:]
-            elif not phone.startswith('233'):
-                if phone.startswith('00233'):
-                    phone = phone[2:]  # Remove 00 prefix
-                elif len(phone) == 9:  # Assume it's a local number without country code
-                    phone = '233' + phone
-                elif len(phone) == 10 and phone.startswith('0'):
-                    phone = '233' + phone[1:]
-                elif not phone.startswith('233'):
-                    phone = '233' + phone
-            
+            from django.db import transaction
+            with transaction.atomic():
+                duplicate = SMSLog.objects.select_for_update().filter(
+                    recipient_phone__in=[normalized_phone, original_phone.replace('+', '').replace(' ', '').replace('-', '').replace('(', '').replace(')', '').replace('.', '')],
+                    message__iexact=normalized_message,
+                    message_type=message_type,
+                    created__gte=dedup_window
+                ).exclude(status='failed').order_by('-created').first()
+
+                if duplicate:
+                    logger.info(f"Duplicate SMS suppressed for {normalized_phone} [{message_type}] within 10 minutes")
+                    return duplicate
+
+                # Create SMS log entry AFTER deduplication check
+                sms_log = SMSLog.objects.create(
+                    recipient_phone=normalized_phone,
+                    recipient_name=recipient_name,
+                    message=normalized_message,
+                    message_type=message_type,
+                    status='pending',
+                    related_object_id=related_object_id,
+                    related_object_type=related_object_type
+                )
+        except Exception as dedup_error:
+            logger.warning(f"SMS deduplication check failed: {dedup_error}")
+            # Fallback: create log without lock
+            sms_log = SMSLog.objects.create(
+                recipient_phone=normalized_phone,
+                recipient_name=recipient_name,
+                message=normalized_message,
+                message_type=message_type,
+                status='pending',
+                related_object_id=related_object_id,
+                related_object_type=related_object_type
+            )
+
+        try:
             # Validate final phone number format
-            if not phone.startswith('233'):
+            if not normalized_phone.startswith('233'):
                 sms_log.status = 'failed'
-                sms_log.error_message = f"Invalid phone number format: {original_phone} (formatted: {phone}). Must start with 233 for Ghana."
+                sms_log.error_message = f"Invalid phone number format: {original_phone} (formatted: {normalized_phone}). Must start with 233 for Ghana."
                 sms_log.provider_response = {
                     'original_phone': original_phone,
-                    'formatted_phone': phone,
+                    'formatted_phone': normalized_phone,
                     'validation_error': 'Must start with 233'
                 }
                 sms_log.save()
                 return sms_log
             
-            if len(phone) != 12:
+            if len(normalized_phone) != 12:
                 sms_log.status = 'failed'
-                sms_log.error_message = f"Invalid phone number length: {original_phone} (formatted: {phone}, length: {len(phone)}). Expected 12 digits (233XXXXXXXXX)."
+                sms_log.error_message = f"Invalid phone number length: {original_phone} (formatted: {normalized_phone}, length: {len(normalized_phone)}). Expected 12 digits (233XXXXXXXXX)."
                 sms_log.provider_response = {
                     'original_phone': original_phone,
-                    'formatted_phone': phone,
-                    'length': len(phone),
-                    'validation_error': f'Expected 12 digits, got {len(phone)}'
+                    'formatted_phone': normalized_phone,
+                    'length': len(normalized_phone),
+                    'validation_error': f'Expected 12 digits, got {len(normalized_phone)}'
                 }
                 sms_log.save()
                 return sms_log
             
             # Additional validation: check if all digits after 233 are numeric
-            if not phone[3:].isdigit():
+            if not normalized_phone[3:].isdigit():
                 sms_log.status = 'failed'
                 sms_log.error_message = f"Invalid phone number: {original_phone} contains non-numeric characters after country code."
                 sms_log.provider_response = {
                     'original_phone': original_phone,
-                    'formatted_phone': phone,
+                    'formatted_phone': normalized_phone,
                     'validation_error': 'Contains non-numeric characters'
                 }
                 sms_log.save()
@@ -120,8 +178,8 @@ class SMSService:
             # Prepare request payload for SMS Notify GH API
             payload = {
                 'key': self.api_key,
-                'to': phone,
-                'msg': message,
+                'to': normalized_phone,
+                'msg': message_original,
                 'sender_id': self.sender_id
             }
             
@@ -146,7 +204,23 @@ class SMSService:
                     response_json = json.loads(response_text)
                     
                     # Check for JSON success response
-                    if response_json.get('success') == True or response_json.get('code') == 1000:
+                    # API returns: {"success":true,"code":1000,"message":"message submitted successfully",...}
+                    success_flag = response_json.get('success', False)
+                    code_value = response_json.get('code', None)
+                    
+                    # Handle both boolean True and string "true", and both int 1000 and string "1000"
+                    is_success = (
+                        success_flag is True or 
+                        (isinstance(success_flag, str) and success_flag.lower() == 'true') or
+                        code_value == 1000 or
+                        (isinstance(code_value, str) and code_value == '1000')
+                    )
+                    
+                    # Log the parsed values for debugging
+                    logger.debug(f"SMS API Response - success flag: {success_flag} (type: {type(success_flag)}), code: {code_value} (type: {type(code_value)}), is_success: {is_success}")
+                    logger.debug(f"Full API response: {response_json}")
+                    
+                    if is_success:
                         sms_log.status = 'sent'
                         sms_log.sent_at = timezone.now()
                         sms_log.provider_response = {
@@ -154,13 +228,18 @@ class SMSService:
                             'status_code': response.status_code,
                             'response': response_text,
                             'parsed_response': response_json,
-                            'phone_sent_to': phone
+                            'phone_sent_to': normalized_phone,
+                            'api_success': success_flag,
+                            'api_code': code_value
                         }
+                        logger.info(f"✅ SMS marked as SENT for {normalized_phone}. API success={success_flag}, code={code_value}")
                     else:
                         # JSON response but not successful
                         error_code = response_json.get('code', 'unknown')
                         error_msg = response_json.get('message', response_text)
                         sms_log.status = 'failed'
+                        
+                        logger.warning(f"⚠️ SMS API returned failure for {normalized_phone}. Code: {error_code}, Message: {error_msg}")
                         
                         # Provide more helpful error messages
                         if error_code == 1004:
@@ -168,7 +247,7 @@ class SMSService:
                         elif error_code == 1707:
                             sms_log.error_message = f"INSUFFICIENT BALANCE (code {error_code}): {error_msg}. Please top up your SMS account."
                         elif error_code == 1704:
-                            sms_log.error_message = f"INVALID PHONE NUMBER (code {error_code}): {error_msg}. Phone: {phone}"
+                            sms_log.error_message = f"INVALID PHONE NUMBER (code {error_code}): {error_msg}. Phone: {normalized_phone}"
                         elif error_code == 1706:
                             sms_log.error_message = f"INVALID SENDER ID (code {error_code}): {error_msg}. Check SMS_SENDER_ID setting."
                         else:
@@ -179,21 +258,25 @@ class SMSService:
                             'status_code': response.status_code,
                             'response': response_text,
                             'parsed_response': response_json,
-                            'phone_attempted': phone,
+                            'phone_attempted': normalized_phone,
                             'api_key_used': self.api_key[:10] + '...' if len(self.api_key) > 10 else self.api_key
                         }
-                except (json.JSONDecodeError, ValueError):
+                except (json.JSONDecodeError, ValueError) as parse_error:
                     # Not JSON - try old format (plain text status codes)
+                    logger.warning(f"SMS API returned non-JSON response. Trying to parse as plain text. Error: {str(parse_error)}, Response: {response_text[:200]}")
+                    
                     # Success codes: "1701" or contains "success"/"sent"
-                    if response_text.startswith('1701') or 'success' in response_lower or 'sent' in response_lower:
+                    if response_text.startswith('1701') or 'success' in response_lower or 'sent' in response_lower or '1000' in response_text:
                         sms_log.status = 'sent'
                         sms_log.sent_at = timezone.now()
                         sms_log.provider_response = {
                             'status': 'success',
                             'status_code': response.status_code,
                             'response': response_text,
-                            'phone_sent_to': phone
+                            'phone_sent_to': normalized_phone,
+                            'format': 'plain_text'
                         }
+                        logger.info(f"✅ SMS marked as SENT (plain text format) for {normalized_phone}")
                     else:
                         # Error codes (old format)
                         sms_log.status = 'failed'
@@ -207,14 +290,17 @@ class SMSService:
                             '1708': 'Invalid credentials'
                         }
                         error_code = response_text[:4] if len(response_text) >= 4 else 'unknown'
-                        error_msg = error_map.get(error_code, response_text)
-                        sms_log.error_message = f"API Error ({error_code}): {error_msg}"
+                        error_msg = error_map.get(error_code, response_text[:200])
+                        sms_log.error_message = f"API Error ({error_code}): {error_msg}. Raw response: {response_text[:200]}"
                         sms_log.provider_response = {
                             'status': 'failed',
                             'status_code': response.status_code,
                             'response': response_text,
-                            'phone_attempted': phone
+                            'phone_attempted': normalized_phone,
+                            'format': 'plain_text',
+                            'parse_error': str(parse_error)
                         }
+                        logger.error(f"❌ SMS failed (plain text format) for {normalized_phone}. Error code: {error_code}, Message: {error_msg}")
             else:
                 sms_log.status = 'failed'
                 sms_log.error_message = f"HTTP {response.status_code}: {response.text}"
@@ -222,7 +308,7 @@ class SMSService:
                     'status': 'failed',
                     'status_code': response.status_code,
                     'response': response.text,
-                    'phone_attempted': phone
+                    'phone_attempted': normalized_phone
                 }
             
         except requests.exceptions.Timeout:
@@ -242,6 +328,31 @@ class SMSService:
         
         sms_log.save()
         return sms_log
+
+    @staticmethod
+    def _normalize_phone(phone):
+        """Normalize phone to 233XXXXXXXXX format as much as possible"""
+        phone = phone.replace('+', '').replace(' ', '').replace('-', '').replace('(', '').replace(')', '').replace('.', '').strip()
+        if phone.startswith('0'):
+            phone = '233' + phone[1:]
+        elif not phone.startswith('233'):
+            if phone.startswith('00233'):
+                phone = phone[2:]
+            elif len(phone) == 9:
+                phone = '233' + phone
+            elif len(phone) == 10 and phone.startswith('0'):
+                phone = '233' + phone[1:]
+            elif not phone.startswith('233'):
+                phone = '233' + phone
+        return phone
+
+    @staticmethod
+    def _normalize_message(message):
+        """Normalize message for deduplication without changing user-facing text meaningfully"""
+        if not message:
+            return ''
+        # Collapse repeated whitespace but keep single spaces; strip ends
+        return re.sub(r'\s+', ' ', message).strip()
     
     
     def send_appointment_reminder(self, appointment):
@@ -271,8 +382,7 @@ class SMSService:
         """Send lab result ready notification"""
         try:
             patient = lab_result.order.encounter.patient
-            test_name = lab_result.test.name
-            
+
             # Check if patient has phone number
             if not patient.phone_number or not patient.phone_number.strip():
                 # Create a failed log entry
@@ -288,9 +398,9 @@ class SMSService:
                 )
                 return sms_log
             
-            # Build message with result summary if available
+            # Build message with result summary if available (no specific test name in SMS)
             message = f"Dear {patient.first_name},\n\n"
-            message += f"Your lab test result for {test_name} is ready.\n"
+            message += "Your lab test results are ready.\n"
             
             # Add result summary if completed
             if lab_result.status == 'completed' and lab_result.value:
@@ -305,7 +415,7 @@ class SMSService:
                 
                 # Add verification info if available
                 if lab_result.verified_by:
-                    message += f"Verified by: Dr. {lab_result.verified_by.user.get_full_name or lab_result.verified_by.user.username}\n"
+                    message += f"Verified by: Dr. {lab_result.verified_by.user.get_full_name() or lab_result.verified_by.user.username}\n"
                 if lab_result.verified_at:
                     message += f"Verified on: {lab_result.verified_at.strftime('%B %d, %Y at %I:%M %p')}\n"
             
@@ -338,15 +448,13 @@ class SMSService:
             return sms_log
     
     def send_payment_reminder(self, invoice):
-        """Send payment reminder SMS"""
+        """Send payment reminder SMS (no amounts — patient confirms total at Cashier)."""
         patient = invoice.patient
-        amount = invoice.balance
         
         message = (
             f"Dear {patient.first_name},\n\n"
-            f"You have an outstanding balance of GHS {amount:,.2f}\n"
-            f"on invoice {invoice.invoice_number}.\n"
-            f"Please settle at your earliest convenience.\n\n"
+            f"You have an outstanding balance on invoice {invoice.invoice_number}.\n"
+            f"Please go to the Cashier to settle your bill — the correct amount is available there.\n\n"
             f"Thank you."
         )
         

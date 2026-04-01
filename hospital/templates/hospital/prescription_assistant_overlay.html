@@ -1,0 +1,573 @@
+{% comment %}
+Prescription Assistant — Chatbot overlay for doctors. Chat-style UI with typing indicator.
+{% endcomment %}
+{% load static %}
+<div id="pharmacistOverlay" class="pharmacist-overlay" aria-hidden="true">
+    <div class="pharmacist-overlay-backdrop" onclick="closePharmacistOverlay()"></div>
+    <div class="pharmacist-overlay-panel chatbot-panel">
+        <button type="button" class="pharmacist-overlay-close" onclick="closePharmacistOverlay()" aria-label="Close">
+            <i class="bi bi-x-lg"></i>
+        </button>
+        <!-- Chat header: compact, like messaging app -->
+        <div class="chatbot-header">
+            <div class="chatbot-header-avatar">
+                <i class="bi bi-person-badge-fill"></i>
+                <i class="bi bi-capsule chatbot-capsule"></i>
+                <span class="chatbot-online"></span>
+            </div>
+            <div class="chatbot-header-info">
+                <span class="chatbot-header-name">Prescription Assistant</span>
+                <span class="chatbot-header-status">Online · Typically replies instantly</span>
+            </div>
+        </div>
+        <!-- Messages -->
+        <div class="chatbot-messages" id="pharmacistOverlayMessages">
+            <div class="chatbot-msg bot">
+                <div class="chatbot-bubble bot">
+                    <div class="chatbot-msg-content">Hi! I'm your prescription assistant. Ask me for drug suggestions by indication (e.g. <strong>antibiotic for UTI</strong>, <strong>pain relief</strong>) or type a drug name. Tap any suggestion to add it to the prescription below.</div>
+                    <div class="chatbot-time">Just now</div>
+                </div>
+            </div>
+        </div>
+        <!-- Quick replies -->
+        <div class="chatbot-quick" id="pharmacistOverlayQuick">
+            <span class="chatbot-quick-label">Quick ask:</span>
+            <button type="button" class="chatbot-quick-btn" data-msg="antibiotic for UTI">Antibiotic UTI</button>
+            <button type="button" class="chatbot-quick-btn" data-msg="pain relief">Pain relief</button>
+            <button type="button" class="chatbot-quick-btn" data-msg="antihypertensive">Antihypertensive</button>
+            <button type="button" class="chatbot-quick-btn" data-msg="fever">Fever</button>
+            <button type="button" class="chatbot-quick-btn" data-msg="antiemetic">Antiemetic</button>
+            <button type="button" class="chatbot-quick-btn" data-msg="check interactions">Check interactions</button>
+        </div>
+        <!-- Input -->
+        <div class="chatbot-input-wrap">
+            <form id="pharmacistOverlayForm" onsubmit="return sendPharmacistOverlayChat(event)">
+                <input type="text" id="pharmacistOverlayInput" placeholder="Type a message..." autocomplete="off">
+                <button type="submit" id="pharmacistOverlaySend" aria-label="Send"><i class="bi bi-send-fill"></i></button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Floating chat button (fixed bottom-right, always on top) -->
+<button type="button" class="pharmacist-fab chatbot-fab" id="pharmacistFab" onclick="openPharmacistOverlay()" aria-label="Open Prescription Assistant" style="display: inline-flex !important; visibility: visible !important; opacity: 1 !important;">
+    <span class="pharmacist-fab-icon">
+        <i class="bi bi-chat-dots-fill"></i>
+    </span>
+    <span class="pharmacist-fab-label">Prescription Chat</span>
+</button>
+
+<style>
+/* Overlay */
+.pharmacist-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: stretch;
+    justify-content: flex-end;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+.pharmacist-overlay.is-open {
+    pointer-events: auto;
+    opacity: 1;
+    visibility: visible;
+}
+.pharmacist-overlay-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(6px);
+}
+.pharmacist-overlay-panel.chatbot-panel {
+    position: relative;
+    width: 100%;
+    max-width: 400px;
+    background: #f8fafc;
+    box-shadow: -10px 0 40px rgba(0,0,0,0.12);
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+}
+.pharmacist-overlay.is-open .pharmacist-overlay-panel {
+    transform: translateX(0);
+}
+.pharmacist-overlay-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    z-index: 3;
+    width: 34px;
+    height: 34px;
+    border: none;
+    background: rgba(0,0,0,0.06);
+    border-radius: 50%;
+    color: #64748b;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    transition: background 0.2s, color 0.2s;
+}
+.pharmacist-overlay-close:hover {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+/* Chatbot header — compact, like messaging app */
+.chatbot-header {
+    background: linear-gradient(135deg, #0f766e 0%, #0d9488 100%);
+    color: white;
+    padding: 16px 48px 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+.chatbot-header-avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.25);
+    border: 2px solid rgba(255,255,255,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    font-size: 20px;
+}
+.chatbot-header-avatar .chatbot-capsule {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    font-size: 10px;
+    opacity: 0.9;
+}
+.chatbot-header-avatar .chatbot-online {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    width: 10px;
+    height: 10px;
+    background: #22c55e;
+    border: 2px solid #0d9488;
+    border-radius: 50%;
+    animation: chatbot-online-pulse 2s ease-in-out infinite;
+}
+@keyframes chatbot-online-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+.chatbot-header-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.chatbot-header-name {
+    font-size: 16px;
+    font-weight: 700;
+}
+.chatbot-header-status {
+    font-size: 12px;
+    opacity: 0.9;
+}
+
+/* Chat messages */
+.chatbot-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    min-height: 180px;
+    max-height: 300px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+.chatbot-msg {
+    display: flex;
+    width: 100%;
+    justify-content: flex-start;
+}
+.chatbot-msg.user {
+    justify-content: flex-end;
+}
+.chatbot-bubble {
+    max-width: 85%;
+    padding: 12px 16px;
+    border-radius: 18px;
+    font-size: 14px;
+    line-height: 1.5;
+    position: relative;
+}
+.chatbot-bubble.bot {
+    background: white;
+    border: 1px solid #e2e8f0;
+    color: #1e293b;
+    border-bottom-left-radius: 4px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.chatbot-bubble.user {
+    background: linear-gradient(135deg, #0f766e 0%, #0d9488 100%);
+    color: white;
+    border-bottom-right-radius: 4px;
+    box-shadow: 0 1px 4px rgba(13, 148, 136, 0.25);
+}
+.chatbot-msg-content { white-space: pre-line; }
+.chatbot-time {
+    font-size: 10px;
+    color: #94a3b8;
+    margin-top: 6px;
+}
+.chatbot-bubble.user .chatbot-time { color: rgba(255,255,255,0.75); }
+
+/* Typing indicator — shown inside message list */
+.chatbot-typing-holder {
+    flex-shrink: 0;
+}
+.chatbot-typing-bubble {
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.chatbot-typing-dot {
+    width: 8px;
+    height: 8px;
+    background: #94a3b8;
+    border-radius: 50%;
+    animation: chatbot-typing 1.4s ease-in-out infinite both;
+}
+.chatbot-typing-dot:nth-child(1) { animation-delay: 0s; }
+.chatbot-typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.chatbot-typing-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes chatbot-typing {
+    0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
+    40% { transform: scale(1.2); opacity: 1; }
+}
+
+/* Drug cards inside bot message */
+.chatbot-msg .pharmacist-drugs {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #e2e8f0;
+}
+.chatbot-drug-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: #f8fafc;
+    border: 2px solid #e2e8f0;
+    border-radius: 12px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.chatbot-drug-card:hover {
+    border-color: #0d9488;
+    background: #f0fdfa;
+    box-shadow: 0 2px 8px rgba(13, 148, 136, 0.15);
+}
+.chatbot-drug-card .pharmacist-drug-name { font-weight: 600; color: #1e293b; }
+.chatbot-drug-card .pharmacist-drug-meta { color: #64748b; margin-top: 2px; }
+.chatbot-drug-card .btn-add-rx-overlay {
+    background: #0d9488;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.chatbot-drug-card .btn-add-rx-overlay:hover { background: #0f766e; color: white; }
+.pharmacist-dosing-hint {
+    background: #ccfbf1;
+    border: 1px solid #99f6e4;
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: #0f766e;
+}
+
+/* Quick replies */
+.chatbot-quick {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+    padding: 8px 16px 12px;
+    background: #fff;
+    border-top: 1px solid #e2e8f0;
+}
+.chatbot-quick-label {
+    font-size: 11px;
+    color: #64748b;
+    width: 100%;
+    margin-bottom: 2px;
+}
+.chatbot-quick-btn {
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    color: #475569;
+    padding: 6px 12px;
+    border-radius: 16px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.chatbot-quick-btn:hover {
+    background: #0d9488;
+    color: white;
+    border-color: #0d9488;
+}
+
+/* Input — chat style */
+.chatbot-input-wrap {
+    padding: 12px 16px 20px;
+    background: #fff;
+    border-top: 1px solid #e2e8f0;
+}
+.chatbot-input-wrap form {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    background: #f1f5f9;
+    border: 2px solid #e2e8f0;
+    border-radius: 24px;
+    padding: 6px 6px 6px 18px;
+    transition: border-color 0.2s;
+}
+.chatbot-input-wrap form:focus-within {
+    border-color: #0d9488;
+    background: #fff;
+}
+.chatbot-input-wrap input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    padding: 10px 0;
+    font-size: 14px;
+}
+.chatbot-input-wrap input:focus { outline: none; }
+.chatbot-input-wrap button[type="submit"] {
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #0f766e 0%, #0d9488 100%);
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    transition: transform 0.2s;
+}
+.chatbot-input-wrap button[type="submit"]:hover { transform: scale(1.08); }
+.chatbot-input-wrap button[type="submit"]:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+/* FAB — chat icon (above sidebar so always visible) */
+.chatbot-fab {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 9998;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 20px;
+    border: none;
+    border-radius: 50px;
+    background: linear-gradient(135deg, #0f766e 0%, #0d9488 100%);
+    color: white;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    box-shadow: 0 4px 20px rgba(13, 148, 136, 0.4);
+    transition: transform 0.2s, box-shadow 0.2s;
+    animation: pharmacist-fab-glow 2.5s ease-in-out infinite;
+}
+.chatbot-fab:hover {
+    transform: scale(1.05);
+    box-shadow: 0 6px 24px rgba(13, 148, 136, 0.5);
+}
+.pharmacist-fab-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.25);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+}
+.pharmacist-fab-label { white-space: nowrap; }
+@media (max-width: 480px) {
+    .pharmacist-fab-label { display: none; }
+    .pharmacist-fab { padding: 14px; }
+}
+@keyframes pharmacist-fab-glow {
+    0%, 100% { box-shadow: 0 4px 20px rgba(13, 148, 136, 0.4); }
+    50% { box-shadow: 0 4px 28px rgba(13, 148, 136, 0.55); }
+}
+</style>
+
+<script>
+(function() {
+    var overlay = document.getElementById('pharmacistOverlay');
+    var messagesEl = document.getElementById('pharmacistOverlayMessages');
+    var typingHolder = null;
+    var inputEl = document.getElementById('pharmacistOverlayInput');
+    var formEl = document.getElementById('pharmacistOverlayForm');
+    var sendBtn = document.getElementById('pharmacistOverlaySend');
+    var encounterId = '{{ encounter_id|default:""|escapejs }}';
+    var chatApiUrl = '{% url "hospital:api_prescription_assistant_chat" %}';
+    var csrfToken = document.querySelector('[name=csrfmiddlewaretoken]') && document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+    function scrollChat() {
+        if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    window.openPharmacistOverlay = function() {
+        if (overlay) {
+            overlay.classList.add('is-open');
+            overlay.setAttribute('aria-hidden', 'false');
+            if (inputEl) { inputEl.focus(); }
+            scrollChat();
+        }
+    };
+    window.closePharmacistOverlay = function() {
+        if (overlay) {
+            overlay.classList.remove('is-open');
+            overlay.setAttribute('aria-hidden', 'true');
+        }
+    };
+
+    function escapeHtml(s) {
+        if (!s) return '';
+        var el = document.createElement('div');
+        el.textContent = s;
+        return el.innerHTML;
+    }
+    function renderReply(s) {
+        return escapeHtml(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+    }
+
+    function appendUserMessage(text) {
+        var div = document.createElement('div');
+        div.className = 'chatbot-msg user';
+        div.innerHTML = '<div class="chatbot-bubble user"><div class="chatbot-msg-content">' + escapeHtml(text) + '</div><div class="chatbot-time">Just now</div></div>';
+        messagesEl.appendChild(div);
+        scrollChat();
+    }
+
+    function showTyping(show) {
+        if (typingHolder && typingHolder.parentNode) typingHolder.remove();
+        typingHolder = null;
+        if (show && messagesEl) {
+            typingHolder = document.createElement('div');
+            typingHolder.className = 'chatbot-typing-holder chatbot-msg bot';
+            typingHolder.innerHTML = '<div class="chatbot-bubble bot chatbot-typing-bubble"><span class="chatbot-typing-dot"></span><span class="chatbot-typing-dot"></span><span class="chatbot-typing-dot"></span></div>';
+            messagesEl.appendChild(typingHolder);
+        }
+        scrollChat();
+    }
+
+    function appendAssistantMessage(data) {
+        showTyping(false);
+        var div = document.createElement('div');
+        div.className = 'chatbot-msg bot';
+        var html = '<div class="chatbot-bubble bot"><div class="chatbot-msg-content">' + renderReply(data.reply) + '</div>';
+        if (data.dosing_hint && (data.dosing_hint.dose || data.dosing_hint.frequency)) {
+            html += '<div class="pharmacist-dosing-hint"><strong>Suggested:</strong> ';
+            html += [data.dosing_hint.dose, data.dosing_hint.route, data.dosing_hint.frequency, data.dosing_hint.duration].filter(Boolean).join(' · ') + '</div>';
+        }
+        if (data.suggested_drugs && data.suggested_drugs.length) {
+            html += '<div class="pharmacist-drugs">';
+            data.suggested_drugs.forEach(function(d) {
+                html += '<div class="chatbot-drug-card" data-drug-id="' + escapeHtml(d.id) + '" data-name="' + escapeHtml(d.name) + '" data-strength="' + escapeHtml(d.strength || '') + '" data-form="' + escapeHtml(d.form || '') + '">';
+                html += '<div><div class="pharmacist-drug-name">' + escapeHtml(d.name) + '</div><div class="pharmacist-drug-meta">' + escapeHtml((d.strength || '') + ' · ' + (d.form || '')) + '</div></div>';
+                html += '<button type="button" class="btn-add-rx-overlay">Add to Rx</button></div>';
+            });
+            html += '</div>';
+        }
+        if (data.interactions && data.interactions.length) {
+            html += '<div class="pharmacist-dosing-hint" style="background:#fef2f2;border-color:#fecaca;color:#991b1b;margin-top:8px;">';
+            data.interactions.forEach(function(w) { html += '<div>' + escapeHtml(w.message) + '</div>'; });
+            html += '</div>';
+        }
+        html += '<div class="chatbot-time">Just now</div></div>';
+        div.innerHTML = html;
+        messagesEl.appendChild(div);
+        div.querySelectorAll('.btn-add-rx-overlay').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var card = this.closest('.chatbot-drug-card');
+                if (!card) return;
+                var drugId = card.getAttribute('data-drug-id');
+                var name = card.getAttribute('data-name');
+                var strength = card.getAttribute('data-strength') || '';
+                var form = card.getAttribute('data-form') || '';
+                if (typeof selectDrug === 'function') {
+                    selectDrug(drugId, name, strength, form);
+                } else {
+                    var sid = document.getElementById('selectedDrugId');
+                    var searchInput = document.getElementById('drugSearchInput');
+                    if (sid) sid.value = drugId;
+                    if (searchInput) searchInput.value = [name, strength, form].filter(Boolean).join(' · ');
+                }
+                closePharmacistOverlay();
+                var panel = document.getElementById('prescribe-panel') || document.getElementById('prescribe-tab');
+                if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                var prescribeBtn = document.querySelector('[data-tab="prescribe"]');
+                if (prescribeBtn) prescribeBtn.click();
+            });
+        });
+        scrollChat();
+    }
+
+    window.sendPharmacistOverlayChat = function(e) {
+        if (e) e.preventDefault();
+        var msg = (inputEl && inputEl.value) ? inputEl.value.trim() : '';
+        if (!msg) return false;
+        if (inputEl) inputEl.value = '';
+        appendUserMessage(msg);
+        if (sendBtn) { sendBtn.disabled = true; sendBtn.innerHTML = '<i class="bi bi-send-fill"></i>'; }
+        showTyping(true);
+        var payload = { message: msg, encounter_id: encounterId || null, selected_drug_ids: [] };
+        fetch(chatApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken || '' },
+            body: JSON.stringify(payload)
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) { appendAssistantMessage(data); })
+        .catch(function() {
+            showTyping(false);
+            appendAssistantMessage({ reply: 'Something went wrong. Please try again.', suggested_drugs: [], interactions: [] });
+        })
+        .finally(function() {
+            if (sendBtn) { sendBtn.disabled = false; sendBtn.innerHTML = '<i class="bi bi-send-fill"></i>'; }
+        });
+        return false;
+    };
+
+    if (formEl) formEl.onsubmit = window.sendPharmacistOverlayChat;
+    document.querySelectorAll('.chatbot-quick-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var m = this.getAttribute('data-msg');
+            if (m) { if (inputEl) inputEl.value = m; window.sendPharmacistOverlayChat(); }
+        });
+    });
+})();
+</script>

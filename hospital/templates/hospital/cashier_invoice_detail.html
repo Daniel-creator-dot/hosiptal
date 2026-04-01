@@ -17,6 +17,15 @@
     </div>
 </div>
 
+{% if invoice.balance > 0 %}
+{% if can_waive %}
+<div class="alert alert-info border-info mb-3">
+    <i class="bi bi-info-circle me-2"></i>
+    <strong>Administrator:</strong> Use <strong>Waive</strong> to remove items already paid (e.g. patient from old system). Enter a reason for audit.
+</div>
+{% endif %}
+{% endif %}
+
 <div class="row">
     <div class="col-md-8">
         <div class="modern-card mb-4">
@@ -43,11 +52,12 @@
                     <tr>
                         <th style="width: 5%">#</th>
                         <th style="width: 15%">Service Code</th>
-                        <th style="width: 35%">Service Description</th>
+                        <th style="width: 30%">Service Description</th>
                         <th style="width: 10%" class="text-center">Qty</th>
-                        <th style="width: 15%" class="text-end">Unit Price</th>
-                        <th style="width: 10%" class="text-end">Disc.</th>
-                        <th style="width: 15%" class="text-end">Total</th>
+                        <th style="width: 12%" class="text-end">Unit Price</th>
+                        <th style="width: 8%" class="text-end">Disc.</th>
+                        <th style="width: 12%" class="text-end">Total</th>
+                        <th style="width: 12%" class="text-center">Action</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -67,23 +77,92 @@
                             {% endif %}
                         </td>
                         <td class="text-center">
+                            {% if not line.waived_at and invoice.balance > 0 %}
+                                {% if line.service_code and line.service_code.code|default:''|slice:':4' == 'LAB-' %}
+                            <span class="badge bg-secondary" title="Lab: fixed 1 per test (final once sent to cashier)">{{ line.quantity }}</span>
+                                {% else %}
+                            <form method="post" action="/hms/invoices/line/update-quantity/" class="d-inline-flex align-items-center gap-1">
+                                {% csrf_token %}
+                                <input type="hidden" name="line_id" value="{{ line.id }}">
+                                <input type="number" name="quantity" value="{{ line.quantity|floatformat:2 }}" min="0.01" step="0.01" class="form-control form-control-sm text-center" style="width: 65px;">
+                                <button type="submit" class="btn btn-sm btn-outline-primary py-0 px-1" title="Update quantity"><i class="bi bi-check"></i></button>
+                            </form>
+                                {% endif %}
+                            {% else %}
                             <span class="badge bg-info">{{ line.quantity }}</span>
+                            {% endif %}
                         </td>
-                        <td class="text-end">GHS {{ line.unit_price|floatformat:2 }}</td>
+                        <td class="text-end">GHS {{ line.display_unit_price|floatformat:2 }}</td>
                         <td class="text-end">
-                            {% if line.discount_amount > 0 %}
+                            {% if line.waived_at %}
+                            <span class="text-success" title="Fully waived"><small>-GHS {{ line.discount_amount|floatformat:2 }}</small></span>
+                            {% elif line.discount_amount > 0 %}
                             <span class="text-success"><small>-GHS {{ line.discount_amount|floatformat:2 }}</small></span>
                             {% else %}
                             <span class="text-muted">-</span>
                             {% endif %}
                         </td>
-                        <td class="text-end"><strong style="color: var(--primary);">GHS {{ line.line_total|floatformat:2 }}</strong></td>
+                        <td class="text-end">
+                            {% if line.waived_at %}
+                            <strong class="text-success" title="Waived: {{ line.waiver_reason|default:'N/A' }}">GHS 0.00</strong>
+                            <br><span class="badge bg-success" style="font-size: 0.7rem;">Waived</span>
+                            {% else %}
+                            <strong style="color: var(--primary);">GHS {{ line.display_line_total|floatformat:2 }}</strong>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if line.waived_at %}
+                            <small class="text-muted" title="{{ line.waiver_reason|default:'' }}">{% if line.waived_by %}{{ line.waived_by.get_full_name|default:line.waived_by.username }}{% else %}Admin{% endif %} waived</small>
+                            {% elif can_waive and invoice.balance > 0 and invoice.status != 'paid' %}
+                            <div class="btn-group btn-group-sm">
+                                <a href="{% url 'hospital:process_payment_invoice' invoice.pk %}?line_id={{ line.id }}" 
+                                   class="btn btn-success" title="Pay for this item">
+                                    <i class="bi bi-credit-card"></i> Pay
+                                </a>
+                                <button type="button" class="btn btn-outline-warning" title="Waive this item (administrators only)"
+                                        data-bs-toggle="modal" data-bs-target="#waiveModal" 
+                                        data-line-id="{{ line.id }}" data-line-desc="{{ line.description }}">
+                                    <i class="bi bi-dash-circle"></i> Waive
+                                </button>
+                            </div>
+                            {% elif invoice.balance > 0 and invoice.status != 'paid' %}
+                            <div class="btn-group btn-group-sm">
+                                <a href="{% url 'hospital:process_payment_invoice' invoice.pk %}?line_id={{ line.id }}" 
+                                   class="btn btn-success" title="Pay for this item">
+                                    <i class="bi bi-credit-card"></i> Pay
+                                </a>
+                            </div>
+                            {% elif invoice.balance <= 0 or invoice.status == 'paid' %}
+                            <span class="badge bg-success"><i class="bi bi-check-circle"></i> Paid</span>
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="7" class="text-center text-muted py-4">
+                        <td colspan="8" class="text-center text-muted py-4">
                             <i class="bi bi-inbox" style="font-size: 2.5rem; opacity: 0.3;"></i>
                             <p class="mb-0 mt-2">No services have been added to this invoice</p>
+                            <form method="post" action="{% url 'hospital:cashier_add_services_to_invoice' invoice.patient.pk %}" class="mt-3">
+                                {% csrf_token %}
+                                <input type="hidden" name="invoice_id" value="{{ invoice.id }}">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-plus-circle"></i> Add Pending Services to This Invoice
+                                </button>
+                            </form>
+                            <p class="mt-2 mb-0">
+                                <a href="{% url 'hospital:cashier_add_services_select' invoice.patient.pk %}" class="btn btn-outline-primary btn-sm">
+                                    <i class="bi bi-search"></i> Search and Add Charges (Services/Labs/Scans)
+                                </a>
+                            </p>
+                            <p class="mt-2 mb-0">
+                                <small class="text-muted">
+                                    <a href="{% url 'hospital:cashier_patient_total_bill' invoice.patient.pk %}">
+                                        View all pending services for this patient
+                                    </a>
+                                </small>
+                            </p>
                         </td>
                     </tr>
                     {% endfor %}
@@ -91,17 +170,17 @@
                 {% if invoice_lines %}
                 <tfoot style="background-color: #f8f9fa;">
                     <tr>
-                        <td colspan="6" class="text-end"><strong>Subtotal:</strong></td>
+                        <td colspan="7" class="text-end"><strong>Subtotal:</strong></td>
                         <td class="text-end"><strong>GHS {{ invoice.total_amount|floatformat:2|intcomma }}</strong></td>
                     </tr>
                     {% if invoice.total_amount != invoice.balance %}
                     <tr>
-                        <td colspan="6" class="text-end" style="color: var(--success);"><strong>Payments Received:</strong></td>
+                        <td colspan="7" class="text-end" style="color: var(--success);"><strong>Payments Received:</strong></td>
                         <td class="text-end" style="color: var(--success);"><strong>-GHS {{ invoice.total_amount|sub:invoice.balance|floatformat:2|intcomma }}</strong></td>
                     </tr>
                     {% endif %}
                     <tr style="font-size: 1.15rem; border-top: 2px solid #dee2e6;">
-                        <td colspan="6" class="text-end"><strong>Outstanding Balance:</strong></td>
+                        <td colspan="7" class="text-end"><strong>Outstanding Balance:</strong></td>
                         <td class="text-end">
                             <strong style="color: {% if invoice.balance > 0 %}var(--danger){% else %}var(--success){% endif %};">
                                 GHS {{ invoice.balance|floatformat:2|intcomma }}
@@ -181,6 +260,15 @@
         
         <div class="modern-card">
             <h5 class="mb-3">Actions</h5>
+            {% if invoice_lines|length == 0 %}
+            <form method="post" action="{% url 'hospital:cashier_add_services_to_invoice' invoice.patient.pk %}" class="mb-2">
+                {% csrf_token %}
+                <input type="hidden" name="invoice_id" value="{{ invoice.id }}">
+                <button type="submit" class="btn btn-primary w-100 mb-2">
+                    <i class="bi bi-plus-circle"></i> Add Services to Invoice
+                </button>
+            </form>
+            {% endif %}
             <a href="{% url 'hospital:invoice_print' invoice.pk %}" class="btn btn-outline-primary w-100 mb-2" target="_blank">
                 <i class="bi bi-printer-fill"></i> Print Detailed Invoice
             </a>
@@ -189,11 +277,60 @@
                 <i class="bi bi-credit-card"></i> Process Payment
             </a>
             {% endif %}
+            <a href="{% url 'hospital:cashier_patient_total_bill' invoice.patient.pk %}" class="btn btn-outline-warning w-100 mb-2">
+                <i class="bi bi-receipt"></i> View Total Bill
+            </a>
             <a href="{% url 'hospital:cashier_patient_invoices' invoice.patient.pk %}" class="btn btn-outline-info w-100 mb-2">
                 <i class="bi bi-person"></i> View All Patient Invoices
             </a>
         </div>
     </div>
 </div>
+
+<!-- Waive Line Modal - for patients migrating from old system -->
+<div class="modal fade" id="waiveModal" tabindex="-1" aria-labelledby="waiveModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'hospital:waive_invoice_line' %}">
+                {% csrf_token %}
+                <input type="hidden" name="line_id" id="waive_line_id" value="">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title" id="waiveModalLabel">
+                        <i class="bi bi-dash-circle"></i> Waive Invoice Item
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted mb-3">
+                        Use this for <strong>patients migrating from your old system</strong> who have already paid certain items (e.g. registration fee, consultation) elsewhere.
+                    </p>
+                    <p class="mb-2"><strong>Item to waive:</strong> <span id="waive_line_desc" class="text-primary"></span></p>
+                    <div class="form-group">
+                        <label for="waiver_reason" class="form-label">Reason (required for audit)</label>
+                        <textarea name="waiver_reason" id="waiver_reason" class="form-control" rows="2" 
+                                  placeholder="e.g. Patient from old system - already paid registration" required></textarea>
+                        <small class="text-muted">Examples: "Migrated from old system", "Already paid registration", "Charity waiver"</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning">
+                        <i class="bi bi-dash-circle"></i> Waive This Item
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<script>
+document.getElementById('waiveModal').addEventListener('show.bs.modal', function(event) {
+    var btn = event.relatedTarget;
+    if (btn) {
+        document.getElementById('waive_line_id').value = btn.getAttribute('data-line-id') || '';
+        document.getElementById('waive_line_desc').textContent = btn.getAttribute('data-line-desc') || '';
+        document.getElementById('waiver_reason').value = 'Patient from old system - already paid';
+    }
+});
+</script>
 {% endblock %}
 

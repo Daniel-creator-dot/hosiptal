@@ -89,6 +89,19 @@ class Command(BaseCommand):
                 
                 if not dry_run:
                     with transaction.atomic():
+                        # Check for existing enrollment to prevent duplicates
+                        existing_enrollment = PatientInsurance.objects.filter(
+                            patient=patient,
+                            insurance_company=insurance_company,
+                            is_deleted=False
+                        ).first()
+                        
+                        if existing_enrollment:
+                            # Update existing enrollment instead of creating duplicate
+                            self.stdout.write(f'  [SKIP] Patient {patient.mrn} already has insurance enrollment')
+                            skipped_count += 1
+                            continue
+                        
                         # Create PatientInsurance record
                         enrollment = PatientInsurance.objects.create(
                             patient=patient,

@@ -1,0 +1,421 @@
+{% extends "hospital/base.html" %}
+{% load humanize %}
+{% load static %}
+
+{% block title %}{{ item.name }} - Inventory Item Detail{% endblock %}
+
+{% block extra_css %}
+<style>
+    .item-header-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 30px;
+        margin-bottom: 24px;
+        box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);
+    }
+    
+    .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+        border-left: 4px solid #667eea;
+        transition: all 0.3s ease;
+    }
+    
+    .stat-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    
+    .stat-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #667eea;
+        margin: 10px 0;
+    }
+    
+    .stat-label {
+        color: #6b7280;
+        font-size: 0.875rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .info-section {
+        background: white;
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .info-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 12px 0;
+        border-bottom: 1px solid #e5e7eb;
+    }
+    
+    .info-row:last-child {
+        border-bottom: none;
+    }
+    
+    .info-label {
+        font-weight: 600;
+        color: #6b7280;
+    }
+    
+    .info-value {
+        color: #1f2937;
+    }
+    
+    .badge-modern {
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+    
+    .badge-success { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
+    .badge-warning { background: rgba(234, 179, 8, 0.1); color: #eab308; }
+    .badge-danger { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+    .badge-info { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+    
+    .transaction-table {
+        background: white;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .table thead {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    
+    .table thead th {
+        border: none;
+        padding: 15px;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.875rem;
+        letter-spacing: 0.5px;
+    }
+    
+    .table tbody tr {
+        transition: all 0.2s ease;
+    }
+    
+    .table tbody tr:hover {
+        background: #f9fafb;
+    }
+    
+    .batch-card {
+        background: #f8fafc;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        border-left: 3px solid #667eea;
+    }
+    
+    .alert-card {
+        background: #fef2f2;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        border-left: 3px solid #ef4444;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="item-header-card">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                <h1 class="mb-2" style="font-size: 2rem; font-weight: 700;">
+                    <i class="bi bi-box-seam me-2"></i>{{ item.name }}
+                </h1>
+                <p class="mb-0" style="opacity: 0.9; font-size: 1.1rem;">
+                    {{ item.code|default:"No Code" }}
+                    {% if item.category %}
+                        <span class="ms-3">• {{ item.category.name }}</span>
+                    {% endif %}
+                </p>
+            </div>
+            <div>
+                <a href="{% url 'hospital:inventory:items_list' %}" class="btn btn-light">
+                    <i class="bi bi-arrow-left"></i> Back to List
+                </a>
+                {% if perms.hospital.change_inventoryitem %}
+                <a href="{% url 'hospital:inventory_item_edit' item.pk %}" class="btn btn-light ms-2">
+                    <i class="bi bi-pencil"></i> Edit
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">Quantity on Hand</div>
+                <div class="stat-value">{{ item.quantity_on_hand|floatformat:0|intcomma }}</div>
+                <div class="mt-2">
+                    {% if item.quantity_on_hand == 0 %}
+                        <span class="badge-modern badge-danger">Out of Stock</span>
+                    {% elif item.quantity_on_hand <= item.reorder_level and item.reorder_level > 0 %}
+                        <span class="badge-modern badge-warning">Low Stock</span>
+                    {% else %}
+                        <span class="badge-modern badge-success">In Stock</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">Total Value</div>
+                <div class="stat-value">GHS {{ total_value|floatformat:2|intcomma }}</div>
+                <div class="mt-2 text-muted small">
+                    Unit Cost: GHS {{ item.unit_cost|floatformat:2|intcomma }}
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">Usage (30 Days)</div>
+                <div class="stat-value">{{ usage_last_30_days|floatformat:0|intcomma }}</div>
+                <div class="mt-2 text-muted small">
+                    Avg Daily: {{ avg_daily_usage|floatformat:2 }}
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">Days of Stock</div>
+                <div class="stat-value">
+                    {% if days_of_stock %}
+                        {{ days_of_stock|floatformat:1 }}
+                    {% else %}
+                        N/A
+                    {% endif %}
+                </div>
+                <div class="mt-2">
+                    {% if item.reorder_level > 0 %}
+                        <span class="badge-modern badge-info">Reorder: {{ item.reorder_level }}</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if item.quantity_on_hand == 0 or item.reorder_level and item.quantity_on_hand <= item.reorder_level %}
+    <!-- Low / zero stock actions -->
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div class="stat-card border-warning" style="border-left-width: 6px !important; background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);">
+                <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+                    <div>
+                        <h5 class="mb-1" style="color: #92400e; font-weight: 700;">
+                            <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                            {% if item.quantity_on_hand == 0 %}Out of stock{% else %}Low stock{% endif %}
+                        </h5>
+                        <p class="mb-0 text-muted small">
+                            Replenish by transferring from another store or creating a stock request.
+                        </p>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2">
+                        <a href="{% url 'hospital:create_transfer_modern' %}?to_store={{ item.store_id }}&for_item={{ item.pk }}" 
+                           class="btn btn-success btn-lg">
+                            <i class="bi bi-box-arrow-in-down me-2"></i>Transfer in
+                        </a>
+                        <a href="{% url 'hospital:inventory:create_requisition' %}" 
+                           class="btn btn-warning btn-lg">
+                            <i class="bi bi-clipboard-plus me-2"></i>Request stock
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="row g-4">
+        <!-- Left Column -->
+        <div class="col-md-8">
+            <!-- Transaction History -->
+            <div class="info-section">
+                <h5 class="mb-4" style="font-weight: 700; color: #1f2937;">
+                    <i class="bi bi-clock-history me-2"></i>Transaction History
+                </h5>
+                
+                {% if transactions %}
+                <div class="transaction-table">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Type</th>
+                                <th>Quantity</th>
+                                <th>Reference</th>
+                                <th>Performed By</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for transaction in transactions %}
+                            <tr>
+                                <td>{{ transaction.transaction_date|date:"M d, Y H:i" }}</td>
+                                <td>
+                                    <span class="badge-modern 
+                                        {% if transaction.transaction_type == 'receipt' %}badge-success
+                                        {% elif transaction.transaction_type == 'issue' %}badge-danger
+                                        {% elif transaction.transaction_type == 'adjustment' %}badge-warning
+                                        {% else %}badge-info{% endif %}">
+                                        {{ transaction.get_transaction_type_display }}
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if transaction.transaction_type == 'receipt' %}
+                                        <span class="text-success">+{{ transaction.quantity|floatformat:0|intcomma }}</span>
+                                    {% elif transaction.transaction_type == 'issue' %}
+                                        <span class="text-danger">-{{ transaction.quantity|floatformat:0|intcomma }}</span>
+                                    {% else %}
+                                        {{ transaction.quantity|floatformat:0|intcomma }}
+                                    {% endif %}
+                                </td>
+                                <td>{{ transaction.reference_number|default:"—" }}</td>
+                                <td>
+                                    {% if transaction.performed_by %}
+                                        {{ transaction.performed_by.user.get_full_name|default:transaction.performed_by.user.username }}
+                                    {% else %}
+                                        —
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5 text-muted">
+                    <i class="bi bi-inbox" style="font-size: 3rem;"></i>
+                    <p class="mt-3 mb-0">No transactions found</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Right Column -->
+        <div class="col-md-4">
+            <!-- Item Information -->
+            <div class="info-section">
+                <h5 class="mb-4" style="font-weight: 700; color: #1f2937;">
+                    <i class="bi bi-info-circle me-2"></i>Item Information
+                </h5>
+                
+                <div class="info-row">
+                    <span class="info-label">Store:</span>
+                    <span class="info-value">{{ item.store.name|default:"—" }}</span>
+                </div>
+                
+                <div class="info-row">
+                    <span class="info-label">Category:</span>
+                    <span class="info-value">{{ item.category.name|default:"—" }}</span>
+                </div>
+                
+                <div class="info-row">
+                    <span class="info-label">Unit:</span>
+                    <span class="info-value">{{ item.unit|default:"—" }}</span>
+                </div>
+                
+                <div class="info-row">
+                    <span class="info-label">Unit Cost:</span>
+                    <span class="info-value">GHS {{ item.unit_cost|floatformat:2|intcomma }}</span>
+                </div>
+                
+                {% if item.preferred_supplier %}
+                <div class="info-row">
+                    <span class="info-label">Preferred Supplier:</span>
+                    <span class="info-value">{{ item.preferred_supplier.name }}</span>
+                </div>
+                {% endif %}
+                
+                {% if item.reorder_level > 0 %}
+                <div class="info-row">
+                    <span class="info-label">Reorder Level:</span>
+                    <span class="info-value">{{ item.reorder_level|floatformat:0|intcomma }}</span>
+                </div>
+                {% endif %}
+                
+                {% if item.description %}
+                <div class="info-row">
+                    <span class="info-label">Description:</span>
+                    <span class="info-value">{{ item.description }}</span>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Active Batches -->
+            {% if batches %}
+            <div class="info-section">
+                <h5 class="mb-4" style="font-weight: 700; color: #1f2937;">
+                    <i class="bi bi-boxes me-2"></i>Active Batches
+                </h5>
+                
+                {% for batch in batches %}
+                <div class="batch-card">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <strong>{{ batch.batch_number|default:"Batch #"|add:forloop.counter }}</strong>
+                        <span class="badge-modern badge-info">{{ batch.quantity_remaining|floatformat:0|intcomma }} {{ item.unit|default:"units" }}</span>
+                    </div>
+                    {% if batch.expiry_date %}
+                    <div class="small text-muted">
+                        <i class="bi bi-calendar-event me-1"></i>
+                        Expires: {{ batch.expiry_date|date:"M d, Y" }}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Active Alerts -->
+            {% if alerts %}
+            <div class="info-section">
+                <h5 class="mb-4" style="font-weight: 700; color: #1f2937;">
+                    <i class="bi bi-exclamation-triangle me-2"></i>Active Alerts
+                </h5>
+                
+                {% for alert in alerts %}
+                <div class="alert-card">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <strong>{{ alert.get_alert_type_display }}</strong>
+                        <span class="badge-modern 
+                            {% if alert.severity == 'critical' %}badge-danger
+                            {% elif alert.severity == 'high' %}badge-warning
+                            {% else %}badge-info{% endif %}">
+                            {{ alert.get_severity_display }}
+                        </span>
+                    </div>
+                    {% if alert.message %}
+                    <p class="mb-0 small">{{ alert.message }}</p>
+                    {% endif %}
+                    <div class="mt-2 small text-muted">
+                        Created: {{ alert.created|date:"M d, Y" }}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

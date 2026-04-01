@@ -209,16 +209,31 @@
         <div class="col-12">
             <div class="detail-card" style="border-left: 4px solid #F59E0B;">
                 <h5 class="mb-3">
-                    <i class="bi bi-currency-dollar text-warning"></i> Bed Charges
+                    <i class="bi bi-currency-dollar text-warning"></i> Accommodation Charges
                 </h5>
+                {% if bed_charges.is_detention %}
                 <div class="detail-row">
-                    <div class="detail-label">Daily Rate:</div>
-                    <div class="detail-value"><strong>GHS {{ bed_charges.daily_rate|floatformat:2 }}</strong> per day</div>
+                    <div class="detail-label">Type:</div>
+                    <div class="detail-value"><strong>Detention</strong> (stay &lt; 12 hours)</div>
                 </div>
                 <div class="detail-row">
-                    <div class="detail-label">Days Admitted:</div>
-                    <div class="detail-value"><strong>{{ bed_charges.days_admitted }}</strong> day{{ bed_charges.days_admitted|pluralize }}</div>
+                    <div class="detail-label">Duration:</div>
+                    <div class="detail-value">{{ bed_charges.total_hours|floatformat:1 }} hours</div>
                 </div>
+                {% else %}
+                <div class="detail-row">
+                    <div class="detail-label">Type:</div>
+                    <div class="detail-value"><strong>Admission</strong> (stay ≥ 12 hours, billed per night) + Doctor care (GHS 80/night) + Nursing care (GHS 70/night)</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Nightly Rate:</div>
+                    <div class="detail-value"><strong>GHS {{ bed_charges.daily_rate|floatformat:2 }}</strong> per night</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Nights:</div>
+                    <div class="detail-value"><strong>{{ bed_charges.days_admitted }}</strong> night{{ bed_charges.days_admitted|pluralize }}</div>
+                </div>
+                {% endif %}
                 <div class="detail-row">
                     <div class="detail-label">Bed Location:</div>
                     <div class="detail-value">{{ bed_charges.ward_name }} - Bed {{ bed_charges.bed_number }}</div>
@@ -236,7 +251,7 @@
                 </div>
                 <div class="detail-row" style="background: #FEF3C7; padding: 15px; border-radius: 8px; margin-top: 10px;">
                     <div class="detail-label" style="font-size: 16px;">
-                        <i class="bi bi-calculator"></i> Total Bed Charges:
+                        <i class="bi bi-calculator"></i> Total Accommodation Charges:
                     </div>
                     <div class="detail-value" style="font-size: 20px; font-weight: 700; color: #D97706;">
                         GHS {{ bed_charges.current_charges|floatformat:2|intcomma }}
@@ -244,12 +259,21 @@
                 </div>
                 {% if not bed_charges.is_discharged %}
                 <div class="alert alert-info mt-3 mb-0">
-                    <i class="bi bi-info-circle"></i> <strong>Note:</strong> This is the current charge based on {{ bed_charges.days_admitted }} day{{ bed_charges.days_admitted|pluralize }}. 
-                    Final charges will be calculated at discharge.
+                    <i class="bi bi-info-circle"></i> <strong>Note:</strong>
+                    {% if bed_charges.is_detention %}
+                    If discharged now (&lt; 12 hrs): Detention = GHS 120. If stays ≥ 12 hrs: Admission + doctor/nursing care.
+                    {% else %}
+                    This is the projected charge based on {{ bed_charges.days_admitted }} night{{ bed_charges.days_admitted|pluralize }} so far. Final charges calculated at discharge.
+                    {% endif %}
                 </div>
                 {% else %}
                 <div class="alert alert-success mt-3 mb-0">
-                    <i class="bi bi-check-circle"></i> <strong>Final charges calculated.</strong> Patient stayed for {{ bed_charges.days_admitted }} day{{ bed_charges.days_admitted|pluralize }}.
+                    <i class="bi bi-check-circle"></i> <strong>Final charges calculated.</strong>
+                    {% if bed_charges.is_detention %}
+                    Detention ({{ bed_charges.total_hours|floatformat:1 }} hrs) = GHS 120.
+                    {% else %}
+                    Admission {{ bed_charges.days_admitted }} night{{ bed_charges.days_admitted|pluralize }} + care = GHS {{ bed_charges.current_charges|floatformat:2 }}.
+                    {% endif %}
                 </div>
                 {% endif %}
             </div>

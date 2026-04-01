@@ -160,9 +160,16 @@ class Command(BaseCommand):
                             self.stdout.write(f'  [DRY RUN] Would update patient: {mrn}')
                         continue
                     
-                    # Create new patient
+                    # Create new patient - CHECK FOR DUPLICATES FIRST
                     if not dry_run:
                         with transaction.atomic():
+                            # CRITICAL: Check for duplicate MRN before creating
+                            existing = Patient.objects.filter(mrn=mrn, is_deleted=False).first()
+                            if existing:
+                                self.stdout.write(f'  ⚠️ Skipping duplicate MRN: {mrn} (already exists)')
+                                skipped_count += 1
+                                continue
+                            
                             # Create patient with minimal data
                             patient = Patient.objects.create(
                                 mrn=mrn,

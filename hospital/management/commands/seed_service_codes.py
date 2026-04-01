@@ -23,6 +23,7 @@ class Command(BaseCommand):
             {'code': 'CONS-FOLLOW', 'description': 'Follow-up Consultation', 'category': 'Consultation', 'price': Decimal('30.00')},
             
             # Registration & Administrative
+            {'code': 'REG', 'description': 'Patient Registration Fee', 'category': 'Registration', 'price': Decimal('50.00')},
             {'code': 'REG-NEW', 'description': 'New Patient Registration', 'category': 'Administration', 'price': Decimal('10.00')},
             {'code': 'REG-FILE', 'description': 'Medical Records Retrieval', 'category': 'Administration', 'price': Decimal('5.00')},
             {'code': 'REG-CERT', 'description': 'Medical Certificate', 'category': 'Administration', 'price': Decimal('20.00')},
@@ -53,7 +54,11 @@ class Command(BaseCommand):
             {'code': 'PHARM-DISP', 'description': 'Pharmacy Dispensing Fee', 'category': 'Pharmacy', 'price': Decimal('5.00')},
             {'code': 'PHARM-COUNSEL', 'description': 'Pharmacy Counseling', 'category': 'Pharmacy', 'price': Decimal('10.00')},
             
-            # Admission & Ward Services
+            # Admission & Ward Services (Detention vs Admission)
+            {'code': 'DETENTION', 'description': 'Detention (< 12 hours)', 'category': 'accommodation', 'price': Decimal('120.00')},
+            {'code': 'ADM-ACCOM', 'description': 'Admission accommodation (≥ 12 hrs)', 'category': 'accommodation', 'price': Decimal('150.00')},
+            {'code': 'ADM-DOCTOR-CARE', 'description': 'Doctor care (admission)', 'category': 'accommodation', 'price': Decimal('80.00')},
+            {'code': 'ADM-NURSING-CARE', 'description': 'Nursing care (admission)', 'category': 'accommodation', 'price': Decimal('70.00')},
             {'code': 'ADM-FEE', 'description': 'Admission Fee', 'category': 'Administration', 'price': Decimal('50.00')},
             {'code': 'WARD-GEN', 'description': 'General Ward Daily Charge', 'category': 'Ward', 'price': Decimal('30.00')},
             {'code': 'WARD-PRIVATE', 'description': 'Private Ward Daily Charge', 'category': 'Ward', 'price': Decimal('80.00')},
@@ -80,7 +85,8 @@ class Command(BaseCommand):
             
             # Maternity Services
             {'code': 'MAT-ANC', 'description': 'Antenatal Care Visit', 'category': 'Maternity', 'price': Decimal('50.00')},
-            {'code': 'MAT-DELIVER', 'description': 'Delivery Fee', 'category': 'Maternity', 'price': Decimal('500.00')},
+            {'code': 'MAT-DELIVER', 'description': 'Delivery Fee', 'category': 'Maternity', 'price': Decimal('2800.00')},
+            {'code': 'MAT-MIDWIFE', 'description': 'Midwife Care', 'category': 'Maternity', 'price': Decimal('300.00')},
             {'code': 'MAT-CSECT', 'description': 'Caesarean Section', 'category': 'Maternity', 'price': Decimal('1500.00')},
             {'code': 'MAT-PNC', 'description': 'Postnatal Care Visit', 'category': 'Maternity', 'price': Decimal('40.00')},
             
@@ -98,7 +104,9 @@ class Command(BaseCommand):
             # Other Services
             {'code': 'EYE-TEST', 'description': 'Eye Test/Vision Screening', 'category': 'Diagnostic', 'price': Decimal('30.00')},
             {'code': 'HEAR-TEST', 'description': 'Hearing Test', 'category': 'Diagnostic', 'price': Decimal('50.00')},
-            {'code': 'PHYSIO', 'description': 'Physiotherapy Session', 'category': 'Therapy', 'price': Decimal('60.00')},
+            # Physiotherapy – cash patient prices
+            {'code': 'PHYSIO', 'description': 'Physiotherapy (First Time)', 'category': 'Therapy', 'price': Decimal('250.00')},
+            {'code': 'PHYSIO-SUB', 'description': 'Physiotherapy (Subsequent)', 'category': 'Therapy', 'price': Decimal('150.00')},
             {'code': 'NUTRITION', 'description': 'Nutrition Consultation', 'category': 'Consultation', 'price': Decimal('50.00')},
         ]
         

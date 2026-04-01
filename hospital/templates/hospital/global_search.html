@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load static %}
+{% load static hospital_extras %}
 
 {% block title %}Search - HMS{% endblock %}
 {% block page_title %}Global Search{% endblock %}
@@ -223,14 +223,14 @@
                     placeholder="Search patients, encounters, invoices, appointments, staff, drugs, lab results, prescriptions, orders, medical records, referrals, insurance, departments, specialties, wards, beds..."
                     autofocus
                     autocomplete="off"
-                >
+                 title="Enter text" placeholder="Enter text">
                 <small class="keyboard-hint">
                     <i class="bi bi-keyboard me-1"></i>Press <kbd>Enter</kbd> to search, <kbd>Esc</kbd> to clear
                 </small>
             </div>
             <div class="col-md-2">
                 <label for="categoryFilter" class="visually-hidden">Category Filter</label>
-                <select name="category" class="form-select form-control-modern" id="categoryFilter" title="Filter by category">
+                <select name="category" class="form-select form-control-modern" id="categoryFilter" title="Filter by category" title="Select option" aria-label="Select option">
                     <option value="">All Categories</option>
                     <option value="patients" {% if category_filter == 'patients' %}selected{% endif %}>Patients</option>
                     <option value="encounters" {% if category_filter == 'encounters' %}selected{% endif %}>Encounters</option>
@@ -266,7 +266,7 @@
         <div class="row g-3 mt-3" id="advancedFilters">
             <div class="col-md-3">
                 <label for="statusFilter" class="form-label small fw-bold">Status</label>
-                <select name="status" id="statusFilter" class="form-select form-select-sm" title="Filter by status">
+                <select name="status" id="statusFilter" class="form-select form-select-sm" title="Filter by status" title="Select option" aria-label="Select option">
                     <option value="">All Statuses</option>
                     <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Active</option>
                     <option value="completed" {% if status_filter == 'completed' %}selected{% endif %}>Completed</option>
@@ -335,6 +335,7 @@
                             <a href="{% url 'hospital:patient_detail' patient.pk %}" class="result-item-link">
                                 {{ patient.full_name }}
                             </a>
+                            {% patient_payer_badges patient %}
                         </h6>
                         <div class="result-item-meta">
                             MRN: {{ patient.mrn }} | 
@@ -375,6 +376,7 @@
                             <a href="{% url 'hospital:encounter_detail' encounter.pk %}" class="result-item-link">
                                 {{ encounter.patient.full_name }} - {{ encounter.get_encounter_type_display }}
                             </a>
+                            {% patient_payer_badges encounter.patient encounter %}
                         </h6>
                         <div class="result-item-meta">
                             {{ encounter.started_at|date:"M d, Y H:i" }} | 
@@ -419,7 +421,7 @@
                             </a>
                         </h6>
                         <div class="result-item-meta">
-                            Patient: {{ invoice.patient.full_name }} | 
+                            Patient: {{ invoice.patient.full_name }} {% patient_payer_badges invoice.patient invoice.encounter %} | 
                             Date: {{ invoice.issued_at|date:"M d, Y" }} | 
                             Amount: GHS {{ invoice.total_amount|floatformat:2 }}
                             {% if invoice.balance > 0 %} | Balance: GHS {{ invoice.balance|floatformat:2 }}{% endif %}
@@ -456,7 +458,7 @@
                 <div class="row align-items-center">
                     <div class="col-md-8">
                         <h6 class="result-item-title">
-                            {{ appointment.patient.full_name }} with {{ appointment.provider.user.get_full_name|default:appointment.provider.user.username }}
+                            {{ appointment.patient.full_name }} {% patient_payer_badges appointment.patient %} with {{ appointment.provider.user.get_full_name|default:appointment.provider.user.username }}
                         </h6>
                         <div class="result-item-meta">
                             {{ appointment.appointment_date|date:"M d, Y H:i" }} |
@@ -613,7 +615,7 @@
                 <div class="row align-items-center">
                     <div class="col-md-8">
                         <h6 class="result-item-title">
-                            {{ lab_result.test.name }} - {{ lab_result.order.encounter.patient.full_name }}
+                            {{ lab_result.test.name }} - {{ lab_result.order.encounter.patient.full_name }} {% patient_payer_badges lab_result.order.encounter.patient lab_result.order.encounter %}
                         </h6>
                         <div class="result-item-meta">
                             Test: {{ lab_result.test.name }} ({{ lab_result.test.code }}) | 
@@ -653,11 +655,11 @@
                 <div class="row align-items-center">
                     <div class="col-md-8">
                         <h6 class="result-item-title">
-                            {{ prescription.drug.name }} - {{ prescription.encounter.patient.full_name }}
+                            {{ prescription.drug.name }} - {{ prescription.order.encounter.patient.full_name }} {% patient_payer_badges prescription.order.encounter.patient prescription.order.encounter %}
                         </h6>
                         <div class="result-item-meta">
                             Drug: {{ prescription.drug.name }} | 
-                            Patient: {{ prescription.encounter.patient.full_name }} | 
+                            Patient: {{ prescription.order.encounter.patient.full_name }} | 
                             Date: {{ prescription.created|date:"M d, Y" }}
                             {% if prescription.instructions %} | Instructions: {{ prescription.instructions|truncatewords:10 }}{% endif %}
                         </div>
@@ -693,7 +695,7 @@
                 <div class="row align-items-center">
                     <div class="col-md-8">
                         <h6 class="result-item-title">
-                            {{ order.get_order_type_display }} - {{ order.encounter.patient.full_name }}
+                            {{ order.get_order_type_display }} - {{ order.encounter.patient.full_name }} {% patient_payer_badges order.encounter.patient order.encounter %}
                         </h6>
                         <div class="result-item-meta">
                             Type: {{ order.get_order_type_display }} | 
@@ -734,7 +736,7 @@
                 <div class="row align-items-center">
                     <div class="col-md-8">
                         <h6 class="result-item-title">
-                            {{ record.patient.full_name }} - {{ record.diagnosis|truncatewords:5|default:"Medical Record" }}
+                            {{ record.patient.full_name }} {% patient_payer_badges record.patient record.encounter %} - {{ record.diagnosis|truncatewords:5|default:"Medical Record" }}
                         </h6>
                         <div class="result-item-meta">
                             Patient: {{ record.patient.full_name }} | 
@@ -770,7 +772,7 @@
                 <div class="row align-items-center">
                     <div class="col-md-8">
                         <h6 class="result-item-title">
-                            {{ referral.encounter.patient.full_name }} → {{ referral.specialty.name }}
+                            {{ referral.encounter.patient.full_name }} {% patient_payer_badges referral.encounter.patient referral.encounter %} → {{ referral.specialty.name }}
                         </h6>
                         <div class="result-item-meta">
                             Patient: {{ referral.encounter.patient.full_name }} | 
@@ -814,6 +816,7 @@
                             <a href="{% url 'hospital:insurance_detail' insurance.pk %}" class="result-item-link">
                                 {{ insurance.patient.full_name }} - {{ insurance.insurance_company.name }}
                             </a>
+                            {% patient_payer_badges insurance.patient %}
                         </h6>
                         <div class="result-item-meta">
                             Patient: {{ insurance.patient.full_name }} | 

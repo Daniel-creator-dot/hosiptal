@@ -1,0 +1,156 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Bank Account Detail - HMS{% endblock %}
+{% block page_title %}Bank Account Detail{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-lg-10 mx-auto">
+            <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-bank"></i> {{ bank.bank_name }} - {{ bank.account_name }}</h5>
+                    <div>
+                        <a href="{% url 'hospital:bank_account_edit' bank.id %}" class="btn btn-warning btn-sm me-2">
+                            <i class="bi bi-pencil me-1"></i>Edit
+                        </a>
+                        <a href="{% url 'hospital:bank_account_list' %}" class="btn btn-secondary btn-sm">
+                            <i class="bi bi-arrow-left me-1"></i>Back to List
+                        </a>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <strong>Bank Name:</strong>
+                            <p>{{ bank.bank_name }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <strong>Account Name:</strong>
+                            <p>{{ bank.account_name }}</p>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <strong>Account Number:</strong>
+                            <p><code>{{ bank.account_number }}</code></p>
+                        </div>
+                        <div class="col-md-6">
+                            <strong>Account Type:</strong>
+                            <p><span class="badge bg-info">{% if bank.account_type|lower == "invalid" or bank.get_account_type_display|lower == "invalid" or not bank.account_type %}Checking / Current{% else %}{{ bank.get_account_type_display|default:"Checking / Current" }}{% endif %}</span></p>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <strong>Branch:</strong>
+                            <p>{{ bank.branch|default:"-" }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <strong>Currency:</strong>
+                            <p>{{ bank.currency }}</p>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <strong>Opening Balance:</strong>
+                            <p>{{ bank.currency }} {{ bank.opening_balance|floatformat:2|intcomma }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <strong>Current Balance:</strong>
+                            <p class="h4 mb-0">
+                                <strong class="{% if bank.current_balance < 0 %}text-danger{% else %}text-success{% endif %}">
+                                    {{ bank.currency }} {{ bank.current_balance|floatformat:2|intcomma }}
+                                </strong>
+                            </p>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <strong>GL Account:</strong>
+                            <p>
+                                {% if bank.gl_account %}
+                                    {{ bank.gl_account.account_code }} - {{ bank.gl_account.account_name }}
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </p>
+                        </div>
+                        <div class="col-md-6">
+                            <strong>Status:</strong>
+                            <p>
+                                <span class="badge bg-{% if bank.is_active %}success{% else %}secondary{% endif %}">
+                                    {% if bank.is_active %}Active{% else %}Inactive{% endif %}
+                                </span>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-arrow-left-right"></i> Recent Transactions (last 50)</h5>
+                    <a href="{% url 'hospital:bank_transaction_list' %}?bank={{ bank.id }}" class="btn btn-outline-primary btn-sm">
+                        <i class="bi bi-list-ul me-1"></i>View All Transactions
+                    </a>
+                </div>
+                <div class="card-body">
+                    {% if transactions %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Type</th>
+                                    <th>Description</th>
+                                    <th>Reference</th>
+                                    <th>Amount</th>
+                                    <th>Reconciled</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for transaction in transactions %}
+                                <tr>
+                                    <td>{{ transaction.transaction_date|date:"M d, Y" }}</td>
+                                    <td>
+                                        <span class="badge bg-{% if transaction.transaction_type == 'deposit' or transaction.transaction_type == 'interest' %}success{% elif transaction.transaction_type == 'withdrawal' or transaction.transaction_type == 'fee' %}danger{% else %}info{% endif %}">
+                                            {{ transaction.get_transaction_type_display }}
+                                        </span>
+                                    </td>
+                                    <td>{{ transaction.description|truncatewords:10 }}</td>
+                                    <td><code>{{ transaction.reference|default:"-" }}</code></td>
+                                    <td>
+                                        <strong class="{% if transaction.transaction_type == 'deposit' or transaction.transaction_type == 'interest' %}text-success{% else %}text-danger{% endif %}">
+                                            {% if transaction.transaction_type == 'deposit' or transaction.transaction_type == 'interest' %}+{% else %}-{% endif %}
+                                            {{ bank.currency }} {{ transaction.amount|floatformat:2|intcomma }}
+                                        </strong>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-{% if transaction.is_reconciled %}success{% else %}warning{% endif %}">
+                                            {% if transaction.is_reconciled %}Yes{% else %}No{% endif %}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <a href="{% url 'hospital:bank_transaction_detail' transaction.id %}" class="btn btn-sm btn-outline-primary" title="View">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-info mb-0">
+                        <i class="bi bi-info-circle"></i> No transactions for this bank account yet.
+                        <a href="{% url 'hospital:bank_transaction_create' %}" class="alert-link">Add a transaction</a>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

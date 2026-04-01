@@ -1,0 +1,196 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Create Budget Period - HMS{% endblock %}
+
+{% block page_title %}Create Budget Period{% endblock %}
+{% block page_subtitle %}Create a new budget period for department budgeting{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-lg-8 mx-auto">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white border-0 py-3">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h4 class="mb-0"><i class="bi bi-calendar-plus me-2"></i>Create Budget Period</h4>
+                        <a href="{% url 'hospital:budget_dashboard' %}" class="btn btn-outline-secondary btn-sm">
+                            <i class="bi bi-arrow-left me-1"></i>Back to Dashboard
+                        </a>
+                    </div>
+                </div>
+                <div class="card-body">
+                    {% if messages %}
+                        {% for message in messages %}
+                            <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                                {{ message }}
+                                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                            </div>
+                        {% endfor %}
+                    {% endif %}
+
+                    <form method="post" id="budgetPeriodForm">
+                        {% csrf_token %}
+                        
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label for="name" class="form-label">
+                                    Period Name <span class="text-danger">*</span>
+                                </label>
+                                <input type="text" 
+                                       class="form-control" 
+                                       id="name" 
+                                       name="name" 
+                                       required
+                                       placeholder="e.g., FY 2025, Q1 2025, January 2025"
+                                       title="Enter period name"
+                                       aria-label="Period name">
+                                <small class="form-text text-muted">
+                                    <i class="bi bi-info-circle"></i> Examples: FY 2025, Q1 2025, January 2025
+                                </small>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="period_type" class="form-label">
+                                    Period Type <span class="text-danger">*</span>
+                                </label>
+                                <select class="form-select" 
+                                        id="period_type" 
+                                        name="period_type" 
+                                        required
+                                        title="Select period type"
+                                        aria-label="Period type">
+                                    <option value="">Select Period Type...</option>
+                                    <option value="annual">Annual</option>
+                                    <option value="quarterly">Quarterly</option>
+                                    <option value="monthly">Monthly</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label for="start_date" class="form-label">
+                                    Start Date <span class="text-danger">*</span>
+                                </label>
+                                <input type="date" 
+                                       class="form-control" 
+                                       id="start_date" 
+                                       name="start_date" 
+                                       required
+                                       title="Select start date"
+                                       aria-label="Start date"
+                                       aria-describedby="start_date_help">
+                                <small id="start_date_help" class="form-text text-muted">
+                                    <i class="bi bi-calendar"></i> Budget period start date
+                                </small>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="end_date" class="form-label">
+                                    End Date <span class="text-danger">*</span>
+                                </label>
+                                <input type="date" 
+                                       class="form-control" 
+                                       id="end_date" 
+                                       name="end_date" 
+                                       required
+                                       title="Select end date"
+                                       aria-label="End date"
+                                       aria-describedby="end_date_help">
+                                <small id="end_date_help" class="form-text text-muted">
+                                    <i class="bi bi-calendar"></i> Budget period end date
+                                </small>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-12">
+                                <label for="total_budget" class="form-label">
+                                    Total Budget Amount <span class="text-danger">*</span>
+                                </label>
+                                <div class="input-group">
+                                    <span class="input-group-text">GHS</span>
+                                    <input type="number" 
+                                           class="form-control" 
+                                           id="total_budget" 
+                                           name="total_budget" 
+                                           step="0.01" 
+                                           min="0"
+                                           required
+                                           placeholder="0.00"
+                                           title="Enter total budget amount"
+                                           aria-label="Total budget amount">
+                                </div>
+                                <small class="form-text text-muted">
+                                    <i class="bi bi-currency-exchange"></i> Total budget allocated for this period
+                                </small>
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <label for="notes" class="form-label">
+                                Notes
+                            </label>
+                            <textarea class="form-control" 
+                                      id="notes" 
+                                      name="notes" 
+                                      rows="4"
+                                      placeholder="Additional notes or comments about this budget period..."
+                                      title="Enter notes"
+                                      aria-label="Notes"></textarea>
+                        </div>
+
+                        <div class="d-flex justify-content-between">
+                            <a href="{% url 'hospital:budget_dashboard' %}" class="btn btn-outline-secondary">
+                                <i class="bi bi-x-circle me-1"></i>Cancel
+                            </a>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check-circle me-1"></i>Create Budget Period
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Validate end date is after start date
+    const startDateInput = document.getElementById('start_date');
+    const endDateInput = document.getElementById('end_date');
+    
+    function validateDates() {
+        if (startDateInput.value && endDateInput.value) {
+            const startDate = new Date(startDateInput.value);
+            const endDate = new Date(endDateInput.value);
+            
+            if (endDate <= startDate) {
+                endDateInput.setCustomValidity('End date must be after start date');
+            } else {
+                endDateInput.setCustomValidity('');
+            }
+        }
+    }
+    
+    startDateInput.addEventListener('change', validateDates);
+    endDateInput.addEventListener('change', validateDates);
+    
+    // Form submission validation
+    document.getElementById('budgetPeriodForm').addEventListener('submit', function(e) {
+        validateDates();
+        if (!this.checkValidity()) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        this.classList.add('was-validated');
+    });
+});
+</script>
+{% endblock %}
+
+
+
+
+

@@ -87,30 +87,92 @@
 
 {% block content %}
 <div class="container-fluid">
+    <!-- Quick Access Buttons - Top Section -->
+    <div class="row mb-4 g-3">
+        <div class="col-md-6 col-xl-3">
+            <a href="{% url 'hospital:claims_bills_hub' %}" class="btn btn-success btn-lg w-100" style="padding: 20px; font-size: 18px; border-radius: 12px;">
+                <i class="bi bi-file-earmark-text me-2"></i><strong>Claims Bills Hub</strong>
+                <br><small style="opacity: 0.9;">Bills, corporate, insurance, statements & reports</small>
+            </a>
+        </div>
+        <div class="col-md-6 col-xl-3">
+            <a href="{% url 'hospital:revenue_payment_analysis' %}" class="btn btn-info btn-lg w-100 text-white" style="padding: 20px; font-size: 18px; border-radius: 12px;">
+                <i class="bi bi-graph-up-arrow me-2"></i><strong>Revenue &amp; Payment Analysis</strong>
+                <br><small style="opacity: 0.9;">Billed vs collected, trends, and bill-type breakdown</small>
+            </a>
+        </div>
+        <div class="col-md-6 col-xl-3">
+            <a href="{% url 'hospital:centralized_cashier_dashboard' %}" class="btn btn-warning btn-lg w-100" style="padding: 20px; font-size: 18px; border-radius: 12px;">
+                <i class="bi bi-cash-stack me-2"></i><strong>Cashier Hub</strong>
+                <br><small style="opacity: 0.9;">Monitor cashier activities and payment processing</small>
+            </a>
+        </div>
+        <div class="col-md-6 col-xl-3">
+            <a href="{% url 'hospital:cashier_patient_bills' %}" class="btn btn-primary btn-lg w-100" style="padding: 20px; font-size: 18px; border-radius: 12px;">
+                <i class="bi bi-cash-coin me-2"></i><strong>Patient Bills</strong>
+                <br><small style="opacity: 0.9;">Combined payment – collect from patients (lab, pharmacy, imaging, etc.)</small>
+            </a>
+        </div>
+    </div>
+
     <!-- Financial Summary Cards -->
     <div class="row mb-4">
         <div class="col-md-3">
             <div class="stat-card revenue">
                 <h5>Total Revenue (Month)</h5>
-                <h2>GHS {{ total_revenue|floatformat:2|intcomma }}</h2>
+                <h2>GHS {{ total_revenue|default:0|floatformat:2|intcomma }}</h2>
             </div>
         </div>
         <div class="col-md-3">
             <div class="stat-card expense">
                 <h5>Total Expenses (Month)</h5>
-                <h2>GHS {{ total_expenses|floatformat:2|intcomma }}</h2>
+                <h2>GHS {{ total_expenses|default:0|floatformat:2|intcomma }}</h2>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="stat-card {% if net_income >= 0 %}revenue{% else %}expense{% endif %}">
+            <div class="stat-card {% if net_income|default:0 >= 0 %}revenue{% else %}expense{% endif %}">
                 <h5>Net Income (Month)</h5>
-                <h2>GHS {{ net_income|floatformat:2|intcomma }}</h2>
+                <h2>GHS {{ net_income|default:0|floatformat:2|intcomma }}</h2>
             </div>
         </div>
         <div class="col-md-3">
             <div class="stat-card info">
                 <h5>Accounts Receivable</h5>
-                <h2>GHS {{ total_ar|floatformat:2|intcomma }}</h2>
+                <h2>GHS {{ total_ar|default:0|floatformat:2|intcomma }}</h2>
+            </div>
+        </div>
+    </div>
+
+    <!-- Additional Financial Metrics Row -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <a href="{% url 'hospital:ap_report' %}" style="text-decoration: none; color: inherit; display: block;">
+                <div class="stat-card warning" style="cursor: pointer;">
+                    <h5>Accounts Payable</h5>
+                    <h2>GHS {{ total_ap|default:0|floatformat:2|intcomma }}</h2>
+                    {% if overdue_ap|default:0 > 0 %}
+                    <small style="opacity: 0.9;">Overdue: GHS {{ overdue_ap|default:0|floatformat:2|intcomma }}</small>
+                    {% endif %}
+                    <small style="opacity: 0.8; display: block; margin-top: 5px;"><i class="bi bi-arrow-right-circle"></i> View Suppliers We Owe</small>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);">
+                <h5>Total Bank Balance</h5>
+                <h2>GHS {{ total_bank_balance|default:0|floatformat:2|intcomma }}</h2>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card revenue">
+                <h5>Today's Revenue</h5>
+                <h2>GHS {{ today_revenue|default:0|floatformat:2|intcomma }}</h2>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card expense">
+                <h5>Today's Expenses</h5>
+                <h2>GHS {{ today_expenses|default:0|floatformat:2|intcomma }}</h2>
             </div>
         </div>
     </div>
@@ -119,52 +181,172 @@
     <div class="row mb-4">
         <div class="col-md-2">
             <div class="dashboard-card text-center">
-                <h3 class="text-primary">{{ pending_cashbook }}</h3>
+                <h3 class="text-primary">{{ pending_cashbook|default:0 }}</h3>
                 <p class="text-muted mb-0">Pending Cashbook</p>
             </div>
         </div>
         <div class="col-md-2">
             <div class="dashboard-card text-center">
-                <h3 class="text-success">{{ ready_to_classify }}</h3>
+                <h3 class="text-success">{{ ready_to_classify|default:0 }}</h3>
                 <p class="text-muted mb-0">Ready to Classify</p>
             </div>
         </div>
         <div class="col-md-2">
             <div class="dashboard-card text-center">
-                <h3 class="text-warning">{{ unreconciled_transactions }}</h3>
+                <h3 class="text-warning">{{ unreconciled_transactions|default:0 }}</h3>
                 <p class="text-muted mb-0">Unreconciled</p>
             </div>
         </div>
         <div class="col-md-2">
             <div class="dashboard-card text-center">
-                <h3 class="text-info">{{ total_insurance_receivable|floatformat:0|intcomma }}</h3>
+                <h3 class="text-info">GHS {{ total_insurance_receivable|default:0|floatformat:0|intcomma }}</h3>
                 <p class="text-muted mb-0">Insurance AR</p>
             </div>
         </div>
         <div class="col-md-2">
             <div class="dashboard-card text-center">
-                <h3 class="text-danger">{{ pending_procurement }}</h3>
+                <h3 class="text-danger">{{ pending_procurement|default:0 }}</h3>
                 <p class="text-muted mb-0">Pending Procurement</p>
             </div>
         </div>
         <div class="col-md-2">
             <div class="dashboard-card text-center">
-                <h3 class="text-primary">{{ pending_payroll }}</h3>
+                <h3 class="text-primary">{{ pending_payroll|default:0 }}</h3>
                 <p class="text-muted mb-0">Pending Payroll</p>
             </div>
         </div>
     </div>
 
+    <!-- Procurement expenses (month) - link to report -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <a href="{% url 'hospital:procurement_expenses_report' %}" class="dashboard-card d-flex align-items-center justify-content-between" style="text-decoration: none; color: inherit; border-left: 4px solid #0d6efd;">
+                <div>
+                    <h5 class="text-muted mb-1"><i class="bi bi-journal-bookmark me-2"></i>Procurement Expenses (this month)</h5>
+                    <p class="mb-0">Expenses from approved procurement posted to the ledger. Shown in General Ledger and financial reports.</p>
+                </div>
+                <div class="text-end">
+                    <h3 class="text-primary mb-0">GHS {{ procurement_expense_total_month|default:0|floatformat:2|intcomma }}</h3>
+                    <small class="text-muted">{{ procurement_expense_count_month|default:0 }} entries</small>
+                    <span class="d-block mt-1 text-primary"><i class="bi bi-arrow-right-circle"></i> View report</span>
+                </div>
+            </a>
+        </div>
+    </div>
+
+    <!-- Quick Access Cards Row -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <a href="{% url 'hospital:claims_bills_hub' %}" class="dashboard-card text-center" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; text-decoration: none; display: block; border: none;">
+                <h2 class="mb-2"><i class="bi bi-file-earmark-text"></i></h2>
+                <h4 class="mb-2">Claims Bills Hub</h4>
+                <p class="mb-0" style="opacity: 0.9;">All Billing & Claims Features</p>
+                <p class="mt-2 mb-0"><small style="opacity: 0.8;">Click to Open →</small></p>
+            </a>
+        </div>
+        <div class="col-md-6">
+            <a href="{% url 'hospital:centralized_cashier_dashboard' %}" class="dashboard-card text-center" style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); color: white; text-decoration: none; display: block; border: none;">
+                <h2 class="mb-2"><i class="bi bi-cash-stack"></i></h2>
+                <h4 class="mb-2">Cashier Hub</h4>
+                <p class="mb-0" style="opacity: 0.9;">Payment Processing & Sessions</p>
+                <p class="mt-2 mb-0"><small style="opacity: 0.8;">Click to Open →</small></p>
+            </a>
+        </div>
+    </div>
+
+    <!-- Action Items Row -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="dashboard-card text-center" style="border-left: 4px solid #dc3545;">
+                <h3 class="text-danger">{{ pending_vouchers|default:0 }}</h3>
+                <p class="text-muted mb-0">Pending Vouchers</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="dashboard-card text-center" style="border-left: 4px solid #ffc107;">
+                <h3 class="text-warning">{{ draft_journals|default:0 }}</h3>
+                <p class="text-muted mb-0">Draft Journals</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="dashboard-card text-center" style="border-left: 4px solid #17a2b8;">
+                <h3 class="text-info">GHS {{ outstanding_cheques|default:0|floatformat:2|intcomma }}</h3>
+                <p class="text-muted mb-0">Outstanding Cheques</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <a href="{% url 'hospital:accounts_approval_list' %}" class="dashboard-card text-center" style="border-left: 4px solid #28a745; text-decoration: none; color: inherit; display: block; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border: 2px solid #f59e0b;">
+                <h3 class="text-warning" style="font-weight: 700; font-size: 32px;">{{ pending_accounts_approval|default:0 }}</h3>
+                <p class="mb-1" style="font-weight: 600; color: #92400e;">Procurement Approvals</p>
+                <small style="color: #78350f;">Click to Review →</small>
+            </a>
+        </div>
+    </div>
+
+    <!-- PROCUREMENT APPROVAL - PROMINENT BANNER -->
+    {% if pending_accounts_approval|default:0 > 0 %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <a href="{% url 'hospital:accounts_approval_list' %}" style="text-decoration: none; display: block;">
+                <div class="dashboard-card" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; border: none; cursor: pointer; transition: all 0.3s;" onmouseover="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 8px 24px rgba(245,158,11,0.4)'" onmouseout="this.style.transform=''; this.style.boxShadow=''">
+                    <div class="row align-items-center">
+                        <div class="col-md-8">
+                            <h3 class="mb-2" style="color: white; font-weight: 700;">
+                                <i class="bi bi-clipboard-check-fill me-2"></i>Procurement Approval Required
+                            </h3>
+                            <p class="mb-0" style="opacity: 0.95; font-size: 18px; color: white;">
+                                You have <strong>{{ pending_accounts_approval }}</strong> procurement request{{ pending_accounts_approval|pluralize }} pending your approval.
+                            </p>
+                            <p class="mb-0 mt-2" style="opacity: 0.9; font-size: 14px; color: white;">
+                                <i class="bi bi-info-circle me-1"></i>Review and approve requests to create accounting entries automatically
+                            </p>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <div style="background: rgba(255,255,255,0.2); border-radius: 12px; padding: 20px; display: inline-block;">
+                                <div style="font-size: 48px; font-weight: 700;">{{ pending_accounts_approval }}</div>
+                                <div style="font-size: 14px; opacity: 0.9;">Pending</div>
+                            </div>
+                            <div class="mt-3">
+                                <span class="badge bg-white text-warning" style="font-size: 16px; padding: 10px 20px;">
+                                    <i class="bi bi-arrow-right-circle me-2"></i>Review Now
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </a>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Cashier Hub - Prominent Section -->
     <div class="dashboard-card mb-4" style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); color: white; border: none;">
         <div class="row align-items-center">
-            <div class="col-md-8">
+            <div class="col-md-6">
                 <h3 class="mb-2"><i class="bi bi-cash-stack me-2"></i>Cashier Hub</h3>
                 <p class="mb-0" style="opacity: 0.9;">Monitor and manage all cashier activities, sessions, and payment processing</p>
             </div>
-            <div class="col-md-4 text-end">
+            <div class="col-md-6 text-end">
+                <a href="{% url 'hospital:cashier_patient_bills' %}" class="btn btn-light btn-lg me-2">
+                    <i class="bi bi-cash-coin me-2"></i>Patient Bills
+                </a>
                 <a href="{% url 'hospital:centralized_cashier_dashboard' %}" class="btn btn-light btn-lg">
                     <i class="bi bi-arrow-right-circle me-2"></i>Open Cashier Hub
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Billing & Claims Section -->
+    <div class="dashboard-card mb-4" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none;">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h3 class="mb-2"><i class="bi bi-file-earmark-text me-2"></i>Claims Bills Hub</h3>
+                <p class="mb-0" style="opacity: 0.9;">Comprehensive billing and claims management - Bills, Corporate Bills, Insurance Bills, Statements, and Reports</p>
+            </div>
+            <div class="col-md-4 text-end">
+                <a href="{% url 'hospital:claims_bills_hub' %}" class="btn btn-light btn-lg">
+                    <i class="bi bi-arrow-right-circle me-2"></i>Open Claims Bills Hub
                 </a>
             </div>
         </div>
@@ -174,6 +356,17 @@
     <div class="dashboard-card">
         <h3 class="mb-4"><i class="bi bi-grid-3x3-gap"></i> All Accounting Features</h3>
         <div class="feature-grid">
+            <a href="{% url 'hospital:claims_bills_hub' %}" class="feature-card" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white;">
+                <i class="bi bi-file-earmark-text"></i>
+                <h4>Claims Bills</h4>
+                <p class="text-muted" style="opacity: 0.9;">Billing & Claims Hub</p>
+            </a>
+            <a href="{% url 'hospital:cashier_patient_bills' %}" class="feature-card" style="background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%); color: white;">
+                <i class="bi bi-cash-coin"></i>
+                <h4>Patient Bills</h4>
+                <p class="text-muted" style="opacity: 0.9;">Combined Payment – Collect from Patients</p>
+            </a>
+            
             <a href="{% url 'hospital:cashbook_list' %}" class="feature-card">
                 <i class="bi bi-journal-text"></i>
                 <h4>Cashbook</h4>
@@ -192,22 +385,125 @@
                 <p class="text-muted">Track Insurance Claims</p>
             </a>
             
+            <a href="{% url 'hospital:corporate_receivables' %}" class="feature-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                <i class="bi bi-building"></i>
+                <h4>Corporate Receivables</h4>
+                <p class="text-muted" style="opacity: 0.9;">Corporate Client Debtors</p>
+            </a>
+            
             <a href="{% url 'hospital:procurement_purchase_list' %}" class="feature-card">
                 <i class="bi bi-cart"></i>
                 <h4>Procurement Purchases</h4>
                 <p class="text-muted">Cash & Credit Purchases</p>
             </a>
+            {% if show_stock_management_link %}
+            <a href="{% url 'hospital:stock_management_monitoring' %}" class="feature-card" style="background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%); color: white;">
+                <i class="bi bi-box-seam"></i>
+                <h4 style="color: white;">Stock Management & Monitoring</h4>
+                <p style="color: white; opacity: 0.9;">Pharmacy stock – see what store manager added</p>
+            </a>
+            {% endif %}
+            <a href="{% url 'hospital:procurement_expenses_report' %}" class="feature-card" style="background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%); color: white;">
+                <i class="bi bi-journal-bookmark"></i>
+                <h4 style="color: white;">Procurement Expenses</h4>
+                <p style="color: white; opacity: 0.9;">Report: expenses from approved procurement</p>
+            </a>
             
-            <a href="{% url 'hospital:payroll_list' %}" class="feature-card">
+            <a href="{% url 'hospital:accounts_approval_list' %}" class="feature-card" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; border: 2px solid #f59e0b;">
+                <i class="bi bi-clipboard-check-fill" style="font-size: 48px;"></i>
+                <h4 style="color: white; font-weight: 700;">Procurement Approvals</h4>
+                <p style="color: white; opacity: 0.95;">
+                    {% if pending_accounts_approval|default:0 > 0 %}
+                        <strong>{{ pending_accounts_approval }}</strong> pending approval{{ pending_accounts_approval|pluralize }}
+                    {% else %}
+                        Review & approve requests
+                    {% endif %}
+                </p>
+                {% if pending_accounts_approval|default:0 > 0 %}
+                <span class="badge bg-white text-warning" style="font-size: 14px; padding: 6px 12px; margin-top: 8px;">
+                    <i class="bi bi-exclamation-triangle me-1"></i>Action Required
+                </span>
+                {% endif %}
+            </a>
+            
+            <!-- NEW: Accounts Receivable Management -->
+            <a href="{% url 'hospital:ar_list' %}" class="feature-card" style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white;">
+                <i class="bi bi-receipt-cutoff"></i>
+                <h4 style="color: white;">Accounts Receivable</h4>
+                <p style="color: white; opacity: 0.9;">Add/Edit AR Entries</p>
+            </a>
+            
+            <!-- NEW: Accounts Payable Management -->
+            <a href="{% url 'hospital:ap_list' %}" class="feature-card" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white;">
+                <i class="bi bi-file-earmark-text"></i>
+                <h4 style="color: white;">Accounts Payable</h4>
+                <p style="color: white; opacity: 0.9;">Add/Edit AP Entries</p>
+            </a>
+            
+            <!-- NEW: Journal Entries -->
+            <a href="{% url 'hospital:journal_entry_list' %}" class="feature-card" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white;">
+                <i class="bi bi-journal-text"></i>
+                <h4 style="color: white;">Journal Entries</h4>
+                <p style="color: white; opacity: 0.9;">Create/Edit Journal Entries</p>
+            </a>
+            
+            <!-- NEW: Revenue Management -->
+            <a href="{% url 'hospital:revenue_list' %}" class="feature-card" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white;">
+                <i class="bi bi-arrow-up-circle"></i>
+                <h4 style="color: white;">Revenue</h4>
+                <p style="color: white; opacity: 0.9;">Add/Edit Revenue</p>
+            </a>
+            
+            <!-- NEW: Expense Management -->
+            <a href="{% url 'hospital:expense_list' %}" class="feature-card" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white;">
+                <i class="bi bi-arrow-down-circle"></i>
+                <h4 style="color: white;">Expense</h4>
+                <p style="color: white; opacity: 0.9;">Add/Edit Expenses</p>
+            </a>
+            
+            <!-- NEW: Receipt Voucher -->
+            <a href="{% url 'hospital:receipt_voucher_list' %}" class="feature-card">
+                <i class="bi bi-receipt"></i>
+                <h4>Receipt Vouchers</h4>
+                <p class="text-muted">Create/Edit Receipt Vouchers</p>
+            </a>
+            
+            <!-- NEW: Bank Accounts -->
+            <a href="{% url 'hospital:bank_account_list' %}" class="feature-card">
+                <i class="bi bi-bank"></i>
+                <h4>Bank Accounts</h4>
+                <p class="text-muted">Manage Bank Accounts</p>
+            </a>
+            
+            <!-- NEW: Bank Transactions -->
+            <a href="{% url 'hospital:bank_transaction_list' %}" class="feature-card">
+                <i class="bi bi-arrow-left-right"></i>
+                <h4>Bank Transactions</h4>
+                <p class="text-muted">Add/Edit Bank Transactions</p>
+            </a>
+            
+            <a href="{% url 'accountant_payroll_list' %}" class="feature-card">
                 <i class="bi bi-people"></i>
                 <h4>Payroll</h4>
-                <p class="text-muted">Payroll Management</p>
+                <p class="text-muted">RMC salary template &amp; import</p>
             </a>
             
             <a href="{% url 'hospital:doctor_commission_list' %}" class="feature-card">
                 <i class="bi bi-person-badge"></i>
                 <h4>Doctor Commissions</h4>
                 <p class="text-muted">Commission Tracking</p>
+            </a>
+            
+            <a href="{% url 'hospital:doctor_performance_dashboard' %}" class="feature-card">
+                <i class="bi bi-graph-up-arrow"></i>
+                <h4>Doctor Performance</h4>
+                <p class="text-muted">Real-time Patient Visits & Services</p>
+            </a>
+            
+            <a href="{% url 'hospital:ap_report' %}" class="feature-card" style="background: linear-gradient(135deg, #dc3545 0%, #fd7e14 100%); color: white;">
+                <i class="bi bi-journal-check"></i>
+                <h4>Accounts Payable</h4>
+                <p class="text-muted" style="opacity: 0.9;">Suppliers We Owe</p>
             </a>
             
             <a href="{% url 'hospital:profit_loss_list' %}" class="feature-card">
@@ -249,16 +545,30 @@
             <a href="{% url 'hospital:initial_revaluation_list' %}" class="feature-card">
                 <i class="bi bi-arrow-repeat"></i>
                 <h4>Revaluations</h4>
-                <p class="text-muted">Asset Revaluations</p>
+                <p class="text-muted">Add/Edit Asset Revaluations</p>
             </a>
             
-            <a href="{% url 'hospital:chart_of_accounts' %}" class="feature-card">
+            <!-- NEW: Withholding Receivable -->
+            <a href="{% url 'hospital:withholding_receivable_list' %}" class="feature-card">
+                <i class="bi bi-file-earmark-lock"></i>
+                <h4>Withholding Receivable</h4>
+                <p class="text-muted">Add/Edit Withholding Receivables</p>
+            </a>
+            
+            <!-- NEW: Deposits -->
+            <a href="{% url 'hospital:deposit_list' %}" class="feature-card">
+                <i class="bi bi-wallet2"></i>
+                <h4>Deposits</h4>
+                <p class="text-muted">Add/Edit Deposits</p>
+            </a>
+            
+            <a href="{% url 'hospital:accountant_chart_of_accounts' %}" class="feature-card">
                 <i class="bi bi-list-ul"></i>
                 <h4>Chart of Accounts</h4>
                 <p class="text-muted">All Accounts</p>
             </a>
             
-            <a href="{% url 'hospital:sync_accounts' %}" class="feature-card" onclick="return confirm('This will sync and link all accounts. Continue?');" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+            <a href="{% url 'hospital:sync_accounts' %}" class="feature-card" onclick="return confirm('This will sync and link all accounts. Continue?');" class="encounter-overview-gradient">
                 <i class="bi bi-arrow-repeat"></i>
                 <h4>Sync Accounts</h4>
                 <p class="text-muted">Link & Sync All Accounts</p>

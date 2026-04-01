@@ -32,6 +32,15 @@ class ClinicalNoteViewSet(viewsets.ModelViewSet):
     search_fields = ['notes', 'subjective', 'objective', 'assessment', 'plan']
     ordering_fields = ['created']
     ordering = ['-created']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'encounter__patient',
+            'encounter__provider',
+            'encounter__location',
+            'created_by__user',
+            'created_by__department',
+        )
     
     def get_serializer_class(self):
         from .serializers_advanced import ClinicalNoteSerializer
@@ -47,6 +56,14 @@ class CarePlanViewSet(viewsets.ModelViewSet):
     search_fields = ['diagnosis', 'goals', 'interventions']
     ordering_fields = ['created', 'start_date']
     ordering = ['-created']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'patient',
+            'encounter',
+            'created_by__user',
+            'created_by__department',
+        )
     
     def get_serializer_class(self):
         from .serializers_advanced import CarePlanSerializer
@@ -62,6 +79,14 @@ class ProblemListViewSet(viewsets.ModelViewSet):
     search_fields = ['problem', 'icd10_code', 'description']
     ordering_fields = ['created']
     ordering = ['-created']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'patient',
+            'encounter',
+            'created_by__user',
+            'created_by__department',
+        )
     
     def get_serializer_class(self):
         from .serializers_advanced import ProblemListSerializer
@@ -78,6 +103,13 @@ class ProviderScheduleViewSet(viewsets.ModelViewSet):
     filterset_fields = ['provider', 'department', 'date', 'is_available']
     ordering_fields = ['date', 'start_time']
     ordering = ['date', 'start_time']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'provider__user',
+            'provider__department',
+            'department',
+        )
     
     def get_serializer_class(self):
         from .serializers_advanced import ProviderScheduleSerializer
@@ -92,14 +124,25 @@ class QueueViewSet(viewsets.ModelViewSet):
     filterset_fields = ['department', 'location', 'status', 'priority']
     ordering_fields = ['queue_number', 'checked_in_at']
     ordering = ['priority', 'queue_number']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'encounter__patient',
+            'department',
+        )
     
     @action(detail=False, methods=['get'])
     def current_queue(self, request):
         """Get current queue for a department"""
         department_id = request.query_params.get('department')
         location = request.query_params.get('location')
+        status = request.query_params.get('status')
         
         queryset = self.filter_queryset(self.get_queryset())
+
+        # Default behavior: only show active queue items unless status is explicitly requested.
+        if not status:
+            queryset = queryset.exclude(status__in=['completed', 'skipped'])
         
         if department_id:
             queryset = queryset.filter(department_id=department_id)
@@ -132,6 +175,13 @@ class TriageViewSet(viewsets.ModelViewSet):
     filterset_fields = ['triage_level', 'encounter']
     ordering_fields = ['triage_time']
     ordering = ['-triage_time']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'encounter__patient',
+            'triaged_by__user',
+            'triaged_by__department',
+        )
     
     def get_serializer_class(self):
         from .serializers_advanced import TriageSerializer
@@ -149,6 +199,17 @@ class ImagingStudyViewSet(viewsets.ModelViewSet):
     search_fields = ['dicom_uid', 'pacs_id', 'body_part']
     ordering_fields = ['scheduled_at', 'performed_at']
     ordering = ['-scheduled_at']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'patient',
+            'encounter',
+            'order',
+            'technician__user',
+            'assigned_radiologist__user',
+            'report_dictated_by__user',
+            'report_verified_by__user',
+        )
     
     @action(detail=True, methods=['post'])
     def report(self, request, pk=None):
@@ -189,6 +250,15 @@ class TheatreScheduleViewSet(viewsets.ModelViewSet):
     filterset_fields = ['theatre_name', 'status', 'surgeon']
     ordering_fields = ['scheduled_start']
     ordering = ['scheduled_start']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'patient',
+            'encounter',
+            'surgeon__user',
+            'anaesthetist__user',
+            'scrub_nurse__user',
+        )
     
     @action(detail=True, methods=['post'])
     def start(self, request, pk=None):
@@ -219,6 +289,13 @@ class SurgicalChecklistViewSet(viewsets.ModelViewSet):
     """ViewSet for Surgical Checklists"""
     queryset = SurgicalChecklist.objects.filter(is_deleted=False)
     permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'theatre_schedule__patient',
+            'theatre_schedule__encounter',
+            'completed_by__user',
+        )
     
     def get_serializer_class(self):
         from .serializers_advanced import SurgicalChecklistSerializer
@@ -233,6 +310,12 @@ class AnaesthesiaRecordViewSet(viewsets.ModelViewSet):
     filterset_fields = ['theatre_schedule', 'anaesthetist']
     ordering_fields = ['created']
     ordering = ['-created']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'theatre_schedule__patient',
+            'anaesthetist__user',
+        )
     
     def get_serializer_class(self):
         from .serializers_advanced import AnaesthesiaRecordSerializer
@@ -249,6 +332,14 @@ class MedicationAdministrationRecordViewSet(viewsets.ModelViewSet):
     filterset_fields = ['patient', 'encounter', 'status', 'prescription']
     ordering_fields = ['scheduled_time']
     ordering = ['scheduled_time']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'patient',
+            'prescription',
+            'encounter',
+            'administered_by__user',
+        )
     
     @action(detail=True, methods=['post'])
     def administer(self, request, pk=None):
@@ -278,6 +369,13 @@ class HandoverSheetViewSet(viewsets.ModelViewSet):
     filterset_fields = ['ward', 'shift_type', 'date']
     ordering_fields = ['date', 'shift_start']
     ordering = ['-date', '-shift_start']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'ward',
+            'created_by__user',
+            'created_by__department',
+        )
     
     def get_serializer_class(self):
         from .serializers_advanced import HandoverSheetSerializer
@@ -294,6 +392,13 @@ class IncidentLogViewSet(viewsets.ModelViewSet):
     filterset_fields = ['incident_type', 'severity', 'status']
     ordering_fields = ['incident_date']
     ordering = ['-incident_date']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'patient',
+            'reported_by__user',
+            'staff__user',
+        )
     
     def get_serializer_class(self):
         from .serializers_advanced import IncidentLogSerializer
@@ -308,6 +413,9 @@ class CrashCartCheckViewSet(viewsets.ModelViewSet):
     filterset_fields = ['location', 'status']
     ordering_fields = ['check_date']
     ordering = ['-check_date']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related('checked_by__user')
     
     def get_serializer_class(self):
         from .serializers_advanced import CrashCartCheckSerializer
@@ -375,6 +483,9 @@ class MaintenanceLogViewSet(viewsets.ModelViewSet):
     filterset_fields = ['equipment', 'maintenance_type']
     ordering_fields = ['service_date']
     ordering = ['-service_date']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related('equipment', 'technician__user')
     
     def get_serializer_class(self):
         from .serializers_advanced import MaintenanceLogSerializer
@@ -391,6 +502,9 @@ class DutyRosterViewSet(viewsets.ModelViewSet):
     filterset_fields = ['staff', 'department', 'shift_type', 'shift_date']
     ordering_fields = ['shift_date', 'start_time']
     ordering = ['shift_date', 'start_time']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related('staff__user', 'department')
     
     def get_serializer_class(self):
         from .serializers_advanced import DutyRosterSerializer
@@ -405,6 +519,9 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
     filterset_fields = ['staff', 'leave_type', 'status']
     ordering_fields = ['created', 'start_date']
     ordering = ['-created']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related('staff__user', 'approved_by__user')
     
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
@@ -443,6 +560,9 @@ class InsurancePreAuthorizationViewSet(viewsets.ModelViewSet):
     filterset_fields = ['payer', 'status', 'patient']
     ordering_fields = ['requested_date']
     ordering = ['-requested_date']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related('patient', 'payer', 'encounter')
     
     def get_serializer_class(self):
         from .serializers_advanced import InsurancePreAuthorizationSerializer
@@ -457,6 +577,9 @@ class ClaimsBatchViewSet(viewsets.ModelViewSet):
     filterset_fields = ['payer', 'status']
     ordering_fields = ['created', 'submission_date']
     ordering = ['-created']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related('payer')
     
     @action(detail=True, methods=['post'])
     def submit(self, request, pk=None):
@@ -481,6 +604,14 @@ class ChargeCaptureViewSet(viewsets.ModelViewSet):
     filterset_fields = ['encounter', 'service_code']
     ordering_fields = ['charge_date']
     ordering = ['-charge_date']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'encounter__patient',
+            'service_code',
+            'charged_by__user',
+            'invoice_line',
+        )
     
     def get_serializer_class(self):
         from .serializers_advanced import ChargeCaptureSerializer
@@ -495,6 +626,9 @@ class LabTestPanelViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, rest_filters.SearchFilter]
     search_fields = ['panel_code', 'panel_name']
+
+    def get_queryset(self):
+        return super().get_queryset().prefetch_related('tests')
     
     def get_serializer_class(self):
         from .serializers_advanced import LabTestPanelSerializer
@@ -510,6 +644,13 @@ class SampleCollectionViewSet(viewsets.ModelViewSet):
     search_fields = ['sample_id']
     ordering_fields = ['collection_time', 'created']
     ordering = ['-created']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'patient',
+            'order',
+            'collected_by__user',
+        )
     
     @action(detail=True, methods=['post'])
     def collect(self, request, pk=None):

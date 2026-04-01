@@ -1,0 +1,166 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Receipt Vouchers - HMS{% endblock %}
+{% block page_title %}Receipt Vouchers{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Status</label>
+                    <select name="status" class="form-select">
+                        <option value="">All</option>
+                        <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Draft</option>
+                        <option value="issued" {% if status_filter == 'issued' %}selected{% endif %}>Issued</option>
+                        <option value="void" {% if status_filter == 'void' %}selected{% endif %}>Void</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Date From</label>
+                    <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Date To</label>
+                    <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">&nbsp;</label>
+                    <div>
+                        <button type="submit" class="btn btn-primary w-100"><i class="bi bi-funnel"></i> Filter</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6 class="text-muted mb-0">Total Amount</h6>
+                    <h4 class="mb-0"><strong>GHS {{ total_amount|floatformat:2|intcomma }}</strong></h4>
+                </div>
+                <div class="col-md-6 text-end">
+                    <h6 class="text-muted mb-0">Total Records</h6>
+                    <h4 class="mb-0"><strong>{% if vouchers %}{{ vouchers.paginator.count|intcomma }}{% else %}0{% endif %}</strong></h4>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header d-flex justify-content-between">
+            <h5><i class="bi bi-receipt"></i> Receipt Vouchers</h5>
+            <a href="{% url 'hospital:receipt_voucher_create' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> Create Receipt Voucher
+            </a>
+        </div>
+        <div class="card-body">
+            {% if vouchers %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Receipt #</th>
+                            <th>Date</th>
+                            <th>Received From</th>
+                            <th>Patient</th>
+                            <th>Amount</th>
+                            <th>Payment Method</th>
+                            <th>Status</th>
+                            <th>Revenue Account</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for voucher in vouchers %}
+                        <tr>
+                            <td><strong>{{ voucher.receipt_number }}</strong></td>
+                            <td>{{ voucher.receipt_date|date:"M d, Y" }}</td>
+                            <td>{{ voucher.received_from }}</td>
+                            <td>
+                                {% if voucher.patient %}
+                                    <a href="{% url 'hospital:patient_detail' voucher.patient.id %}">
+                                        {{ voucher.patient.full_name }}
+                                    </a>
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td><strong>GHS {{ voucher.amount|floatformat:2|intcomma }}</strong></td>
+                            <td>
+                                <span class="badge bg-info">
+                                    {{ voucher.get_payment_method_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge bg-{% if voucher.status == 'issued' %}success{% elif voucher.status == 'void' %}danger{% else %}secondary{% endif %}">
+                                    {{ voucher.get_status_display }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if voucher.revenue_account %}
+                                    {{ voucher.revenue_account.account_code }} - {{ voucher.revenue_account.account_name|truncatewords:3 }}
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:receipt_voucher_detail' voucher.id %}" class="btn btn-sm btn-outline-primary" title="View">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                {% if voucher.status == 'draft' %}
+                                <a href="{% url 'hospital:receipt_voucher_edit' voucher.id %}" class="btn btn-sm btn-outline-warning" title="Edit">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            {% if vouchers.has_other_pages %}
+            <nav aria-label="Receipt vouchers pagination">
+                <ul class="pagination justify-content-center">
+                    {% if vouchers.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page=1{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">First</a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ vouchers.previous_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Previous</a>
+                    </li>
+                    {% endif %}
+
+                    <li class="page-item active">
+                        <span class="page-link">
+                            Page {{ vouchers.number }} of {{ vouchers.paginator.num_pages }}
+                        </span>
+                    </li>
+
+                    {% if vouchers.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ vouchers.next_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Next</a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ vouchers.paginator.num_pages }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Last</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i> No receipt vouchers found.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

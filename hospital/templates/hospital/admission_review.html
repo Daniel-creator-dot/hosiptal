@@ -2,6 +2,93 @@
 {% load static humanize math_filters %}
 
 {% block title %}{{ title }}{% endblock %}
+{% block extra_head %}
+<style>
+/* Progress notes calendar - PROJECT MONTHLY PLANNER style */
+.progress-notes-calendar-wrap { font-family: 'Segoe UI', system-ui, sans-serif; }
+.progress-notes-view-tabs { display: flex; gap: 0.25rem; }
+.progress-notes-view-tabs .btn { border-radius: 8px; font-weight: 600; }
+.progress-notes-view-tabs .btn.active { background: rgba(255,255,255,0.95); color: #0ea5e9; border-color: #fff; }
+.calendar-header-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem; }
+.calendar-title { font-size: 1.1rem; font-weight: 700; color: #1e293b; margin: 0; }
+.calendar-nav { display: flex; align-items: center; gap: 0.35rem; }
+.calendar-nav-btn { width: 36px; height: 36px; border-radius: 6px; border: 1px solid #e2e8f0; background: #fff; color: #64748b; display: inline-flex; align-items: center; justify-content: center; transition: all 0.2s; }
+.calendar-nav-btn:hover { background: #f1f5f9; color: #334155; }
+
+/* Planner layout: calendar left + side panels right */
+.planner-layout { display: flex; gap: 1rem; flex-wrap: wrap; }
+.planner-calendar-section { flex: 1; min-width: 280px; }
+.planner-side-panels { width: 260px; display: flex; flex-direction: column; gap: 0.75rem; }
+
+/* Calendar grid - clean lines, dark date blocks like reference */
+.calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; background: #cbd5e1; border: 1px solid #cbd5e1; }
+.calendar-day-header { background: #f1f5f9; padding: 0.5rem 0.35rem; text-align: center; font-size: 0.7rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; }
+.calendar-day-cell { min-height: 88px; background: #fff; padding: 0.4rem; overflow: hidden; display: flex; flex-direction: column; }
+.calendar-day-cell.other-month { background: #f8fafc; }
+.calendar-day-cell.today { background: #fffbeb; outline: 2px solid #f59e0b; outline-offset: -2px; }
+/* Dark rectangular date block (like planner) */
+.calendar-day-num { display: inline-block; min-width: 26px; height: 26px; line-height: 26px; text-align: center; font-weight: 700; font-size: 0.85rem; color: #fff; background: #334155; margin-bottom: 0.3rem; }
+.calendar-day-cell.other-month .calendar-day-num { background: #94a3b8; color: #fff; }
+.calendar-day-cell.today .calendar-day-num { background: #0ea5e9; color: #fff; }
+.calendar-day-notes { flex: 1; overflow-y: auto; }
+.calendar-note-chip { font-size: 0.68rem; padding: 0.2rem 0.35rem; margin-bottom: 0.2rem; background: #e0f2fe; color: #0369a1; border-radius: 4px; cursor: pointer; border: none; text-align: left; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.calendar-note-chip:hover { background: #bae6fd; }
+.calendar-note-chip .time { font-weight: 600; margin-right: 0.2rem; opacity: 0.9; }
+
+/* Goals row at bottom of calendar */
+.calendar-goals-cell { grid-column: span 4; background: #fff; padding: 0.5rem 0.75rem; border: 1px solid #e2e8f0; display: flex; align-items: center; gap: 0.5rem; min-height: 44px; }
+.calendar-goals-label { font-weight: 700; font-size: 0.85rem; color: #334155; white-space: nowrap; }
+.calendar-goals-content { flex: 1; font-size: 0.8rem; color: #64748b; }
+
+/* To Do List panel - green (like planner) */
+.planner-todo-panel { border: 1px solid #15803d; border-radius: 4px; overflow: hidden; }
+.planner-todo-panel .panel-header { background: #15803d; color: #fff; padding: 0.5rem 0.75rem; font-weight: 700; font-size: 0.9rem; display: flex; align-items: center; gap: 0.5rem; }
+.planner-todo-panel .panel-body { background: #dcfce7; padding: 0.6rem 0.75rem; font-size: 0.8rem; min-height: 100px; }
+.planner-todo-panel .panel-body ul { margin: 0; padding-left: 1.25rem; }
+.planner-todo-panel .panel-body li { margin-bottom: 0.35rem; color: #166534; }
+
+/* Projects panel - orange (like planner) */
+.planner-projects-panel { border: 1px solid #c2410c; border-radius: 4px; overflow: hidden; }
+.planner-projects-panel .panel-header { background: #ea580c; color: #fff; padding: 0.5rem 0.75rem; font-weight: 700; font-size: 0.9rem; display: flex; align-items: center; gap: 0.5rem; }
+.planner-projects-panel .panel-body { background: #ffedd5; padding: 0.6rem 0.75rem; font-size: 0.8rem; min-height: 100px; }
+.planner-projects-panel .panel-body ul { margin: 0; padding-left: 1.25rem; }
+.planner-projects-panel .panel-body li { margin-bottom: 0.35rem; color: #9a3412; }
+
+#progress-notes-list-view { display: none; }
+#progress-notes-calendar-view { display: block; }
+.progress-notes-calendar-wrap.view-list #progress-notes-calendar-view { display: none; }
+.progress-notes-calendar-wrap.view-list #progress-notes-list-view { display: block; }
+.progress-notes-calendar-wrap.view-list .planner-layout { display: none; }
+
+/* Progress notes list: book-page style – continuous flow, minimal cards */
+.progress-notes-book-page { max-width: 720px; margin: 0 auto; padding: 0.5rem 0; font-size: 0.95rem; line-height: 1.6; }
+.progress-notes-book-page .progress-note-entry { margin-bottom: 0; padding: 0.75rem 0 1rem; border-bottom: 1px solid #e5e7eb; }
+.progress-notes-book-page .progress-note-entry:last-child { border-bottom: none; }
+.progress-notes-book-page .progress-note-byline { font-size: 0.8rem; color: #64748b; margin-bottom: 0.5rem; display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem 1rem; }
+.progress-notes-book-page .progress-note-byline .note-type-badge { font-size: 0.7rem; padding: 0.15rem 0.4rem; }
+.progress-notes-book-page .progress-note-byline .note-date { font-weight: 600; color: #334155; }
+.progress-notes-book-page .progress-note-body { color: #1e293b; white-space: pre-wrap; word-wrap: break-word; }
+.progress-notes-book-page .progress-note-body p { margin-bottom: 0.35rem; }
+.progress-notes-book-page .progress-note-body p:last-child { margin-bottom: 0; }
+.progress-notes-book-page .progress-note-entry.is-today { background: linear-gradient(to right, rgba(255,251,235,0.5), transparent); }
+.progress-notes-book-page .progress-note-entry.is-today .progress-note-byline .note-date { color: #b45309; }
+@keyframes highlight { 0% { background: #dbeafe; } 100% { background: transparent; } }
+
+/* Admission review: right-column labs/scans – clearer, logical layout */
+.admission-review-side-card { min-height: 120px; }
+.admission-review-card-body { padding: 1rem 1.25rem; font-size: 0.95rem; }
+.admission-review-table { font-size: 0.9rem; margin-bottom: 0; }
+.admission-review-table th { font-weight: 600; color: #374151; padding: 0.6rem 0.5rem; border-bottom: 2px solid #e5e7eb; white-space: nowrap; }
+.admission-review-table td { padding: 0.55rem 0.5rem; vertical-align: middle; }
+.admission-review-table tbody tr:hover { background-color: #f8fafc; }
+.admission-review-cell { font-size: 0.9rem; line-height: 1.35; }
+.admission-review-side-card .btn { font-size: 0.85rem; }
+.admission-review-side-card .card-header { font-size: 1.05rem; }
+@media (min-width: 768px) {
+    .admission-review-side-card .table-responsive { max-height: none; }
+}
+</style>
+{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
@@ -36,7 +123,7 @@
     <div class="row">
         <!-- Left Column - Main Review Area -->
         <div class="col-md-8">
-            <!-- Quick Actions -->
+            <!-- Quick Actions (Add Progress Note, Medication, Update Status, Order Labs, Order Scans, Discharge) -->
             <div class="row g-3 mb-4">
                 <div class="col-md-4">
                     <button class="btn btn-primary w-100 btn-lg" data-bs-toggle="modal" data-bs-target="#addProgressNoteModal">
@@ -56,85 +143,211 @@
                         <small>Update Status</small>
                     </button>
                 </div>
+                <div class="col-md-4">
+                    <button class="btn btn-warning w-100 btn-lg" data-bs-toggle="modal" data-bs-target="#orderLabsModal">
+                        <i class="bi bi-clipboard-pulse"></i><br>
+                        <small>Order Labs</small>
+                    </button>
+                </div>
+                <div class="col-md-4">
+                    <button class="btn btn-secondary w-100 btn-lg" data-bs-toggle="modal" data-bs-target="#orderScansModal">
+                        <i class="bi bi-images"></i><br>
+                        <small>Order Scans</small>
+                    </button>
+                </div>
+                <div class="col-md-4">
+                    {% if admission %}
+                    <a href="{% url 'hospital:discharge_patient' admission.pk %}" class="btn btn-danger w-100 btn-lg text-decoration-none">
+                        <i class="bi bi-box-arrow-right"></i><br>
+                        <small>Discharge</small>
+                    </a>
+                    {% else %}
+                    <button class="btn btn-outline-secondary w-100 btn-lg" disabled title="No active admission record">
+                        <i class="bi bi-box-arrow-right"></i><br>
+                        <small>Discharge</small>
+                    </button>
+                    {% endif %}
+                </div>
             </div>
 
             <!-- Current Diagnosis & Status -->
             <div class="card shadow-sm mb-4">
-                <div class="card-header bg-primary text-white">
+                <div class="card-header bg-primary text-white d-flex flex-wrap align-items-center justify-content-between gap-2">
                     <h5 class="mb-0"><i class="bi bi-clipboard2-check me-2"></i>Current Status</h5>
+                    <span class="badge {% if encounter.encounter_type == 'specialist' %}bg-warning text-dark{% else %}bg-light text-dark{% endif %} fs-6 px-3 py-2">
+                        <i class="bi bi-{% if encounter.encounter_type == 'specialist' %}person-badge{% else %}person{% endif %} me-1"></i>
+                        {{ encounter.get_encounter_type_display|default:"Visit" }}
+                        {% if encounter.encounter_type == 'specialist' %} <small>(Specialist fee applies)</small>{% endif %}
+                    </span>
                 </div>
                 <div class="card-body">
-                    <div class="row">
+                    <div class="row g-3">
                         <div class="col-md-6">
-                            <h6>Diagnosis</h6>
-                            <p class="border-start border-3 border-primary ps-3">
+                            <h6 class="text-uppercase small fw-bold text-muted mb-2">Diagnosis</h6>
+                            <p class="mb-0 border-start border-3 border-primary ps-3 py-2 bg-light rounded-end">
                                 {{ encounter.diagnosis|default:"Not yet diagnosed" }}
                             </p>
                         </div>
                         <div class="col-md-6">
-                            <h6>Chief Complaint</h6>
-                            <p class="border-start border-3 border-success ps-3">
+                            <h6 class="text-uppercase small fw-bold text-muted mb-2">Chief Complaint</h6>
+                            <p class="mb-0 border-start border-3 border-success ps-3 py-2 bg-light rounded-end">
                                 {{ encounter.chief_complaint|default:"Not recorded" }}
                             </p>
                         </div>
                     </div>
-                    {% if encounter.notes %}
-                        <h6 class="mt-3">Clinical Notes</h6>
-                        <div class="bg-light p-3 rounded">
+                    {% if encounter.encounter_type == 'specialist' or encounter.encounter_type == 'outpatient' %}
+                    <div class="mt-3 pt-3 border-top">
+                        <p class="mb-0 small">
+                            <i class="bi bi-credit-card text-primary me-1"></i>
+                            <strong>Billing:</strong> Consultation fee collected at cashier.
+                            <a href="{% url 'hospital:cashier_patient_bills' %}?search={{ patient.mrn }}" class="ms-1" target="_blank">View patient bill <i class="bi bi-box-arrow-up-right small"></i></a>
+                        </p>
+                    </div>
+                    {% endif %}
+                    {% if encounter.notes or clinical_notes %}
+                        <h6 class="mt-4 mb-2 text-uppercase small fw-bold text-muted">Clinical Notes</h6>
+                        {% if encounter.notes %}
+                        <div class="bg-light p-3 rounded mb-3 border-start border-3 border-info">
                             {{ encounter.notes|linebreaks }}
                         </div>
+                        {% endif %}
+                        {% if clinical_notes %}
+                        <p class="mb-2 small text-muted">Chronological activity and progress notes (shift handover):</p>
+                        <div class="list-group list-group-flush border rounded overflow-hidden">
+                            {% for note in clinical_notes %}
+                            <div class="list-group-item px-3 py-2 d-flex flex-wrap align-items-start gap-2">
+                                <span class="badge {% if note.note_type == 'consultation' or note.note_type == 'consultation_note' %}bg-primary{% elif note.note_type == 'progress' %}bg-info{% else %}bg-secondary{% endif %} me-0">{{ note.get_note_type_display }}</span>
+                                <strong class="text-nowrap">{{ note.created|date:"M d, Y H:i" }}</strong>
+                                {% if note.created_by and note.created_by.user %}
+                                <span class="text-muted small">by {{ note.created_by.user.get_full_name|default:note.created_by.user.username }}</span>
+                                {% endif %}
+                                <div class="w-100 mt-1 small">
+                                    {% if note.assessment %}<span class="text-dark d-block">A: {{ note.assessment|truncatewords:20 }}</span>{% endif %}
+                                    {% if note.plan %}<span class="text-muted d-block">P: {{ note.plan|truncatewords:20 }}</span>{% endif %}
+                                    {% if note.notes %}<span class="text-muted d-block">{{ note.notes|truncatewords:25 }}</span>{% endif %}
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        <p class="mt-3 mb-0 small">
+                            <a href="#progress-notes-card" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-journal-text me-1"></i>View full progress notes below &darr;
+                            </a>
+                        </p>
+                        {% endif %}
                     {% endif %}
                 </div>
             </div>
 
-            <!-- Progress Notes (For Next Shift) -->
-            <div class="card shadow-sm mb-4">
-                <div class="card-header bg-info text-white">
+            <!-- Progress Notes (Calendar + List) -->
+            <div class="card shadow-sm mb-4 progress-notes-calendar-wrap" id="progress-notes-card" data-notes-count="{{ clinical_notes|length }}">
+                <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2" style="background: linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%); color: white;">
                     <h5 class="mb-0"><i class="bi bi-journal-medical me-2"></i>Progress Notes (Shift Handover)</h5>
+                    <div class="progress-notes-view-tabs">
+                        <button type="button" class="btn btn-sm btn-light active btn-calendar-view" aria-pressed="true">
+                            <i class="bi bi-calendar3 me-1"></i>Calendar
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-light btn-list-view" aria-pressed="false">
+                            <i class="bi bi-list-ul me-1"></i>List
+                        </button>
+                    </div>
                 </div>
                 <div class="card-body">
-                    {% if clinical_notes %}
-                        {% for note in clinical_notes %}
-                        <div class="card mb-3 {% if forloop.first %}border-success border-2{% endif %}">
-                            <div class="card-body">
-                                <div class="d-flex justify-content-between mb-2">
-                                    <div>
-                                        <span class="badge bg-{% if note.note_type == 'progress' %}info{% elif note.note_type == 'admission' %}primary{% else %}secondary{% endif %}">
-                                            {{ note.get_note_type_display }}
-                                        </span>
-                                        {% if forloop.first %}
-                                            <span class="badge bg-success">Latest</span>
-                                        {% endif %}
+                    <div id="progress-notes-calendar-view">
+                        <div class="planner-layout">
+                            <div class="planner-calendar-section">
+                                <div class="calendar-header-row">
+                                    <h6 class="calendar-title" id="calendarMonthTitle">March 2026</h6>
+                                    <div class="calendar-nav">
+                                        <button type="button" class="calendar-nav-btn" id="calendarPrev" aria-label="Previous month"><i class="bi bi-chevron-left"></i></button>
+                                        <button type="button" class="calendar-nav-btn" id="calendarNext" aria-label="Next month"><i class="bi bi-chevron-right"></i></button>
                                     </div>
-                                    <small class="text-muted">
-                                        {{ note.created|date:"M d, Y H:i" }} by Dr. {{ note.created_by.get_full_name }}
-                                    </small>
                                 </div>
-                                
-                                {% if note.subjective %}
-                                    <p class="mb-2"><strong class="text-primary">S:</strong> {{ note.subjective }}</p>
-                                {% endif %}
-                                {% if note.objective %}
-                                    <p class="mb-2"><strong class="text-success">O:</strong> {{ note.objective }}</p>
-                                {% endif %}
-                                {% if note.assessment %}
-                                    <p class="mb-2"><strong class="text-warning">A:</strong> {{ note.assessment }}</p>
-                                {% endif %}
-                                {% if note.plan %}
-                                    <p class="mb-2"><strong class="text-danger">P:</strong> {{ note.plan }}</p>
-                                {% endif %}
-                                {% if note.notes %}
-                                    <p class="mb-0 small text-muted border-top pt-2">{{ note.notes }}</p>
-                                {% endif %}
+                                <div class="calendar-grid" id="calendarGrid">
+                                    <div class="calendar-day-header">Sun</div>
+                                    <div class="calendar-day-header">Mon</div>
+                                    <div class="calendar-day-header">Tue</div>
+                                    <div class="calendar-day-header">Wed</div>
+                                    <div class="calendar-day-header">Thu</div>
+                                    <div class="calendar-day-header">Fri</div>
+                                    <div class="calendar-day-header">Sat</div>
+                                    <!-- Day cells + Goals row filled by JS -->
+                                </div>
+                            </div>
+                            <div class="planner-side-panels">
+                                <div class="planner-todo-panel">
+                                    <div class="panel-header">
+                                        <i class="bi bi-list-check"></i> To Do List
+                                    </div>
+                                    <div class="panel-body">
+                                        <ul>
+                                            <li>Add progress note for shift handover</li>
+                                            <li>Review latest vitals and medications</li>
+                                            <li>Update diagnosis if needed</li>
+                                            <li>Order labs or imaging as planned</li>
+                                            <li>Document plan for next shift</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                                <div class="planner-projects-panel">
+                                    <div class="panel-header">
+                                        <i class="bi bi-folder2-open"></i> Care Plan
+                                    </div>
+                                    <div class="panel-body">
+                                        <ul id="plannerCarePlanList">
+                                            {% if encounter.diagnosis %}
+                                                <li><strong>Diagnosis:</strong> {{ encounter.diagnosis|truncatewords:12 }}</li>
+                                            {% endif %}
+                                            {% for note in clinical_notes %}
+                                                {% if note.plan %}
+                                                    <li>{{ note.plan|truncatewords:12 }}</li>
+                                                {% endif %}
+                                            {% empty %}
+                                                <li>No care plan yet. Add a progress note.</li>
+                                            {% endfor %}
+                                        </ul>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                        {% endfor %}
-                    {% else %}
-                        <div class="alert alert-warning">
-                            <i class="bi bi-exclamation-triangle me-2"></i>
-                            No progress notes yet. Add one for the next shift!
-                        </div>
-                    {% endif %}
+                        <p class="small text-muted mt-2 mb-0"><i class="bi bi-info-circle me-1"></i>Click a note on the calendar to jump to it in List view.</p>
+                    </div>
+                    <div id="progress-notes-list-view">
+                        {% if clinical_notes %}
+                            <div class="progress-notes-book-page">
+                                {% for note in clinical_notes %}
+                                <article class="progress-note-entry progress-note-card {% if note.created|date:'Y-m-d' == progress_notes_today_date|date:'Y-m-d' %}is-today{% endif %}" id="progress-note-{{ note.id }}"
+                                         data-note-id="{{ note.id }}"
+                                         data-date="{{ note.created|date:'Y-m-d' }}"
+                                         data-time="{{ note.created|date:'H:i' }}"
+                                         data-subjective="{{ note.subjective|default:'' }}"
+                                         data-objective="{{ note.objective|default:'' }}"
+                                         data-assessment="{{ note.assessment|default:'' }}"
+                                         data-plan="{{ note.plan|default:'' }}"
+                                         data-notes="{{ note.notes|default:'' }}">
+                                    <div class="progress-note-byline">
+                                        <span class="note-type-badge badge bg-{% if note.note_type == 'progress' %}info{% elif note.note_type == 'admission' %}primary{% else %}secondary{% endif %}">{{ note.get_note_type_display }}</span>
+                                        <span class="note-date">{{ note.created|date:"M d, Y" }} {{ note.created|time:"H:i" }}</span>
+                                        <span>by {% if note.created_by %}{% if note.created_by.user %}Dr. {{ note.created_by.user.get_full_name|default:note.created_by.user.username|default:"Staff" }}{% else %}{{ note.created_by.get_full_name|default:"Staff" }}{% endif %}{% else %}<em>System</em>{% endif %}</span>
+                                        <button type="button" class="btn btn-sm btn-outline-primary ms-auto edit-progress-note-btn" title="Edit this note" aria-label="Edit progress note"><i class="bi bi-pencil-square"></i> Edit</button>
+                                    </div>
+                                    <div class="progress-note-body">
+                                        {% if note.subjective %}<p><strong class="text-primary">S:</strong> {{ note.subjective }}</p>{% endif %}
+                                        {% if note.objective %}<p><strong class="text-success">O:</strong> {{ note.objective }}</p>{% endif %}
+                                        {% if note.assessment %}<p><strong class="text-warning">A:</strong> {{ note.assessment }}</p>{% endif %}
+                                        {% if note.plan %}<p><strong class="text-danger">P:</strong> {{ note.plan }}</p>{% endif %}
+                                        {% if note.notes %}<p class="text-muted">{{ note.notes }}</p>{% endif %}
+                                    </div>
+                                </article>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <div class="alert alert-warning">
+                                <i class="bi bi-exclamation-triangle me-2"></i>
+                                No progress notes yet. Add one for the next shift!
+                            </div>
+                        {% endif %}
+                    </div>
                 </div>
             </div>
 
@@ -143,10 +356,10 @@
                 <div class="card-header bg-success text-white">
                     <h5 class="mb-0"><i class="bi bi-prescription2 me-2"></i>Current Medications</h5>
                 </div>
-                <div class="card-body">
+                <div class="card-body admission-review-card-body">
                     {% if current_prescriptions %}
                         <div class="table-responsive">
-                            <table class="table table-sm">
+                            <table class="table table-hover admission-review-table">
                                 <thead>
                                     <tr>
                                         <th>Medication</th>
@@ -164,12 +377,18 @@
                                             <strong>{{ rx.drug.name }}</strong><br>
                                             <small class="text-muted">{{ rx.drug.strength }}</small>
                                         </td>
-                                        <td>{{ rx.dosage_instructions|default:"-" }}</td>
+                                        <td>{{ rx.dose|default:"-" }}</td>
                                         <td>{{ rx.frequency|default:"-" }}</td>
                                         <td>{{ rx.route|default:"Oral" }}</td>
                                         <td>
-                                            <small>Dr. {{ rx.prescribed_by.get_full_name }}<br>
-                                            {{ rx.created|date:"M d, H:i" }}</small>
+                                            <small>
+                                                {% if rx.prescribed_by and rx.prescribed_by.user %}
+                                                    Dr. {{ rx.prescribed_by.user.get_full_name|default:rx.prescribed_by.user.username|default:"Not assigned" }}
+                                                {% else %}
+                                                    Not assigned
+                                                {% endif %}<br>
+                                                {{ rx.created|date:"M d, H:i" }}
+                                            </small>
                                         </td>
                                         <td>
                                             <span class="badge bg-info">
@@ -186,29 +405,74 @@
                     {% endif %}
                 </div>
             </div>
+        </div>
 
-            <!-- Recent Lab Results -->
-            {% if recent_lab_results %}
-            <div class="card shadow-sm mb-4">
-                <div class="card-header bg-warning text-dark">
-                    <h5 class="mb-0"><i class="bi bi-clipboard-pulse me-2"></i>Recent Lab Results</h5>
+        <!-- Right Column - Vitals, Labs & Scans (clear side layout) -->
+        <div class="col-md-4">
+            <!-- Labs & Results - moved to side for clarity -->
+            <div class="card shadow-sm mb-4 admission-review-side-card">
+                <div class="card-header bg-warning text-dark py-3">
+                    <h5 class="mb-0"><i class="bi bi-clipboard-pulse me-2"></i>Labs & Results</h5>
                 </div>
-                <div class="card-body">
+                <div class="card-body admission-review-card-body">
+                    {% if lab_orders %}
+                    <h6 class="mb-2 mt-0">Lab Orders</h6>
+                    <div class="table-responsive mb-3">
+                        <table class="table table-sm admission-review-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Tests</th>
+                                    <th>Priority</th>
+                                    <th>Status</th>
+                                    <th>Result</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for order in lab_orders %}
+                                <tr>
+                                    <td><span class="admission-review-cell">{{ order.created|date:"M d, H:i" }}</span></td>
+                                    <td>
+                                        <span class="admission-review-cell">
+                                        {% for lr in order.lab_results.all|slice:":3" %}
+                                            {{ lr.test.name }}{% if not forloop.last %}, {% endif %}
+                                        {% endfor %}
+                                        {% if order.lab_results.count > 3 %}<small class="text-muted">+{{ order.lab_results.count|add:"-3" }} more</small>{% endif %}
+                                        </span>
+                                    </td>
+                                    <td><span class="badge bg-secondary">{{ order.get_priority_display }}</span></td>
+                                    <td><span class="badge bg-{% if order.status == 'completed' %}success{% elif order.status == 'cancelled' %}danger{% else %}warning{% endif %}">{{ order.get_status_display }}</span></td>
+                                    <td>
+                                        <div class="d-flex flex-wrap gap-1">
+                                        {% for lr in order.lab_results.all %}
+                                        <a href="{% url 'hospital:print_lab_report' lr.id %}" target="_blank" class="btn btn-sm btn-outline-primary">View {{ lr.test.name }}</a>
+                                        {% endfor %}
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% endif %}
+                    <h6 class="mb-2">Recent Lab Results</h6>
+                    {% if recent_lab_results %}
                     <div class="table-responsive">
-                        <table class="table table-sm">
+                        <table class="table table-sm admission-review-table">
                             <thead>
                                 <tr>
                                     <th>Test</th>
                                     <th>Result</th>
                                     <th>Units</th>
-                                    <th>Reference</th>
+                                    <th>Ref</th>
                                     <th>Date</th>
+                                    <th></th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {% for result in recent_lab_results %}
                                 <tr>
-                                    <td>{{ result.test.name }}</td>
+                                    <td><span class="admission-review-cell">{{ result.test.name }}</span></td>
                                     <td class="{% if result.is_abnormal %}text-danger fw-bold{% endif %}">
                                         {{ result.value|default:result.qualitative_result }}
                                         {% if result.is_abnormal %}<i class="bi bi-exclamation-triangle text-danger"></i>{% endif %}
@@ -217,23 +481,83 @@
                                     <td>
                                         {% if result.range_low and result.range_high %}
                                             {{ result.range_low }}-{{ result.range_high }}
-                                        {% else %}
-                                            -
+                                        {% else %}-
                                         {% endif %}
                                     </td>
-                                    <td><small>{{ result.created|date:"M d, H:i" }}</small></td>
+                                    <td><span class="admission-review-cell">{{ result.created|date:"M d, H:i" }}</span></td>
+                                    <td><a href="{% url 'hospital:print_lab_report' result.id %}" target="_blank" class="btn btn-sm btn-outline-primary">View</a></td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
                         </table>
                     </div>
+                    {% if lab_pdf_docs %}
+                    <p class="mb-2 mt-2 small text-muted">Attached reports:</p>
+                    <ul class="list-unstyled mb-0">
+                        {% for doc in lab_pdf_docs %}
+                        <li class="mb-1"><a href="{{ doc.file.url }}" target="_blank" class="btn btn-sm btn-outline-secondary"><i class="bi bi-file-earmark-pdf"></i> {{ doc.title }}</a></li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
+                    {% else %}
+                    <p class="text-muted mb-0">No lab results yet. Use <strong>Order Labs</strong> above to request tests.</p>
+                    {% endif %}
                 </div>
             </div>
-            {% endif %}
-        </div>
 
-        <!-- Right Column - Vitals & Quick Info -->
-        <div class="col-md-4">
+            <!-- Scans & Results - moved to side for clarity -->
+            <div class="card shadow-sm mb-4 admission-review-side-card">
+                <div class="card-header bg-secondary text-white py-3">
+                    <h5 class="mb-0"><i class="bi bi-images me-2"></i>Scans & Imaging</h5>
+                </div>
+                <div class="card-body admission-review-card-body">
+                    {% if imaging_orders or imaging_studies_with_files %}
+                    <h6 class="mb-2 mt-0">Imaging Orders / Studies</h6>
+                    <div class="table-responsive mb-3">
+                        <table class="table table-sm admission-review-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Study</th>
+                                    <th>Modality</th>
+                                    <th>Status</th>
+                                    <th>Result</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for study in imaging_studies_with_files %}
+                                <tr>
+                                    <td><span class="admission-review-cell">{{ study.created|date:"M d, H:i" }}</span></td>
+                                    <td><span class="admission-review-cell">{{ study.study_type|default:study.get_modality_display }}{% if study.body_part %} ({{ study.body_part }}){% endif %}</span></td>
+                                    <td>{{ study.get_modality_display }}</td>
+                                    <td><span class="badge bg-{% if study.status == 'reported' or study.status == 'completed' %}success{% elif study.status == 'in_progress' %}warning{% else %}info{% endif %}">{{ study.get_status_display }}</span></td>
+                                    <td>
+                                        <a href="{% url 'hospital:imaging_study_detail' study.id %}" target="_blank" class="btn btn-sm btn-outline-primary">View study</a>
+                                        {% if study.findings or study.impression %}<span class="text-success small d-block">Report available</span>{% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% endif %}
+                    {% if imaging_pdf_docs %}
+                    <h6 class="mb-2">Imaging Reports (PDF)</h6>
+                    <ul class="list-unstyled mb-0">
+                        {% for doc in imaging_pdf_docs %}
+                        <li class="mb-2">
+                            <a href="{{ doc.file.url }}" target="_blank" class="btn btn-sm btn-outline-primary me-1"><i class="bi bi-eye"></i> View</a>
+                            <a href="{{ doc.file.url }}" download class="btn btn-sm btn-outline-secondary me-1"><i class="bi bi-download"></i> Download</a>
+                            <span class="admission-review-cell">{{ doc.title }}</span> <small class="text-muted">— {{ doc.created|date:"M d, Y" }}</small>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
+                    {% if not imaging_studies_with_files and not imaging_pdf_docs %}
+                    <p class="text-muted mb-0">No imaging yet. Use <strong>Order Scans</strong> above to request studies.</p>
+                    {% endif %}
+                </div>
+            </div>
             <!-- Latest Vitals -->
             <div class="card shadow-sm mb-4">
                 <div class="card-header bg-danger text-white">
@@ -290,7 +614,7 @@
                 <div class="card-body">
                     {% for problem in problems %}
                     <div class="{% if not forloop.last %}border-bottom pb-2 mb-2{% endif %}">
-                        <strong>{{ problem.problem_name }}</strong><br>
+                        <strong>{{ problem.problem }}</strong><br>
                         <small class="text-muted">{{ problem.onset_date|date:"M d, Y"|default:"Onset unknown" }}</small>
                     </div>
                     {% endfor %}
@@ -306,9 +630,58 @@
                 <div class="card-body">
                     <p class="mb-2"><strong>Admitted:</strong><br>{{ encounter.started_at|date:"M d, Y H:i" }}</p>
                     <p class="mb-2"><strong>Duration:</strong><br>{{ days_admitted }} days, {{ hours_admitted }} hours</p>
-                    <p class="mb-0"><strong>Admitting Doctor:</strong><br>Dr. {{ encounter.provider.get_full_name|default:"Not assigned" }}</p>
+                    <p class="mb-0"><strong>Admitting Doctor:</strong><br>{% if encounter.provider and encounter.provider.user %}Dr. {{ encounter.provider.user.get_full_name|default:encounter.provider.user.username|default:"Not assigned" }}{% else %}Not assigned{% endif %}</p>
                 </div>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Progress Note Modal (same fields as Add, filled via JS) -->
+<div class="modal fade" id="editProgressNoteModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-info text-white">
+                <h5 class="modal-title"><i class="bi bi-pencil-square me-2"></i>Edit Progress Note</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close modal"></button>
+            </div>
+            <form method="post" id="editProgressNoteForm">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="edit_progress_note">
+                <input type="hidden" name="note_id" id="editProgressNoteId" value="">
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        Update the note and click Save. You can edit again anytime.
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label"><strong>Subjective</strong> (Patient's complaints)</label>
+                            <textarea name="subjective" id="editProgressSubjective" class="form-control" rows="3"></textarea>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label"><strong>Objective</strong> (Your findings)</label>
+                            <textarea name="objective" id="editProgressObjective" class="form-control" rows="3"></textarea>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label"><strong>Assessment</strong> (Your conclusion)</label>
+                        <textarea name="assessment" id="editProgressAssessment" class="form-control" rows="2"></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label"><strong>Plan</strong> (What to do next)</label>
+                        <textarea name="plan" id="editProgressPlan" class="form-control" rows="3"></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Additional Notes</label>
+                        <textarea name="note_content" id="editProgressNoteContent" class="form-control" rows="2"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-info"><i class="bi bi-check-circle me-2"></i>Save changes</button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
@@ -385,24 +758,50 @@
                 <input type="hidden" name="action" value="add_medication">
                 <div class="modal-body">
                     <div class="mb-3">
-                        <label class="form-label"><strong>Select Medication</strong></label>
-                        <select name="drug_id" class="form-select" required>
-                            <option value="">-- Choose Drug --</option>
-                            {% for drug in available_drugs %}
-                                <option value="{{ drug.pk }}">{{ drug.name }} {{ drug.strength }} ({{ drug.form }})</option>
-                            {% endfor %}
-                        </select>
+                        <label class="form-label" for="admission_drug_search"><strong>Select Medication</strong></label>
+                        <div class="position-relative">
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                <input type="text" id="admission_drug_search" class="form-control" placeholder="Search drugs by name (type 2+ characters)..." autocomplete="off">
+                            </div>
+                            <div id="admission_drug_results" class="list-group position-absolute w-100 mt-1 shadow" style="display: none; max-height: 280px; overflow-y: auto; z-index: 1050;"></div>
+                            <div id="admission_drug_selected" class="mt-2 p-2 rounded border bg-light" style="display: none;">
+                                <small><i class="bi bi-check-circle text-success"></i> Selected: <strong id="admission_drug_selected_name"></strong>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary ms-2" onclick="clearAdmissionDrugSelection()">Change</button></small>
+                            </div>
+                        </div>
+                        <input type="hidden" id="admission_drug_id" name="drug_id" value="" required>
+                    </div>
+
+                    <!-- Order: Drug (name), Route, Dose, Frequency, Duration (pharmacy fills quantity) -->
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="admission_route">Route</label>
+                            <select id="admission_route" name="route" class="form-select" title="Select administration route" aria-label="Select administration route">
+                                <option value="oral">Oral</option>
+                                <option value="iv">IV (Intravenous)</option>
+                                <option value="im">IM (Intramuscular)</option>
+                                <option value="sc">SC (Subcutaneous)</option>
+                                <option value="intra-articular">Intra-articular</option>
+                                <option value="intrathecal">Intrathecal</option>
+                                <option value="topical">Topical</option>
+                                <option value="inhaled">Inhaled</option>
+                                <option value="rectally">Rectally</option>
+                                <option value="nasal">Nasal</option>
+                                <option value="per_vaginum">Per vaginum (PV)</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="dosage_instructions">Dose</label>
+                            <input type="text" id="dosage_instructions" name="dosage_instructions" class="form-control" 
+                                   placeholder="e.g., 500mg, 1 tablet" required title="Enter dose" aria-label="Enter dose">
+                        </div>
                     </div>
 
                     <div class="row">
                         <div class="col-md-6 mb-3">
-                            <label class="form-label">Dosage Instructions</label>
-                            <input type="text" name="dosage_instructions" class="form-control" 
-                                   placeholder="e.g., 1 tablet" required>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Frequency</label>
-                            <select name="frequency" class="form-select">
+                            <label class="form-label" for="admission_frequency">Frequency</label>
+                            <select id="admission_frequency" name="frequency" class="form-select" title="Select frequency" aria-label="Select frequency">
                                 <option value="once_daily">Once daily</option>
                                 <option value="twice_daily">Twice daily</option>
                                 <option value="three_times_daily">Three times daily</option>
@@ -413,29 +812,13 @@
                                 <option value="every_8_hours">Every 8 hours</option>
                             </select>
                         </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="admission_duration">Duration (days)</label>
+                            <input type="number" id="admission_duration" name="duration_days" class="form-control" placeholder="e.g., 7" title="Enter duration in days" aria-label="Enter duration in days">
+                        </div>
                     </div>
 
-                    <div class="row">
-                        <div class="col-md-4 mb-3">
-                            <label class="form-label">Quantity</label>
-                            <input type="number" name="quantity" class="form-control" value="1" min="1" required>
-                        </div>
-                        <div class="col-md-4 mb-3">
-                            <label class="form-label">Duration (days)</label>
-                            <input type="number" name="duration_days" class="form-control" placeholder="e.g., 7">
-                        </div>
-                        <div class="col-md-4 mb-3">
-                            <label class="form-label">Route</label>
-                            <select name="route" class="form-select">
-                                <option value="oral">Oral</option>
-                                <option value="iv">IV (Intravenous)</option>
-                                <option value="im">IM (Intramuscular)</option>
-                                <option value="sc">SC (Subcutaneous)</option>
-                                <option value="topical">Topical</option>
-                                <option value="inhaled">Inhaled</option>
-                            </select>
-                        </div>
-                    </div>
+                    <input type="hidden" name="quantity" value="1">
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -483,5 +866,614 @@
     </div>
 </div>
 
+<!-- Order Labs Modal -->
+<div class="modal fade" id="orderLabsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title"><i class="bi bi-clipboard-pulse me-2"></i>Order Labs</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close modal"></button>
+            </div>
+            <form method="post" id="orderLabsForm">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="order_labs">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Search & select lab tests</label>
+                        <div class="position-relative">
+                            <input type="text" id="admission_lab_search" class="form-control" placeholder="Type test name or code (e.g. FBC, RBS)..." autocomplete="off">
+                            <div id="admission_lab_results" class="list-group position-absolute w-100 mt-1 shadow" style="display: none; max-height: 220px; overflow-y: auto; z-index: 1050;"></div>
+                        </div>
+                        <div id="admission_lab_selected" class="mt-2 p-2 rounded border bg-light" style="min-height: 40px;">
+                            <small class="text-muted">Selected tests will appear here. Click a result above to add.</small>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Priority</label>
+                            <select name="priority" class="form-select">
+                                <option value="routine">Routine</option>
+                                <option value="urgent">Urgent</option>
+                                <option value="stat">STAT</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Notes (optional)</label>
+                            <input type="text" name="notes" class="form-control" placeholder="Clinical indication...">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning">
+                        <i class="bi bi-check-circle me-2"></i>Order Labs
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Order Scans Modal -->
+<div class="modal fade" id="orderScansModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-secondary text-white">
+                <h5 class="modal-title"><i class="bi bi-images me-2"></i>Order Scans / Imaging</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close modal"></button>
+            </div>
+            <form method="post" id="orderScansForm">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="order_imaging">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Search & select imaging studies</label>
+                        <div class="position-relative">
+                            <input type="text" id="admission_imaging_search" class="form-control" placeholder="Type study name or modality (e.g. X-Ray, CT, Ultrasound)..." autocomplete="off">
+                            <div id="admission_imaging_results" class="list-group position-absolute w-100 mt-1 shadow" style="display: none; max-height: 220px; overflow-y: auto; z-index: 1050;"></div>
+                        </div>
+                        <div id="admission_imaging_selected" class="mt-2 p-2 rounded border bg-light" style="min-height: 40px;">
+                            <small class="text-muted">Selected studies will appear here. Click a result above to add.</small>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Priority</label>
+                            <select name="priority" class="form-select">
+                                <option value="routine">Routine</option>
+                                <option value="urgent">Urgent</option>
+                                <option value="stat">STAT</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Notes (optional)</label>
+                            <input type="text" name="notes" class="form-control" placeholder="Clinical indication...">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-secondary">
+                        <i class="bi bi-check-circle me-2"></i>Order Scans
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
+{% block extra_js %}
+{{ clinical_notes_calendar_data|json_script:"clinicalNotesData" }}
+<script>
+// Progress Notes Calendar — robust init: read from JSON script, fallback to list-view cards, retry if DOM not ready
+(function(){
+  function readNotesFromScript() {
+    var el = document.getElementById('clinicalNotesData');
+    if (!el || !el.textContent) return [];
+    var raw = el.textContent.trim();
+    if (!raw) return [];
+    try {
+      var data = JSON.parse(raw);
+      if (typeof data === 'string') data = JSON.parse(data);
+      return Array.isArray(data) ? data : [];
+    } catch (e) { return []; }
+  }
+
+  function readNotesFromListFallback() {
+    var cards = document.querySelectorAll('#progress-notes-list-view .progress-note-card');
+    var out = [];
+    cards.forEach(function(card) {
+      var id = card.getAttribute('data-note-id') || (card.id ? card.id.replace('progress-note-', '') : '');
+      if (!id) return;
+      var dateStr = card.getAttribute('data-date') || '';
+      var timeStr = card.getAttribute('data-time') || '';
+      var summary = (card.getAttribute('data-assessment') || card.getAttribute('data-plan') || card.getAttribute('data-notes') || 'Note').substring(0, 80);
+      out.push({ id: id, date: dateStr.substring(0, 10), time: timeStr, summary: summary, plan: card.getAttribute('data-plan') || '', assessment: card.getAttribute('data-assessment') || '' });
+    });
+    return out;
+  }
+
+  function readNotesData() {
+    var data = readNotesFromScript();
+    if (!Array.isArray(data)) data = [];
+    if (data.length === 0) data = readNotesFromListFallback();
+    return Array.isArray(data) ? data : [];
+  }
+
+  function initProgressNotesCalendar() {
+    var wrap = document.getElementById('progress-notes-card');
+    if (!wrap || !wrap.classList.contains('progress-notes-calendar-wrap')) return;
+    var calendarGrid = document.getElementById('calendarGrid');
+    if (!calendarGrid) return;
+    var monthTitle = document.getElementById('calendarMonthTitle');
+    var btnCalendar = wrap.querySelector('.btn-calendar-view');
+    var btnList = wrap.querySelector('.btn-list-view');
+
+    var rawNotes = readNotesData();
+    if (!Array.isArray(rawNotes)) rawNotes = [];
+    var notesData = [];
+    for (var i = 0; i < rawNotes.length; i++) {
+      var n = rawNotes[i];
+      var d = (n && n.date) ? String(n.date) : '';
+      if (d.length > 10) d = d.substring(0, 10);
+      notesData.push({
+        id: n && (n.id != null) ? String(n.id) : '',
+        date: d,
+        time: (n && n.time) ? String(n.time) : '',
+        summary: (n && n.summary) ? String(n.summary).substring(0, 80) : 'Note',
+        plan: (n && n.plan) ? String(n.plan) : '',
+        assessment: (n && n.assessment) ? String(n.assessment) : ''
+      });
+    }
+    if (!Array.isArray(notesData)) notesData = [];
+
+    var currentMonth = new Date();
+    currentMonth.setHours(0, 0, 0, 0);
+
+    function getMonthKey(d) {
+        var y = d.getFullYear(), m = d.getMonth();
+        return y + '-' + (m < 9 ? '0' : '') + (m + 1);
+    }
+    function getDateKey(d) {
+        var y = d.getFullYear(), m = d.getMonth(), day = d.getDate();
+        return y + '-' + (m < 9 ? '0' : '') + (m + 1) + '-' + (day < 10 ? '0' : '') + day;
+    }
+    var todayKey = getDateKey(new Date());
+
+    function notesForDate(dateKey) {
+        if (!notesData || typeof notesData.filter !== 'function') return [];
+        return notesData.filter(function(n) { return n && n.date === dateKey; });
+    }
+
+    function renderCalendar() {
+        try {
+            var y = currentMonth.getFullYear(), m = currentMonth.getMonth();
+            var first = new Date(y, m, 1);
+            var last = new Date(y, m + 1, 0);
+            var startDay = first.getDay();
+            var daysInMonth = last.getDate();
+            var prevMonth = new Date(y, m, 0);
+            var prevDays = prevMonth.getDate();
+
+            var monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+            if (monthTitle) monthTitle.textContent = monthNames[m] + ' ' + y;
+
+            var cells = [];
+            var i;
+            for (i = 0; i < 7; i++) cells.push('<div class="calendar-day-header">' + ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][i] + '</div>');
+
+            var py = m === 0 ? y - 1 : y, pm = m === 0 ? 11 : m - 1;
+            for (i = 0; i < startDay; i++) {
+                var pd = prevDays - startDay + 1 + i;
+                var prevDate = new Date(py, pm, pd);
+                var prevKeyFull = getDateKey(prevDate);
+                var notes = notesForDate(prevKeyFull);
+                cells.push(buildDayCell(prevKeyFull, pd, notes, true));
+            }
+            for (i = 1; i <= daysInMonth; i++) {
+                var dateKey = y + '-' + (m < 9 ? '0' : '') + (m + 1) + '-' + (i < 10 ? '0' : '') + i;
+                var notes = notesForDate(dateKey);
+                var isToday = dateKey === todayKey;
+                cells.push(buildDayCell(dateKey, i, notes, false, isToday));
+            }
+            var remaining = 35 - startDay - daysInMonth;
+            var nextDay = 1;
+            while (remaining > 0) {
+                var nextDate = new Date(y, m + 1, nextDay);
+                var nextKey = getDateKey(nextDate);
+                var notes = notesForDate(nextKey);
+                cells.push(buildDayCell(nextKey, nextDay, notes, true));
+                nextDay++;
+                remaining--;
+            }
+            var raw = notesData.length ? (notesData[0].plan || notesData[0].assessment || '') : '';
+            var goalsSummary = (raw || '').substring(0, 120);
+            if (raw && raw.length > 120) goalsSummary += '\u2026';
+            goalsSummary = (goalsSummary || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            cells.push('<div class="calendar-day-cell other-month" style="grid-column: span 3; min-height: 44px;"></div>');
+            cells.push('<div class="calendar-goals-cell">' +
+                '<span class="calendar-goals-label">Goals:</span>' +
+                '<span class="calendar-goals-content">' + (goalsSummary || 'Monthly care goals for this admission. Add progress notes to document plan.') + '</span></div>');
+            calendarGrid.innerHTML = cells.join('');
+            attachNoteChipClick();
+        } catch (err) {
+            calendarGrid.innerHTML = '<div class="p-3 text-center text-muted">Calendar could not load. Use the <strong>List</strong> view for progress notes.</div>';
+        }
+    }
+
+    function escapeHtml(s) {
+        if (!s) return '';
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function buildDayCell(dateKey, dayNum, notes, otherMonth, isToday) {
+        var cls = 'calendar-day-cell';
+        if (otherMonth) cls += ' other-month';
+        if (isToday) cls += ' today';
+        var notesHtml = notes.map(function(n) {
+            var sum = (n.summary || 'Note').substring(0, 25);
+            if ((n.summary || '').length > 25) sum += '…';
+            var title = escapeHtml((n.summary || '').substring(0, 100));
+            var time = escapeHtml(n.time || '');
+            return '<button type="button" class="calendar-note-chip" data-note-id="' + escapeHtml(String(n.id)) + '" title="' + title + '">' +
+                '<span class="time">' + time + '</span>' + escapeHtml(sum) + '</button>';
+        }).join('');
+        return '<div class="' + cls + '" data-date="' + dateKey + '">' +
+            '<span class="calendar-day-num">' + dayNum + '</span>' +
+            '<div class="calendar-day-notes">' + notesHtml + '</div></div>';
+    }
+
+    function attachNoteChipClick() {
+        if (!calendarGrid) return;
+        calendarGrid.querySelectorAll('.calendar-note-chip').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var id = this.getAttribute('data-note-id');
+                if (!id) return;
+                wrap.classList.add('view-list');
+                if (btnCalendar) { btnCalendar.classList.remove('active'); btnCalendar.setAttribute('aria-pressed', 'false'); }
+                if (btnList) { btnList.classList.add('active'); btnList.setAttribute('aria-pressed', 'true'); }
+                var card = document.getElementById('progress-note-' + id);
+                if (card) {
+                    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    card.style.animation = 'none';
+                    card.offsetHeight;
+                    card.style.animation = 'highlight 1s ease';
+                }
+            });
+        });
+    }
+
+    if (btnCalendar) {
+        btnCalendar.addEventListener('click', function() {
+            wrap.classList.remove('view-list');
+            this.classList.add('active'); this.setAttribute('aria-pressed', 'true');
+            if (btnList) { btnList.classList.remove('active'); btnList.setAttribute('aria-pressed', 'false'); }
+        });
+    }
+    if (btnList) {
+        btnList.addEventListener('click', function() {
+            wrap.classList.add('view-list');
+            this.classList.add('active'); this.setAttribute('aria-pressed', 'true');
+            if (btnCalendar) { btnCalendar.classList.remove('active'); btnCalendar.setAttribute('aria-pressed', 'false'); }
+        });
+    }
+    document.getElementById('calendarPrev')?.addEventListener('click', function() {
+        currentMonth.setMonth(currentMonth.getMonth() - 1);
+        renderCalendar();
+    });
+    document.getElementById('calendarNext')?.addEventListener('click', function() {
+        currentMonth.setMonth(currentMonth.getMonth() + 1);
+        renderCalendar();
+    });
+
+    renderCalendar();
+  }
+
+  function run() {
+    var attempts = 0;
+    var maxAttempts = 25;
+    function tryInit() {
+      attempts++;
+      var dataEl = document.getElementById('clinicalNotesData');
+      var gridEl = document.getElementById('calendarGrid');
+      if (dataEl && gridEl) {
+        initProgressNotesCalendar();
+        return;
+      }
+      if (attempts < maxAttempts) setTimeout(tryInit, 120);
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function() { setTimeout(tryInit, 0); });
+    } else {
+      setTimeout(tryInit, 0);
+    }
+  }
+  run();
+})();
+
+(function() {
+    let admissionDrugSearchTimeout;
+    const searchInput = document.getElementById('admission_drug_search');
+    const resultsDiv = document.getElementById('admission_drug_results');
+    const selectedDiv = document.getElementById('admission_drug_selected');
+    const selectedNameSpan = document.getElementById('admission_drug_selected_name');
+    const drugIdInput = document.getElementById('admission_drug_id');
+
+    window.clearAdmissionDrugSelection = function() {
+        drugIdInput.value = '';
+        selectedDiv.style.display = 'none';
+        searchInput.value = '';
+        searchInput.disabled = false;
+        resultsDiv.style.display = 'none';
+    };
+
+    if (searchInput) {
+        searchInput.addEventListener('input', function() {
+            const q = this.value.trim();
+            clearTimeout(admissionDrugSearchTimeout);
+            resultsDiv.style.display = 'none';
+            resultsDiv.innerHTML = '';
+            if (q.length < 2) return;
+            admissionDrugSearchTimeout = setTimeout(function() {
+                fetch('{% url "hospital:api_search_drugs" %}?q=' + encodeURIComponent(q), { credentials: 'same-origin' })
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        const drugs = data.drugs || [];
+                        if (drugs.length === 0) {
+                            resultsDiv.innerHTML = '<div class="list-group-item text-muted">No drugs found. Try a different search.</div>';
+                        } else {
+                            resultsDiv.innerHTML = drugs.map(function(d) {
+                                const disp = (d.name || '') + ' ' + (d.strength || '') + ' ' + (d.form || '');
+                                return '<a href="#" class="list-group-item list-group-item-action admission-drug-item" data-id="' + d.id + '" data-name="' + (disp || d.name).replace(/"/g, '&quot;') + '">' +
+                                    '<strong>' + (d.name || '') + '</strong> ' + (d.strength || '') + ' (' + (d.form || '') + ')<br>' +
+                                    '<small class="text-muted">Stock: ' + (d.stock_available || 0) + '</small></a>';
+                            }).join('');
+                        }
+                        resultsDiv.style.display = 'block';
+                        resultsDiv.querySelectorAll('.admission-drug-item').forEach(function(el) {
+                            el.addEventListener('click', function(e) {
+                                e.preventDefault();
+                                drugIdInput.value = this.dataset.id;
+                                selectedNameSpan.textContent = this.dataset.name.replace(/&quot;/g, '"');
+                                selectedDiv.style.display = 'block';
+                                searchInput.value = '';
+                                searchInput.disabled = true;
+                                resultsDiv.style.display = 'none';
+                            });
+                        });
+                    })
+                    .catch(function() {
+                        resultsDiv.innerHTML = '<div class="list-group-item text-danger">Search failed. Please try again.</div>';
+                        resultsDiv.style.display = 'block';
+                    });
+            }, 300);
+        });
+        searchInput.addEventListener('focus', function() {
+            if (this.value.trim().length >= 2 && resultsDiv.innerHTML) resultsDiv.style.display = 'block';
+        });
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('#admission_drug_search') && !e.target.closest('#admission_drug_results')) {
+                resultsDiv.style.display = 'none';
+            }
+        });
+    }
+
+    // Edit Progress Note: open modal and fill from card data
+    document.querySelectorAll('.edit-progress-note-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var card = this.closest('.progress-note-card');
+            if (!card) return;
+            var noteId = card.getAttribute('data-note-id');
+            if (!noteId) return;
+            document.getElementById('editProgressNoteId').value = noteId;
+            document.getElementById('editProgressSubjective').value = card.getAttribute('data-subjective') || '';
+            document.getElementById('editProgressObjective').value = card.getAttribute('data-objective') || '';
+            document.getElementById('editProgressAssessment').value = card.getAttribute('data-assessment') || '';
+            document.getElementById('editProgressPlan').value = card.getAttribute('data-plan') || '';
+            document.getElementById('editProgressNoteContent').value = card.getAttribute('data-notes') || '';
+            var editModal = document.getElementById('editProgressNoteModal');
+            if (editModal && typeof bootstrap !== 'undefined') {
+                var modal = bootstrap.Modal.getOrCreateInstance(editModal);
+                modal.show();
+            } else if (editModal && editModal.classList) {
+                editModal.classList.add('show');
+                editModal.style.display = 'block';
+                document.body.classList.add('modal-open');
+            }
+        });
+    });
+
+    document.getElementById('addMedicationModal')?.addEventListener('show.bs.modal', function() {
+        drugIdInput.value = '';
+        selectedDiv.style.display = 'none';
+        searchInput.value = '';
+        searchInput.disabled = false;
+    });
+})();
+
+// Order Labs: selected test IDs and form submit
+(function() {
+    const labSearch = document.getElementById('admission_lab_search');
+    const labResults = document.getElementById('admission_lab_results');
+    const labSelected = document.getElementById('admission_lab_selected');
+    const labForm = document.getElementById('orderLabsForm');
+    const labSelectedIds = new Set();
+    let labSearchTimeout;
+
+    function renderLabSelected() {
+        if (labSelectedIds.size === 0) {
+            labSelected.innerHTML = '<small class="text-muted">Selected tests will appear here. Click a result above to add.</small>';
+            return;
+        }
+        labSelected.innerHTML = Array.from(labSelectedIds).map(function(id) {
+            const item = window.__admissionLabMap && window.__admissionLabMap[id];
+            const name = item ? (item.name || item.display || id) : id;
+            return '<span class="badge bg-warning text-dark me-1 mb-1">' + name + ' <button type="button" class="btn-close btn-close-sm" style="font-size: 0.6rem;" data-id="' + id + '" aria-label="Remove"></button></span>';
+        }).join('');
+        labSelected.querySelectorAll('[data-id]').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                labSelectedIds.delete(this.getAttribute('data-id'));
+                renderLabSelected();
+            });
+        });
+    }
+
+    if (labSearch) {
+        labSearch.addEventListener('input', function() {
+            const q = this.value.trim();
+            clearTimeout(labSearchTimeout);
+            labResults.style.display = 'none';
+            labResults.innerHTML = '';
+            if (q.length < 2) return;
+            labSearchTimeout = setTimeout(function() {
+                fetch('{% url "hospital:api_autocomplete_lab_tests" %}?q=' + encodeURIComponent(q), { credentials: 'same-origin' })
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        const results = data.results || [];
+                        window.__admissionLabMap = window.__admissionLabMap || {};
+                        if (results.length === 0) {
+                            labResults.innerHTML = '<div class="list-group-item text-muted">No tests found.</div>';
+                        } else {
+                            results.forEach(function(t) { window.__admissionLabMap[t.id] = t; });
+                            labResults.innerHTML = results.map(function(t) {
+                                return '<a href="#" class="list-group-item list-group-item-action admission-lab-pick" data-id="' + t.id + '" data-name="' + (t.name || t.display || '').replace(/"/g, '&quot;') + '">' + (t.display || t.name) + '</a>';
+                            }).join('');
+                            labResults.querySelectorAll('.admission-lab-pick').forEach(function(el) {
+                                el.addEventListener('click', function(e) {
+                                    e.preventDefault();
+                                    labSelectedIds.add(this.getAttribute('data-id'));
+                                    renderLabSelected();
+                                });
+                            });
+                        }
+                        labResults.style.display = 'block';
+                    })
+                    .catch(function() {
+                        labResults.innerHTML = '<div class="list-group-item text-danger">Search failed.</div>';
+                        labResults.style.display = 'block';
+                    });
+            }, 300);
+        });
+    }
+    document.addEventListener('click', function(e) {
+        if (labResults && !e.target.closest('#admission_lab_search') && !e.target.closest('#admission_lab_results')) labResults.style.display = 'none';
+    });
+
+    if (labForm) {
+        labForm.addEventListener('submit', function() {
+            document.querySelectorAll('#orderLabsForm input[name="test_ids"]').forEach(function(el) { el.remove(); });
+            labSelectedIds.forEach(function(id) {
+                var inp = document.createElement('input');
+                inp.type = 'hidden';
+                inp.name = 'test_ids';
+                inp.value = id;
+                labForm.appendChild(inp);
+            });
+            if (labSelectedIds.size === 0) {
+                alert('Please select at least one lab test.');
+                return false;
+            }
+        });
+    }
+    document.getElementById('orderLabsModal')?.addEventListener('show.bs.modal', function() {
+        labSelectedIds.clear();
+        renderLabSelected();
+        if (labSearch) labSearch.value = '';
+        if (labResults) { labResults.innerHTML = ''; labResults.style.display = 'none'; }
+    });
+})();
+
+// Order Scans: selected imaging catalog IDs and form submit
+(function() {
+    const imgSearch = document.getElementById('admission_imaging_search');
+    const imgResults = document.getElementById('admission_imaging_results');
+    const imgSelected = document.getElementById('admission_imaging_selected');
+    const imgForm = document.getElementById('orderScansForm');
+    const imgSelectedIds = new Set();
+    let imgSearchTimeout;
+
+    function renderImgSelected() {
+        if (imgSelectedIds.size === 0) {
+            imgSelected.innerHTML = '<small class="text-muted">Selected studies will appear here. Click a result above to add.</small>';
+            return;
+        }
+        imgSelected.innerHTML = Array.from(imgSelectedIds).map(function(id) {
+            const item = window.__admissionImgMap && window.__admissionImgMap[id];
+            const name = item ? (item.name || item.display || id) : id;
+            return '<span class="badge bg-secondary me-1 mb-1">' + name + ' <button type="button" class="btn-close btn-close-white btn-close-sm" style="font-size: 0.6rem;" data-id="' + id + '" aria-label="Remove"></button></span>';
+        }).join('');
+        imgSelected.querySelectorAll('[data-id]').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                imgSelectedIds.delete(this.getAttribute('data-id'));
+                renderImgSelected();
+            });
+        });
+    }
+
+    if (imgSearch) {
+        imgSearch.addEventListener('input', function() {
+            const q = this.value.trim();
+            clearTimeout(imgSearchTimeout);
+            imgResults.style.display = 'none';
+            imgResults.innerHTML = '';
+            if (q.length < 2) return;
+            imgSearchTimeout = setTimeout(function() {
+                fetch('{% url "hospital:api_autocomplete_imaging_studies" %}?q=' + encodeURIComponent(q), { credentials: 'same-origin' })
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        const results = data.results || [];
+                        window.__admissionImgMap = window.__admissionImgMap || {};
+                        if (results.length === 0) {
+                            imgResults.innerHTML = '<div class="list-group-item text-muted">No studies found.</div>';
+                        } else {
+                            results.forEach(function(t) { window.__admissionImgMap[t.id] = t; });
+                            imgResults.innerHTML = results.map(function(t) {
+                                return '<a href="#" class="list-group-item list-group-item-action admission-img-pick" data-id="' + t.id + '">' + (t.display || t.name) + ' <small class="text-muted">' + (t.modality || '') + '</small></a>';
+                            }).join('');
+                            imgResults.querySelectorAll('.admission-img-pick').forEach(function(el) {
+                                el.addEventListener('click', function(e) {
+                                    e.preventDefault();
+                                    imgSelectedIds.add(this.getAttribute('data-id'));
+                                    renderImgSelected();
+                                });
+                            });
+                        }
+                        imgResults.style.display = 'block';
+                    })
+                    .catch(function() {
+                        imgResults.innerHTML = '<div class="list-group-item text-danger">Search failed.</div>';
+                        imgResults.style.display = 'block';
+                    });
+            }, 300);
+        });
+    }
+    document.addEventListener('click', function(e) {
+        if (imgResults && !e.target.closest('#admission_imaging_search') && !e.target.closest('#admission_imaging_results')) imgResults.style.display = 'none';
+    });
+
+    if (imgForm) {
+        imgForm.addEventListener('submit', function() {
+            document.querySelectorAll('#orderScansForm input[name="imaging_catalog_ids"]').forEach(function(el) { el.remove(); });
+            imgSelectedIds.forEach(function(id) {
+                var inp = document.createElement('input');
+                inp.type = 'hidden';
+                inp.name = 'imaging_catalog_ids';
+                inp.value = id;
+                imgForm.appendChild(inp);
+            });
+            if (imgSelectedIds.size === 0) {
+                alert('Please select at least one imaging study.');
+                return false;
+            }
+        });
+    }
+    document.getElementById('orderScansModal')?.addEventListener('show.bs.modal', function() {
+        imgSelectedIds.clear();
+        renderImgSelected();
+        if (imgSearch) imgSearch.value = '';
+        if (imgResults) { imgResults.innerHTML = ''; imgResults.style.display = 'none'; }
+    });
+})();
+</script>
+{% endblock %}

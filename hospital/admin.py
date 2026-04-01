@@ -2,6 +2,7 @@
 Admin configuration for Hospital Management System with enhanced UI.
 """
 from django.contrib import admin
+from django import forms
 
 # Import settings admin
 from .admin_settings import *
@@ -19,12 +20,12 @@ from .admin_flexible_pricing import *
 from .admin_contracts import *
 # Import telemedicine admin
 from .admin_telemedicine import *
-# Import biometric admin
-from .admin_biometric import *
 # Import legacy patients admin
 from .admin_legacy_patients import *
 # Import advanced accounting admin
 from .admin_accounting_advanced import *
+# Import patient deposits admin
+from .admin_patient_deposits import *
 
 # HOD Management
 from .admin_hod_simple import *
@@ -43,6 +44,21 @@ from .admin_locum_doctors import *
 
 # Audit Logging
 from .admin_audit import *
+
+# Lab Management
+from .admin_lab_management import *
+
+# Pre-employment / Pre-admission screening
+try:
+    from .admin_screening import *
+except ImportError:
+    pass
+
+# Consulting Rooms Management
+try:
+    from .admin_consulting_rooms import *
+except ImportError:
+    pass
 
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User
@@ -64,7 +80,7 @@ from .models import (
 )
 from .models_advanced import (
     ClinicalNote, CarePlan, ProblemList, ProviderSchedule, Queue, Triage,
-    ImagingStudy, TheatreSchedule, SurgicalChecklist, AnaesthesiaRecord,
+    ImagingStudy, ImagingCatalog, ProcedureCatalog, TheatreSchedule, SurgicalChecklist, AnaesthesiaRecord,
     MedicationAdministrationRecord, HandoverSheet, FallRiskAssessment,
     PressureUlcerRiskAssessment, CrashCartCheck, IncidentLog,
     MedicalEquipment, MaintenanceLog, ConsumablesInventory,
@@ -437,7 +453,9 @@ class StaffAdmin(admin.ModelAdmin):
     
     def user_link(self, obj):
         url = reverse('admin:auth_user_change', args=[obj.user.pk])
-        return format_html('<a href="{}">{}</a>', url, obj.user.get_full_name())
+        # Show full name, or username if name is empty
+        display_name = obj.user.get_full_name() or obj.user.username
+        return format_html('<a href="{}">{}</a>', url, display_name)
     user_link.short_description = 'User'
     
     def profession_badge(self, obj):
@@ -976,7 +994,8 @@ class DrugAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Drug Information', {
-            'fields': ('atc_code', 'name', 'generic_name', 'category')
+            'fields': ('atc_code', 'name', 'generic_name', 'category'),
+            'description': 'Select the appropriate drug category. <a href="/hms/drug-classification-guide/" target="_blank">Browse Drug Classification Guide</a> to see all categories with descriptions.'
         }),
         ('Formulation', {
             'fields': ('strength', 'form', 'pack_size', 'is_controlled')
@@ -1052,13 +1071,50 @@ class DrugAdmin(admin.ModelAdmin):
     deactivate_drugs.short_description = 'Deactivate selected drugs'
 
 
+class PharmacyStockAdminForm(forms.ModelForm):
+    """Allow empty batch_number - will be auto-generated on save"""
+    class Meta:
+        model = PharmacyStock
+        fields = '__all__'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.fields.get('batch_number'):
+            self.fields['batch_number'].required = False
+            self.fields['batch_number'].help_text = 'Leave blank to auto-generate (e.g. BATCH-20260309-0001)'
+        if self.fields.get('drug'):
+            self.fields['drug'].help_text = 'Click the box, then type drug name (e.g. paracetamol) to search'
+
+
 @admin.register(PharmacyStock)
 class PharmacyStockAdmin(admin.ModelAdmin):
+    form = PharmacyStockAdminForm
     list_display = ['drug_link', 'batch_number', 'expiry_date', 'quantity_display', 'reorder_level', 'location', 'stock_status']
     list_filter = ['location', 'expiry_date', 'drug__form']
     search_fields = ['drug__name', 'batch_number']
     ordering = ['drug__name', 'expiry_date']
-    
+    autocomplete_fields = ['drug']
+
+    def save_model(self, request, obj, form, change):
+        # Auto-generate batch number if empty
+        if not obj.batch_number or not str(obj.batch_number).strip():
+            from django.utils import timezone
+            dt = timezone.now()
+            prefix = f"BATCH-{dt.strftime('%Y%m%d')}"
+            same_prefix = PharmacyStock.objects.filter(
+                batch_number__startswith=prefix,
+                is_deleted=False
+            ).count()
+            obj.batch_number = f"{prefix}-{same_prefix + 1:04d}"
+        super().save_model(request, obj, form, change)
+
+    def has_change_permission(self, request, obj=None):
+        """Only admins can edit stock - restrict procurement/pharmacy from changing quantities"""
+        from .views_procurement import is_admin_user
+        if not is_admin_user(request.user):
+            return False
+        return super().has_change_permission(request, obj)
+
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('drug')
     
@@ -1105,7 +1161,6 @@ class PrescriptionAdmin(admin.ModelAdmin):
     def send_to_cashier(self, request, queryset):
         """Create cashier bills for selected prescriptions without leaving admin."""
         queued = 0
-        already_pending = 0
         already_paid = 0
         errors = 0
         
@@ -1119,12 +1174,23 @@ class PrescriptionAdmin(admin.ModelAdmin):
                 if dispensing_record.payment_receipt:
                     already_paid += 1
                     continue
-                if dispensing_record.dispensing_status != 'pending_payment':
-                    dispensing_record.dispensing_status = 'pending_payment'
-                    dispensing_record.save(update_fields=['dispensing_status'])
-                already_pending += 1
+                if dispensing_record.dispensing_status == 'cancelled':
+                    errors += 1
+                    continue
+                # Queue exists: actually push invoice to cashier (previously this branch did nothing)
+                result = AutoBillingService.create_pharmacy_bill(prescription)
+                if result.get('success'):
+                    queued += 1
+                else:
+                    errors += 1
                 continue
-            
+
+            # Bill may only be created after a pharmacy queue row exists (doctor/signal or explicit queue)
+            ensure_queue = AutoBillingService.create_pharmacy_dispensing_record_only(prescription)
+            if not ensure_queue.get('success'):
+                errors += 1
+                continue
+
             result = AutoBillingService.create_pharmacy_bill(prescription)
             if result.get('success'):
                 queued += 1
@@ -1135,8 +1201,6 @@ class PrescriptionAdmin(admin.ModelAdmin):
         message_parts = []
         if queued:
             message_parts.append(f'✅ {queued} item(s) queued for cashier')
-        if already_pending:
-            message_parts.append(f'🕒 {already_pending} already pending payment')
         if already_paid:
             message_parts.append(f'💰 {already_paid} already paid')
         if errors:
@@ -1674,6 +1738,72 @@ admin.site.site_header = "🏥 PrimeCare Medical Center - Admin"
 admin.site.site_title = "PrimeCare Medical Center"
 admin.site.index_title = "Welcome to PrimeCare Medical Center"
 
+# Harden Django Admin access:
+# Pharmacists (and other non-admin/IT staff) must NOT be able to access /admin/,
+# except: Admin/IT groups and Finance/Account roles (accountant, senior_account_officer, etc.)
+def _primecare_admin_has_permission(request):
+    user = getattr(request, 'user', None)
+    if not user or not user.is_authenticated or not user.is_active:
+        return False
+    if user.is_superuser:
+        return True
+    # Explicit usernames that always get finance/account admin access (no group required)
+    if user.username and user.username.lower() in ('finance', 'accountant', 'ebenezer.donkor'):
+        _ensure_staff_for_admin(user)
+        return True
+    # Allow Admin / IT groups
+    admin_it_groups = {'admin', 'administrator', 'it', 'it_staff', 'it_operations', 'it_support'}
+    # Allow Finance / Account groups and roles so they can access Insurance Receivable and accounting admin
+    finance_account_groups = {'accountant', 'finance', 'senior_account_officer', 'account_officer', 'account_personnel'}
+    allowed_groups = admin_it_groups | finance_account_groups
+    for g in user.groups.values_list('name', flat=True):
+        if not g:
+            continue
+        normalized = g.lower().replace(' ', '_').replace('&', '_')
+        if normalized in allowed_groups:
+            _ensure_staff_for_admin(user)
+            return True
+        if 'account' in normalized or 'finance' in normalized:
+            _ensure_staff_for_admin(user)
+            return True
+    # Also allow by role (Staff profession or role detection) so finance/account users get in even without group
+    try:
+        from .utils_roles import get_user_role
+        role = get_user_role(user)
+        if role in ('accountant', 'senior_account_officer', 'account_officer', 'account_personnel'):
+            _ensure_staff_for_admin(user)
+            return True
+    except Exception:
+        pass
+    # By Staff profession: any profession containing "account" or "finance"
+    try:
+        from .models import Staff
+        staff = Staff.objects.filter(user=user, is_deleted=False).first()
+        if staff and staff.profession:
+            p = (staff.profession or '').lower()
+            if 'account' in p or 'finance' in p:
+                _ensure_staff_for_admin(user)
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _ensure_staff_for_admin(user):
+    """Set is_staff=True so Django admin views (staff_member_required) allow access without redirect to login."""
+    if getattr(user, 'is_staff', False):
+        return
+    try:
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        User.objects.filter(pk=user.pk).update(is_staff=True)
+        user.is_staff = True
+    except Exception:
+        pass
+
+# Apply the permission gate to the admin site globally
+admin.site.has_permission = _primecare_admin_has_permission
+
 # Override admin index view to include statistics
 from django.contrib.admin.views.decorators import staff_member_required
 from django.template.response import TemplateResponse
@@ -1682,7 +1812,34 @@ original_index = admin.site.index
 
 @staff_member_required
 def custom_admin_index(request, extra_context=None):
-    """Custom admin index with statistics"""
+    """Custom admin index - accounting-friendly for accountants, standard for others"""
+    from .utils_roles import get_user_role
+    
+    user_role = get_user_role(request.user)
+    
+    # Check if user is accountant - show accounting-friendly interface
+    # Also check if superuser has accountant profession (for Robbert)
+    is_accountant_user = False
+    if user_role == 'accountant':
+        is_accountant_user = True
+    elif request.user.is_superuser:
+        # Check if superuser has accountant profession
+        try:
+            from .models import Staff
+            staff = Staff.objects.filter(user=request.user, is_deleted=False).first()
+            if staff and staff.profession == 'accountant':
+                is_accountant_user = True
+        except:
+            pass
+    
+    if is_accountant_user:
+        try:
+            from .admin_accounting_friendly import accounting_friendly_admin_index
+            return accounting_friendly_admin_index(request, extra_context)
+        except ImportError:
+            pass  # Fall through to default if module not available
+    
+    # For others (superusers, admins), show standard admin with statistics
     from django.db.models import Sum
     
     extra_context = extra_context or {}

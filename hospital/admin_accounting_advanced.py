@@ -24,8 +24,10 @@ from .models_accounting_advanced import (
     AccountingPayroll, AccountingPayrollEntry, DoctorCommission,
     IncomeGroup, ProfitLossReport,
     RegistrationFee, CashSale, AccountingCorporateAccount,
-    WithholdingReceivable, WithholdingTaxPayable, Deposit, InitialRevaluation
+    WithholdingReceivable, WithholdingTaxPayable, Deposit, InitialRevaluation,
+    PettyCashTransaction
 )
+from .models_primecare_accounting import InsuranceReceivableEntry, InsurancePaymentReceived, CorporateReceivableEntry
 
 
 # ==================== INLINE ADMINS ====================
@@ -382,6 +384,71 @@ class PaymentVoucherAdmin(admin.ModelAdmin):
         wb.save(response)
         return response
     export_to_excel.short_description = "📊 Export to Excel"
+
+
+@admin.register(PettyCashTransaction)
+class PettyCashTransactionAdmin(admin.ModelAdmin):
+    list_display = ['transaction_number', 'transaction_date', 'payee_name', 'amount', 'status_badge', 'expense_account', 'created_by']
+    list_filter = ['status', 'transaction_date', 'expense_account']
+    search_fields = ['transaction_number', 'payee_name', 'description', 'invoice_number']
+    readonly_fields = ['transaction_number', 'journal_entry', 'approved_date', 'rejected_date', 'created', 'modified']
+    date_hierarchy = 'transaction_date'
+    autocomplete_fields = ['expense_account', 'cost_center']
+    
+    fieldsets = (
+        ('Transaction Information', {
+            'fields': ('transaction_number', 'transaction_date', 'status'),
+            'description': 'Basic transaction identification'
+        }),
+        ('Payee Details', {
+            'fields': ('payee_name', 'payee_type', 'amount'),
+            'description': 'Who is being paid and how much'
+        }),
+        ('Description', {
+            'fields': ('description',),
+        }),
+        ('Accounting', {
+            'fields': ('expense_account', 'cost_center', 'journal_entry'),
+            'description': 'Expense account and cost center'
+        }),
+        ('Payment Details', {
+            'fields': ('payment_date', 'receipt_number', 'invoice_number'),
+            'description': 'Payment processing information',
+            'classes': ('collapse',)
+        }),
+        ('Approval Workflow', {
+            'fields': ('created_by', 'approved_by', 'approved_date', 'rejected_by', 'rejected_date', 'rejection_reason'),
+            'description': 'Approval and rejection audit trail'
+        }),
+        ('Additional Information', {
+            'fields': ('notes', 'created', 'modified'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_readonly_fields(self, request, obj=None):
+        """Make certain fields readonly for existing transactions"""
+        readonly = ['transaction_number', 'journal_entry', 'approved_date', 'rejected_date', 'created', 'modified']
+        if obj and obj.status in ['paid', 'void']:
+            readonly.extend(['amount', 'payee_name', 'expense_account'])
+        return readonly
+    
+    def status_badge(self, obj):
+        """Display status as colored badge"""
+        colors = {
+            'draft': 'secondary',
+            'pending_approval': 'warning',
+            'approved': 'info',
+            'paid': 'success',
+            'rejected': 'danger',
+            'void': 'dark',
+        }
+        color = colors.get(obj.status, 'secondary')
+        badge_text = obj.get_status_display()
+        if obj.amount > 500 and obj.status == 'pending_approval':
+            badge_text += ' (High Amount)'
+        return format_html('<span class="badge bg-{}">{}</span>', color, badge_text)
+    status_badge.short_description = 'Status'
 
 
 @admin.register(ReceiptVoucher)
@@ -773,6 +840,92 @@ class InsuranceReceivableAdmin(admin.ModelAdmin):
     )
 
 
+@admin.register(InsuranceReceivableEntry)
+class InsuranceReceivableEntryAdmin(admin.ModelAdmin):
+    """Admin for Insurance Receivable Entry (PrimeCare Accounting) - INSURANCE ONLY, EXCLUDES CORPORATE"""
+    list_display = ['entry_number', 'payer', 'entry_date', 'total_amount', 'outstanding_amount', 'status', 'entry_date']
+    list_filter = ['status', 'entry_date', 'payer']
+    search_fields = ['entry_number', 'payer__name', 'notes']
+    readonly_fields = ['entry_number', 'outstanding_amount']
+    date_hierarchy = 'entry_date'
+    
+    def get_queryset(self, request):
+        """Filter out corporate payers - only show insurance receivables (private/nhis)"""
+        qs = super().get_queryset(request)
+        return qs.exclude(payer__payer_type='corporate')
+    
+    def changelist_view(self, request, extra_context=None):
+        """Add a note about corporate receivables being excluded"""
+        extra_context = extra_context or {}
+        extra_context['title'] = 'Insurance Receivable Entries (Insurance Companies Only)'
+        return super().changelist_view(request, extra_context)
+    
+    fieldsets = (
+        ('Entry Information', {
+            'fields': ('entry_number', 'payer', 'entry_date', 'status')
+        }),
+        ('Amounts', {
+            'fields': ('total_amount', 'amount_received', 'amount_rejected', 'withholding_tax', 'outstanding_amount')
+        }),
+        ('Revenue Breakdown', {
+            'fields': (
+                'registration_amount', 'consultation_amount', 'laboratory_amount',
+                'pharmacy_amount', 'surgeries_amount', 'admissions_amount',
+                'radiology_amount', 'dental_amount', 'physiotherapy_amount'
+            )
+        }),
+        ('Accounting', {
+            'fields': ('journal_entry', 'matched_at', 'matched_by')
+        }),
+        ('Notes', {
+            'fields': ('notes',)
+        }),
+    )
+
+
+@admin.register(CorporateReceivableEntry)
+class CorporateReceivableEntryAdmin(admin.ModelAdmin):
+    """Admin for Corporate Receivable Entry - CORPORATE CLIENTS ONLY"""
+    list_display = ['entry_number', 'payer', 'entry_date', 'total_amount', 'outstanding_amount', 'status', 'entry_date']
+    list_filter = ['status', 'entry_date', 'payer']
+    search_fields = ['entry_number', 'payer__name', 'notes']
+    readonly_fields = ['entry_number', 'outstanding_amount']
+    date_hierarchy = 'entry_date'
+    
+    def get_queryset(self, request):
+        """Only show corporate payers"""
+        qs = super().get_queryset(request)
+        return qs.filter(payer__payer_type='corporate')
+    
+    def changelist_view(self, request, extra_context=None):
+        """Add a note about this being corporate receivables only"""
+        extra_context = extra_context or {}
+        extra_context['title'] = 'Corporate Receivable Entries (Corporate Clients Only)'
+        return super().changelist_view(request, extra_context)
+    
+    fieldsets = (
+        ('Entry Information', {
+            'fields': ('entry_number', 'payer', 'entry_date', 'status')
+        }),
+        ('Amounts', {
+            'fields': ('total_amount', 'amount_received', 'amount_rejected', 'withholding_tax', 'outstanding_amount')
+        }),
+        ('Revenue Breakdown', {
+            'fields': (
+                'registration_amount', 'consultation_amount', 'laboratory_amount',
+                'pharmacy_amount', 'surgeries_amount', 'admissions_amount',
+                'radiology_amount', 'dental_amount', 'physiotherapy_amount'
+            )
+        }),
+        ('Accounting', {
+            'fields': ('journal_entry', 'matched_at', 'matched_by')
+        }),
+        ('Notes', {
+            'fields': ('notes',)
+        }),
+    )
+
+
 # ==================== PROCUREMENT PURCHASE ====================
 
 @admin.register(ProcurementPurchase)
@@ -803,14 +956,23 @@ class ProcurementPurchaseAdmin(admin.ModelAdmin):
 
 class AccountingPayrollEntryInline(admin.TabularInline):
     model = AccountingPayrollEntry
-    extra = 1
-    fields = ['staff', 'gross_pay', 'deductions', 'net_pay', 'consultation_commission', 'surgery_commission', 'operational_share', 'hospital_share']
+    extra = 0
+    fields = [
+        'staff', 'sheet_serial', 'department_snapshot', 'basic_salary', 'other_allowances',
+        'medical_allowance', 'risk_emergency_allowance', 'personal_relief', 'taxable_income',
+        'loan_deduction', 'gross_pay',
+        'ssnit_employee', 'pension_employee', 'paye_tax', 'deductions', 'net_pay',
+    ]
+    readonly_fields = ['gross_pay', 'deductions', 'net_pay']
 
 
 @admin.register(AccountingPayroll)
 class AccountingPayrollAdmin(admin.ModelAdmin):
-    list_display = ['payroll_number', 'payroll_period_start', 'payroll_period_end', 'pay_date', 'total_net_pay', 'status']
-    list_filter = ['status', 'payroll_period_start', 'payroll_period_end']
+    list_display = [
+        'payroll_number', 'payroll_period_start', 'payroll_period_end', 'pay_date',
+        'total_net_pay', 'deduction_apply_percentages', 'status',
+    ]
+    list_filter = ['status', 'deduction_apply_percentages', 'payroll_period_start', 'payroll_period_end']
     search_fields = ['payroll_number']
     readonly_fields = ['payroll_number', 'total_net_pay']
     inlines = [AccountingPayrollEntryInline]
@@ -818,7 +980,21 @@ class AccountingPayrollAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Payroll Information', {
-            'fields': ('payroll_number', 'payroll_period_start', 'payroll_period_end', 'pay_date', 'status')
+            'fields': ('payroll_number', 'payroll_period_start', 'payroll_period_end', 'pay_date', 'period_label', 'import_source_filename', 'status')
+        }),
+        ('Automatic deduction percentages', {
+            'description': (
+                'Turn on the switch, set rates, then save. All staff lines are recalculated from earnings '
+                '(SSF/PF use basic salary, or gross earnings if basic is 0). Leave a rate at 0 to type that amount manually on each line. '
+                'PAYE uses Taxable income when set; otherwise (gross earnings - personal relief) when the PAYE % is above zero.'
+            ),
+            'fields': (
+                'deduction_apply_percentages',
+                'deduction_ssnit_employee_pct',
+                'deduction_pension_employee_pct',
+                'deduction_paye_pct',
+                'deduction_other_deduction_pct',
+            ),
         }),
         ('Totals', {
             'fields': ('total_gross_pay', 'total_deductions', 'total_net_pay')
@@ -827,6 +1003,12 @@ class AccountingPayrollAdmin(admin.ModelAdmin):
             'fields': ('created_by', 'approved_by')
         }),
     )
+
+    def save_related(self, request, form, formsets, change):
+        super().save_related(request, form, formsets, change)
+        obj = form.instance
+        if getattr(obj, 'deduction_apply_percentages', False):
+            obj.apply_percentage_deductions_to_all_entries()
 
 
 @admin.register(DoctorCommission)

@@ -1,0 +1,331 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Record Patient Deposit - HMS{% endblock %}
+{% block page_title %}Record Patient Deposit{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-cash-coin me-2"></i>Record Patient Deposit</h5>
+                </div>
+                <div class="card-body">
+                    <form method="post" id="record-deposit-form">
+                        {% csrf_token %}
+                        {% if deposit_form_nonce %}
+                        <input type="hidden" name="deposit_form_nonce" value="{{ deposit_form_nonce }}">
+                        {% endif %}
+                        
+                        <!-- Patient Selection -->
+                        <div class="mb-4">
+                            <label for="patient_search" class="form-label fw-bold">Search Patient <span class="text-danger">*</span></label>
+                            {% if patient %}
+                                <input type="hidden" name="patient_id" id="patient_id" value="{{ patient.pk }}">
+                                <div class="alert alert-info">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <strong>{{ patient.full_name }}</strong> (MRN: {{ patient.mrn }})
+                                            {% if patient.phone_number %}
+                                                <br><small class="text-muted">Phone: {{ patient.phone_number }}</small>
+                                            {% endif %}
+                                            {% if patient.deposit_balance > 0 %}
+                                                <br><span class="badge bg-success mt-1">Current Balance: GHS {{ patient.deposit_balance|floatformat:2 }}</span>
+                                            {% endif %}
+                                        </div>
+                                        <a href="{% url 'hospital:record_patient_deposit' %}" class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-x-circle"></i> Change Patient
+                                        </a>
+                                    </div>
+                                </div>
+                            {% else %}
+                                <input type="text" 
+                                       class="form-control form-control-lg" 
+                                       id="patient_search" 
+                                       name="patient_search"
+                                       placeholder="Start typing patient name, MRN, or phone number..."
+                                       autocomplete="off"
+                                       required>
+                                <input type="hidden" name="patient_id" id="patient_id" required>
+                                <div id="patient_search_results" class="list-group mt-2 shadow-sm" style="max-height: 400px; overflow-y: auto; display: none; position: absolute; z-index: 1000; width: calc(100% - 30px);"></div>
+                                <small class="form-text text-muted mt-2">
+                                    <i class="bi bi-info-circle"></i> Search by name, MRN, or phone number. Select from dropdown.
+                                </small>
+                                
+                                <!-- Quick Recent Patients (if available) -->
+                                {% if recent_patients %}
+                                <div class="mt-3">
+                                    <label class="form-label text-muted">
+                                        <small><i class="bi bi-clock-history"></i> Recent Patients (Click to select)</small>
+                                    </label>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        {% for recent_patient in recent_patients|slice:":10" %}
+                                        <button type="button" 
+                                                class="btn btn-sm btn-outline-secondary recent-patient-btn" 
+                                                data-patient-id="{{ recent_patient.pk }}"
+                                                data-patient-name="{{ recent_patient.full_name }}"
+                                                data-patient-mrn="{{ recent_patient.mrn }}"
+                                                data-patient-phone="{{ recent_patient.phone_number|default:'' }}"
+                                                title="{{ recent_patient.full_name }} ({{ recent_patient.mrn }})">
+                                            {{ recent_patient.full_name|truncatechars:20 }} ({{ recent_patient.mrn }})
+                                        </button>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                {% endif %}
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Deposit Amount -->
+                        <div class="mb-3">
+                            <label for="deposit_amount" class="form-label">Deposit Amount (GHS) <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" id="deposit_amount" name="deposit_amount" 
+                                   step="0.01" min="0.01" required placeholder="0.00">
+                        </div>
+                        
+                        <!-- Payment Method -->
+                        <div class="mb-3">
+                            <label for="payment_method" class="form-label">Payment Method <span class="text-danger">*</span></label>
+                            <select class="form-select" id="payment_method" name="payment_method" required>
+                                <option value="cash">Cash</option>
+                                <option value="mobile_money">Mobile Money</option>
+                                <option value="bank_transfer">Bank Transfer</option>
+                                <option value="cheque">Cheque</option>
+                                <option value="card">Card</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        
+                        <!-- Reference Number -->
+                        <div class="mb-3">
+                            <label for="reference_number" class="form-label">Reference Number</label>
+                            <input type="text" class="form-control" id="reference_number" name="reference_number" 
+                                   placeholder="Transaction ID, Cheque Number, etc.">
+                        </div>
+                        
+                        <!-- Bank Account (if bank transfer) -->
+                        <div class="mb-3" id="bank_account_group" style="display: none;">
+                            <label for="bank_account" class="form-label">Bank Account</label>
+                            <select class="form-select" id="bank_account" name="bank_account">
+                                <option value="">Select Bank Account...</option>
+                                {% for bank in bank_accounts %}
+                                    <option value="{{ bank.pk }}">{{ bank.account_name }} ({{ bank.account_number }})</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        
+                        <!-- Notes -->
+                        <div class="mb-3">
+                            <label for="notes" class="form-label">Notes</label>
+                            <textarea class="form-control" id="notes" name="notes" rows="3" 
+                                      placeholder="Additional notes about this deposit..."></textarea>
+                        </div>
+                        
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                            <a href="{% if patient %}{% url 'hospital:patient_deposit_history' patient.pk %}{% else %}{% url 'hospital:patient_deposit_list' %}{% endif %}" 
+                               class="btn btn-secondary">Cancel</a>
+                            <button type="submit" class="btn btn-primary" id="record-deposit-submit">
+                                <i class="bi bi-check-circle me-1"></i>Record Deposit
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Patient Search with API
+let patientSearchTimeout;
+const patientSearchInput = document.getElementById('patient_search');
+const patientSearchResults = document.getElementById('patient_search_results');
+const patientIdInput = document.getElementById('patient_id');
+
+if (patientSearchInput) {
+    patientSearchInput.addEventListener('input', function() {
+        clearTimeout(patientSearchTimeout);
+        const query = this.value.trim();
+        
+        if (query.length < 2) {
+            patientSearchResults.style.display = 'none';
+            patientIdInput.value = '';
+            return;
+        }
+        
+        patientSearchTimeout = setTimeout(() => {
+            fetch(`{% url 'hospital:api_patient_search' %}?q=${encodeURIComponent(query)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.patients && data.patients.length > 0) {
+                        patientSearchResults.innerHTML = data.patients.map(p => `
+                            <a href="#" class="list-group-item list-group-item-action patient-select-item" 
+                               data-id="${p.id}" 
+                               data-name="${p.name || p.full_name || 'Unknown'}" 
+                               data-mrn="${p.mrn || ''}"
+                               data-phone="${p.phone || ''}"
+                               data-balance="${p.deposit_balance || 0}">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div class="flex-grow-1">
+                                        <strong>${p.name || p.full_name || 'Unknown'}</strong>
+                                        <br>
+                                        <small class="text-muted">
+                                            MRN: ${p.mrn || 'N/A'} 
+                                            ${p.phone ? ' | Phone: ' + p.phone : ''}
+                                        </small>
+                                    </div>
+                                    <div class="text-end">
+                                        ${p.deposit_balance > 0 ? 
+                                            `<span class="badge bg-success">Balance: GHS ${parseFloat(p.deposit_balance).toFixed(2)}</span>` : 
+                                            '<span class="badge bg-secondary">No Balance</span>'
+                                        }
+                                    </div>
+                                </div>
+                            </a>
+                        `).join('');
+                        
+                        patientSearchResults.style.display = 'block';
+                        
+                        // Add click handlers
+                        document.querySelectorAll('.patient-select-item').forEach(el => {
+                            el.addEventListener('click', function(e) {
+                                e.preventDefault();
+                                const patientId = this.dataset.id;
+                                const patientName = this.dataset.name;
+                                const patientMrn = this.dataset.mrn;
+                                const patientPhone = this.dataset.phone;
+                                const patientBalance = parseFloat(this.dataset.balance || 0);
+                                
+                                patientIdInput.value = patientId;
+                                patientSearchInput.value = `${patientName} (${patientMrn})`;
+                                
+                                // Show selected patient info
+                                let infoHtml = `<strong>${patientName}</strong> (MRN: ${patientMrn})`;
+                                if (patientPhone) {
+                                    infoHtml += `<br><small class="text-muted">Phone: ${patientPhone}</small>`;
+                                }
+                                if (patientBalance > 0) {
+                                    infoHtml += `<br><span class="badge bg-success mt-1">Current Balance: GHS ${patientBalance.toFixed(2)}</span>`;
+                                }
+                                
+                                patientSearchResults.innerHTML = `
+                                    <div class="list-group-item bg-light">
+                                        ${infoHtml}
+                                    </div>
+                                `;
+                                
+                                // Validate form
+                                if (patientId) {
+                                    patientSearchInput.setCustomValidity('');
+                                }
+                            });
+                        });
+                    } else {
+                        patientSearchResults.innerHTML = '<div class="list-group-item text-muted">No patients found. Try a different search term.</div>';
+                        patientSearchResults.style.display = 'block';
+                    }
+                })
+                .catch(error => {
+                    console.error('Patient search error:', error);
+                    patientSearchResults.innerHTML = '<div class="list-group-item text-danger">Error searching patients. Please try again.</div>';
+                    patientSearchResults.style.display = 'block';
+                });
+        }, 300);
+    });
+    
+    // Hide results when clicking outside
+    document.addEventListener('click', function(e) {
+        if (!patientSearchInput.contains(e.target) && !patientSearchResults.contains(e.target)) {
+            patientSearchResults.style.display = 'none';
+        }
+    });
+}
+
+// Recent patient selection
+document.querySelectorAll('.recent-patient-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const patientId = this.dataset.patientId;
+        const patientName = this.dataset.patientName;
+        const patientMrn = this.dataset.patientMrn;
+        
+        if (patientIdInput) {
+            patientIdInput.value = patientId;
+        }
+        if (patientSearchInput) {
+            patientSearchInput.value = `${patientName} (${patientMrn})`;
+        }
+        
+        // Highlight selected button
+        document.querySelectorAll('.recent-patient-btn').forEach(b => {
+            b.classList.remove('btn-primary');
+            b.classList.add('btn-outline-secondary');
+        });
+        this.classList.remove('btn-outline-secondary');
+        this.classList.add('btn-primary');
+    });
+});
+
+// Show/hide bank account field based on payment method
+const paymentMethodSelect = document.getElementById('payment_method');
+if (paymentMethodSelect) {
+    paymentMethodSelect.addEventListener('change', function() {
+        const bankAccountGroup = document.getElementById('bank_account_group');
+        if (this.value === 'bank_transfer') {
+            bankAccountGroup.style.display = 'block';
+        } else {
+            bankAccountGroup.style.display = 'none';
+        }
+    });
+}
+
+// Form validation + prevent double submit (server also enforces idempotency)
+const depositForm = document.getElementById('record-deposit-form');
+const depositSubmitBtn = document.getElementById('record-deposit-submit');
+if (depositForm) {
+    depositForm.addEventListener('submit', function(e) {
+        const patientId = patientIdInput ? patientIdInput.value : '';
+        if (!patientId) {
+            e.preventDefault();
+            alert('Please select a patient before submitting.');
+            if (patientSearchInput) {
+                patientSearchInput.focus();
+            }
+            return false;
+        }
+        if (depositSubmitBtn && !depositSubmitBtn.disabled) {
+            depositSubmitBtn.disabled = true;
+            depositSubmitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span>Recording…';
+        }
+    });
+}
+</script>
+
+<style>
+#patient_search_results {
+    border-radius: 0.375rem;
+    border: 1px solid #dee2e6;
+}
+
+.patient-select-item:hover {
+    background-color: #f8f9fa;
+    cursor: pointer;
+}
+
+.recent-patient-btn {
+    font-size: 0.875rem;
+    white-space: nowrap;
+}
+
+.recent-patient-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+</style>
+{% endblock %}
+
+
+
+
+

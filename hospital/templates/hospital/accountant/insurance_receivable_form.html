@@ -1,0 +1,114 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}{% if form_type == 'edit' %}Edit{% else %}Add{% endif %} Insurance Receivable - HMS{% endblock %}
+{% block page_title %}{% if form_type == 'edit' %}Edit Insurance Receivable{% else %}Add Insurance Receivable{% endif %}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-lg-10 mx-auto">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white border-0 py-3 d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0"><i class="bi bi-file-earmark-medical me-2"></i>{% if form_type == 'edit' %}Edit{% else %}Add{% endif %} Insurance Receivable</h4>
+                    <a href="{% url 'hospital:insurance_receivable_list' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left me-1"></i>Back to list</a>
+                </div>
+                <div class="card-body p-4">
+                    <form method="post" class="needs-validation" novalidate>
+                        {% csrf_token %}
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Insurance Company <span class="text-danger">*</span></label>
+                                <select name="insurance_company" class="form-select" required>
+                                    <option value="">Select insurance company</option>
+                                    {% for payer in insurance_payers %}
+                                    <option value="{{ payer.id }}" {% if receivable and receivable.insurance_company_id == payer.id %}selected{% endif %}>{{ payer.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Receivable Account <span class="text-danger">*</span></label>
+                                <select name="receivable_account" class="form-select" required>
+                                    <option value="">Select account</option>
+                                    {% for acc in receivable_accounts %}
+                                    <option value="{{ acc.id }}" {% if receivable and receivable.receivable_account_id == acc.id %}selected{% endif %}>{{ acc.account_code }} - {{ acc.account_name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Patient <span class="text-danger">*</span></label>
+                                <select name="patient" class="form-select" required>
+                                    <option value="">Select patient</option>
+                                    {% for p in patients %}
+                                    <option value="{{ p.id }}" {% if receivable and receivable.patient_id == p.id %}selected{% endif %}>{{ p.full_name }} ({{ p.mrn }})</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Invoice <span class="text-danger">*</span></label>
+                                <select name="invoice" class="form-select" required>
+                                    <option value="">Select invoice</option>
+                                    {% for inv in invoices %}
+                                    <option value="{{ inv.id }}" {% if receivable and receivable.invoice_id == inv.id %}selected{% endif %}>{{ inv.invoice_number }} - {{ inv.patient.full_name }} - GHS {{ inv.total_amount|floatformat:2 }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-4">
+                                <label class="form-label">Claim Number</label>
+                                <input type="text" name="claim_number" class="form-control" value="{{ receivable.claim_number|default:'' }}" placeholder="Optional">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Claim Date <span class="text-danger">*</span></label>
+                                <input type="date" name="claim_date" class="form-control" value="{% if receivable %}{{ receivable.claim_date|date:'Y-m-d' }}{% else %}{% now 'Y-m-d' %}{% endif %}" required>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Due Date <span class="text-danger">*</span></label>
+                                <input type="date" name="due_date" class="form-control" value="{% if receivable %}{{ receivable.due_date|date:'Y-m-d' }}{% else %}{% now 'Y-m-d' %}{% endif %}" required>
+                            </div>
+                        </div>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-4">
+                                <label class="form-label">Total Amount (GHS) <span class="text-danger">*</span></label>
+                                <input type="number" name="total_amount" class="form-control" step="0.01" min="0" value="{% if receivable %}{{ receivable.total_amount }}{% endif %}" required>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Amount Paid (GHS)</label>
+                                <input type="number" name="amount_paid" class="form-control" step="0.01" min="0" value="{% if receivable %}{{ receivable.amount_paid }}{% else %}0{% endif %}">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Payment Date</label>
+                                <input type="date" name="payment_date" class="form-control" value="{% if receivable and receivable.payment_date %}{{ receivable.payment_date|date:'Y-m-d' }}{% endif %}">
+                            </div>
+                        </div>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Status</label>
+                                <select name="status" class="form-select">
+                                    <option value="pending" {% if receivable and receivable.status == 'pending' %}selected{% endif %}>Pending Submission</option>
+                                    <option value="submitted" {% if receivable and receivable.status == 'submitted' %}selected{% endif %}>Submitted to Insurance</option>
+                                    <option value="approved" {% if receivable and receivable.status == 'approved' %}selected{% endif %}>Approved by Insurance</option>
+                                    <option value="partial" {% if receivable and receivable.status == 'partial' %}selected{% endif %}>Partially Paid</option>
+                                    <option value="paid" {% if receivable and receivable.status == 'paid' %}selected{% endif %}>Paid</option>
+                                    <option value="rejected" {% if receivable and receivable.status == 'rejected' %}selected{% endif %}>Rejected</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="mb-4">
+                            <label class="form-label">Notes</label>
+                            <textarea name="notes" class="form-control" rows="3">{% if receivable %}{{ receivable.notes }}{% endif %}</textarea>
+                        </div>
+                        <div class="d-flex justify-content-between pt-2">
+                            <a href="{% url 'hospital:insurance_receivable_list' %}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-2"></i>Cancel</a>
+                            <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle me-2"></i>{% if form_type == 'edit' %}Update{% else %}Create{% endif %} Receivable</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

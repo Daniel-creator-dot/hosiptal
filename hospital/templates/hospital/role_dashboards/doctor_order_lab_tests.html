@@ -1,0 +1,318 @@
+{% extends 'hospital/base.html' %}
+{% load static hospital_extras %}
+
+{% block title %}Order Lab Tests - Doctor Dashboard{% endblock %}
+
+{% block extra_css %}
+<style>
+    .patient-select-card {
+        background: white;
+        border: 2px solid #e9ecef;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+    .patient-select-card:hover {
+        border-color: #17a2b8;
+        box-shadow: 0 4px 12px rgba(23, 162, 184, 0.15);
+        transform: translateY(-2px);
+    }
+    .patient-select-card.selected {
+        border-color: #17a2b8;
+        background: #f0f9ff;
+    }
+    .lab-test-card {
+        background: white;
+        border: 2px solid #e9ecef;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 10px;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+    .lab-test-card:hover {
+        border-color: #17a2b8;
+        box-shadow: 0 2px 8px rgba(23, 162, 184, 0.1);
+    }
+    .lab-test-card.selected {
+        border-color: #17a2b8;
+        background: #f0f9ff;
+    }
+    .reagent-warning {
+        color: #ff9800;
+        font-size: 0.85rem;
+    }
+    .reagent-error {
+        color: #f44336;
+        font-size: 0.85rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h2>
+                        <i class="bi bi-flask me-2"></i>
+                        Order Lab Tests
+                    </h2>
+                    <p class="text-muted mb-0">Select patient and tests to create lab order</p>
+                </div>
+                <a href="{% url 'hospital:doctor_dashboard' %}" class="btn btn-light">
+                    <i class="bi bi-arrow-left me-1"></i>Back to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <form method="post" id="labOrderForm">
+        {% csrf_token %}
+        
+        <!-- Step 1: Select Patient -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-person me-2"></i>
+                            Step 1: Select Patient
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <input type="text" id="patientSearch" class="form-control" placeholder="🔍 Search patients..." oninput="filterPatients(this.value)">
+                        </div>
+                        <div id="patientList">
+                            {% for patient in recent_patients %}
+                            <div class="patient-select-card" onclick="selectPatient('{{ patient.pk }}', '{{ patient.full_name }}', '{{ patient.mrn }}')">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <h6 class="mb-1">{{ patient.full_name }}</h6>
+                                        <p class="text-muted mb-0">
+                                            MRN: {{ patient.mrn }} | Age: {{ patient.age }} years | {{ patient.gender }}
+                                        </p>
+                                    </div>
+                                    <i class="bi bi-check-circle text-success" style="font-size: 1.5rem; display: none;" id="check_{{ patient.pk }}"></i>
+                                </div>
+                            </div>
+                            {% empty %}
+                            <div class="text-center py-4">
+                                <p class="text-muted">No recent patients found. <a href="{% url 'hospital:patient_create' %}">Create new patient</a></p>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        <input type="hidden" name="patient_id" id="selected_patient_id" required>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 2: Select Lab Tests -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-flask me-2"></i>
+                            Step 2: Select Lab Tests
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <input type="text" id="testSearch" class="form-control" placeholder="🔍 Search lab tests..." oninput="filterTests(this.value)">
+                        </div>
+                        <div id="testList">
+                            {% for test in lab_tests %}
+                            <div class="lab-test-card" onclick="toggleTest('{{ test.pk }}')" id="test_card_{{ test.pk }}">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div class="flex-grow-1">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="test_ids" value="{{ test.pk }}" id="test_{{ test.pk }}" onchange="updateTestCard('{{ test.pk }}')">
+                                            <label class="form-check-label" for="test_{{ test.pk }}">
+                                                <strong>{{ test.name }}</strong>
+                                            </label>
+                                        </div>
+                                        <div class="mt-2">
+                                            <small class="text-muted">
+                                                Code: {{ test.code }} | Specimen: {{ test.specimen_type|default:"N/A" }} | Price: GHS {{ test.price|default:0 }}
+                                            </small>
+                                        </div>
+                                        {% load hospital_extras %}
+                                        {% with test_id_str=test.pk|stringformat:"s" %}
+                                        {% with info=test_reagent_info|get_item:test_id_str %}
+                                        {% if info and not info.all_available %}
+                                        <div class="mt-2">
+                                            {% for reagent in info.reagents %}
+                                            {% if reagent.is_low_stock %}
+                                            <span class="reagent-warning">
+                                                <i class="bi bi-exclamation-triangle"></i> {{ reagent.name }} (low stock)
+                                            </span>
+                                            {% endif %}
+                                            {% if reagent.is_expired %}
+                                            <span class="reagent-error">
+                                                <i class="bi bi-x-circle"></i> {{ reagent.name }} (expired)
+                                            </span>
+                                            {% endif %}
+                                            {% endfor %}
+                                        </div>
+                                        {% endif %}
+                                        {% endwith %}
+                                        {% endwith %}
+                                    </div>
+                                </div>
+                            </div>
+                            {% empty %}
+                            <div class="text-center py-4">
+                                <p class="text-muted">No lab tests available</p>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 3: Order Details -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-info-circle me-2"></i>
+                            Step 3: Order Details
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Priority</label>
+                                <select name="priority" class="form-select">
+                                    <option value="routine">Routine</option>
+                                    <option value="urgent">Urgent</option>
+                                    <option value="stat">STAT</option>
+                                </select>
+                            </div>
+                            <div class="col-md-8 mb-3">
+                                <label class="form-label">Clinical Notes</label>
+                                <textarea name="notes" class="form-control" rows="3" placeholder="Add clinical indication or special instructions..."></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Submit Button -->
+        <div class="row">
+            <div class="col-12">
+                <div class="d-flex justify-content-end gap-3">
+                    <a href="{% url 'hospital:doctor_dashboard' %}" class="btn btn-light">Cancel</a>
+                    <button type="submit" class="btn btn-primary btn-lg" id="submitBtn" disabled>
+                        <i class="bi bi-check-circle me-2"></i>Create Lab Order
+                    </button>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+<script>
+let selectedPatientId = null;
+
+function selectPatient(patientId, patientName, mrn) {
+    selectedPatientId = patientId;
+    document.getElementById('selected_patient_id').value = patientId;
+    
+    // Update UI
+    document.querySelectorAll('.patient-select-card').forEach(card => {
+        card.classList.remove('selected');
+    });
+    event.currentTarget.classList.add('selected');
+    
+    // Show checkmark
+    document.querySelectorAll('[id^="check_"]').forEach(check => {
+        check.style.display = 'none';
+    });
+    document.getElementById('check_' + patientId).style.display = 'block';
+    
+    // Enable submit if tests selected
+    checkFormReady();
+}
+
+function toggleTest(testId) {
+    const checkbox = document.getElementById('test_' + testId);
+    checkbox.checked = !checkbox.checked;
+    updateTestCard(testId);
+}
+
+function updateTestCard(testId) {
+    const checkbox = document.getElementById('test_' + testId);
+    const card = document.getElementById('test_card_' + testId);
+    
+    if (checkbox.checked) {
+        card.classList.add('selected');
+    } else {
+        card.classList.remove('selected');
+    }
+    
+    checkFormReady();
+}
+
+function checkFormReady() {
+    const patientSelected = selectedPatientId !== null;
+    const testsSelected = document.querySelectorAll('input[name="test_ids"]:checked').length > 0;
+    const submitBtn = document.getElementById('submitBtn');
+    
+    if (patientSelected && testsSelected) {
+        submitBtn.disabled = false;
+    } else {
+        submitBtn.disabled = true;
+    }
+}
+
+function filterPatients(searchTerm) {
+    const cards = document.querySelectorAll('.patient-select-card');
+    const term = searchTerm.toLowerCase();
+    
+    cards.forEach(card => {
+        const text = card.textContent.toLowerCase();
+        card.style.display = text.includes(term) ? 'block' : 'none';
+    });
+}
+
+function filterTests(searchTerm) {
+    const cards = document.querySelectorAll('.lab-test-card');
+    const term = searchTerm.toLowerCase();
+    
+    cards.forEach(card => {
+        const text = card.textContent.toLowerCase();
+        card.style.display = text.includes(term) ? 'block' : 'none';
+    });
+}
+
+// Check on page load
+document.addEventListener('DOMContentLoaded', function() {
+    checkFormReady();
+    
+    // Add change listeners to all checkboxes
+    document.querySelectorAll('input[name="test_ids"]').forEach(checkbox => {
+        checkbox.addEventListener('change', checkFormReady);
+    });
+});
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+

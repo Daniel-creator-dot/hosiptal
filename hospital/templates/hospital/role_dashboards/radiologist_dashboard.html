@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load static %}
+{% load static hospital_extras %}
 
 {% block title %}Radiologist Dashboard{% endblock %}
 
@@ -21,6 +21,12 @@
         padding: 20px;
         text-align: center;
         margin-bottom: 20px;
+        transition: all 0.3s ease;
+    }
+    
+    .stat-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 16px rgba(0,0,0,0.2);
     }
     
     .stat-number {
@@ -82,8 +88,261 @@
     .btn-primary { background: #007bff; }
     .btn-danger { background: #dc3545; }
     .btn-info { background: #17a2b8; }
+    
+    /* Stat card links - COMPLETELY ISOLATED VERSION */
+    a.stat-card-link {
+        display: block !important;
+        width: 100% !important;
+        height: 100% !important;
+        text-decoration: none !important;
+        color: inherit !important;
+        position: relative;
+        z-index: 10;
+        outline: none !important;
+        border: none !important;
+        -webkit-tap-highlight-color: transparent !important;
+        user-select: none;
+        -webkit-user-select: none;
+    }
+    
+    a.stat-card-link:hover {
+        text-decoration: none !important;
+        color: inherit !important;
+    }
+    
+    a.stat-card-link:focus {
+        outline: none !important;
+        box-shadow: none !important;
+    }
+    
+    a.stat-card-link .stat-card {
+        pointer-events: none;
+        transition: transform 0.2s ease, opacity 0.2s ease, box-shadow 0.2s ease;
+        transform: none !important;
+        opacity: 1 !important;
+    }
+    
+    /* Hover state - ONLY for the specific button being hovered */
+    a.stat-card-link:hover .stat-card {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3) !important;
+    }
+    
+    /* ACTIVE STATE - Only when data-active="true" attribute is set */
+    a.stat-card-link[data-active="true"] .stat-card {
+        transform: scale(0.97) !important;
+        opacity: 0.95 !important;
+        box-shadow: 0 2px 8px rgba(139, 92, 246, 0.5) !important;
+    }
+    
+    /* CRITICAL: Disable :active pseudo-class completely - use data attribute instead */
+    a.stat-card-link:active .stat-card {
+        /* Only apply if data-active is set, otherwise ignore */
+    }
+    
+    a.stat-card-link:not([data-active="true"]) .stat-card {
+        transform: none !important;
+        opacity: 1 !important;
+    }
+    
+    a.stat-card-link * {
+        pointer-events: none;
+    }
+    
+    /* Prevent parent elements from getting focus/active - COMPLETE ISOLATION */
+    .row.mb-4,
+    .row.mb-4 .col-md-3 {
+        outline: none !important;
+        -webkit-tap-highlight-color: transparent !important;
+    }
+    
+    .row.mb-4 .col-md-3:active,
+    .row.mb-4 .col-md-3:focus,
+    .row.mb-4:active,
+    .row.mb-4:focus {
+        outline: none !important;
+    }
+    
+    /* CRITICAL: Completely disable :active states on parent elements */
+    .row.mb-4:active .stat-card,
+    .row.mb-4:focus .stat-card,
+    .row.mb-4 .col-md-3:active .stat-card,
+    .row.mb-4 .col-md-3:focus .stat-card,
+    .row.mb-4 .col-md-3:active .stat-card-link,
+    .row.mb-4 .col-md-3:focus .stat-card-link {
+        transform: none !important;
+        opacity: 1 !important;
+        box-shadow: none !important;
+    }
+    
+    /* Only allow active state via data-active attribute */
+    .row.mb-4 .col-md-3 .stat-card-link[data-active="true"] .stat-card {
+        transform: scale(0.97) !important;
+        opacity: 0.95 !important;
+        box-shadow: 0 2px 8px rgba(139, 92, 246, 0.5) !important;
+    }
+    
+    /* Isolate each button container completely */
+    .row.mb-4 .col-md-3 {
+        isolation: isolate;
+        position: relative;
+        contain: layout style paint;
+    }
 </style>
+<script>
+// COMPLETE BUTTON ISOLATION - Using data attributes instead of classes
+(function() {
+    'use strict';
+    
+    function initButtons() {
+        const buttons = document.querySelectorAll('.stat-card-link');
+        
+        // Remove ALL active states from ALL buttons
+        function removeAllActiveStates() {
+            buttons.forEach(function(btn) {
+                btn.removeAttribute('data-active');
+                btn.classList.remove('is-active', 'active', 'focus');
+                btn.blur();
+                
+                // Force reset inline styles
+                const statCard = btn.querySelector('.stat-card');
+                if (statCard) {
+                    statCard.style.transform = '';
+                    statCard.style.opacity = '';
+                    statCard.style.boxShadow = '';
+                }
+            });
+        }
+        
+        // Initialize all buttons - ensure no active states
+        removeAllActiveStates();
+        
+        buttons.forEach(function(button) {
+            // Ensure button starts with no active state
+            button.removeAttribute('data-active');
+            
+            // Handle mousedown - set active state ONLY on this button
+            button.addEventListener('mousedown', function(e) {
+                // DO NOT stop propagation or prevent default - allow navigation to work!
+                // e.stopPropagation(); // REMOVED - was blocking navigation
+                // e.preventDefault(); // REMOVED - was blocking navigation
+                
+                // Remove active from ALL buttons first
+                removeAllActiveStates();
+                
+                // Set active ONLY on this button using data attribute
+                button.setAttribute('data-active', 'true');
+            }, { passive: true });
+            
+            // Handle mouseup - keep active briefly
+            button.addEventListener('mouseup', function(e) {
+                // DO NOT stop propagation - allow normal click behavior
+                // e.stopPropagation(); // REMOVED
+                
+                // Keep active state briefly for visual feedback
+                if (button.getAttribute('data-active') === 'true') {
+                    // Will be removed in click handler
+                }
+            });
+            
+            // Handle click - navigate and clean up
+            button.addEventListener('click', function(e) {
+                // DO NOT stop propagation or prevent default - allow navigation!
+                // e.stopPropagation(); // REMOVED - this was blocking navigation
+                
+                // Remove active from all OTHER buttons
+                buttons.forEach(function(btn) {
+                    if (btn !== button) {
+                        btn.removeAttribute('data-active');
+                        btn.classList.remove('is-active', 'active', 'focus');
+                        btn.blur();
+                        
+                        const statCard = btn.querySelector('.stat-card');
+                        if (statCard) {
+                            statCard.style.transform = '';
+                            statCard.style.opacity = '';
+                            statCard.style.boxShadow = '';
+                        }
+                    }
+                });
+                
+                // Keep active on clicked button briefly
+                button.setAttribute('data-active', 'true');
+                
+                // Remove active state after navigation starts
+                setTimeout(function() {
+                    button.removeAttribute('data-active');
+                    button.blur();
+                    
+                    const statCard = button.querySelector('.stat-card');
+                    if (statCard) {
+                        statCard.style.transform = '';
+                        statCard.style.opacity = '';
+                        statCard.style.boxShadow = '';
+                    }
+                }, 200);
+                
+                // Allow navigation to proceed normally
+                // DO NOT prevent default!
+            }, { passive: true });
+            
+            // Remove active if mouse leaves during interaction
+            button.addEventListener('mouseleave', function(e) {
+                // Only remove if we're not in the middle of a click
+                setTimeout(function() {
+                    if (button.getAttribute('data-active') === 'true' && !document.activeElement === button) {
+                        button.removeAttribute('data-active');
+                    }
+                }, 50);
+            });
+            
+            // Prevent focus on keyboard navigation (optional)
+            button.addEventListener('focus', function(e) {
+                // Don't add active state on focus
+                if (button.getAttribute('data-active') !== 'true') {
+                    button.blur();
+                }
+            });
+        });
+        
+        // Prevent parent elements from getting focus
+        const cols = document.querySelectorAll('.row.mb-4 .col-md-3');
+        cols.forEach(function(col) {
+            col.setAttribute('tabindex', '-1');
+            col.style.outline = 'none';
+            col.style.webkitTapHighlightColor = 'transparent';
+        });
+        
+        // Global click handler - remove all active states when clicking elsewhere
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.stat-card-link')) {
+                removeAllActiveStates();
+            }
+        }, true); // Use capture phase
+        
+        // Also remove on any other interaction
+        document.addEventListener('mousedown', function(e) {
+            if (!e.target.closest('.stat-card-link')) {
+                removeAllActiveStates();
+            }
+        }, true);
+    }
+    
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initButtons);
+    } else {
+        initButtons();
+    }
+    
+    // Also re-initialize after page load (in case of dynamic content)
+    window.addEventListener('load', function() {
+        setTimeout(initButtons, 100);
+    });
+})();
+</script>
 {% endblock %}
+
 
 {% block content %}
 <div class="container-fluid">
@@ -111,14 +370,56 @@
         </div>
     </div>
 
-    <!-- Statistics Cards -->
+    <!-- Quick Action Buttons - Purple/Violet Style -->
     <div class="row mb-4">
-        <div class="col-md-3">
-            <div class="stat-card">
-                <div class="stat-number">{{ stats.pending_orders }}</div>
-                <div class="stat-label">Pending Orders</div>
-            </div>
+        <div class="col-md-3 mb-3">
+            <a href="{% url 'hospital:radiologist_pending_orders' %}" class="stat-card-link" id="btn-pending-orders" data-active="false">
+                <div class="stat-card" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); min-height: 120px; display: flex; flex-direction: column; justify-content: center;">
+                    <div class="d-flex align-items-center justify-content-center mb-2">
+                        <i class="bi bi-clock-history me-2" style="font-size: 1.5rem;"></i>
+                        <div class="stat-number">{{ stats.pending_orders }}</div>
+                    </div>
+                    <div class="stat-label">Pending Orders</div>
+                </div>
+            </a>
         </div>
+        <div class="col-md-3 mb-3">
+            <a href="{% url 'hospital:radiologist_my_studies' %}" class="stat-card-link" id="btn-my-studies" data-active="false">
+                <div class="stat-card" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); min-height: 120px; display: flex; flex-direction: column; justify-content: center;">
+                    <div class="d-flex align-items-center justify-content-center mb-2">
+                        <i class="bi bi-person-badge me-2" style="font-size: 1.5rem;"></i>
+                        <div class="stat-number">{{ stats.my_studies }}</div>
+                    </div>
+                    <div class="stat-label">My Studies</div>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-3 mb-3">
+            <a href="{% url 'hospital:radiologist_report_queue' %}" class="stat-card-link" id="btn-report-queue" data-active="false">
+                <div class="stat-card" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); min-height: 120px; display: flex; flex-direction: column; justify-content: center;">
+                    <div class="d-flex align-items-center justify-content-center mb-2">
+                        <i class="bi bi-file-earmark-text me-2" style="font-size: 1.5rem;"></i>
+                        <div class="stat-number">{{ stats.awaiting_report }}</div>
+                    </div>
+                    <div class="stat-label">Report Queue</div>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-3 mb-3">
+            <a href="{% url 'hospital:radiologist_completed_studies' %}" class="stat-card-link" id="btn-completed-studies" data-active="false">
+                <div class="stat-card" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); min-height: 120px; display: flex; flex-direction: column; justify-content: center;">
+                    <div class="d-flex align-items-center justify-content-center mb-2">
+                        <i class="bi bi-check-circle me-2" style="font-size: 1.5rem;"></i>
+                        <div class="stat-number">{{ stats.completed_today }}</div>
+                    </div>
+                    <div class="stat-label">Completed Studies</div>
+                </div>
+            </a>
+        </div>
+    </div>
+
+    <!-- Additional Statistics Cards -->
+    <div class="row mb-4">
         <div class="col-md-3">
             <div class="stat-card" style="background: linear-gradient(135deg, #6f42c1 0%, #e83e8c 100%);">
                 <div class="stat-number">{{ stats.in_progress_studies }}</div>
@@ -126,15 +427,21 @@
             </div>
         </div>
         <div class="col-md-3">
-            <div class="stat-card" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);">
-                <div class="stat-number">{{ stats.completed_today }}</div>
-                <div class="stat-label">Completed Today</div>
-            </div>
-        </div>
-        <div class="col-md-3">
             <div class="stat-card" style="background: linear-gradient(135deg, #17a2b8 0%, #6f42c1 100%);">
                 <div class="stat-number">{{ stats.total_studies_today }}</div>
                 <div class="stat-label">Total Studies Today</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);">
+                <div class="stat-number">{{ stats.critical_findings }}</div>
+                <div class="stat-label">Critical Findings</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                <div class="stat-number">{{ stats.avg_turnaround_hours }}h</div>
+                <div class="stat-label">Avg Turnaround</div>
             </div>
         </div>
     </div>
@@ -149,13 +456,15 @@
                 </h5>
                 {% if pending_orders %}
                     {% for order in pending_orders %}
+                    {% if order.encounter and order.encounter.patient %}
                     <div class="study-card study-pending">
                         <div class="d-flex justify-content-between align-items-start">
                             <div>
                                 <h6 class="mb-1">
-                                    <a href="{% url 'hospital:patient_detail' order.patient.pk %}" class="text-decoration-none">
-                                        {{ order.patient.full_name }}
+                                    <a href="{% url 'hospital:patient_detail' order.encounter.patient.pk %}" class="text-decoration-none">
+                                        {{ order.encounter.patient.full_name }}
                                     </a>
+                                    {% patient_payer_badges order.encounter.patient order.encounter %}
                                 </h6>
                                 <p class="text-muted mb-1">
                                     <i class="bi bi-camera me-1"></i>
@@ -168,12 +477,13 @@
                             <div>
                                 <span class="status-badge status-pending">Pending</span>
                                 <br>
-                                <a href="#" class="action-btn btn-warning mt-2">
+                                <a href="{% url 'hospital:start_imaging_order' order.id %}" class="action-btn btn-warning mt-2">
                                     <i class="bi bi-play-circle me-1"></i>Start
                                 </a>
                             </div>
                         </div>
                     </div>
+                    {% endif %}
                     {% endfor %}
                 {% else %}
                     <div class="text-center py-4">
@@ -193,6 +503,7 @@
                 </h5>
                 {% if in_progress_studies %}
                     {% for study in in_progress_studies %}
+                    {% if study.patient %}
                     <div class="study-card study-in-progress">
                         <div class="d-flex justify-content-between align-items-start">
                             <div>
@@ -200,6 +511,11 @@
                                     <a href="{% url 'hospital:patient_detail' study.patient.pk %}" class="text-decoration-none">
                                         {{ study.patient.full_name }}
                                     </a>
+                                    {% if study.encounter %}
+                                        {% patient_payer_badges study.patient study.encounter %}
+                                    {% else %}
+                                        {% patient_payer_badges study.patient study.order.encounter %}
+                                    {% endif %}
                                 </h6>
                                 <p class="text-muted mb-1">
                                     <i class="bi bi-camera me-1"></i>
@@ -212,12 +528,13 @@
                             <div>
                                 <span class="status-badge status-in-progress">In Progress</span>
                                 <br>
-                                <a href="#" class="action-btn btn-primary mt-2">
+                                <a href="{% url 'hospital:imaging_study_detail' study.id %}" class="action-btn btn-primary mt-2">
                                     <i class="bi bi-pencil me-1"></i>Update
                                 </a>
                             </div>
                         </div>
                     </div>
+                    {% endif %}
                     {% endfor %}
                 {% else %}
                     <div class="text-center py-4">
@@ -237,8 +554,9 @@
                     <i class="bi bi-check-circle me-2"></i>
                     Recent Completed Studies
                 </h5>
-                {% if completed_studies %}
-                    {% for study in completed_studies %}
+                {% if completed_today %}
+                    {% for study in completed_today %}
+                    {% if study.patient %}
                     <div class="study-card study-completed">
                         <div class="d-flex justify-content-between align-items-start">
                             <div>
@@ -246,6 +564,11 @@
                                     <a href="{% url 'hospital:patient_detail' study.patient.pk %}" class="text-decoration-none">
                                         {{ study.patient.full_name }}
                                     </a>
+                                    {% if study.encounter %}
+                                        {% patient_payer_badges study.patient study.encounter %}
+                                    {% else %}
+                                        {% patient_payer_badges study.patient study.order.encounter %}
+                                    {% endif %}
                                 </h6>
                                 <p class="text-muted mb-1">
                                     <i class="bi bi-camera me-1"></i>
@@ -258,12 +581,13 @@
                             <div>
                                 <span class="status-badge status-completed">Completed</span>
                                 <br>
-                                <a href="#" class="action-btn btn-success mt-2">
+                                <a href="{% url 'hospital:imaging_study_detail' study.id %}" class="action-btn btn-success mt-2">
                                     <i class="bi bi-eye me-1"></i>View
                                 </a>
                             </div>
                         </div>
                     </div>
+                    {% endif %}
                     {% endfor %}
                 {% else %}
                     <div class="text-center py-4">
@@ -309,20 +633,29 @@
                     Quick Actions
                 </h5>
                 <div class="d-flex flex-wrap gap-2">
-                    <a href="#" class="action-btn">
+                    <a href="{% url 'hospital:flow_dashboard' %}" class="action-btn" style="background: #667eea;">
+                        <i class="bi bi-diagram-3 me-1"></i>Patient Flowboard
+                    </a>
+                    <a href="{% url 'hospital:create_imaging_study' %}" class="action-btn">
                         <i class="bi bi-plus-circle me-1"></i>New Study
                     </a>
-                    <a href="#" class="action-btn btn-warning">
+                    <a href="{% url 'hospital:create_imaging_study' %}" class="action-btn btn-warning">
                         <i class="bi bi-camera me-1"></i>Capture Image
                     </a>
-                    <a href="#" class="action-btn btn-success">
+                    <a href="{% url 'hospital:radiologist_report_queue' %}" class="action-btn btn-success">
                         <i class="bi bi-clipboard-check me-1"></i>Enter Report
                     </a>
-                    <a href="#" class="action-btn btn-primary">
+                    <a href="{% url 'hospital:radiologist_completed_studies' %}" class="action-btn btn-primary">
                         <i class="bi bi-printer me-1"></i>Print Report
                     </a>
-                    <a href="#" class="action-btn btn-info">
+                    <a href="{% url 'hospital:radiologist_my_studies' %}" class="action-btn btn-info">
                         <i class="bi bi-search me-1"></i>Search Studies
+                    </a>
+                    <a href="{% url 'hospital:imaging_teleradiology' %}" class="action-btn" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                        <i class="bi bi-display me-1"></i>PACS Viewer
+                    </a>
+                    <a href="{% url 'hospital:imaging_equipment' %}" class="action-btn" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                        <i class="bi bi-gear me-1"></i>Equipment Status
                     </a>
                     <a href="{% url 'hospital:global_search' %}" class="action-btn">
                         <i class="bi bi-search me-1"></i>Global Search

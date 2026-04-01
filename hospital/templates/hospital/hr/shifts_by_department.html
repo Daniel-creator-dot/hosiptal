@@ -1,0 +1,251 @@
+{% extends "hospital/base.html" %}
+{% load static %}
+
+{% block title %}Shifts by Department{% endblock %}
+
+{% block extra_css %}
+<style>
+    .dept-card {
+        border-left: 4px solid;
+        transition: all 0.3s ease;
+        cursor: pointer;
+    }
+    .dept-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .dept-card.has-shifts { border-left-color: #10b981; }
+    .dept-card.no-shifts { border-left-color: #e5e7eb; }
+    .dept-card.low-compliance { border-left-color: #ef4444; }
+    .dept-card.medium-compliance { border-left-color: #f59e0b; }
+    .dept-card.high-compliance { border-left-color: #10b981; }
+    
+    .stat-badge {
+        display: inline-block;
+        padding: 0.5rem 1rem;
+        border-radius: 0.5rem;
+        font-weight: 600;
+        font-size: 0.875rem;
+    }
+    .badge-success { background-color: #d1fae5; color: #065f46; }
+    .badge-danger { background-color: #fee2e2; color: #991b1b; }
+    .badge-warning { background-color: #fef3c7; color: #92400e; }
+    .badge-info { background-color: #dbeafe; color: #1e40af; }
+    
+    .compliance-bar {
+        height: 8px;
+        border-radius: 4px;
+        background-color: #e5e7eb;
+        overflow: hidden;
+        margin-top: 0.5rem;
+    }
+    .compliance-fill {
+        height: 100%;
+        transition: width 0.3s;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-1">
+                <i class="fas fa-building text-primary"></i>
+                Shifts by Department
+            </h2>
+            <p class="text-muted mb-0">
+                Department-wise shift overview and monitoring
+            </p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:staff_shift_list' %}" class="btn btn-outline-secondary">
+                <i class="fas fa-list"></i> All Shifts
+            </a>
+            <a href="{% url 'hospital:shift_calendar' %}" class="btn btn-outline-primary">
+                <i class="fas fa-calendar"></i> Calendar View
+            </a>
+        </div>
+    </div>
+
+    <!-- Date Selector -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label for="date" class="form-label">Select Date</label>
+                    <input type="date" class="form-control" id="date" name="date" 
+                           value="{{ selected_date|date:'Y-m-d' }}" onchange="this.form.submit()">
+                </div>
+                <div class="col-md-8">
+                    <div class="btn-group" role="group">
+                        <a href="?date={{ selected_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-calendar-day"></i> Today
+                        </a>
+                        <a href="?date={{ week_start|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-calendar-week"></i> Week Start
+                        </a>
+                        <a href="?date={{ week_end|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-calendar-week"></i> Week End
+                        </a>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Overall Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h3 class="mb-0">{{ total_shifts_all }}</h3>
+                    <p class="text-muted mb-0">Total Shifts</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center border-success">
+                <div class="card-body">
+                    <h3 class="mb-0 text-success">{{ total_present_all }}</h3>
+                    <p class="text-muted mb-0">Present</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center border-danger">
+                <div class="card-body">
+                    <h3 class="mb-0 text-danger">{{ total_absent_all }}</h3>
+                    <p class="text-muted mb-0">Absent</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h3 class="mb-0">{{ overall_compliance }}%</h3>
+                    <p class="text-muted mb-0">Overall Compliance</p>
+                    <div class="compliance-bar mt-2">
+                        <div class="compliance-fill bg-success" style="width: {{ overall_compliance }}%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Department Cards -->
+    <div class="row g-4">
+        {% for dept_stat in department_stats %}
+        <div class="col-md-6 col-lg-4">
+            <div class="card dept-card 
+                {% if dept_stat.total_shifts == 0 %}no-shifts
+                {% elif dept_stat.compliance_rate >= 90 %}high-compliance
+                {% elif dept_stat.compliance_rate >= 70 %}medium-compliance
+                {% else %}low-compliance{% endif %}" 
+                onclick="window.location.href='{% url 'hospital:hr_department_shifts_detail' dept_id=dept_stat.department.id %}?date={{ selected_date|date:'Y-m-d' }}'"
+                style="cursor: pointer;">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-3">
+                        <div>
+                            <h5 class="mb-1">{{ dept_stat.department.name }}</h5>
+                            {% if dept_stat.hod %}
+                            <small class="text-muted">
+                                <i class="fas fa-user-tie"></i> HOD: {{ dept_stat.hod.user.get_full_name|default:dept_stat.hod.user.username }}
+                            </small>
+                            {% else %}
+                            <small class="text-muted">No HOD assigned</small>
+                            {% endif %}
+                        </div>
+                        <span class="badge bg-secondary">{{ dept_stat.total_staff }} staff</span>
+                    </div>
+                    
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <div class="text-center p-2 bg-light rounded">
+                                <div class="fw-bold text-primary">{{ dept_stat.total_shifts }}</div>
+                                <small class="text-muted">Shifts</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="text-center p-2 bg-light rounded">
+                                <div class="fw-bold text-success">{{ dept_stat.present_count }}</div>
+                                <small class="text-muted">Present</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="text-center p-2 bg-light rounded">
+                                <div class="fw-bold text-danger">{{ dept_stat.absent_count }}</div>
+                                <small class="text-muted">Absent</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="text-center p-2 bg-light rounded">
+                                <div class="fw-bold text-warning">{{ dept_stat.late_count }}</div>
+                                <small class="text-muted">Late</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <small class="text-muted">Compliance</small>
+                            <strong>{{ dept_stat.compliance_rate }}%</strong>
+                        </div>
+                        <div class="compliance-bar">
+                            <div class="compliance-fill 
+                                {% if dept_stat.compliance_rate >= 90 %}bg-success
+                                {% elif dept_stat.compliance_rate >= 70 %}bg-warning
+                                {% else %}bg-danger{% endif %}" 
+                                style="width: {{ dept_stat.compliance_rate }}%"></div>
+                        </div>
+                    </div>
+                    
+                    {% if dept_stat.shifts %}
+                    <div class="mb-2">
+                        <small class="text-muted d-block mb-1">Recent Shifts:</small>
+                        {% for shift in dept_stat.shifts %}
+                        <div class="small mb-1">
+                            <i class="fas fa-clock text-muted"></i>
+                            {{ shift.staff.user.get_full_name|default:shift.staff.user.username }} - 
+                            {{ shift.start_time|time:"H:i" }} ({{ shift.get_shift_type_display }})
+                        </div>
+                        {% endfor %}
+                        {% if dept_stat.total_shifts > 5 %}
+                        <small class="text-muted">+{{ dept_stat.total_shifts|add:"-5" }} more...</small>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                    
+                    {% if dept_stat.upcoming_shifts > 0 %}
+                    <div class="mt-2">
+                        <small class="badge bg-info">
+                            <i class="fas fa-calendar-alt"></i> {{ dept_stat.upcoming_shifts }} upcoming
+                        </small>
+                    </div>
+                    {% endif %}
+                    
+                    <div class="mt-3 pt-3 border-top">
+                        <a href="{% url 'hospital:hr_department_shifts_detail' dept_id=dept_stat.department.id %}?date={{ selected_date|date:'Y-m-d' }}" 
+                           class="btn btn-sm btn-primary w-100">
+                            <i class="fas fa-eye"></i> View Details
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="col-12">
+            <div class="alert alert-info text-center">
+                <i class="fas fa-info-circle"></i> No departments found.
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+

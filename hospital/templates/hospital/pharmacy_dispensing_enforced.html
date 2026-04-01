@@ -2,10 +2,125 @@
 {% load static %}
 {% load math_filters %}
 
+{% block title %}{{ title }} · Pharmacy{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'hospital/css/pharmacy_ui.css' %}">
+<style>
+    .rx-pharmacy-page, .pharmacy-header {
+        --pharmacy-primary: #10b981;
+        --pharmacy-success: #059669;
+        --pharmacy-warning: #f59e0b;
+        --pharmacy-danger: #ef4444;
+        --pharmacy-info: #3b82f6;
+        --dark: #0f172a;
+        --gray: #64748b;
+        --light: #f1f5f9;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
+<div class="rx-pharmacy-page pharmacy-ui">
+    <div class="pharmacy-header mb-3">
+        <div class="row align-items-center">
+            <div class="col-lg-8">
+                <h1 class="mb-1" style="font-size: clamp(1.2rem, 2.5vw, 1.65rem); font-weight: 800;">
+                    <i class="bi bi-shield-lock me-2"></i>{{ title }}
+                </h1>
+                <p class="mb-0" style="font-size: 0.9rem; opacity: 0.92;">
+                    Payment verification required before dispensing ·
+                    <a href="{% url 'hospital:pharmacy_dashboard' %}" class="text-white text-decoration-underline fw-semibold">Pharmacy home</a>
+                </p>
+            </div>
+            <div class="col-lg-4 text-lg-end mt-2 mt-lg-0">
+                <a href="{% url 'hospital:pharmacy_dashboard' %}" class="btn btn-light btn-sm">Operations hub</a>
+            </div>
+        </div>
+    </div>
 <div class="container-fluid">
-    <h2>{{ title }}</h2>
-    <p class="text-muted">🔒 Payment verification required before dispensing medication</p>
+    <p class="text-muted small mb-3">🔒 Payment verification required before dispensing medication</p>
+    <div class="alert alert-light border mb-3">
+        <strong>Workflow:</strong> 1) Doctor prescribes → 2) <strong>Pharmacy checks & edits</strong> (substitute, qty) → 3) Pharmacy sends to <strong>Cashier</strong> or <strong>Insurance</strong> → 4) Patient pays (cash) or insurer billed → 5) Pharmacy dispenses. Pharmacy edits are final for billing and records.
+    </div>
+    {% if stats.pending_insurance_count %}
+    <div class="alert alert-primary border mb-3">
+        <strong>📋 Insurance/Corporate pending:</strong> {{ stats.pending_insurance_count }} prescription(s) need <strong>Send to Insurance</strong>. Check, edit, then send from the pharmacy dashboard.
+    </div>
+    {% endif %}
+    {% if stats.pending_payment_total == 0 and stats.paid_ready_total == 0 and stats.walkin_pending == 0 and stats.walkin_ready == 0 %}
+    <div class="alert alert-info border mb-3">
+        <strong>📭 No items in queue.</strong> Prescriptions will appear here after doctors prescribe and pharmacy sends them to Cashier or Insurance. Prescribe (walk-in) sales appear when created from Pharmacy → Prescription.
+    </div>
+    {% endif %}
+
+    <form method="get" class="card border mb-3 shadow">
+        <div class="card-header py-2 d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <strong class="fs-6">Search &amp; filters</strong>
+            <span class="text-muted small">Scroll down for the two columns after you click Apply.</span>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-12 col-xl-6">
+                    <div class="p-3 rounded border border-2 border-danger bg-danger bg-opacity-10 h-100">
+                        <h6 class="text-danger mb-3 fw-bold">Left: Pending payment</h6>
+                        <div class="row row-cols-1 row-cols-sm-2 g-2 align-items-end">
+                            <div class="col">
+                                <label class="form-label fw-semibold mb-1" for="id_pharm_date_from">Prescribed from</label>
+                                <input type="date" name="date_from" id="id_pharm_date_from" class="form-control" value="{{ filter_date_from|default:'' }}">
+                            </div>
+                            <div class="col">
+                                <label class="form-label fw-semibold mb-1" for="id_pharm_date_to">Prescribed to</label>
+                                <input type="date" name="date_to" id="id_pharm_date_to" class="form-control" value="{{ filter_date_to|default:'' }}">
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label fw-semibold mb-1" for="id_payment_filter">
+                                    <i class="bi bi-funnel me-1"></i>Payment type <span class="text-muted fw-normal">(pending + paid + prescribe)</span>
+                                </label>
+                                <select name="payment" id="id_payment_filter" class="form-select" title="Filters red queue, green queue, and walk-in prescribe sales">
+                                    <option value="all" {% if payment_filter|default:"all" == "all" %}selected{% endif %}>All payments</option>
+                                    <option value="cash" {% if payment_filter|default:"" == "cash" %}selected{% endif %}>Cash only</option>
+                                    <option value="corporate" {% if payment_filter|default:"" == "corporate" %}selected{% endif %}>Corporate only</option>
+                                    <option value="insurance" {% if payment_filter|default:"" == "insurance" %}selected{% endif %}>Insurance only (NHIS / private)</option>
+                                </select>
+                                <p class="small mb-0 mt-1 text-body-secondary">Use <strong>Insurance only</strong> to see pending items for insured patients (uses patient billing payer when no invoice exists yet).</p>
+                            </div>
+                        </div>
+                        <p class="small mb-0 mt-2 text-body-secondary">Filters the <strong>red</strong> column dates (prescribed / prescribe sale). Payment type applies to both columns below.</p>
+                    </div>
+                </div>
+                <div class="col-12 col-xl-6">
+                    <div class="p-3 rounded border border-2 border-success bg-success bg-opacity-10 h-100">
+                        <h6 class="text-success mb-3 fw-bold">Right: Paid — ready to dispense</h6>
+                        <div class="row row-cols-1 row-cols-sm-2 g-2 align-items-end">
+                            <div class="col">
+                                <label class="form-label fw-semibold mb-1" for="id_paid_from">Paid / ready from</label>
+                                <input type="date" name="paid_from" id="id_paid_from" class="form-control" value="{{ filter_paid_from|default:'' }}" title="Filter green column by payment or sale date">
+                            </div>
+                            <div class="col">
+                                <label class="form-label fw-semibold mb-1" for="id_paid_to">Paid / ready to</label>
+                                <input type="date" name="paid_to" id="id_paid_to" class="form-control" value="{{ filter_paid_to|default:'' }}">
+                            </div>
+                        </div>
+                        <p class="small mb-0 mt-2 text-body-secondary">Filters the <strong>green</strong> column. <strong>Payment type</strong> is in the red box (left). Leave dates empty to use the same window as “Prescribed” above.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="d-flex flex-wrap gap-2 align-items-center mt-3 pt-3 border-top">
+                <button type="submit" class="btn btn-primary px-4">Apply filters</button>
+                <a href="{% url 'hospital:pharmacy_pending_dispensing' %}" class="btn btn-outline-secondary">Clear all</a>
+            </div>
+            {% if date_filter_active|default:False %}
+            <p class="small text-body-secondary mb-0 mt-3">Left column uses <strong>prescribed date</strong> (and prescribe sale date for walk-in).</p>
+            {% endif %}
+            {% if paid_date_filter_active|default:False %}
+            <p class="small text-body-secondary mb-0 mt-1">Right column uses <strong>payment verified / receipt / created</strong> for prescriptions; <strong>sale date</strong> for prescribe sales.</p>
+            {% endif %}
+            {% if read_filter_active|default:False and payment_filter|default:"all" != "all" %}
+            <p class="small text-body-secondary mb-0 mt-1">Pending (red) + paid (green) + prescribe: showing <strong>{{ payment_filter }}</strong> only.</p>
+            {% endif %}
+        </div>
+    </form>
     
     <!-- Statistics -->
     <div class="row mb-4">
@@ -14,7 +129,7 @@
                 <div class="card-body">
                     <h6 class="text-muted">Pending Payment</h6>
                     <h2 class="text-danger">{{ stats.pending_payment_total }}</h2>
-                    <small>Prescriptions + walk-in awaiting cashier payment</small>
+                    <small>Prescriptions + prescribe awaiting cashier payment</small>
                 </div>
             </div>
         </div>
@@ -34,7 +149,7 @@
                 <div class="card-body">
                     <h6 class="text-muted">Already Dispensed</h6>
                     <h2 class="text-info">{{ stats.dispensed_total }}</h2>
-                    <small>Prescriptions + walk-in already completed</small>
+                    <small>Prescriptions + prescribe already completed</small>
                 </div>
             </div>
         </div>
@@ -44,25 +159,25 @@
                 <div class="card-body">
                     <h6 class="text-muted">Total Workload</h6>
                     <h2>{{ stats.total_all }}</h2>
-                    <small>All prescriptions and walk-in sales</small>
+                    <small>All prescriptions and prescribe sales</small>
                 </div>
             </div>
         </div>
         <div class="col-md-3">
             <div class="card border-left-warning shadow">
                 <div class="card-body">
-                    <h6 class="text-muted">Walk-in Pending Payment</h6>
+                    <h6 class="text-muted">Prescribe Pending Payment</h6>
                     <h2 class="text-warning">{{ stats.walkin_pending }}</h2>
-                    <small>Walk-in sales needing cashier payment</small>
+                    <small>Prescribe sales needing cashier payment</small>
                 </div>
             </div>
         </div>
         <div class="col-md-3">
             <div class="card border-left-success shadow">
                 <div class="card-body">
-                    <h6 class="text-muted">Walk-in Ready</h6>
+                    <h6 class="text-muted">Prescribe Ready</h6>
                     <h2 class="text-success">{{ stats.walkin_ready }}</h2>
-                    <small>Walk-in sales paid and waiting to dispense</small>
+                    <small>Prescribe sales paid and waiting to dispense</small>
                 </div>
             </div>
         </div>
@@ -73,7 +188,7 @@
         <div class="col-md-6">
             <div class="card shadow">
                 <div class="card-header bg-danger text-white">
-                    <h5 class="mb-0">🔒 Pending Payment ({{ stats.pending_payment_total }})</h5>
+                    <h5 class="mb-0">🔒 Pending Payment ({{ stats.pending_payment_total }}){% if date_filter_active %} <small class="fw-normal opacity-75">(date filter on)</small>{% endif %}</h5>
                 </div>
                 <div class="card-body" style="max-height: 500px; overflow-y: auto;">
                     {% if pending_payment %}
@@ -82,11 +197,28 @@
                             <div class="card-body">
                                 <div class="d-flex justify-content-between align-items-start">
                                     <div style="flex: 1;">
-                                        <h6>{{ record.prescription.drug.name }} {{ record.prescription.drug.strength }}</h6>
-                                        <p class="mb-1"><strong>Patient:</strong> {{ record.patient.full_name }}</p>
+                                        <h6>{% if record.effective_drug %}{{ record.effective_drug.name }} {{ record.effective_drug.strength|default:"" }}{% else %}{{ record.prescription.drug.name }} {{ record.prescription.drug.strength }}{% endif %}</h6>
+                                        <p class="mb-1 d-flex flex-wrap align-items-center gap-2">
+                                            <strong>Patient:</strong> {{ record.patient.full_name }}
+                                            {% if record.payer_channel|default:"cash" == "insurance" %}
+                                            <span class="badge rounded-pill bg-info text-dark">Insurance</span>
+                                            {% elif record.payer_channel|default:"cash" == "corporate" %}
+                                            <span class="badge rounded-pill bg-primary">Corporate</span>
+                                            {% else %}
+                                            <span class="badge rounded-pill bg-secondary">Cash</span>
+                                            {% endif %}
+                                        </p>
+                                        {% if record.payer_name %}
+                                        <p class="mb-1"><small><strong>Company / Payer:</strong> <span class="text-primary">{{ record.payer_name }}</span></small></p>
+                                        {% endif %}
                                         <p class="mb-1"><small><strong>Quantity:</strong> {{ record.quantity_ordered }} units</small></p>
-                                        <p class="mb-1"><small><strong>Total Cost:</strong> <strong class="text-primary">GHS {{ record.prescription.total_cost|floatformat:2 }}</strong> ({{ record.quantity_ordered }} × GHS {{ record.prescription.drug.unit_price|default:"0.00" }})</small></p>
+                                        <p class="mb-1"><small><strong>Total Cost:</strong> <strong class="text-primary">GHS {{ record.display_line_total|default:0|floatformat:2 }}</strong> ({{ record.display_qty_for_breakdown|default:0 }} × GHS {{ record.display_unit_price|default:0|floatformat:2 }})</small></p>
                                         <p class="mb-1"><small>Dose: {{ record.prescription.dose }}, {{ record.prescription.frequency }}</small></p>
+                                        {% if record.prescription.instructions %}
+                                        <p class="mb-1" style="background: rgba(13, 110, 253, 0.1); padding: 5px; border-radius: 4px;">
+                                            <small><i class="bi bi-sticky-fill text-info me-1"></i><strong>Doctor's Note:</strong> {{ record.prescription.instructions|truncatewords:15 }}</small>
+                                        </p>
+                                        {% endif %}
                                         <p class="mb-1"><small>Prescribed: {{ record.prescription.created|date:"M d, Y" }}</small></p>
                                         <p class="mb-0"><strong class="text-danger">🔒 SEND TO CASHIER</strong></p>
                                     </div>
@@ -102,10 +234,49 @@
                         {% endfor %}
                     {% endif %}
 
-                    {% if walkin_pending %}
+                    {% if walkin_pending_insurance or walkin_pending_cash %}
                         <hr>
-                        <h6 class="text-warning">🛒 Walk-in Sales Pending Payment</h6>
-                        {% for sale in walkin_pending %}
+                        <h6 class="text-primary">🛒 Prescribe Sales – Send to Insurance</h6>
+                        <p class="small text-muted mb-2">Push the bill to Insurance/Corporate. No cash – insurer will be billed. Use the button on each sale below.</p>
+                        {% for sale in walkin_pending_insurance %}
+                        <div class="card mb-2" style="border-left: 4px solid #0d6efd;">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <h6 class="mb-1">{{ sale.customer_name }}</h6>
+                                        <p class="mb-1"><strong>Sale #:</strong> {{ sale.sale_number }}</p>
+                                        <p class="mb-1"><small>Phone: {{ sale.customer_phone|default:"N/A" }}</small></p>
+                                        {% if sale.payer %}<p class="mb-1"><small class="text-primary"><strong>Payer:</strong> {{ sale.payer.name }}</small></p>{% endif %}
+                                        <p class="mb-1 text-primary"><strong>Total: GHS {{ sale.total_amount|floatformat:2 }}</strong></p>
+                                        <p class="mb-0 small text-muted">↳ Send bill to {{ sale.payer.name|default:"Insurance" }} then dispense</p>
+                                    </div>
+                                    <div class="d-flex flex-column gap-1">
+                                        <form method="post" action="{% url 'hospital:send_prescribe_sale_to_insurance' sale.id %}" class="d-inline">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-primary btn-sm">
+                                                <i class="bi bi-send"></i> Send to Insurance
+                                            </button>
+                                        </form>
+                                        <a href="{% url 'hospital:pharmacy_walkin_dispense' sale.id %}" class="btn btn-success btn-sm" title="Open dispensing — syncs invoice payment if needed">
+                                            <i class="bi bi-capsule"></i> Dispense
+                                        </a>
+                                        <a href="{% url 'hospital:pharmacy_walkin_sale_detail' sale.id %}" class="btn btn-outline-secondary btn-sm">
+                                            View Sale
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                        {% if not walkin_pending_insurance and walkin_pending_cash %}
+                        <p class="small text-muted mb-2">No sales with Payer = Insurance yet. Use <strong>Send to Insurance</strong> on any sale below (uses patient’s insurance if on file).</p>
+                        {% endif %}
+                    {% endif %}
+
+                    {% if walkin_pending_cash %}
+                        {% if walkin_pending_insurance or walkin_pending_cash %}<hr>{% endif %}
+                        <h6 class="text-warning">🛒 Prescribe Sales – Pay at Cashier</h6>
+                        {% for sale in walkin_pending_cash %}
                         <div class="card mb-2" style="border-left: 4px solid #f59e0b;">
                             <div class="card-body">
                                 <div class="d-flex justify-content-between align-items-start">
@@ -113,9 +284,19 @@
                                         <h6 class="mb-1">{{ sale.customer_name }}</h6>
                                         <p class="mb-1"><strong>Sale #:</strong> {{ sale.sale_number }}</p>
                                         <p class="mb-1"><small>Phone: {{ sale.customer_phone|default:"N/A" }}</small></p>
-                                        <p class="mb-0 text-danger"><strong>Due: GHS {{ sale.amount_due|floatformat:2 }}</strong></p>
+                                        <p class="mb-1 text-danger"><strong>Due: GHS {{ sale.amount_due|floatformat:2 }}</strong></p>
+                                        <p class="mb-0 small text-muted">↳ Direct to Cashier with Sale #, or send to Insurance below</p>
                                     </div>
-                                    <div>
+                                    <div class="d-flex flex-column gap-1">
+                                        <form method="post" action="{% url 'hospital:send_prescribe_sale_to_insurance' sale.id %}" class="d-inline">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-primary btn-sm" title="Bill to patient's insurance (if on file)">
+                                                <i class="bi bi-send"></i> Send to Insurance
+                                            </button>
+                                        </form>
+                                        <a href="{% url 'hospital:pharmacy_walkin_dispense' sale.id %}" class="btn btn-success btn-sm" title="Dispense — confirms invoice payment if needed">
+                                            <i class="bi bi-capsule"></i> Dispense
+                                        </a>
                                         <a href="{% url 'hospital:pharmacy_walkin_sale_detail' sale.id %}" class="btn btn-warning btn-sm">
                                             View Sale
                                         </a>
@@ -127,7 +308,7 @@
                     {% endif %}
 
                     {% if not pending_payment and not walkin_pending %}
-                        <p class="text-muted text-center py-4">No prescriptions or walk-in sales pending payment</p>
+                        <p class="text-muted text-center py-4">No prescriptions or prescribe sales pending payment</p>
                     {% endif %}
                 </div>
             </div>
@@ -137,7 +318,7 @@
         <div class="col-md-6">
             <div class="card shadow">
                 <div class="card-header bg-success text-white">
-                    <h5 class="mb-0">✅ Paid - Ready to Dispense ({{ stats.paid_ready_total }})</h5>
+                    <h5 class="mb-0">✅ Paid - Ready to Dispense ({{ stats.paid_ready_total }}){% if read_filter_active|default:False %} <small class="fw-normal opacity-75">(filtered)</small>{% endif %}</h5>
                 </div>
                 <div class="card-body" style="max-height: 500px; overflow-y: auto;">
                     {% if paid_ready_to_dispense %}
@@ -147,16 +328,41 @@
                                 <div class="d-flex justify-content-between align-items-start">
                                     <div>
                                         <h6>{{ record.prescription.drug.name }} {{ record.prescription.drug.strength }}</h6>
-                                        <p class="mb-1"><strong>Patient:</strong> {{ record.patient.full_name }}</p>
+                                        <p class="mb-1 d-flex flex-wrap align-items-center gap-2">
+                                            <strong>Patient:</strong> {{ record.patient.full_name }}
+                                            {% if record.payer_channel|default:"cash" == "insurance" %}
+                                            <span class="badge rounded-pill bg-info text-dark">Insurance</span>
+                                            {% elif record.payer_channel|default:"cash" == "corporate" %}
+                                            <span class="badge rounded-pill bg-primary">Corporate</span>
+                                            {% else %}
+                                            <span class="badge rounded-pill bg-secondary">Cash</span>
+                                            {% endif %}
+                                        </p>
+                                        {% if record.payer_name %}
+                                        <p class="mb-1"><small><strong>Company / Payer:</strong> <span class="text-primary">{{ record.payer_name }}</span></small></p>
+                                        {% endif %}
                                         <p class="mb-1"><small>Quantity: {{ record.quantity_ordered }}</small></p>
                                         <p class="mb-1"><small>Dose: {{ record.prescription.dose }}, {{ record.prescription.frequency }}</small></p>
+                                        {% if record.prescription.instructions %}
+                                        <p class="mb-1" style="background: rgba(13, 110, 253, 0.1); padding: 5px; border-radius: 4px;">
+                                            <small><i class="bi bi-sticky-fill text-info me-1"></i><strong>Doctor's Note:</strong> {{ record.prescription.instructions|truncatewords:15 }}</small>
+                                        </p>
+                                        {% endif %}
                                         <p class="mb-0"><strong class="text-success">✅ PAYMENT VERIFIED</strong></p>
+                                        {% if record.payment_receipt %}
                                         <small class="text-muted">Receipt: {{ record.payment_receipt.receipt_number }}</small>
+                                        {% else %}
+                                        <small class="text-muted">Invoice settled at cashier — ready to dispense</small>
+                                        {% endif %}
                                     </div>
-                                    <div>
+                                    <div class="d-flex flex-column gap-1">
                                         <a href="{% url 'hospital:pharmacy_dispense_enforced' record.prescription.id %}" 
                                            class="btn btn-success btn-sm">
                                             <i class="bi bi-capsule"></i> Dispense Now
+                                        </a>
+                                        <a href="{% url 'hospital:pharmacy_label_print' record.prescription.id %}" 
+                                           class="btn btn-outline-primary btn-sm" target="_blank" title="Print Label">
+                                            <i class="bi bi-printer"></i> Print Label
                                         </a>
                                     </div>
                                 </div>
@@ -167,7 +373,7 @@
 
                     {% if walkin_ready %}
                         <hr>
-                        <h6 class="text-success">🛒 Walk-in Sales Ready to Dispense</h6>
+                        <h6 class="text-success">🛒 Prescribe Sales Ready to Dispense</h6>
                         {% for sale in walkin_ready %}
                         <div class="card mb-2" style="border-left: 4px solid #10b981;">
                             <div class="card-body">
@@ -190,7 +396,7 @@
                     {% endif %}
 
                     {% if not paid_ready_to_dispense and not walkin_ready %}
-                        <p class="text-muted text-center py-4">No prescriptions or walk-in sales ready to dispense</p>
+                        <p class="text-muted text-center py-4">No prescriptions or prescribe sales ready to dispense</p>
                     {% endif %}
                 </div>
             </div>
@@ -216,6 +422,7 @@
                                     <th>Receipt</th>
                                     <th>Dispensed By</th>
                                     <th>Dispensed At</th>
+                                    <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -227,6 +434,12 @@
                                     <td>{{ record.payment_receipt.receipt_number|default:"—" }}</td>
                                     <td>{{ record.dispensed_by.user.get_full_name|default:"-" }}</td>
                                     <td>{{ record.dispensed_at|date:"M d, h:i A" }}</td>
+                                    <td>
+                                        <a href="{% url 'hospital:pharmacy_label_print' record.prescription.id %}?auto_print=1" 
+                                           class="btn btn-primary btn-sm" target="_blank" title="Print Label (Brother QL-820NWB)">
+                                            <i class="bi bi-printer"></i> Print Label
+                                        </a>
+                                    </td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -238,13 +451,13 @@
     </div>
     {% endif %}
     
-    <!-- Walk-in Recently Dispensed -->
+    <!-- Prescribe Recently Dispensed -->
     {% if walkin_recently_dispensed %}
     <div class="row mt-4">
         <div class="col-md-12">
             <div class="card shadow">
                 <div class="card-header bg-success text-white">
-                    <h5 class="mb-0">🧾 Walk-in Dispensing History (Latest {{ walkin_recently_dispensed|length }})</h5>
+                    <h5 class="mb-0">🧾 Prescribe Dispensing History (Latest {{ walkin_recently_dispensed|length }})</h5>
                 </div>
                 <div class="card-body">
                     <div class="table-responsive">
@@ -345,6 +558,7 @@
             </div>
         </div>
     </div>
+</div>
 </div>
 {% endblock %}
 

@@ -1,0 +1,296 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}{{ title }}{% endblock %}
+{% block page_title %}{{ title }}{% endblock %}
+
+{% block content %}
+<style>
+    .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        transition: transform 0.2s;
+    }
+    .stat-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .stat-value {
+        font-size: 32px;
+        font-weight: 700;
+        color: #667eea;
+        margin: 10px 0;
+    }
+    .stat-label {
+        font-size: 14px;
+        color: #6c757d;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .transfer-card {
+        background: white;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 15px;
+        border-left: 4px solid #667eea;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .transfer-card.pending { border-left-color: #f59e0b; }
+    .transfer-card.approved { border-left-color: #10b981; }
+    .transfer-card.in_transit { border-left-color: #3b82f6; }
+    .transfer-card.completed { border-left-color: #059669; }
+    .transfer-card.cancelled { border-left-color: #ef4444; }
+    .status-badge {
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    .badge-pending { background: #fef3c7; color: #92400e; }
+    .badge-approved { background: #d1fae5; color: #065f46; }
+    .badge-in_transit { background: #dbeafe; color: #1e40af; }
+    .badge-completed { background: #d1fae5; color: #059669; }
+    .badge-cancelled { background: #fee2e2; color: #991b1b; }
+    .overdue-alert {
+        background: #fee2e2;
+        border-left: 4px solid #ef4444;
+        padding: 12px;
+        border-radius: 6px;
+        margin-bottom: 15px;
+    }
+</style>
+
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2><i class="bi bi-diagram-3"></i> {{ title }}</h2>
+            <p class="text-muted">Real-time monitoring of all store transfers</p>
+        </div>
+        <div>
+            <a href="{% url 'hospital:create_transfer_modern' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> Create Transfer
+            </a>
+            <a href="{% url 'hospital:procurement_dashboard' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back
+            </a>
+        </div>
+    </div>
+
+    <!-- Guidelines for end users -->
+    <div class="alert alert-light border mb-4 py-3" role="region" aria-label="Transfer workflow guide">
+        <strong><i class="bi bi-lightbulb text-warning me-2"></i>Transfer workflow</strong>
+        <p class="mb-1 mt-2 small">Transfers move stock between stores. Create a transfer (from <a href="{% url 'hospital:stores_list' %}">Stores</a> or the button above), then: <strong>Approve</strong> the transfer when authorised, and <strong>Complete</strong> it when items are received at the destination. Completion deducts from the source store and adds to the destination; quantities are tied to real inventory.</p>
+    </div>
+
+    <!-- Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-2">
+            <div class="stat-card">
+                <div class="stat-label">Total</div>
+                <div class="stat-value">{{ stats.total }}</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stat-card">
+                <div class="stat-label">Pending</div>
+                <div class="stat-value text-warning">{{ stats.pending }}</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stat-card">
+                <div class="stat-label">Approved</div>
+                <div class="stat-value text-info">{{ stats.approved }}</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stat-card">
+                <div class="stat-label">In Transit</div>
+                <div class="stat-value text-primary">{{ stats.in_transit }}</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stat-card">
+                <div class="stat-label">Completed</div>
+                <div class="stat-value text-success">{{ stats.completed }}</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stat-card">
+                <div class="stat-label">Cancelled</div>
+                <div class="stat-value text-danger">{{ stats.cancelled }}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Status</label>
+                    <select name="status" class="form-select">
+                        <option value="">All Statuses</option>
+                        {% for value, label in status_choices %}
+                        <option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Store</label>
+                    <select name="store" class="form-select">
+                        <option value="">All Stores</option>
+                        {% for store in all_stores %}
+                        <option value="{{ store.pk }}" {% if store_filter == store.pk|stringformat:"s" %}selected{% endif %}>{{ store.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">From Date</label>
+                    <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">To Date</label>
+                    <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">&nbsp;</label>
+                    <button type="submit" class="btn btn-primary w-100">Filter</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Overdue Alerts -->
+    {% if overdue_transfers %}
+    <div class="overdue-alert">
+        <h6><i class="bi bi-exclamation-triangle-fill text-danger"></i> Overdue Transfers</h6>
+        <p class="mb-0">The following transfers have been in transit for more than 2 days:</p>
+        <ul class="mb-0 mt-2">
+            {% for transfer in overdue_transfers %}
+            <li>
+                <a href="{% url 'hospital:transfer_detail_enhanced' transfer.pk %}">{{ transfer.transfer_number }}</a>
+                - {{ transfer.from_store.name }} → {{ transfer.to_store.name }}
+                ({{ transfer.created|timesince }})
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <!-- Pending Transfers -->
+    {% if pending_transfers %}
+    <div class="card mb-4">
+        <div class="card-header bg-warning text-white">
+            <h5 class="mb-0"><i class="bi bi-clock-history"></i> Pending Approval ({{ pending_transfers|length }})</h5>
+        </div>
+        <div class="card-body">
+            {% for transfer in pending_transfers %}
+            <div class="transfer-card pending">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <h6 class="mb-1">
+                            <a href="{% url 'hospital:transfer_detail_enhanced' transfer.pk %}">
+                                {{ transfer.transfer_number }}
+                            </a>
+                        </h6>
+                        <p class="mb-1 text-muted">
+                            <i class="bi bi-arrow-right"></i> {{ transfer.from_store.name }} → {{ transfer.to_store.name }}
+                        </p>
+                        <small class="text-muted">
+                            <i class="bi bi-calendar"></i> {{ transfer.transfer_date|date:"M d, Y" }} |
+                            <i class="bi bi-person"></i> {{ transfer.requested_by.user.get_full_name|default:"N/A" }}
+                        </small>
+                    </div>
+                    <div class="text-end">
+                        <span class="status-badge badge-pending">{{ transfer.get_status_display }}</span>
+                        <div class="mt-2">
+                            <a href="{% url 'hospital:approve_transfer' transfer.pk %}" class="btn btn-sm btn-success">
+                                <i class="bi bi-check-circle"></i> Approve
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Recent Transfers -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-list-ul"></i> All Transfers</h5>
+        </div>
+        <div class="card-body">
+            {% if transfers %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Transfer #</th>
+                            <th>From → To</th>
+                            <th>Date</th>
+                            <th>Status</th>
+                            <th>Requested By</th>
+                            <th>Items</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for transfer in transfers %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'hospital:transfer_detail_enhanced' transfer.pk %}">
+                                    {{ transfer.transfer_number }}
+                                </a>
+                            </td>
+                            <td>
+                                <i class="bi bi-arrow-right"></i>
+                                {{ transfer.from_store.name }} → {{ transfer.to_store.name }}
+                            </td>
+                            <td>{{ transfer.transfer_date|date:"M d, Y" }}</td>
+                            <td>
+                                <span class="status-badge badge-{{ transfer.status }}">
+                                    {{ transfer.get_status_display }}
+                                </span>
+                            </td>
+                            <td>{{ transfer.requested_by.user.get_full_name|default:"N/A" }}</td>
+                            <td>{{ transfer.lines.count }} items</td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <a href="{% url 'hospital:transfer_detail_enhanced' transfer.pk %}" class="btn btn-outline-primary">
+                                        <i class="bi bi-eye"></i>
+                                    </a>
+                                    {% if transfer.status == 'approved' %}
+                                    <a href="{% url 'hospital:complete_transfer' transfer.pk %}" class="btn btn-outline-success">
+                                        <i class="bi bi-check-circle"></i> Complete
+                                    </a>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox" style="font-size: 48px; color: #ccc;"></i>
+                <p class="text-muted mt-3">No transfers found</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+// Auto-refresh every 30 seconds
+setTimeout(function() {
+    location.reload();
+}, 30000);
+</script>
+{% endblock %}

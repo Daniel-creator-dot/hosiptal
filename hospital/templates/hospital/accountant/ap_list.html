@@ -1,0 +1,155 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Accounts Payable - HMS{% endblock %}
+{% block page_title %}Accounts Payable{% endblock %}
+{% block page_subtitle %}Manage Accounts Payable Entries{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header with Create Button -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-0"><i class="bi bi-file-earmark-text me-2"></i>Accounts Payable</h2>
+            <p class="text-muted mb-0">Manage all accounts payable entries</p>
+        </div>
+        <a href="{% url 'hospital:ap_create' %}" class="btn btn-primary">
+            <i class="bi bi-plus-circle me-2"></i>Add New AP Entry
+        </a>
+    </div>
+
+    <!-- Search and Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Search</label>
+                    <input type="text"
+                           name="q"
+                           class="form-control"
+                           placeholder="Vendor, bill #, invoice #, description..."
+                           value="{{ search_q|default:'' }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Status</label>
+                    <select name="status" class="form-select">
+                        <option value="">All</option>
+                        <option value="overdue" {% if status_filter == 'overdue' %}selected{% endif %}>Overdue</option>
+                        <option value="current" {% if status_filter == 'current' %}selected{% endif %}>Current</option>
+                    </select>
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary me-2">
+                        <i class="bi bi-search me-1"></i>Search
+                    </button>
+                    <a href="{% url 'hospital:ap_list' %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-x-circle me-1"></i>Clear
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card border-0 shadow-sm" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white;">
+                <div class="card-body">
+                    <h5 class="card-title">Total AP</h5>
+                    <h2 class="mb-0">GHS {{ total_ap|floatformat:2|intcomma }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card border-0 shadow-sm" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white;">
+                <div class="card-body">
+                    <h5 class="card-title">Overdue AP</h5>
+                    <h2 class="mb-0">GHS {{ overdue_ap|floatformat:2|intcomma }}</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AP List -->
+    <div class="card">
+        <div class="card-body">
+            {% if ap_list %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Bill #</th>
+                            <th>Vendor</th>
+                            <th>Vendor Invoice</th>
+                            <th>Amount</th>
+                            <th>Amount Paid</th>
+                            <th>Balance Due</th>
+                            <th>Due Date</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for ap in ap_list %}
+                        <tr>
+                            <td><strong>{{ ap.bill_number }}</strong></td>
+                            <td>{{ ap.vendor_name }}</td>
+                            <td>{{ ap.vendor_invoice|default:"-" }}</td>
+                            <td>GHS {{ ap.amount|floatformat:2|intcomma }}</td>
+                            <td>GHS {{ ap.amount_paid|floatformat:2|intcomma }}</td>
+                            <td>
+                                <strong class="{% if ap.is_overdue %}text-danger{% else %}text-success{% endif %}">
+                                    GHS {{ ap.balance_due|floatformat:2|intcomma }}
+                                </strong>
+                            </td>
+                            <td>{{ ap.due_date|date:"M d, Y" }}</td>
+                            <td>
+                                {% if ap.is_overdue %}
+                                    <span class="badge bg-danger">{{ ap.days_overdue }} Days Overdue</span>
+                                {% else %}
+                                    <span class="badge bg-success">Current</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:ap_detail' ap.id %}" class="btn btn-sm btn-outline-primary" title="View Details">
+                                    <i class="bi bi-eye"></i> View
+                                </a>
+                                <a href="{% url 'hospital:ap_edit' ap.id %}" class="btn btn-sm btn-outline-warning" title="Edit">
+                                    <i class="bi bi-pencil"></i> Edit
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            {% if ap_list.has_other_pages %}
+            <nav aria-label="Page navigation">
+                <ul class="pagination justify-content-center">
+                    {% if ap_list.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ ap_list.previous_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if search_q %}&q={{ search_q|urlencode }}{% endif %}">Previous</a>
+                    </li>
+                    {% endif %}
+                    <li class="page-item active">
+                        <span class="page-link">Page {{ ap_list.number }} of {{ ap_list.paginator.num_pages }}</span>
+                    </li>
+                    {% if ap_list.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ ap_list.next_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if search_q %}&q={{ search_q|urlencode }}{% endif %}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>No accounts payable entries found.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

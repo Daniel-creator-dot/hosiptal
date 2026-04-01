@@ -1,0 +1,415 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Deposit {{ deposit.deposit_number }} - Details{% endblock %}
+{% block page_title %}💰 Deposit Details{% endblock %}
+{% block page_subtitle %}Deposit {{ deposit.deposit_number }} - {{ deposit.patient.full_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .deposit-detail-container {
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+    
+    .info-card {
+        background: white;
+        border-radius: 16px;
+        padding: 30px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        margin-bottom: 25px;
+        border-left: 5px solid #ffc107;
+    }
+    
+    .card-header-custom {
+        background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
+        color: white;
+        padding: 20px 30px;
+        border-radius: 12px 12px 0 0;
+        margin: -30px -30px 25px -30px;
+    }
+    
+    .info-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 15px 0;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .info-row:last-child {
+        border-bottom: none;
+    }
+    
+    .info-label {
+        font-weight: 600;
+        color: #666;
+        min-width: 200px;
+    }
+    
+    .info-value {
+        color: #333;
+        font-weight: 500;
+        text-align: right;
+    }
+    
+    .amount-box {
+        background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 30px;
+        text-align: center;
+        margin: 20px 0;
+    }
+    
+    .amount-box .label {
+        font-size: 14px;
+        opacity: 0.9;
+        margin-bottom: 10px;
+    }
+    
+    .amount-box .amount {
+        font-size: 3em;
+        font-weight: 700;
+    }
+    
+    .status-badge {
+        display: inline-block;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-weight: 600;
+        font-size: 14px;
+    }
+    
+    .status-active {
+        background: #10b981;
+        color: white;
+    }
+    
+    .status-fully-used {
+        background: #6b7280;
+        color: white;
+    }
+    
+    .status-refunded {
+        background: #ef4444;
+        color: white;
+    }
+    
+    .status-cancelled {
+        background: #9ca3af;
+        color: white;
+    }
+    
+    .application-item {
+        background: #f8f9fa;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 15px;
+        border-left: 4px solid #10b981;
+    }
+    
+    .action-buttons {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid deposit-detail-container">
+    <!-- Header Actions -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <a href="{% url 'hospital:patient_deposit_list' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Deposits
+            </a>
+            <a href="{% url 'hospital:patient_deposit_history' deposit.patient.pk %}" class="btn btn-outline-primary ms-2">
+                <i class="bi bi-person"></i> Patient's Deposit History
+            </a>
+            <a href="{% url 'hospital:cashier_patient_total_bill' deposit.patient.pk %}" class="btn btn-outline-success ms-2">
+                <i class="bi bi-receipt"></i> View Total Bill
+            </a>
+        </div>
+        <div>
+            {% if is_cashier %}
+            <a href="{% url 'hospital:patient_deposit_print' deposit.pk %}" class="btn btn-primary">
+                <i class="bi bi-printer"></i> Print Receipt
+            </a>
+            {% endif %}
+            {% if deposit.status == 'active' and deposit.available_balance > 0 %}
+            <a href="{% url 'hospital:apply_deposit_manually' deposit.pk %}" class="btn btn-success">
+                <i class="bi bi-check-circle"></i> Apply to Invoice
+            </a>
+            {% endif %}
+            {% if deposit.available_balance > 0 and deposit.status == 'active' %}
+            <a href="{% url 'hospital:refund_deposit' deposit.pk %}" class="btn btn-warning">
+                <i class="bi bi-arrow-counterclockwise"></i> Refund Deposit
+            </a>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Deposit Information Card -->
+    <div class="info-card">
+        <div class="card-header-custom">
+            <h4 class="mb-0"><i class="bi bi-wallet2"></i> Deposit Information</h4>
+        </div>
+        
+        <div class="row">
+            <div class="col-md-6">
+                <div class="info-row">
+                    <span class="info-label">Deposit Number:</span>
+                    <span class="info-value"><strong>{{ deposit.deposit_number }}</strong></span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Patient:</span>
+                    <span class="info-value">
+                        <a href="{% url 'hospital:patient_detail' deposit.patient.pk %}">
+                            <strong>{{ deposit.patient.full_name }}</strong>
+                        </a>
+                        <br><small class="text-muted">MRN: {{ deposit.patient.mrn }}</small>
+                    </span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Deposit Date:</span>
+                    <span class="info-value">{{ deposit.deposit_date|date:"F d, Y - h:i A" }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Payment Method:</span>
+                    <span class="info-value">{{ deposit.get_payment_method_display }}</span>
+                </div>
+                {% if deposit.reference_number %}
+                <div class="info-row">
+                    <span class="info-label">Reference Number:</span>
+                    <span class="info-value">{{ deposit.reference_number }}</span>
+                </div>
+                {% endif %}
+                {% if deposit.bank_account %}
+                <div class="info-row">
+                    <span class="info-label">Bank Account:</span>
+                    <span class="info-value">{{ deposit.bank_account.account_name }} ({{ deposit.bank_account.account_number }})</span>
+                </div>
+                {% endif %}
+                <div class="info-row">
+                    <span class="info-label">Status:</span>
+                    <span class="info-value">
+                        <span class="status-badge status-{{ deposit.status }}">
+                            {{ deposit.get_status_display }}
+                        </span>
+                    </span>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <div class="amount-box">
+                    <div class="label">Total Deposit Amount</div>
+                    <div class="amount">GHS {{ deposit.deposit_amount|floatformat:2|intcomma }}</div>
+                </div>
+                
+                <div class="row mt-3">
+                    <div class="col-6">
+                        <div class="text-center p-3 bg-success bg-opacity-10 rounded">
+                            <div class="text-muted small">Available Balance</div>
+                            <div class="h4 text-success mb-0">GHS {{ deposit.available_balance|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="text-center p-3 bg-info bg-opacity-10 rounded">
+                            <div class="text-muted small">Used Amount</div>
+                            <div class="h4 text-info mb-0">GHS {{ deposit.used_amount|floatformat:2|intcomma }}</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-3">
+                    <div class="info-row">
+                        <span class="info-label">Received By:</span>
+                        <span class="info-value">
+                            {% if deposit.received_by %}
+                                {{ deposit.received_by.get_full_name|default:deposit.received_by.username }}
+                            {% else %}
+                                N/A
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Created By:</span>
+                        <span class="info-value">
+                            {% if deposit.created_by %}
+                                {{ deposit.created_by.get_full_name|default:deposit.created_by.username }}
+                            {% else %}
+                                N/A
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Created:</span>
+                        <span class="info-value">{{ deposit.created|date:"F d, Y - h:i A" }}</span>
+                    </div>
+                    {% if deposit.transaction %}
+                    <div class="info-row">
+                        <span class="info-label">Transaction:</span>
+                        <span class="info-value">
+                            <strong>{{ deposit.transaction.transaction_number }}</strong>
+                            {% if deposit.transaction.reference_number %}
+                                <br><small class="text-muted">Ref: {{ deposit.transaction.reference_number }}</small>
+                            {% endif %}
+                        </span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Cashier Note Update Section -->
+        {% if is_cashier %}
+        <div class="row mt-4">
+            <div class="col-md-12">
+                <div class="info-card" style="background: #fff9e6; border-left-color: #ffc107;">
+                    <div class="card-header-custom" style="background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);">
+                        <h4 class="mb-0"><i class="bi bi-sticky"></i> Update Notes for Finance Review</h4>
+                    </div>
+                    <form method="post" id="notesUpdateForm" class="mt-3 p-3">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="update_notes">
+                        <div class="mb-3">
+                            <label for="notes" class="form-label"><strong>Cashier Notes:</strong></label>
+                            <textarea class="form-control" id="notes" name="notes" rows="4" 
+                                      placeholder="Add notes for finance department (e.g., payment confirmation, reference numbers, special instructions)">{{ deposit.notes|default:'' }}</textarea>
+                            <small class="form-text text-muted">These notes will be visible on the printed receipt for finance review.</small>
+                        </div>
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="print_after_update" name="print_after_update" value="1" checked>
+                            <label class="form-check-label" for="print_after_update">
+                                <strong>Print receipt after updating notes</strong>
+                            </label>
+                        </div>
+                        <button type="submit" class="btn btn-warning btn-lg">
+                            <i class="bi bi-save"></i> Update Notes & Print
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% elif deposit.notes %}
+        <div class="row mt-4">
+            <div class="col-md-12">
+                <div class="info-card" style="background: #fff9e6; border-left-color: #ffc107;">
+                    <div class="card-header-custom" style="background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);">
+                        <h4 class="mb-0"><i class="bi bi-sticky"></i> Cashier Notes</h4>
+                    </div>
+                    <div class="mt-3 p-3">
+                        <p style="white-space: pre-wrap;">{{ deposit.notes }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Deposit Applications -->
+    <div class="info-card">
+        <div class="card-header-custom" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+            <h4 class="mb-0"><i class="bi bi-receipt"></i> Deposit Applications ({{ applications|length }})</h4>
+        </div>
+        
+        {% if applications %}
+            {% for application in applications %}
+            <div class="application-item">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <h6 class="mb-2">
+                            <a href="{% url 'hospital:invoice_detail' application.invoice.pk %}" class="text-decoration-none">
+                                Invoice: {{ application.invoice.invoice_number }}
+                            </a>
+                        </h6>
+                        <p class="mb-1">
+                            <strong>Applied Amount:</strong> GHS {{ application.applied_amount|floatformat:2|intcomma }}
+                        </p>
+                        <p class="mb-1 text-muted">
+                            <small>
+                                <strong>Applied Date:</strong> {{ application.applied_date|date:"F d, Y - h:i A" }}
+                                {% if application.applied_by %}
+                                    | <strong>By:</strong> {{ application.applied_by.get_full_name|default:application.applied_by.username }}
+                                {% endif %}
+                            </small>
+                        </p>
+                        {% if application.notes %}
+                        <p class="mb-0 text-muted">
+                            <small><strong>Notes:</strong> {{ application.notes }}</small>
+                        </p>
+                        {% endif %}
+                    </div>
+                    <div class="text-end">
+                        <span class="badge bg-success">Applied</span>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i> This deposit has not been applied to any invoices yet.
+                {% if deposit.status == 'active' and deposit.available_balance > 0 %}
+                    <a href="{% url 'hospital:apply_deposit_manually' deposit.pk %}" class="alert-link ms-2">
+                        Apply to Invoice
+                    </a>
+                {% endif %}
+            </div>
+        {% endif %}
+    </div>
+    
+    <!-- Patient Information -->
+    <div class="info-card">
+        <div class="card-header-custom" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+            <h4 class="mb-0"><i class="bi bi-person"></i> Patient Information</h4>
+        </div>
+        
+        <div class="row">
+            <div class="col-md-6">
+                <div class="info-row">
+                    <span class="info-label">Name:</span>
+                    <span class="info-value">
+                        <a href="{% url 'hospital:patient_detail' deposit.patient.pk %}">
+                            <strong>{{ deposit.patient.full_name }}</strong>
+                        </a>
+                    </span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">MRN:</span>
+                    <span class="info-value">{{ deposit.patient.mrn }}</span>
+                </div>
+                {% if deposit.patient.phone_number %}
+                <div class="info-row">
+                    <span class="info-label">Phone:</span>
+                    <span class="info-value">{{ deposit.patient.phone_number }}</span>
+                </div>
+                {% endif %}
+                {% if deposit.patient.email %}
+                <div class="info-row">
+                    <span class="info-label">Email:</span>
+                    <span class="info-value">{{ deposit.patient.email }}</span>
+                </div>
+                {% endif %}
+            </div>
+            <div class="col-md-6">
+                <div class="info-row">
+                    <span class="info-label">Total Deposit Balance:</span>
+                    <span class="info-value">
+                        <strong class="text-success">GHS {{ deposit.patient.deposit_balance|floatformat:2|intcomma }}</strong>
+                    </span>
+                </div>
+                {% if deposit.patient.primary_insurance %}
+                <div class="info-row">
+                    <span class="info-label">Payer:</span>
+                    <span class="info-value">
+                        {{ deposit.patient.primary_insurance.name }}
+                        <span class="badge bg-info ms-2">{{ deposit.patient.primary_insurance.get_payer_type_display }}</span>
+                    </span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

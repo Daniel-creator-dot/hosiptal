@@ -106,15 +106,21 @@ class InsuranceCompany(BaseModel):
     def total_outstanding_claims(self):
         """Total outstanding claims amount"""
         from .models_insurance import InsuranceClaimItem
-        
-        outstanding = InsuranceClaimItem.objects.filter(
-            payer__name=self.name,
-            claim_status__in=['pending', 'submitted', 'processing', 'approved', 'partially_paid'],
-            is_deleted=False
-        ).aggregate(
-            total=models.Sum(models.F('billed_amount') - models.F('paid_amount'))
-        )['total'] or Decimal('0.00')
-        
+        from .insurance_claim_query import insurance_claim_item_deduped_q
+
+        outstanding = (
+            InsuranceClaimItem.objects.filter(
+                payer__name=self.name,
+                claim_status__in=['pending', 'submitted', 'processing', 'approved', 'partially_paid'],
+                is_deleted=False,
+            )
+            .filter(insurance_claim_item_deduped_q())
+            .aggregate(
+                total=models.Sum(models.F('billed_amount') - models.F('paid_amount'))
+            )['total']
+            or Decimal('0.00')
+        )
+
         return outstanding
 
 

@@ -1,5 +1,6 @@
 {% extends 'hospital/base.html' %}
 {% load static %}
+{% load humanize hospital_extras %}
 
 {% block title %}Doctor Dashboard{% endblock %}
 
@@ -113,6 +114,86 @@
 
     {% include 'hospital/includes/performance_snapshot.html' with snapshot=performance_snapshot heading="Your Clinical Impact (Last 14 Days)" %}
 
+    <!-- Consultation Quick Access -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card" style="background: linear-gradient(135deg, #10B981 0%, #059669 100%); color: white; border-left: 4px solid #fff;">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h4 class="mb-2" style="color: white;">
+                            <i class="bi bi-stethoscope me-2"></i>Clinical Consultation
+                        </h4>
+                        <p class="mb-0" style="opacity: 0.95;">
+                            <strong>Quick Access:</strong> Click "Consult" on any appointment or pending consultation below to start. 
+                            You can prescribe medications, order lab tests, add diagnoses, and complete consultations.
+                        </p>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <div class="d-flex flex-column gap-2">
+                            <a href="{% url 'hospital:patient_list' %}" class="btn btn-light btn-lg">
+                                <i class="bi bi-people me-2"></i>All Patients
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Medical Director Authorization Section -->
+    {% if is_medical_director %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card" style="border-left-color: #dc3545; background: linear-gradient(135deg, #fff5f5 0%, #ffe5e5 100%);">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <h5 class="mb-1">
+                            <i class="bi bi-shield-check me-2 text-danger"></i>
+                            Medical Director Authorization
+                        </h5>
+                        <p class="text-muted mb-0">You have authority to approve drug returns and view deletion history</p>
+                    </div>
+                    <span class="badge bg-danger fs-6">Medical Director</span>
+                </div>
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <a href="{% url 'hospital:drug_returns_list' %}" class="btn btn-outline-danger w-100">
+                            <i class="bi bi-arrow-return-left me-2"></i>
+                            Drug Returns
+                            <br>
+                            <small class="text-muted">Approve/Reject Returns</small>
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{% url 'hospital:deletion_history_dashboard' %}" class="btn btn-outline-danger w-100">
+                            <i class="bi bi-trash me-2"></i>
+                            Deletion History
+                            <br>
+                            <small class="text-muted">Audit Trail</small>
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{% url 'hospital:inventory_accountability_dashboard' %}" class="btn btn-outline-danger w-100">
+                            <i class="bi bi-shield-check me-2"></i>
+                            Accountability
+                            <br>
+                            <small class="text-muted">Full Audit System</small>
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{% url 'hospital:hospital_settings' %}" class="btn btn-outline-danger w-100">
+                            <i class="bi bi-gear me-2"></i>
+                            Hospital Settings
+                            <br>
+                            <small class="text-muted">Manage Settings</small>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Statistics Cards -->
     <div class="row mb-4">
         <div class="col-md-3">
@@ -131,7 +212,7 @@
             <div class="stat-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
                 <div class="stat-number">{{ stats.total_patients|default:0 }}</div>
                 <div class="stat-label">Active HMS Patients</div>
-                {% if stats.total_legacy_patients %}
+                {% if legacy_table_exists and stats.total_legacy_patients %}
                 <div class="small mt-2" style="opacity: 0.8;">
                     + {{ stats.total_legacy_patients|intcomma }} Legacy
                 </div>
@@ -146,8 +227,38 @@
         </div>
     </div>
     
+    <!-- Drug Classification Guide - Prominent Card -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-left: 6px solid #4f46e5;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h4 class="mb-2" style="color: white;">
+                            <i class="bi bi-book me-2"></i>
+                            Drug Classification Guide
+                        </h4>
+                        <p class="mb-0" style="opacity: 0.9;">
+                            Comprehensive drug reference with detailed categories, subcategories, and real-time inventory status. 
+                            Browse by system, search drugs, and prescribe directly from the guide.
+                        </p>
+                    </div>
+                    <div class="d-flex gap-2 flex-wrap">
+                        <a href="{% url 'hospital:prescription_assistant' %}" class="btn btn-primary btn-lg" style="font-weight: 600; padding: 12px 32px;">
+                            <i class="bi bi-robot me-2"></i>
+                            Prescription Assistant
+                        </a>
+                        <a href="{% url 'hospital:drug_classification_guide' %}" class="btn btn-light btn-lg" style="font-weight: 600; padding: 12px 32px;">
+                            <i class="bi bi-arrow-right-circle me-2"></i>
+                            Drug Guide
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <!-- Legacy Patient Migration Alert -->
-    {% if stats.unmigrated_legacy > 0 %}
+    {% if legacy_table_exists and stats.unmigrated_legacy > 0 %}
     <div class="alert alert-info mb-4">
         <div class="d-flex justify-content-between align-items-center">
             <div>
@@ -169,29 +280,30 @@
             <div class="dashboard-card">
                 <h5 class="mb-3">
                     <i class="bi bi-calendar-check me-2"></i>
-                    Today's Appointments
+                    Today's visits
                 </h5>
-                {% if today_appointments %}
-                    {% for appointment in today_appointments %}
+                {% if today_encounters %}
+                    {% for encounter in today_encounters %}
                     <div class="appointment-item">
                         <div class="d-flex justify-content-between align-items-start">
                             <div>
                                 <h6 class="mb-1">
-                                    <a href="{% url 'hospital:patient_detail' appointment.patient.pk %}" class="text-decoration-none">
-                                        {{ appointment.patient.full_name }}
+                                    <a href="{% url 'hospital:patient_detail' encounter.patient.pk %}" class="text-decoration-none">
+                                        {{ encounter.patient.full_name }}
                                     </a>
+                                    {% patient_payer_badges encounter.patient encounter %}
                                 </h6>
                                 <p class="text-muted mb-1">
                                     <i class="bi bi-clock me-1"></i>
-                                    {{ appointment.started_at|time:"g:i A" }}
+                                    {{ encounter.started_at|time:"g:i A" }}
                                 </p>
                                 <small class="text-muted">
-                                    MRN: {{ appointment.patient.mrn }}
+                                    MRN: {{ encounter.patient.mrn }}
                                 </small>
                             </div>
                             <div>
-                                <a href="{% url 'hospital:consultation_view' appointment.pk %}" class="action-btn btn-success">
-                                    <i class="bi bi-stethoscope me-1"></i>Consult
+                                <a href="{% url 'hospital:consultation_view' encounter_id=encounter.pk %}" class="action-btn btn-success">
+                                    <i class="bi bi-stethoscope me-1"></i>Open consultation
                                 </a>
                             </div>
                         </div>
@@ -222,6 +334,7 @@
                                     <a href="{% url 'hospital:patient_detail' consultation.patient.pk %}" class="text-decoration-none">
                                         {{ consultation.patient.full_name }}
                                     </a>
+                                    {% patient_payer_badges consultation.patient consultation %}
                                 </h6>
                                 <p class="text-muted mb-1">
                                     <i class="bi bi-clock me-1"></i>
@@ -232,8 +345,8 @@
                                 </small>
                             </div>
                             <div>
-                                <a href="{% url 'hospital:consultation_view' consultation.pk %}" class="action-btn">
-                                    <i class="bi bi-arrow-right me-1"></i>Review
+                                <a href="{% url 'hospital:consultation_view' encounter_id=consultation.pk %}" class="action-btn">
+                                    <i class="bi bi-stethoscope me-1"></i>Open consultation
                                 </a>
                             </div>
                         </div>
@@ -247,6 +360,42 @@
                 {% endif %}
             </div>
         </div>
+
+        <!-- Recently Completed (Re-openable) -->
+        {% if reopenable_consultations %}
+        <div class="col-md-6">
+            <div class="dashboard-card" style="border-left: 4px solid #0ea5e9;">
+                <h5 class="mb-3">
+                    <i class="bi bi-box-arrow-in-right me-2"></i>
+                    Recently Completed – Re-open
+                </h5>
+                <p class="text-muted small mb-3">Expires end of day after completion</p>
+                {% for consultation in reopenable_consultations %}
+                <div class="patient-card">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="mb-1">
+                                <a href="{% url 'hospital:patient_detail' consultation.patient.pk %}" class="text-decoration-none">
+                                    {{ consultation.patient.full_name }}
+                                </a>
+                            </h6>
+                            <p class="text-muted mb-1">
+                                <i class="bi bi-check-circle me-1"></i>
+                                {{ consultation.ended_at|date:"M d, g:i A" }}
+                            </p>
+                            <small class="text-muted">{{ consultation.get_encounter_type_display }}</small>
+                        </div>
+                        <div>
+                            <a href="{% url 'hospital:consultation_view' encounter_id=consultation.pk %}" class="action-btn" style="background: #0ea5e9;">
+                                <i class="bi bi-box-arrow-in-right me-1"></i>Re-open consultation
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
     </div>
 
     <div class="row">
@@ -266,6 +415,7 @@
                                     <a href="{% url 'hospital:patient_detail' patient.pk %}" class="text-decoration-none">
                                         {{ patient.full_name }}
                                     </a>
+                                    {% patient_payer_badges patient %}
                                 </h6>
                                 <p class="text-muted mb-0">
                                     MRN: {{ patient.mrn }} | Age: {{ patient.age }} years
@@ -301,16 +451,17 @@
                         <div class="d-flex justify-content-between align-items-start">
                             <div>
                                 <h6 class="mb-1">
-                                    <a href="{% url 'hospital:patient_detail' result.patient.pk %}" class="text-decoration-none">
-                                        {{ result.patient.full_name }}
+                                    <a href="{% url 'hospital:patient_detail' result.order.encounter.patient.pk %}" class="text-decoration-none">
+                                        {{ result.order.encounter.patient.full_name }}
                                     </a>
+                                    {% patient_payer_badges result.order.encounter.patient result.order.encounter %}
                                 </h6>
                                 <p class="text-muted mb-1">
                                     <i class="bi bi-flask me-1"></i>
                                     {{ result.test.name }}
                                 </p>
                                 <small class="text-muted">
-                                    Completed: {{ result.completed_at|date:"M d, Y g:i A" }}
+                                    Result: {{ result.created|date:"M d, Y g:i A" }}
                                 </small>
                             </div>
                             <div>
@@ -337,7 +488,7 @@
     </div>
 
     <!-- Legacy Patients Section (if any recent) -->
-    {% if recent_legacy_patients %}
+    {% if legacy_table_exists and recent_legacy_patients %}
     <div class="row mb-4">
         <div class="col-12">
             <div class="dashboard-card" style="border-left-color: #ffc107; background: linear-gradient(90deg, rgba(255, 193, 7, 0.05) 0%, white 2%);">
@@ -388,6 +539,52 @@
     </div>
     {% endif %}
 
+    <!-- Recent Lab Orders -->
+    {% if recent_lab_orders %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card" style="border-left-color: #17a2b8;">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0">
+                        <i class="bi bi-flask me-2"></i>
+                        Recent Lab Orders
+                    </h5>
+                    <a href="{% url 'hospital:doctor_order_lab_tests' %}" class="action-btn" style="background: #17a2b8;">
+                        <i class="bi bi-plus-circle me-1"></i>Order Lab Tests
+                    </a>
+                </div>
+                {% for order in recent_lab_orders %}
+                <div class="patient-card" style="border-left-color: #17a2b8;">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="mb-1">
+                                <a href="{% url 'hospital:patient_detail' order.encounter.patient.pk %}" class="text-decoration-none">
+                                    {{ order.encounter.patient.full_name }}
+                                </a>
+                                {% patient_payer_badges order.encounter.patient order.encounter %}
+                            </h6>
+                            <p class="text-muted mb-1">
+                                <i class="bi bi-flask me-1"></i>
+                                {{ order.lab_results.count }} test(s) | 
+                                Priority: <span class="badge bg-{% if order.priority == 'stat' %}danger{% elif order.priority == 'urgent' %}warning{% else %}info{% endif %}">{{ order.get_priority_display }}</span>
+                            </p>
+                            <small class="text-muted">
+                                Ordered: {{ order.requested_at|date:"M d, Y g:i A" }} | Status: {{ order.get_status_display }}
+                            </small>
+                        </div>
+                        <div>
+                            <a href="{% url 'hospital:order_detail_enhanced' order.pk %}" class="action-btn btn-info">
+                                <i class="bi bi-eye me-1"></i>View
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Quick Actions -->
     <div class="row">
         <div class="col-12">
@@ -397,19 +594,34 @@
                     Quick Actions
                 </h5>
                 <div class="d-flex flex-wrap gap-2">
+                    <a href="{% url 'hospital:patient_list' %}" class="action-btn" style="background: #10B981;">
+                        <i class="bi bi-stethoscope me-1"></i>Start Consultation
+                    </a>
+                    <a href="{% url 'hospital:doctor_patient_flowboard' %}" class="action-btn" style="background: #667eea;">
+                        <i class="bi bi-diagram-3 me-1"></i>Patient Flowboard
+                    </a>
                     <a href="{% url 'hospital:patient_create' %}" class="action-btn">
                         <i class="bi bi-person-plus me-1"></i>New Patient
                     </a>
                     <a href="{% url 'hospital:encounter_create' %}" class="action-btn">
                         <i class="bi bi-plus-circle me-1"></i>New Encounter
                     </a>
+                    <a href="{% url 'hospital:doctor_order_lab_tests' %}" class="action-btn" style="background: #17a2b8;">
+                        <i class="bi bi-flask me-1"></i>Order Lab Tests
+                    </a>
+                    <a href="{% url 'hospital:prescription_assistant' %}" class="action-btn" style="background: #6366f1;">
+                        <i class="bi bi-robot me-1"></i>Prescription Assistant
+                    </a>
+                    <a href="{% url 'hospital:drug_classification_guide' %}" class="action-btn" style="background: #6f42c1;">
+                        <i class="bi bi-book me-1"></i>Drug Guide
+                    </a>
                     <a href="{% url 'hospital:global_search' %}" class="action-btn">
                         <i class="bi bi-search me-1"></i>Search
                     </a>
-                    <a href="{% url 'hospital:reports_daily' %}" class="action-btn">
+                    <a href="{% url 'hospital:daily_report' %}" class="action-btn">
                         <i class="bi bi-graph-up me-1"></i>Reports
                     </a>
-                    {% if stats.total_legacy_patients %}
+                    {% if legacy_table_exists and stats.total_legacy_patients %}
                     <a href="{% url 'hospital:legacy_patient_list' %}" class="action-btn" style="background: #ffc107; color: #212529;">
                         <i class="bi bi-archive me-1"></i>Legacy Patients
                     </a>

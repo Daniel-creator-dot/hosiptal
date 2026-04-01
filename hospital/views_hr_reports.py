@@ -19,6 +19,7 @@ from .models_hr import (
 )
 from .models_advanced import LeaveRequest, Attendance
 from .models_login_tracking import LoginHistory, SecurityAlert
+from .utils_roles import get_user_role
 
 try:
     from openpyxl import Workbook
@@ -30,13 +31,20 @@ except ImportError:
 
 def is_hr_or_admin(user):
     """Check if user is HR or Admin"""
-    # Allow superusers, staff users, and users in Admin/HR groups
-    if user.is_superuser or user.is_staff:
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
         return True
-    return user.groups.filter(name__in=['Admin', 'HR']).exists()
+    # Prefer role-based access (no is_staff fallback)
+    role = get_user_role(user)
+    if role in {'admin', 'hr_manager', 'hr', 'it'}:
+        return True
+    # Legacy group support
+    return user.groups.filter(name__in=['Admin', 'Administrator', 'HR', 'Human Resources']).exists()
 
 
 @login_required
+@user_passes_test(is_hr_or_admin)
 def hr_reports_dashboard(request):
     """Main HR Reports Dashboard"""
     today = date.today()
@@ -300,8 +308,9 @@ def leave_report(request):
 
 
 @login_required
+@user_passes_test(is_hr_or_admin, login_url='/hms/login/')
 def attendance_report(request):
-    """Attendance Report"""
+    """Attendance Report - manual attendance records"""
     date_from = request.GET.get('date_from', '')
     date_to = request.GET.get('date_to', '')
     department_filter = request.GET.get('department', '')
@@ -369,7 +378,7 @@ def login_attendance_dashboard(request):
         login_time__lte=end_dt,
         status='success',
         is_deleted=False
-    ).select_related('user', 'staff__department')
+    ).select_related('user', 'staff__department', 'staff__contract')
     
     if department_filter:
         login_qs = login_qs.filter(staff__department_id=department_filter)
@@ -388,28 +397,44 @@ def login_attendance_dashboard(request):
         entry = attendance_map.get(key)
         
         if not entry:
+            # Get job title from contract if available
+            job_title = None
+            try:
+                if hasattr(staff, 'contract') and staff.contract and staff.contract.job_title:
+                    job_title = staff.contract.job_title
+            except:
+                pass
+            
             attendance_map[key] = {
                 'staff': staff,
                 'department': staff.department,
+                'job_title': job_title,  # Add job title to row data
                 'first_login': record.login_time,
                 'last_activity': session_end,
                 'total_sessions': 1,
                 'open_sessions': 0 if record.logout_time else 1,
-                'locations': {record.location_display},
+                'locations': {record.location_display or 'Unknown'},
                 'device_types': {record.device_type or 'Unknown'},
-                'latest_ip': record.ip_address,
+                'latest_ip': record.ip_address or 'Unknown',
                 'suspicious': record.is_suspicious,
             }
         else:
             entry['first_login'] = min(entry['first_login'], record.login_time)
             entry['last_activity'] = max(entry['last_activity'], session_end)
             entry['total_sessions'] += 1
-            entry['locations'].add(record.location_display)
+            entry['locations'].add(record.location_display or 'Unknown')
             entry['device_types'].add(record.device_type or 'Unknown')
-            entry['latest_ip'] = record.ip_address or entry['latest_ip']
+            entry['latest_ip'] = record.ip_address or entry.get('latest_ip', 'Unknown')
             entry['suspicious'] = entry['suspicious'] or record.is_suspicious
             if not record.logout_time:
                 entry['open_sessions'] += 1
+            # Ensure job_title is set if not already
+            if 'job_title' not in entry or not entry['job_title']:
+                try:
+                    if hasattr(staff, 'contract') and staff.contract and staff.contract.job_title:
+                        entry['job_title'] = staff.contract.job_title
+                except:
+                    pass
     
     attendance_rows = sorted(
         attendance_map.values(),
@@ -441,10 +466,20 @@ def login_attendance_dashboard(request):
     departments = Department.objects.filter(is_deleted=False).order_by('name')
     
     for row in attendance_rows:
-        row['locations_display'] = ', '.join(sorted(filter(None, row['locations'])))
-        row['devices_display'] = ', '.join(sorted(filter(None, row['device_types'])))
+        row['locations_display'] = ', '.join(sorted(filter(None, row.get('locations', set())))) or 'Unknown'
+        row['devices_display'] = ', '.join(sorted(filter(None, row.get('device_types', set())))) or 'Unknown'
         row['first_login_time'] = timezone.localtime(row['first_login'])
         row['last_activity_time'] = timezone.localtime(row['last_activity'])
+        # Ensure latest_ip is not None
+        row['latest_ip'] = row.get('latest_ip') or 'Unknown'
+        # Ensure job_title is set if missing
+        if 'job_title' not in row or not row.get('job_title'):
+            try:
+                staff = row.get('staff')
+                if staff and hasattr(staff, 'contract') and staff.contract and staff.contract.job_title:
+                    row['job_title'] = staff.contract.job_title
+            except:
+                pass
     
     context = {
         'title': 'Login Attendance Monitor',
@@ -511,7 +546,9 @@ def live_session_monitor(request):
         is_deleted=False
     ).select_related('staff__user', 'staff__department').order_by('-login_time')
     
-    live_sessions = []
+    # Track unique users for live sessions (prevent duplicates)
+    # Key: user_id, Value: session dict with most recent login info
+    live_sessions_map = {}
     
     for login in recent_logins:
         staff = login.staff
@@ -523,6 +560,7 @@ def live_session_monitor(request):
         
         staff_user = staff.user if staff and staff.user else login.user
         staff_name = staff_user.get_full_name() or staff_user.username
+        user_id = staff_user.id  # Use user ID as unique identifier
         
         last_activity = login.logout_time or login.login_time
         is_online = (login.logout_time is None) or (login.logout_time >= now - window_delta)
@@ -534,21 +572,49 @@ def live_session_monitor(request):
             unit['locations'].add(login.location_display)
         
         if staff_name:
-            unit['recent_users'].append({
-                'name': staff_name,
-                'time': login.login_time,
-                'is_online': is_online,
-            })
+            # Check if this user is already in recent_users to avoid duplicates
+            existing_user = next((u for u in unit['recent_users'] if u.get('user_id') == user_id), None)
+            if existing_user:
+                # Update if this login is more recent
+                if login.login_time > existing_user['time']:
+                    existing_user['time'] = login.login_time
+                    existing_user['is_online'] = is_online
+            else:
+                # New user, add them
+                unit['recent_users'].append({
+                    'user_id': user_id,
+                    'name': staff_name,
+                    'time': login.login_time,
+                    'is_online': is_online,
+                })
             if is_online:
                 unit['online_users'].add(staff_name)
-                live_sessions.append({
-                    'staff': staff_name,
-                    'department': staff.department.name if staff and staff.department else 'General / Cross-Department',
-                    'login_time': login.login_time,
-                    'device': login.device_type or 'Unknown',
-                    'location': login.location_display or 'Unknown',
-                    'ip_address': login.ip_address or '—',
-                })
+                
+                # Track unique users - only keep most recent session per user
+                if user_id not in live_sessions_map:
+                    # First time seeing this user, add them
+                    live_sessions_map[user_id] = {
+                        'user_id': user_id,
+                        'staff': staff_name,
+                        'department': staff.department.name if staff and staff.department else 'General / Cross-Department',
+                        'login_time': login.login_time,
+                        'device': login.device_type or 'Unknown',
+                        'location': login.location_display or 'Unknown',
+                        'ip_address': login.ip_address or '—',
+                    }
+                else:
+                    # User already exists, update only if this login is more recent
+                    existing_login_time = live_sessions_map[user_id]['login_time']
+                    if login.login_time > existing_login_time:
+                        live_sessions_map[user_id].update({
+                            'login_time': login.login_time,
+                            'device': login.device_type or 'Unknown',
+                            'location': login.location_display or 'Unknown',
+                            'ip_address': login.ip_address or '—',
+                        })
+    
+    # Convert map to list (already deduplicated by user_id)
+    live_sessions = list(live_sessions_map.values())
     
     unit_cards = []
     for unit in unit_map.values():
@@ -926,12 +992,14 @@ def export_attendance_csv(attendance_queryset):
     writer.writerow(['Date', 'Staff Name', 'Department', 'Check In', 'Check Out', 'Status', 'Notes'])
     
     for att in attendance_queryset:
+        staff_name = (att.staff.user.get_full_name() or '-') if att.staff and att.staff.user else '-'
+        dept_name = att.staff.department.name if att.staff and att.staff.department else '-'
         writer.writerow([
             att.date.strftime('%Y-%m-%d'),
-            att.staff.user.get_full_name(),
-            att.staff.department.name if att.staff.department else '-',
-            att.check_in_time.strftime('%H:%M') if att.check_in_time else '-',
-            att.check_out_time.strftime('%H:%M') if att.check_out_time else '-',
+            staff_name,
+            dept_name,
+            att.check_in.strftime('%H:%M') if att.check_in else '-',
+            att.check_out.strftime('%H:%M') if att.check_out else '-',
             att.get_status_display(),
             att.notes or '-'
         ])

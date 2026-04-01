@@ -115,7 +115,7 @@
     <!-- Detailed AR List -->
     <div class="card">
         <div class="card-header bg-primary text-white">
-            <h5 class="mb-0"><i class="bi bi-list-ul"></i> Outstanding Invoices ({{ ar_list.count }} total)</h5>
+            <h5 class="mb-0"><i class="bi bi-list-ul"></i> Outstanding Invoices ({{ ar_count|default:ar_list|length }} total)</h5>
         </div>
         <div class="card-body">
             <div class="table-responsive">
@@ -123,7 +123,7 @@
                     <thead>
                         <tr>
                             <th>Invoice</th>
-                            <th>Patient</th>
+                            <th>{% if is_corporate %}Company{% else %}Patient{% endif %}</th>
                             <th>Date</th>
                             <th>Due Date</th>
                             <th>Days</th>
@@ -138,10 +138,24 @@
                         <tr>
                             <td><strong>{{ ar.invoice.invoice_number }}</strong></td>
                             <td>
-                                {% if ar.patient %}
-                                    {{ ar.patient.full_name }}
+                                {% if is_corporate %}
+                                    {# For corporate receivables, show company name from payer #}
+                                    {% if ar.payer %}
+                                        <strong>{{ ar.payer.name }}</strong>
+                                    {% elif ar.insurance_company %}
+                                        <strong>{{ ar.insurance_company.name }}</strong>
+                                    {% elif ar.invoice and ar.invoice.payer %}
+                                        <strong>{{ ar.invoice.payer.name }}</strong>
+                                    {% else %}
+                                        <em class="text-muted">Opening Balance</em>
+                                    {% endif %}
                                 {% else %}
-                                    <em class="text-muted">N/A</em>
+                                    {# For regular receivables, show patient name #}
+                                    {% if ar.patient %}
+                                        {{ ar.patient.full_name }}
+                                    {% else %}
+                                        <em class="text-muted">N/A</em>
+                                    {% endif %}
                                 {% endif %}
                             </td>
                             <td>{{ ar.invoice.created|date:"M d, Y" }}</td>

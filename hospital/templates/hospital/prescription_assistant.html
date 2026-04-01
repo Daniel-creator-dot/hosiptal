@@ -1,0 +1,537 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Prescription Assistant - HMS{% endblock %}
+{% block page_title %}💊 Prescription Assistant{% endblock %}
+{% block page_subtitle %}Drug classification & AI chat — find drugs and add to prescription{% endblock %}
+
+{% block extra_css %}
+<style>
+    .prescription-assistant-layout {
+        display: grid;
+        grid-template-columns: 1fr 380px;
+        gap: 24px;
+        max-width: 1600px;
+        margin: 0 auto;
+        min-height: calc(100vh - 180px);
+    }
+    @media (max-width: 1200px) {
+        .prescription-assistant-layout { grid-template-columns: 1fr; }
+    }
+
+    /* Encounter context bar */
+    .encounter-bar {
+        background: linear-gradient(135deg, #065f46 0%, #047857 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 14px 20px;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 12px;
+        box-shadow: 0 4px 14px rgba(6, 95, 70, 0.25);
+    }
+    .encounter-bar.no-encounter {
+        background: linear-gradient(135deg, #475569 0%, #64748b 100%);
+    }
+    .encounter-bar .patient-info { font-weight: 600; font-size: 15px; }
+    .encounter-bar .mrn { opacity: 0.9; font-size: 13px; }
+    .encounter-bar .btn-open-consult {
+        background: rgba(255,255,255,0.2);
+        color: white;
+        border: 1px solid rgba(255,255,255,0.4);
+        padding: 8px 16px;
+        border-radius: 8px;
+        font-weight: 600;
+        text-decoration: none;
+        transition: all 0.2s;
+    }
+    .encounter-bar .btn-open-consult:hover { background: white; color: #065f46; }
+
+    /* Chat panel */
+    .chat-panel {
+        background: white;
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        height: 640px;
+    }
+    .chat-header {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        color: white;
+        padding: 18px 24px;
+        font-weight: 700;
+        font-size: 17px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+    .chat-msg {
+        max-width: 88%;
+        padding: 14px 18px;
+        border-radius: 14px;
+        font-size: 14px;
+        line-height: 1.5;
+    }
+    .chat-msg.user {
+        align-self: flex-end;
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        color: white;
+    }
+    .chat-msg.assistant {
+        align-self: flex-start;
+        background: #f1f5f9;
+        border: 1px solid #e2e8f0;
+        color: #1e293b;
+    }
+    .chat-msg.assistant .reply-text { white-space: pre-line; }
+    .chat-msg .time { font-size: 11px; opacity: 0.7; margin-top: 6px; }
+
+    /* Quick prompts */
+    .quick-prompts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 0 20px 12px;
+    }
+    .quick-prompt-btn {
+        background: #f1f5f9;
+        border: 1px solid #e2e8f0;
+        color: #475569;
+        padding: 8px 14px;
+        border-radius: 20px;
+        font-size: 13px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .quick-prompt-btn:hover {
+        background: #6366f1;
+        color: white;
+        border-color: #6366f1;
+    }
+
+    /* Suggested drugs from chat */
+    .suggested-drugs {
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px solid #e2e8f0;
+    }
+    .suggested-drugs-title { font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 10px; }
+    .drug-card-chat {
+        background: white;
+        border: 2px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 12px 14px;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        transition: all 0.2s;
+    }
+    .drug-card-chat:hover { border-color: #6366f1; box-shadow: 0 2px 8px rgba(99, 102, 241, 0.15); }
+    .drug-card-chat .name { font-weight: 600; color: #1e293b; }
+    .drug-card-chat .meta { font-size: 12px; color: #64748b; margin-top: 2px; }
+    .drug-card-chat .stock-badge {
+        font-size: 11px;
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-weight: 600;
+    }
+    .drug-card-chat .stock-badge.in-stock { background: #d1fae5; color: #065f46; }
+    .drug-card-chat .stock-badge.low { background: #fef3c7; color: #92400e; }
+    .drug-card-chat .stock-badge.out { background: #fee2e2; color: #991b1b; }
+    .btn-add-rx {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+        border: none;
+        padding: 8px 14px;
+        border-radius: 8px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all 0.2s;
+    }
+    .btn-add-rx:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4); color: white; }
+
+    /* Dosing hint in chat */
+    .dosing-hint-box {
+        background: #ecfdf5;
+        border: 1px solid #a7f3d0;
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin-top: 10px;
+        font-size: 12px;
+        color: #065f46;
+    }
+    .dosing-hint-box strong { display: block; margin-bottom: 4px; }
+
+    /* Chat input */
+    .chat-input-wrap {
+        padding: 16px 20px;
+        border-top: 1px solid #e2e8f0;
+        background: #f8fafc;
+    }
+    .chat-input-wrap form { display: flex; gap: 10px; align-items: center; }
+    .chat-input-wrap input {
+        flex: 1;
+        border: 2px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 12px 16px;
+        font-size: 14px;
+        transition: border-color 0.2s;
+    }
+    .chat-input-wrap input:focus { outline: none; border-color: #6366f1; }
+    .chat-input-wrap button {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        color: white;
+        border: none;
+        padding: 12px 20px;
+        border-radius: 10px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .chat-input-wrap button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4); }
+    .chat-input-wrap button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+    /* Classification panel */
+    .classification-panel {
+        background: white;
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+        overflow: hidden;
+        height: 640px;
+        display: flex;
+        flex-direction: column;
+    }
+    .classification-header {
+        background: linear-gradient(135deg, #0f766e 0%, #0d9488 100%);
+        color: white;
+        padding: 18px 20px;
+        font-weight: 700;
+        font-size: 16px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .classification-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 12px;
+    }
+    .class-group {
+        margin-bottom: 12px;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        overflow: hidden;
+    }
+    .class-group-head {
+        background: #f8fafc;
+        padding: 12px 14px;
+        font-weight: 600;
+        font-size: 14px;
+        color: #334155;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        user-select: none;
+    }
+    .class-group-head:hover { background: #f1f5f9; }
+    .class-group-head .bi-chevron-down { transition: transform 0.2s; }
+    .class-group-head.collapsed .bi-chevron-down { transform: rotate(-90deg); }
+    .class-group-body { padding: 8px; }
+    .class-group-body.collapsed { display: none; }
+    .class-cat-link {
+        display: block;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 13px;
+        color: #475569;
+        text-decoration: none;
+        margin-bottom: 4px;
+        transition: all 0.15s;
+    }
+    .class-cat-link:hover { background: #e0f2fe; color: #0369a1; }
+    .class-cat-link i { margin-right: 8px; opacity: 0.8; }
+
+    /* Selected drugs for interaction check */
+    .selected-for-check {
+        padding: 12px 20px;
+        border-top: 1px solid #e2e8f0;
+        background: #fffbeb;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .selected-for-check .btn-check-int {
+        background: #f59e0b;
+        color: white;
+        border: none;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-weight: 600;
+        cursor: pointer;
+        font-size: 12px;
+    }
+    .selected-for-check .btn-check-int:hover { background: #d97706; }
+
+    .interaction-alert {
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        border-radius: 8px;
+        padding: 10px 14px;
+        margin-top: 10px;
+        font-size: 12px;
+        color: #991b1b;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="prescription-assistant-layout">
+    <div>
+        <!-- Encounter context -->
+        <div class="encounter-bar {% if not encounter_id %}no-encounter{% endif %}" id="encounterBar">
+            {% if encounter_id and patient_name %}
+            <div>
+                <div class="patient-info"><i class="bi bi-person-circle me-2"></i>{{ patient_name }}</div>
+                <div class="mrn">MRN: {{ patient_mrn }} · Add drugs below then open consultation to prescribe</div>
+            </div>
+            <a href="{% url 'hospital:consultation_view' encounter_id %}" class="btn-open-consult">
+                <i class="bi bi-prescription2 me-1"></i> Open in Consultation
+            </a>
+            {% else %}
+            <div>
+                <div class="patient-info"><i class="bi bi-info-circle me-2"></i>No encounter selected</div>
+                <div class="mrn">Select an encounter from consultation page, or use Drug Guide and choose patient when prescribing</div>
+            </div>
+            <a href="{% url 'hospital:drug_classification_guide' %}" class="btn-open-consult">
+                <i class="bi bi-book me-1"></i> Full Drug Guide
+            </a>
+            {% endif %}
+        </div>
+
+        <!-- Chat panel -->
+        <div class="chat-panel">
+            <div class="chat-header">
+                <i class="bi bi-robot"></i>
+                Prescription Assistant — Ask by indication or drug name
+            </div>
+            <div class="chat-messages" id="chatMessages">
+                <div class="chat-msg assistant">
+                    <div class="reply-text">Ask for drug suggestions by indication (e.g. <strong>antibiotic for UTI</strong>, <strong>pain relief</strong>, <strong>antihypertensive</strong>) or type a drug name. You can also say <strong>check interactions</strong> after selecting drugs.</div>
+                    <div class="time">Just now</div>
+                </div>
+            </div>
+            <div class="quick-prompts">
+                <button type="button" class="quick-prompt-btn" data-msg="antibiotic for UTI">Antibiotic UTI</button>
+                <button type="button" class="quick-prompt-btn" data-msg="pain relief">Pain relief</button>
+                <button type="button" class="quick-prompt-btn" data-msg="antihypertensive">Antihypertensive</button>
+                <button type="button" class="quick-prompt-btn" data-msg="fever">Fever</button>
+                <button type="button" class="quick-prompt-btn" data-msg="antiemetic">Antiemetic</button>
+                <button type="button" class="quick-prompt-btn" data-msg="antihistamine">Allergy</button>
+                <button type="button" class="quick-prompt-btn" data-msg="check interactions">Check interactions</button>
+            </div>
+            <div class="chat-input-wrap">
+                <form id="chatForm" onsubmit="return sendChat(event)">
+                    {% csrf_token %}
+                    <input type="text" id="chatInput" placeholder="e.g. antibiotic for UTI, or drug name..." autocomplete="off">
+                    <button type="submit" id="chatSendBtn"><i class="bi bi-send-fill me-1"></i> Send</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Drug classification panel -->
+    <div class="classification-panel">
+        <div class="classification-header">
+            <i class="bi bi-journal-medical"></i>
+            Drug Classification
+        </div>
+        <div class="classification-body">
+            {% for group in category_groups %}
+            <div class="class-group">
+                <div class="class-group-head collapsed" data-group="{{ group.label|slugify }}" onclick="toggleGroup(this)">
+                    {{ group.label }}
+                    <i class="bi bi-chevron-down"></i>
+                </div>
+                <div class="class-group-body collapsed">
+                    {% for cat in categories %}
+                    {% if cat.code in group.codes %}
+                    <a href="{% url 'hospital:drugs_by_category' cat.code %}{% if encounter_id %}?encounter_id={{ encounter_id }}{% endif %}" target="_blank" class="class-cat-link">
+                        <i class="bi bi-capsule"></i> {{ cat.name }}
+                    </a>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+            <div class="mt-3 text-center">
+                <a href="{% url 'hospital:drug_classification_guide' %}{% if encounter_id %}?encounter_id={{ encounter_id }}{% endif %}" target="_blank" class="btn btn-outline-primary btn-sm">
+                    <i class="bi bi-book me-1"></i> Full Classification Guide
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const encounterId = '{{ encounter_id|escapejs }}' || null;
+    const chatMessages = document.getElementById('chatMessages');
+    const chatInput = document.getElementById('chatInput');
+    const chatForm = document.getElementById('chatForm');
+    const chatSendBtn = document.getElementById('chatSendBtn');
+
+    let selectedDrugIds = [];
+
+    function nowTime() {
+        const d = new Date();
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function appendUserMessage(text) {
+        const div = document.createElement('div');
+        div.className = 'chat-msg user';
+        div.innerHTML = '<div>' + escapeHtml(text) + '</div><div class="time">' + nowTime() + '</div>';
+        chatMessages.appendChild(div);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function escapeHtml(s) {
+        const el = document.createElement('div');
+        el.textContent = s;
+        return el.innerHTML;
+    }
+
+    function renderMarkdownLike(s) {
+        if (!s) return '';
+        var escaped = escapeHtml(s);
+        return escaped
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\n/g, '<br>');
+    }
+
+    function appendAssistantMessage(data) {
+        const div = document.createElement('div');
+        div.className = 'chat-msg assistant';
+        let html = '<div class="reply-text">' + renderMarkdownLike(escapeHtml(data.reply)) + '</div>';
+        if (data.dosing_hint && (data.dosing_hint.dose || data.dosing_hint.frequency)) {
+            html += '<div class="dosing-hint-box mt-2"><strong>Suggested dosing</strong> ';
+            html += [data.dosing_hint.dose, data.dosing_hint.route, data.dosing_hint.frequency, data.dosing_hint.duration].filter(Boolean).join(' · ') + '</div>';
+        }
+        if (data.suggested_drugs && data.suggested_drugs.length) {
+            html += '<div class="suggested-drugs"><div class="suggested-drugs-title">Select to add to prescription</div>';
+            data.suggested_drugs.forEach(function(d) {
+                const stockClass = !d.has_stock ? 'out' : (d.stock_available <= 10 ? 'low' : 'in-stock');
+                const stockText = d.has_stock ? (d.stock_available + ' in stock') : 'Out of stock';
+                html += '<div class="drug-card-chat">';
+                html += '<div><div class="name">' + escapeHtml(d.name) + '</div><div class="meta">' + escapeHtml(d.strength + ' · ' + d.form) + '</div></div>';
+                html += '<span class="stock-badge ' + stockClass + '">' + stockText + '</span>';
+                html += '<button type="button" class="btn-add-rx" data-drug-id="' + escapeHtml(d.id) + '" data-name="' + escapeHtml(d.name) + '" data-strength="' + escapeHtml(d.strength) + '" data-form="' + escapeHtml(d.form) + '">Add to prescription</button>';
+                html += '</div>';
+            });
+            html += '</div>';
+        }
+        if (data.interactions && data.interactions.length) {
+            html += '<div class="interaction-alert mt-2">';
+            data.interactions.forEach(function(w) { html += '<div>' + escapeHtml(w.message) + '</div>'; });
+            html += '</div>';
+        }
+        html += '<div class="time">' + nowTime() + '</div>';
+        div.innerHTML = html;
+        chatMessages.appendChild(div);
+        div.querySelectorAll('.btn-add-rx').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                addToPrescription(this.dataset.drugId, this.dataset.name, this.dataset.strength, this.dataset.form);
+            });
+        });
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function addToPrescription(drugId, name, strength, form) {
+        if (encounterId) {
+            window.location.href = '/hms/consultation/' + encounterId + '/?drug_id=' + encodeURIComponent(drugId) + '&action=prescribe';
+        } else {
+            alert('To add this drug to a prescription: open a patient consultation first, then use the "Prescription Assistant" button from that consultation page so the encounter is linked.');
+            window.open('{% url "hospital:drug_classification_guide" %}', '_blank');
+        }
+    }
+
+    window.addToPrescription = addToPrescription;
+
+    function sendChat(e) {
+        if (e) e.preventDefault();
+        var msg = (chatInput.value || '').trim();
+        if (!msg) return false;
+        chatInput.value = '';
+        appendUserMessage(msg);
+        chatSendBtn.disabled = true;
+        chatSendBtn.textContent = '...';
+
+        var payload = {
+            message: msg,
+            encounter_id: encounterId,
+            selected_drug_ids: selectedDrugIds
+        };
+        var csrf = document.querySelector('[name=csrfmiddlewaretoken]');
+        var headers = { 'Content-Type': 'application/json', 'X-CSRFToken': csrf ? csrf.value : '' };
+
+        fetch('{% url "hospital:api_prescription_assistant_chat" %}', {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(payload)
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            appendAssistantMessage(data);
+        })
+        .catch(function(err) {
+            appendAssistantMessage({ reply: 'Sorry, something went wrong. Please try again.', suggested_drugs: [], interactions: [] });
+        })
+        .finally(function() {
+            chatSendBtn.disabled = false;
+            chatSendBtn.innerHTML = '<i class="bi bi-send-fill me-1"></i> Send';
+        });
+        return false;
+    }
+
+    document.getElementById('chatForm').onsubmit = sendChat;
+    document.querySelectorAll('.quick-prompt-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var msg = this.getAttribute('data-msg');
+            if (msg) { chatInput.value = msg; sendChat(); }
+        });
+    });
+
+    function toggleGroup(head) {
+        var body = head.nextElementSibling;
+        head.classList.toggle('collapsed');
+        body.classList.toggle('collapsed');
+    }
+    window.toggleGroup = toggleGroup;
+
+    // Expand first group by default
+    var firstHead = document.querySelector('.class-group-head');
+    if (firstHead) { toggleGroup(firstHead); }
+})();
+</script>
+{% endblock %}

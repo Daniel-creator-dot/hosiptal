@@ -20,6 +20,7 @@ PRIORITY_CHOICES = [
 QUEUE_STATUS_CHOICES = [
     ('checked_in', '✅ Checked In - Waiting'),
     ('called', '📢 Called - Please Proceed'),
+    ('vitals_completed', '🩺 Vitals Done - Awaiting Consultation'),
     ('in_progress', '👨‍⚕️ In Consultation'),
     ('completed', '✓ Completed'),
     ('no_show', '❌ No Show'),
@@ -192,7 +193,7 @@ class QueueEntry(BaseModel):
     @property
     def is_waiting(self):
         """Check if patient is still waiting"""
-        return self.status in ['checked_in', 'called']
+        return self.status in ['checked_in', 'called', 'vitals_completed']
     
     @property
     def is_active(self):
@@ -210,6 +211,64 @@ class QueueEntry(BaseModel):
             return int(wait_seconds / 60)
         
         return 0
+
+    @property
+    def display_ticket_number(self):
+        """
+        Patient-facing ticket for screens/SMS (e.g. 042).
+
+        Prefer the sequence segment in queue_number (OPD-042 or OPD-042-suffix) so
+        SMS matches stickers/boards even when sequence_number was wrong (legacy rows,
+        manual creates). Fall back to sequence_number, then digit scraping.
+        """
+        raw = str(self.queue_number or '').strip()
+        if raw:
+            parts = raw.split('-')
+            if len(parts) >= 2 and parts[1].isdigit():
+                n = int(parts[1])
+                if 0 < n < 1_000_000:
+                    return f"{n:03d}"
+            # Non-standard queue_number (e.g. UUID suffix): prefer sequence over digit scraping
+            try:
+                seq = int(self.sequence_number or 0)
+                if seq > 0:
+                    return f"{seq:03d}"
+            except Exception:
+                pass
+            digits = ''.join(ch for ch in raw if ch.isdigit())
+            if digits:
+                return digits[-3:] if len(digits) > 3 else digits
+            return raw
+        try:
+            seq = int(self.sequence_number or 0)
+            if seq > 0:
+                return f"{seq:03d}"
+        except Exception:
+            pass
+        return '---'
+
+    def get_display_clinician_name(self):
+        """Name for public queue boards: assigned doctor, else encounter provider."""
+        if self.assigned_doctor_id:
+            u = self.assigned_doctor
+            return (u.get_full_name() or u.username or '').strip()
+        try:
+            enc = self.encounter
+            if enc and getattr(enc, 'provider_id', None):
+                prov = enc.provider
+                user = getattr(prov, 'user', None)
+                if user:
+                    return (user.get_full_name() or user.username or '').strip()
+                parts = [
+                    getattr(prov, 'first_name', None) or '',
+                    getattr(prov, 'last_name', None) or '',
+                ]
+                name = ' '.join(p for p in parts if p).strip()
+                if name:
+                    return name
+        except Exception:
+            pass
+        return ''
 
 
 class QueueNotification(BaseModel):

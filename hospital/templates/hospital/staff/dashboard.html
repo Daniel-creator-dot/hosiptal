@@ -149,6 +149,11 @@
                     {% if days_employed %}
                         <i class="bi bi-calendar-check ms-3 me-2"></i>{{ days_employed }} days with us
                     {% endif %}
+                    {% if unread_count.activities %}
+                        <span class="badge bg-warning text-dark ms-2" style="font-size: 13px;">
+                            <i class="bi bi-calendar-event me-1"></i>{{ unread_count.activities }} upcoming event{{ unread_count.activities|pluralize }}
+                        </span>
+                    {% endif %}
                 </p>
             </div>
             <div class="text-end">
@@ -157,6 +162,142 @@
             </div>
         </div>
     </div>
+    
+    <!-- Activity Reminder Banner with Countdown -->
+    {% if next_activity %}
+    <div style="background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%); color: white; border-radius: 16px; padding: 24px; margin-bottom: 24px; box-shadow: 0 8px 32px rgba(139, 92, 246, 0.3);">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+            <div>
+                <h5 class="mb-2">
+                    <i class="bi bi-bell-fill me-2"></i>Upcoming: {{ next_activity.title }}
+                    {% if next_activity.is_mandatory %}
+                    <span class="badge bg-danger ms-2">MANDATORY</span>
+                    {% endif %}
+                </h5>
+                <p class="mb-0" style="opacity: 0.95; font-size: 14px;">
+                    <i class="bi bi-calendar3 me-1"></i>{{ next_activity.start_date|date:"l, M d, Y" }}
+                    {% if next_activity.start_time %}
+                        <i class="bi bi-clock ms-2 me-1"></i>{{ next_activity.start_time|time:"g:i A" }}
+                    {% else %}
+                        <i class="bi bi-clock ms-2 me-1"></i>All day
+                    {% endif %}
+                    {% if next_activity.location %}
+                        <i class="bi bi-geo-alt ms-2 me-1"></i>{{ next_activity.location }}
+                    {% endif %}
+                </p>
+            </div>
+            <div class="text-center">
+                <div class="countdown-label" style="font-size: 12px; opacity: 0.9; margin-bottom: 4px;">Time until event</div>
+                <div class="activity-countdown" data-date="{{ next_activity.start_date|date:'Y-m-d' }}" data-time="{% if next_activity.start_time %}{{ next_activity.start_time|time:'H:i' }}{% else %}09:00{% endif %}" style="font-size: 24px; font-weight: 700; font-family: monospace;">
+                    <span class="countdown-days">--</span>d <span class="countdown-hours">--</span>h <span class="countdown-mins">--</span>m
+                </div>
+            </div>
+            <div>
+                <a href="{% url 'hospital:activity_detail' next_activity.id %}" class="btn btn-light">
+                    <i class="bi bi-eye me-1"></i>View Details
+                </a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- TODAY'S SHIFTS - PROMINENT DISPLAY -->
+    {% if todays_shifts %}
+    <div style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border-radius: 20px; padding: 32px; margin-bottom: 32px; box-shadow: 0 10px 40px rgba(59, 130, 246, 0.3);">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h3 class="mb-2">
+                    <i class="bi bi-calendar-check-fill me-2"></i>Your Shifts Today
+                    <span class="badge bg-white text-primary ms-2" style="font-size: 16px; padding: 8px 16px;">{{ todays_shifts.count }}</span>
+                </h3>
+                <p class="mb-0" style="opacity: 0.95; font-size: 16px;">{{ today|date:"l, F d, Y" }}</p>
+            </div>
+            <div>
+                <a href="{% url 'hospital:staff_schedule_dashboard' %}" class="btn btn-light btn-lg">
+                    <i class="bi bi-calendar-week me-2"></i>View Full Schedule
+                </a>
+            </div>
+        </div>
+        
+        <div class="row g-3">
+            {% for shift in todays_shifts %}
+            <div class="col-md-6">
+                <div style="background: rgba(255,255,255,0.15); backdrop-filter: blur(10px); border-radius: 16px; padding: 24px; border: 2px solid rgba(255,255,255,0.3);">
+                    <div class="d-flex justify-content-between align-items-start mb-3">
+                        <div>
+                            <h5 class="mb-2">
+                                <span class="badge bg-white text-primary me-2" style="font-size: 14px; padding: 6px 12px;">{{ shift.get_shift_type_display }}</span>
+                                <strong>{{ shift.start_time|time:"g:i A" }} - {{ shift.end_time|time:"g:i A" }}</strong>
+                            </h5>
+                            {% if shift.assigned_location %}
+                            <p class="mb-1" style="font-size: 15px; opacity: 0.95;">
+                                <i class="bi bi-geo-alt-fill me-2"></i><strong>Location:</strong> {{ shift.assigned_location }}
+                            </p>
+                            {% endif %}
+                            {% if shift.location %}
+                            <p class="mb-1" style="font-size: 15px; opacity: 0.95;">
+                                <i class="bi bi-building me-2"></i><strong>Ward:</strong> {{ shift.location.name }}
+                            </p>
+                            {% endif %}
+                            {% if shift.assigned_duties %}
+                            <p class="mb-0 mt-2" style="font-size: 14px; opacity: 0.9;">
+                                <i class="bi bi-list-check me-2"></i>{{ shift.assigned_duties|truncatewords:15 }}
+                            </p>
+                            {% endif %}
+                        </div>
+                        <div class="text-end">
+                            {% if shift.is_confirmed %}
+                            <span class="badge bg-success" style="font-size: 12px; padding: 8px 12px;">
+                                <i class="bi bi-check-circle me-1"></i>Confirmed
+                            </span>
+                            {% else %}
+                            <span class="badge bg-warning text-dark" style="font-size: 12px; padding: 8px 12px;">
+                                <i class="bi bi-clock me-1"></i>Pending
+                            </span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% if shift.notes %}
+                    <div style="background: rgba(255,255,255,0.1); border-radius: 8px; padding: 12px; margin-top: 12px;">
+                        <small><i class="bi bi-info-circle me-1"></i>{{ shift.notes|truncatewords:20 }}</small>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% else %}
+    <!-- No shifts today - show message with helpful info -->
+    <div style="background: linear-gradient(135deg, #e5e7eb 0%, #d1d5db 100%); border-radius: 20px; padding: 32px; margin-bottom: 32px; text-align: center;">
+        <i class="bi bi-calendar-x" style="font-size: 64px; color: #9ca3af; margin-bottom: 16px;"></i>
+        <h4 style="color: #6b7280; margin-bottom: 8px;">No Shifts Scheduled Today</h4>
+        <p style="color: #9ca3af; margin-bottom: 12px;">You have no shifts assigned for today ({{ today|date:"l, F d, Y" }}).</p>
+        {% if weekly_shifts %}
+        <p style="color: #10b981; font-weight: 600; margin-bottom: 20px;">
+            <i class="bi bi-info-circle me-1"></i>You have {{ weekly_shifts.count }} shift{{ weekly_shifts.count|pluralize }} scheduled this week.
+        </p>
+        {% elif upcoming_shifts %}
+        <p style="color: #10b981; font-weight: 600; margin-bottom: 20px;">
+            <i class="bi bi-info-circle me-1"></i>You have {{ upcoming_shifts.count }} upcoming shift{{ upcoming_shifts.count|pluralize }} in the next 7 days.
+        </p>
+        {% else %}
+        <p style="color: #f59e0b; font-weight: 600; margin-bottom: 20px;">
+            <i class="bi bi-exclamation-triangle me-1"></i>No shifts found. Please contact your department head or HR to assign shifts.
+        </p>
+        {% endif %}
+        <div class="d-flex gap-2 justify-content-center">
+            <a href="{% url 'hospital:staff_schedule_dashboard' %}" class="btn btn-primary btn-lg">
+                <i class="bi bi-calendar-week me-2"></i>View My Full Schedule
+            </a>
+            {% if staff.department %}
+            <a href="{% url 'hospital:hod_scheduling_dashboard' %}" class="btn btn-outline-primary btn-lg">
+                <i class="bi bi-person-badge me-2"></i>Contact HOD
+            </a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
     
     <!-- URGENT BANNER - Shows only if there are urgent messages -->
     {% if unread_count.messages > 0 or unread_count.mandatory > 0 %}
@@ -314,14 +455,172 @@
         </div>
     </div>
     
+    <!-- MY SHIFTS - PROMINENT SECTION AT TOP - ALWAYS VISIBLE -->
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border-radius: 20px; padding: 32px; box-shadow: 0 10px 40px rgba(16, 185, 129, 0.3);">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h3 class="mb-2" style="color: white;">
+                            <i class="bi bi-calendar-week me-2"></i>My Shifts & Schedule
+                        </h3>
+                        <p class="mb-0" style="opacity: 0.95; font-size: 16px;">
+                            {% if todays_shifts.count > 0 %}
+                                You have <strong>{{ todays_shifts.count }}</strong> shift{{ todays_shifts.count|pluralize }} today and <strong>{{ upcoming_shifts.count }}</strong> upcoming in the next 7 days
+                            {% elif upcoming_shifts.count > 0 %}
+                                No shifts today, but you have <strong>{{ upcoming_shifts.count }}</strong> upcoming shift{{ upcoming_shifts.count|pluralize }} in the next 7 days
+                            {% else %}
+                                View all your assigned shifts, check-in status, and upcoming schedule. No shifts currently assigned.
+                            {% endif %}
+                        </p>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <a href="{% url 'hospital:staff_schedule_dashboard' %}" class="btn btn-light btn-lg" style="font-weight: 600; padding: 12px 24px;">
+                            <i class="bi bi-calendar-week me-2"></i>View Full Schedule
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- SHIFTS SECTION - ALWAYS VISIBLE -->
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border-radius: 20px; padding: 32px; margin-bottom: 32px; box-shadow: 0 10px 40px rgba(59, 130, 246, 0.3);">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <div>
+                        <h3 class="mb-2" style="color: white;">
+                            <i class="bi bi-calendar-range me-2"></i>My Weekly Schedule
+                            <span class="badge bg-white text-primary ms-2" style="font-size: 16px; padding: 8px 16px;">
+                                {% if weekly_shifts %}{{ weekly_shifts.count }} shift{{ weekly_shifts.count|pluralize }}{% else %}0 shifts{% endif %}
+                            </span>
+                        </h3>
+                        <p class="mb-0" style="opacity: 0.95; font-size: 16px; color: white;">
+                            Week of {{ week_start|date:"M d" }} - {{ week_end|date:"M d, Y" }}
+                        </p>
+                    </div>
+                    <div>
+                        <a href="{% url 'hospital:staff_schedule_dashboard' %}" class="btn btn-light btn-lg">
+                            <i class="bi bi-calendar-week me-2"></i>View Full Schedule
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- THIS WEEK'S SCHEDULE TABLE - ALWAYS VISIBLE -->
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); border: 3px solid #3b82f6;">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h4 class="mb-0" style="color: #1F2937; font-weight: 700;">
+                        <i class="bi bi-calendar-range me-2" style="color: #3b82f6;"></i>This Week's Schedule
+                        <small class="text-muted">({{ week_start|date:"M d" }} - {{ week_end|date:"M d" }})</small>
+                        {% if weekly_shifts %}
+                        <span class="badge bg-primary ms-2" style="font-size: 14px; padding: 6px 12px;">{{ weekly_shifts.count }} shift{{ weekly_shifts.count|pluralize }}</span>
+                        {% else %}
+                        <span class="badge bg-warning text-dark ms-2" style="font-size: 14px; padding: 6px 12px;">⚠️ No shifts assigned</span>
+                        {% endif %}
+                    </h4>
+                    <a href="{% url 'hospital:staff_schedule_dashboard' %}" class="btn btn-primary">
+                        <i class="bi bi-calendar3 me-1"></i>View Full Schedule
+                    </a>
+                </div>
+                
+                {% if weekly_shifts %}
+                <div class="table-responsive">
+                    <table class="table table-hover table-striped">
+                        <thead style="background: linear-gradient(135deg, #3b82f6, #2563eb); color: white;">
+                            <tr>
+                                <th style="font-weight: 600; color: white;">Date</th>
+                                <th style="font-weight: 600; color: white;">Day</th>
+                                <th style="font-weight: 600; color: white;">Shift Type</th>
+                                <th style="font-weight: 600; color: white;">Time</th>
+                                <th style="font-weight: 600; color: white;">Location</th>
+                                <th style="font-weight: 600; color: white;">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for shift in weekly_shifts %}
+                            <tr {% if shift.shift_date == today %}style="background-color: #eff6ff; font-weight: 600; border-left: 4px solid #3b82f6;"{% endif %}>
+                                <td>
+                                    {% if shift.shift_date == today %}
+                                        <span class="badge bg-primary me-2">TODAY</span>
+                                    {% endif %}
+                                    {{ shift.shift_date|date:"M d" }}
+                                </td>
+                                <td>
+                                    <strong>{{ shift.shift_date|date:"l" }}</strong>
+                                </td>
+                                <td>
+                                    <span class="badge bg-primary" style="font-size: 12px; padding: 6px 12px;">
+                                        {{ shift.get_shift_type_display }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <strong>{{ shift.start_time|time:"g:i A" }}</strong> - {{ shift.end_time|time:"g:i A" }}
+                                </td>
+                                <td>
+                                    {% if shift.assigned_location %}
+                                        <i class="bi bi-geo-alt me-1"></i>{{ shift.assigned_location }}
+                                    {% elif shift.location %}
+                                        <i class="bi bi-building me-1"></i>{{ shift.location.name }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if shift.is_confirmed %}
+                                    <span class="badge bg-success">
+                                        <i class="bi bi-check-circle me-1"></i>Confirmed
+                                    </span>
+                                    {% else %}
+                                    <span class="badge bg-warning text-dark">
+                                        <i class="bi bi-clock me-1"></i>Pending
+                                    </span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div style="text-align: center; padding: 60px 40px; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 12px; border: 3px solid #f59e0b;">
+                    <i class="bi bi-calendar-x" style="font-size: 72px; color: #f59e0b; margin-bottom: 20px;"></i>
+                    <h3 style="color: #92400e; margin-bottom: 12px; font-weight: 700;">⚠️ No Shifts Scheduled This Week</h3>
+                    <p style="color: #78350f; font-size: 18px; margin-bottom: 12px; font-weight: 600;">You don't have any shifts assigned for this week.</p>
+                    <p style="color: #78350f; font-size: 16px; margin-bottom: 8px;">Week: {{ week_start|date:"M d" }} - {{ week_end|date:"M d, Y" }}</p>
+                    <p style="color: #92400e; font-weight: 700; margin-bottom: 24px; font-size: 18px;">
+                        <i class="bi bi-exclamation-triangle me-2"></i>Please contact your department head or HR to assign shifts.
+                    </p>
+                    <div class="d-flex gap-2 justify-content-center">
+                        <a href="{% url 'hospital:staff_schedule_dashboard' %}" class="btn btn-primary btn-lg">
+                            <i class="bi bi-calendar-week me-2"></i>View Full Schedule
+                        </a>
+                        {% if staff.department %}
+                        <a href="{% url 'hospital:hod_scheduling_dashboard' %}" class="btn btn-warning btn-lg">
+                            <i class="bi bi-person-badge me-2"></i>Contact HOD
+                        </a>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
     <div class="row g-4">
         <!-- Left Column: Messages & Events -->
         <div class="col-lg-8">
-            <!-- Upcoming Hospital Activities (Next 7 Days) -->
+            <!-- Upcoming Hospital Activities (Next 30 Days) -->
             {% if upcoming_hospital_activities %}
             <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); margin-bottom: 24px;">
                 <h5 class="mb-4">
-                    <i class="bi bi-calendar-event me-2"></i>Upcoming Events (Next 7 Days)
+                    <i class="bi bi-calendar-event me-2"></i>Upcoming Events (Next 30 Days)
+                    <span class="badge bg-primary ms-2">{{ upcoming_hospital_activities|length }}</span>
                     <a href="{% url 'hospital:activity_calendar' %}" class="btn btn-sm btn-outline-primary float-end">
                         <i class="bi bi-calendar3 me-1"></i>View Full Calendar
                     </a>
@@ -419,32 +718,55 @@
             </div>
             {% endif %}
             
-            <!-- Upcoming Shifts -->
+            <!-- Upcoming Shifts (Next 7 Days) -->
             {% if upcoming_shifts %}
-            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
-                <h5 class="mb-4"><i class="bi bi-calendar-week me-2"></i>My Upcoming Shifts</h5>
+            <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); margin-bottom: 24px;">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h5 class="mb-0"><i class="bi bi-calendar-week me-2"></i>My Upcoming Shifts (Next 7 Days)</h5>
+                    <a href="{% url 'hospital:staff_schedule_dashboard' %}" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-calendar3 me-1"></i>View Full Schedule
+                    </a>
+                </div>
                 
-                <div class="table-responsive">
-                    <table class="table table-hover">
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th>Shift Type</th>
-                                <th>Time</th>
-                                <th>Department</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for shift in upcoming_shifts %}
-                            <tr>
-                                <td><strong>{{ shift.shift_date|date:"l, M d" }}</strong></td>
-                                <td><span class="badge bg-primary">{{ shift.get_shift_type_display }}</span></td>
-                                <td>{{ shift.start_time|time:"g:i A" }} - {{ shift.end_time|time:"g:i A" }}</td>
-                                <td>{{ shift.department.name }}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                <div class="row g-3">
+                    {% for shift in upcoming_shifts %}
+                    <div class="col-md-6">
+                        <div class="card border-left-primary" style="border-left: 4px solid #3b82f6; transition: all 0.3s;">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <div>
+                                        <h6 class="mb-1">
+                                            <span class="badge bg-primary me-2">{{ shift.get_shift_type_display }}</span>
+                                            <strong>{{ shift.shift_date|date:"l, M d" }}</strong>
+                                        </h6>
+                                        <p class="mb-1 text-muted">
+                                            <i class="bi bi-clock me-1"></i>{{ shift.start_time|time:"g:i A" }} - {{ shift.end_time|time:"g:i A" }}
+                                        </p>
+                                        {% if shift.assigned_location %}
+                                        <p class="mb-0 text-muted" style="font-size: 13px;">
+                                            <i class="bi bi-geo-alt me-1"></i>{{ shift.assigned_location }}
+                                        </p>
+                                        {% endif %}
+                                    </div>
+                                    <div>
+                                        {% if shift.shift_date == today %}
+                                        <span class="badge bg-success">Today</span>
+                                        {% elif shift.shift_date < today %}
+                                        <span class="badge bg-secondary">Past</span>
+                                        {% else %}
+                                        <span class="badge bg-info">Upcoming</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                {% if shift.assigned_duties %}
+                                <div style="background: #f3f4f6; border-radius: 6px; padding: 8px; margin-top: 8px;">
+                                    <small class="text-muted"><i class="bi bi-list-check me-1"></i>{{ shift.assigned_duties|truncatewords:10 }}</small>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
                 </div>
             </div>
             {% endif %}
@@ -452,11 +774,42 @@
         
         <!-- Right Column: Quick Actions & Info -->
         <div class="col-lg-4">
+            <!-- My Shifts - Prominent Card -->
+            <div style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border-radius: 16px; padding: 24px; box-shadow: 0 8px 24px rgba(59, 130, 246, 0.3); margin-bottom: 24px;">
+                <h5 class="mb-3" style="color: white;">
+                    <i class="bi bi-clock-history me-2"></i>My Shifts
+                </h5>
+                <div class="mb-3">
+                    <div style="font-size: 36px; font-weight: 700; margin-bottom: 8px;">
+                        {% if todays_shifts %}
+                            {{ todays_shifts.count }}
+                        {% else %}
+                            0
+                        {% endif %}
+                    </div>
+                    <div style="opacity: 0.9; font-size: 14px;">Shifts Today</div>
+                </div>
+                <div class="mb-3">
+                    <div style="font-size: 24px; font-weight: 600; margin-bottom: 4px;">
+                        {{ upcoming_shifts.count }}
+                    </div>
+                    <div style="opacity: 0.9; font-size: 13px;">Upcoming (Next 7 Days)</div>
+                </div>
+                <div class="d-grid gap-2">
+                    <a href="{% url 'hospital:staff_schedule_dashboard' %}" class="btn btn-light btn-lg" style="font-weight: 600;">
+                        <i class="bi bi-calendar-week me-2"></i>View Full Schedule
+                    </a>
+                </div>
+            </div>
+            
             <!-- Quick Actions -->
             <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); margin-bottom: 24px;">
                 <h5 class="mb-3"><i class="bi bi-lightning me-2"></i>Quick Actions</h5>
                 <div class="d-grid gap-2">
-                    <a href="{% url 'hospital:staff_leave_request' %}" class="btn btn-primary btn-modern">
+                    <a href="{% url 'hospital:staff_schedule_dashboard' %}" class="btn btn-primary btn-modern" style="background: linear-gradient(135deg, #3b82f6, #2563eb); border: none;">
+                        <i class="bi bi-calendar-week me-2"></i>My Shifts & Schedule
+                    </a>
+                    <a href="{% url 'hospital:staff_leave_request' %}" class="btn btn-outline-primary btn-modern">
                         <i class="bi bi-calendar-plus me-2"></i>Request Leave
                     </a>
                     <a href="{% url 'hospital:staff_leave_history' %}" class="btn btn-outline-primary btn-modern">
@@ -538,6 +891,37 @@ function acknowledgeAlert(alertId) {
         }
     });
 }
+
+// Activity countdown - live update every minute
+(function() {
+    const el = document.querySelector('.activity-countdown');
+    if (!el) return;
+    const dateStr = el.dataset.date;
+    const timeStr = el.dataset.time || '09:00';
+    function updateCountdown() {
+        const target = new Date(dateStr + 'T' + timeStr + ':00');
+        const now = new Date();
+        const diff = target - now;
+        const daysEl = el.querySelector('.countdown-days');
+        const hoursEl = el.querySelector('.countdown-hours');
+        const minsEl = el.querySelector('.countdown-mins');
+        if (!daysEl || !hoursEl || !minsEl) return;
+        if (diff <= 0) {
+            daysEl.textContent = '0';
+            hoursEl.textContent = '0';
+            minsEl.textContent = '0';
+            return;
+        }
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        daysEl.textContent = days;
+        hoursEl.textContent = String(hours).padStart(2, '0');
+        minsEl.textContent = String(mins).padStart(2, '0');
+    }
+    updateCountdown();
+    setInterval(updateCountdown, 60000); // Update every minute
+})();
 
 // Auto-refresh every 5 minutes for real-time updates
 setInterval(function() {

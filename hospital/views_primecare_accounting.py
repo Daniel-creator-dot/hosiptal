@@ -220,9 +220,9 @@ def received_payment(request):
             return redirect('primecare:received_payment')
     
     # GET request - show form
-    # Get payers (insurance companies)
+    # Get payers (insurance companies) - include all insurance types
     payers = Payer.objects.filter(
-        payer_type__in=['insurance', 'corporate'],
+        payer_type__in=['insurance', 'corporate', 'nhis', 'private'],
         is_active=True,
         is_deleted=False
     ).order_by('name')

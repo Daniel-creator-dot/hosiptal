@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Radiology Report - {{ study.get_modality_display }} - {{ study.patient.full_name }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 12mm;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 9pt;
+            line-height: 1.4;
+            color: #333;
+        }
+
+        .report-container {
+            width: 100%;
+            max-width: 210mm;
+            margin: 0 auto;
+            padding: 5mm;
+        }
+
+        /* Header Section - Professional Letterhead */
+        .report-header {
+            border-bottom: 2px solid {{ settings.report_header_color|default:'#2196F3' }};
+            padding: 8px 0;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            background: linear-gradient(to bottom, rgba(255,255,255,0.95) 0%, rgba(248,249,250,0.95) 100%);
+            position: relative;
+        }
+        
+        .report-header::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(to right, {{ settings.report_header_color|default:'#2196F3' }}, transparent);
+        }
+
+        .header-left {
+            flex: 1;
+        }
+
+        .hospital-logo {
+            max-width: {{ settings.logo_width|default:80 }}px;
+            max-height: {{ settings.logo_height|default:80 }}px;
+            margin-bottom: 4px;
+            display: block;
+            filter: drop-shadow(0 1px 2px rgba(0,0,0,0.1));
+        }
+
+        .hospital-name {
+            font-size: 14pt;
+            font-weight: 700;
+            color: {{ settings.report_header_color|default:'#2196F3' }};
+            margin-bottom: 2px;
+            letter-spacing: -0.3px;
+            text-transform: uppercase;
+        }
+
+        .hospital-tagline {
+            font-size: 8pt;
+            color: #555;
+            margin-bottom: 4px;
+            font-weight: 500;
+            font-style: italic;
+        }
+
+        .hospital-contact {
+            font-size: 7.5pt;
+            color: #666;
+            line-height: 1.4;
+            margin-top: 4px;
+        }
+        
+        .hospital-contact strong {
+            color: #333;
+            font-weight: 600;
+        }
+
+        .department-badge {
+            background: linear-gradient(135deg, {{ settings.report_header_color|default:'#2196F3' }} 0%, {{ settings.report_header_color|default:'#1976D2' }} 100%);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            text-align: center;
+            min-width: 140px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .department-name {
+            font-size: 9pt;
+            font-weight: 700;
+            margin-bottom: 3px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        .department-accreditation {
+            font-size: 7pt;
+            opacity: 0.95;
+            font-weight: 500;
+            line-height: 1.3;
+        }
+
+        /* Report Title */
+        .report-title-section {
+            background: linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%);
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            border-left: 3px solid {{ settings.report_header_color|default:'#2196F3' }};
+            box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+        }
+
+        .report-title {
+            font-size: 12pt;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 2px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .report-subtitle {
+            font-size: 8.5pt;
+            color: #666;
+            font-weight: 500;
+        }
+
+        /* Patient Information */
+        .patient-info-box {
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            padding: 8px 10px;
+            margin-bottom: 10px;
+            background: #fafafa;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 6px 15px;
+        }
+
+        .info-item {
+            display: flex;
+        }
+
+        .info-label {
+            font-weight: 600;
+            color: #555;
+            min-width: 110px;
+            font-size: 8.5pt;
+        }
+
+        .info-value {
+            color: #333;
+            font-weight: 500;
+            font-size: 8.5pt;
+        }
+
+        /* Report Content */
+        .report-content-section {
+            margin: 10px 0;
+        }
+
+        .section-header {
+            background: {{ settings.report_header_color|default:'#2196F3' }};
+            color: white;
+            padding: 6px 10px;
+            font-size: 9pt;
+            font-weight: 700;
+            border-radius: 3px 3px 0 0;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        .section-content {
+            background: white;
+            border: 1px solid #ddd;
+            border-top: none;
+            padding: 10px 12px;
+            border-radius: 0 0 3px 3px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            font-size: 8.5pt;
+        }
+
+        /* Interpretation Section */
+        .interpretation-section {
+            background: linear-gradient(135deg, #fff8e1 0%, #fff3cd 100%);
+            border: 1px solid #ffc107;
+            border-left: 3px solid #f57c00;
+            border-radius: 4px;
+            padding: 8px 10px;
+            margin: 10px 0;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+        }
+
+        .interpretation-title {
+            font-weight: 700;
+            color: #f57c00;
+            margin-bottom: 6px;
+            font-size: 9pt;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            display: flex;
+            align-items: center;
+        }
+
+        .interpretation-content {
+            color: #333;
+            line-height: 1.5;
+            font-size: 8.5pt;
+        }
+
+        /* Authorization Section */
+        .authorization-section {
+            margin-top: 15px;
+            padding-top: 12px;
+            border-top: 2px solid #e0e0e0;
+            page-break-inside: avoid;
+        }
+
+        .signature-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 25px;
+            margin-top: 10px;
+        }
+
+        .signature-box {
+            text-align: center;
+        }
+
+        .signature-line {
+            margin-bottom: 35px;
+            min-height: 35px;
+            border-bottom: 1.5px solid #333;
+            position: relative;
+        }
+
+        .signature-name {
+            position: absolute;
+            bottom: 3px;
+            left: 0;
+            right: 0;
+            font-size: 8pt;
+            color: #666;
+        }
+
+        .signature-label {
+            font-size: 8pt;
+            color: #666;
+            margin-top: 4px;
+            font-weight: 600;
+        }
+
+        .signature-date {
+            font-size: 7.5pt;
+            color: #999;
+            margin-top: 3px;
+        }
+
+        .authorization-notice {
+            margin-top: 12px;
+            padding: 8px 10px;
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            border-radius: 4px;
+            border-left: 3px solid {{ settings.report_header_color|default:'#2196F3' }};
+        }
+
+        .authorization-notice p {
+            font-size: 7.5pt;
+            color: #1e40af;
+            margin: 0;
+            line-height: 1.4;
+            font-weight: 500;
+        }
+
+        /* Footer */
+        .report-footer {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 3px solid {{ settings.report_header_color|default:'#2196F3' }};
+            font-size: 8.5pt;
+            color: #666;
+            text-align: center;
+            line-height: 1.7;
+        }
+
+        .footer-notice {
+            background: #e3f2fd;
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 12px;
+            font-style: italic;
+        }
+
+        /* Watermark */
+        .watermark {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(-45deg);
+            font-size: 60pt;
+            color: rgba(0, 0, 0, 0.02);
+            z-index: -1;
+            font-weight: 700;
+        }
+
+        /* Print Styles */
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            
+            body {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+                font-size: 8.5pt;
+            }
+            
+            .report-container {
+                padding: 0;
+                max-width: 100%;
+            }
+            
+            .page-break {
+                page-break-after: always;
+            }
+            
+            /* Prevent page breaks inside critical sections */
+            .patient-info-box,
+            .report-content-section,
+            .interpretation-section {
+                page-break-inside: avoid;
+            }
+            
+            /* Reduce margins further for print */
+            @page {
+                margin: 10mm;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Watermark -->
+    <div class="watermark">{{ settings.hospital_name|default:"RADIOLOGY" }}</div>
+
+    <div class="report-container">
+        <!-- Header -->
+        <div class="report-header">
+            <div class="header-left">
+                {% if settings.logo %}
+                <img src="{{ settings.logo.url }}" alt="{{ settings.hospital_name }}" class="hospital-logo">
+                {% endif %}
+                <div class="hospital-name">{{ settings.hospital_name|default:"Hospital Management System" }}</div>
+                <div class="hospital-tagline">{{ settings.hospital_tagline|default:"Quality Healthcare for All" }}</div>
+                <div class="hospital-contact">
+                    {% if settings.address %}
+                        <strong>Address:</strong> {{ settings.address }}{% if settings.city %}, {{ settings.city }}{% endif %}{% if settings.state %}, {{ settings.state }}{% endif %}{% if settings.postal_code %} {{ settings.postal_code }}{% endif %}<br>
+                    {% endif %}
+                    {% if settings.phone %}<strong>Tel:</strong> {{ settings.phone }}{% endif %}
+                    {% if settings.phone and settings.email %} | {% endif %}
+                    {% if settings.email %}<strong>Email:</strong> {{ settings.email }}{% endif %}
+                    {% if settings.website %}<br><strong>Website:</strong> {{ settings.website }}{% endif %}
+                </div>
+            </div>
+            
+            <div class="department-badge">
+                <div class="department-name">{{ settings.radiology_department_name|default:"Radiology Department" }}</div>
+                {% if settings.radiology_phone %}
+                <div class="department-accreditation">Tel: {{ settings.radiology_phone }}</div>
+                {% endif %}
+                {% if settings.radiology_email %}
+                <div class="department-accreditation">Email: {{ settings.radiology_email }}</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Report Title -->
+        <div class="report-title-section">
+            <div class="report-title">RADIOLOGY REPORT</div>
+            <div class="report-subtitle">
+                {{ study.get_modality_display }}{% if study.body_part %} - {{ study.body_part }}{% endif %}{% if study.study_type %} ({{ study.study_type }}){% endif %}
+            </div>
+        </div>
+
+        <!-- Patient Information -->
+        <div class="patient-info-box">
+            <div class="info-grid">
+                <div class="info-item">
+                    <span class="info-label">Patient Name:</span>
+                    <span class="info-value">{{ study.patient.full_name }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">MRN:</span>
+                    <span class="info-value">{{ study.patient.mrn }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Age/Gender:</span>
+                    <span class="info-value">{{ study.patient.age }} Years / {{ study.patient.get_gender_display }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Phone:</span>
+                    <span class="info-value">{{ study.patient.phone_number|default:"N/A" }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Study Date:</span>
+                    <span class="info-value">
+                        {% if study.performed_at %}
+                            {{ study.performed_at|date:"d M Y, H:i" }}
+                        {% elif study.started_at %}
+                            {{ study.started_at|date:"d M Y, H:i" }}
+                        {% elif study.created %}
+                            {{ study.created|date:"d M Y, H:i" }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Report Date:</span>
+                    <span class="info-value">
+                        {% if study.report_verified_at %}
+                            {{ study.report_verified_at|date:"d M Y, H:i" }}
+                        {% elif study.report_dictated_at %}
+                            {{ study.report_dictated_at|date:"d M Y, H:i" }}
+                        {% else %}
+                            Pending
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Requesting Doctor:</span>
+                    <span class="info-value">
+                        {% if study.order and study.order.requested_by and study.order.requested_by.user %}
+                            {{ study.order.requested_by.user.get_full_name|default:study.order.requested_by.user.username|default:"N/A" }}
+                        {% elif study.encounter and study.encounter.provider and study.encounter.provider.user %}
+                            {{ study.encounter.provider.user.get_full_name|default:study.encounter.provider.user.username|default:"N/A" }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Priority:</span>
+                    <span class="info-value">{{ study.get_priority_display }}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Clinical Indication -->
+        {% if study.clinical_indication %}
+        <div class="report-content-section">
+            <div class="section-header">CLINICAL INDICATION</div>
+            <div class="section-content">{{ study.clinical_indication }}</div>
+        </div>
+        {% endif %}
+
+        <!-- Report Text -->
+        {% if study.report_text %}
+        <div class="report-content-section">
+            <div class="section-header">REPORT</div>
+            <div class="section-content">{{ study.report_text }}</div>
+        </div>
+        {% endif %}
+
+        <!-- Findings -->
+        {% if study.findings %}
+        <div class="report-content-section">
+            <div class="section-header">FINDINGS</div>
+            <div class="section-content">{{ study.findings }}</div>
+        </div>
+        {% endif %}
+
+        <!-- Impression & Interpretation -->
+        <div class="interpretation-section">
+            <div class="interpretation-title">
+                <i class="bi bi-clipboard-pulse" style="margin-right: 8px;"></i>
+                IMPRESSION & CLINICAL INTERPRETATION
+            </div>
+            <div class="interpretation-content">
+                {% if study.impression %}
+                    {{ study.impression|linebreaks }}
+                {% else %}
+                    <p style="font-style: italic; color: #888;">
+                        <em>Clinical interpretation and recommendations should be provided by the requesting physician based on patient history, physical examination, and these imaging findings.</em>
+                    </p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Authorization Section -->
+        <div class="authorization-section">
+            <div class="signature-grid">
+                <!-- Radiologist Signature -->
+                <div class="signature-box">
+                    <div class="signature-line">
+                        <div class="signature-name">
+                            {% if study.report_verified_by and study.report_verified_by.user %}
+                                {{ study.report_verified_by.user.get_full_name|default:study.report_verified_by.user.username }}
+                            {% else %}
+                                Radiologist
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="signature-label">
+                        <strong>Radiologist</strong><br>
+                        {% if settings.radiology_department_name %}{{ settings.radiology_department_name }}{% else %}Radiology Department{% endif %}
+                    </div>
+                    {% if study.report_verified_at %}
+                    <div class="signature-date">
+                        Date: {{ study.report_verified_at|date:"d M Y" }}
+                    </div>
+                    {% endif %}
+                </div>
+
+                <!-- Medical Director Signature -->
+                <div class="signature-box">
+                    <div class="signature-line">
+                        <div class="signature-name">
+                            &nbsp;
+                        </div>
+                    </div>
+                    <div class="signature-label">
+                        <strong>Medical Director</strong><br>
+                        {{ settings.hospital_name|default:"Hospital Management System" }}
+                    </div>
+                    <div class="signature-date">
+                        Date: _______________
+                    </div>
+                </div>
+            </div>
+            
+            <div class="authorization-notice">
+                <p>
+                    <strong>AUTHORIZATION:</strong> This radiology report has been reviewed and authorized for external use. 
+                    All findings have been verified according to standard radiology procedures. 
+                    For questions or clarifications, please contact the radiology department at 
+                    {% if settings.radiology_phone %}{{ settings.radiology_phone }}{% else %}{{ settings.phone }}{% endif %}.
+                </p>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="report-footer">
+            {% if settings.report_footer_text %}
+                {{ settings.report_footer_text|linebreaks }}
+            {% else %}
+                <p>This report is electronically generated and validated by {{ settings.hospital_name|default:"our radiology department" }}.</p>
+            {% endif %}
+            
+            <div class="footer-notice">
+                <strong>NOTICE:</strong> This report is confidential and intended solely for the use of the patient and requesting physician. 
+                Results should be interpreted in conjunction with clinical findings and other diagnostic data.
+            </div>
+            
+            <p style="margin-top: 12px;">
+                Printed on: {{ now|date:"d M Y, H:i" }} | 
+                Report ID: {{ study.id }} |
+                {% if settings.radiology_phone %}Radiology: {{ settings.radiology_phone }}{% endif %}
+                {% if settings.radiology_email %} | Email: {{ settings.radiology_email }}{% endif %}
+            </p>
+        </div>
+    </div>
+
+    <!-- Print Button (Hidden when printing) -->
+    <div class="no-print" style="position: fixed; bottom: 20px; right: 20px; z-index: 1000;">
+        <button onclick="window.print()" style="padding: 15px 30px; background: #2196F3; color: white; border: none; border-radius: 8px; font-size: 14pt; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+            🖨️ Print Report
+        </button>
+        <button onclick="window.close()" style="padding: 15px 30px; background: #666; color: white; border: none; border-radius: 8px; font-size: 14pt; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.15); margin-left: 10px;">
+            ✕ Close
+        </button>
+    </div>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+

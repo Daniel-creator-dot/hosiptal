@@ -1,0 +1,966 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}{{ page_title }} - HMS{% endblock %}
+{% block page_title %}📚 {{ page_title }}{% endblock %}
+{% block page_subtitle %}{{ page_description }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .drug-guide-container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+
+    .guide-header {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 32px;
+        margin-bottom: 30px;
+        box-shadow: 0 10px 30px rgba(99, 102, 241, 0.3);
+    }
+
+    .guide-header h1 {
+        font-size: 32px;
+        font-weight: 700;
+        margin-bottom: 12px;
+    }
+
+    .guide-header p {
+        font-size: 16px;
+        opacity: 0.95;
+        margin: 0;
+    }
+
+    .search-box {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 24px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+
+    .search-box input {
+        border: 2px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 12px 16px;
+        font-size: 16px;
+        width: 100%;
+        transition: all 0.3s;
+    }
+
+    .search-box input:focus {
+        outline: none;
+        border-color: #6366f1;
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    }
+
+    .system-card {
+        background: white;
+        border-radius: 12px;
+        margin-bottom: 24px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        overflow: hidden;
+        transition: all 0.3s;
+    }
+
+    .system-card:hover {
+        box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+    }
+
+    .system-header {
+        background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+        padding: 20px 24px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 2px solid #e2e8f0;
+        transition: all 0.3s;
+    }
+
+    .system-header:hover {
+        background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+    }
+
+    .system-header.active {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        color: white;
+    }
+
+    .system-title {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 20px;
+        font-weight: 600;
+    }
+
+    .system-icon {
+        font-size: 28px;
+    }
+
+    .system-content {
+        padding: 0;
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.4s ease-out;
+    }
+
+    .system-content.expanded {
+        max-height: 5000px;
+        padding: 24px;
+    }
+
+    .category-item {
+        margin-bottom: 20px;
+        border-left: 3px solid #e2e8f0;
+        padding-left: 16px;
+    }
+
+    .category-header {
+        font-size: 18px;
+        font-weight: 600;
+        color: #1e293b;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .category-description {
+        color: #64748b;
+        font-size: 14px;
+        margin-bottom: 12px;
+        font-style: italic;
+    }
+
+    .subcategory-list {
+        margin-left: 20px;
+        margin-top: 12px;
+    }
+
+    .subcategory-item {
+        margin-bottom: 16px;
+        padding: 12px;
+        background: #f8fafc;
+        border-radius: 8px;
+    }
+
+    .subcategory-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: #334155;
+        margin-bottom: 8px;
+    }
+
+    .subsubcategory-list {
+        margin-left: 16px;
+        margin-top: 8px;
+    }
+
+    .subsubcategory-item {
+        margin-bottom: 12px;
+        padding: 8px 12px;
+        background: white;
+        border-radius: 6px;
+        border: 1px solid #e2e8f0;
+    }
+
+    .subsubcategory-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #475569;
+        margin-bottom: 6px;
+    }
+
+    .drug-examples {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 8px;
+    }
+
+    .drug-badge {
+        background: #6366f1;
+        color: white;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        display: inline-block;
+    }
+
+    .drug-badge:hover {
+        background: #4f46e5;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(99, 102, 241, 0.3);
+    }
+
+    .drugs-in-stock {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid #e2e8f0;
+    }
+
+    .drugs-in-stock-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #10b981;
+        margin-bottom: 8px;
+    }
+
+    .stock-drug-item {
+        display: block;
+        background: #ecfdf5;
+        color: #065f46;
+        padding: 12px;
+        border-radius: 8px;
+        border: 2px solid #e2e8f0;
+        font-size: 13px;
+        margin-bottom: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
+        position: relative;
+    }
+
+    .stock-drug-item:hover {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        color: white;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        border-color: #6366f1;
+    }
+    
+    .stock-drug-item:hover .bi-prescription {
+        color: white !important;
+        transform: scale(1.2);
+    }
+
+    .stock-drug-item.out-of-stock {
+        background: #fee2e2;
+        color: #991b1b;
+        opacity: 0.7;
+    }
+
+    .stock-drug-item.low-stock {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .category-header {
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .category-header:hover {
+        color: #6366f1;
+    }
+
+    .view-drugs-btn {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        margin-top: 8px;
+        transition: all 0.3s;
+    }
+
+    .view-drugs-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+    }
+
+    .alternatives-box {
+        background: #fef3c7;
+        border-left: 4px solid #f59e0b;
+        padding: 12px;
+        border-radius: 8px;
+        margin-top: 12px;
+    }
+
+    .alternatives-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #92400e;
+        margin-bottom: 8px;
+    }
+
+    .drug-count-badge {
+        background: #6366f1;
+        color: white;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        margin-left: 8px;
+    }
+
+    .drug-list-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 12px;
+        margin-top: 12px;
+    }
+
+    .collapse-icon {
+        transition: transform 0.3s;
+        font-size: 20px;
+    }
+
+    .collapse-icon.rotated {
+        transform: rotate(180deg);
+    }
+
+    .no-results {
+        text-align: center;
+        padding: 60px 20px;
+        color: #64748b;
+    }
+
+    .no-results-icon {
+        font-size: 64px;
+        margin-bottom: 16px;
+        opacity: 0.5;
+    }
+
+    @media (max-width: 768px) {
+        .guide-header h1 {
+            font-size: 24px;
+        }
+
+        .system-title {
+            font-size: 16px;
+        }
+
+        .category-header {
+            font-size: 16px;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="drug-guide-container">
+    <div class="guide-header">
+        <h1>📚 Drug Classification Guide</h1>
+        <p>Comprehensive hierarchical drug reference for doctors and pharmacy staff</p>
+    </div>
+
+    <div class="search-box">
+        <input type="text" id="searchInput" placeholder="🔍 Search for drugs, categories, or systems..." autocomplete="off" title="Enter text" placeholder="Enter text">
+    </div>
+
+    <div id="drugGuideContent">
+        {% for system_key, system_data in drug_classification.items %}
+        <div class="system-card" data-system="{{ system_data.name|lower }}" data-keywords="{{ system_data.name|lower }}">
+            <div class="system-header" onclick="toggleSystem(this)">
+                <div class="system-title">
+                    <span class="system-icon">{{ system_data.icon }}</span>
+                    <span>{{ system_data.name }}</span>
+                </div>
+                <i class="bi bi-chevron-down collapse-icon"></i>
+            </div>
+            <div class="system-content">
+                {% for cat_key, cat_data in system_data.categories.items %}
+                <div class="category-item" data-category="{{ cat_key|lower }}" data-keywords="{{ cat_key|lower }} {{ cat_data.description|default:''|lower }}">
+                    <div class="category-header" onclick="viewDrugsInCategory('{{ cat_key }}', '{{ cat_data.drugs_in_stock|length|default:0 }}')">
+                        <i class="bi bi-capsule"></i>
+                        {{ cat_key }}
+                        {% if cat_data.drugs_count %}
+                        <span class="drug-count-badge">{{ cat_data.in_stock_count|default:0 }}/{{ cat_data.drugs_count }} in stock</span>
+                        {% endif %}
+                    </div>
+                    {% if cat_data.description %}
+                    <div class="category-description">{{ cat_data.description }}</div>
+                    {% endif %}
+
+                    {% if cat_data.examples %}
+                    <div class="drug-examples">
+                        {% for drug in cat_data.examples %}
+                        <span class="drug-badge" data-drug="{{ drug|lower }}">{{ drug }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+
+                    {% if cat_data.subcategories %}
+                    <div class="subcategory-list">
+                        {% for subcat_key, subcat_data in cat_data.subcategories.items %}
+                        <div class="subcategory-item" data-subcategory="{{ subcat_key|lower }}" data-keywords="{{ subcat_key|lower }}">
+                            <div class="subcategory-title">{{ subcat_key }}</div>
+                            
+                            {% if subcat_data.subsubcategories %}
+                                {# Has subsubcategories #}
+                                <div class="subsubcategory-list">
+                                    {% for subsubcat_key, subsubcat_data in subcat_data.subsubcategories.items %}
+                                    <div class="subsubcategory-item" data-subsubcategory="{{ subsubcat_key|lower }}" data-keywords="{{ subsubcat_key|lower }}">
+                                        <div class="subsubcategory-title">{{ subsubcat_key }}</div>
+                                        
+                                        {# Try to render as list first, then as dict #}
+                                        {% if subsubcat_data|length > 0 %}
+                                            {% if subsubcat_data.0 %}
+                                                {# It's a list of strings #}
+                                                <div class="drug-examples">
+                                                    {% for drug in subsubcat_data %}
+                                                    <span class="drug-badge" data-drug="{{ drug|lower }}">{{ drug }}</span>
+                                                    {% endfor %}
+                                                </div>
+                                            {% else %}
+                                                {# Nested dictionary structure #}
+                                                {% for nested_key, nested_data in subsubcat_data.items %}
+                                                <div style="margin-top: 8px;">
+                                                    <strong style="font-size: 13px; color: #475569;">{{ nested_key }}:</strong>
+                                                    <div class="drug-examples" style="margin-top: 4px;">
+                                                        {% for drug in nested_data %}
+                                                        <span class="drug-badge" data-drug="{{ drug|lower }}">{{ drug }}</span>
+                                                        {% endfor %}
+                                                    </div>
+                                                </div>
+                                                {% endfor %}
+                                            {% endif %}
+                                        {% endif %}
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                {# Simple list of drugs #}
+                                <div class="drug-examples">
+                                    {% for drug in subcat_data %}
+                                    <span class="drug-badge" data-drug="{{ drug|lower }}">{{ drug }}</span>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+
+                    {% if cat_data.drugs_in_stock %}
+                    <div class="drugs-in-stock">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <div class="drugs-in-stock-title">
+                                <i class="bi bi-check-circle"></i> Available in Pharmacy Inventory:
+                                <strong>{{ cat_data.in_stock_count|default:0 }}</strong> in stock
+                            </div>
+                            <button class="view-drugs-btn" onclick="viewDrugsInCategory('{{ cat_key }}', '{{ cat_data.drugs_in_stock|length }}')">
+                                <i class="bi bi-eye"></i> View All Drugs
+                            </button>
+                        </div>
+                        <div class="drug-list-grid">
+                            {% for drug in cat_data.drugs_in_stock|slice:":10" %}
+                            <div class="stock-drug-item {{ drug.stock_status }}" 
+                                 onclick="selectDrugForPrescription('{{ drug.id }}', '{{ drug.name }}', '{{ drug.strength }}', '{{ drug.form }}', {{ drug.has_stock|yesno:"true,false" }})"
+                                 title="Click to prescribe {{ drug.name }}">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div style="flex: 1;">
+                                        <div style="font-weight: 600; color: #1e293b;">{{ drug.name }}</div>
+                                        <div style="font-size: 11px; opacity: 0.8; margin-top: 4px;">
+                                            {{ drug.strength }} · {{ drug.form }}
+                                            {% if drug.stock_quantity > 0 %}
+                                            <span style="color: #10b981; font-weight: 600;">({{ drug.stock_quantity }} in stock)</span>
+                                            {% else %}
+                                            <span style="color: #ef4444;">(Out of Stock)</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    <div style="margin-left: 8px;">
+                                        <i class="bi bi-prescription" style="color: #6366f1; font-size: 18px;"></i>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                            {% if cat_data.drugs_in_stock|length > 10 %}
+                            {% with remaining=cat_data.drugs_in_stock|length|add:"-10" %}
+                            <div class="stock-drug-item" style="background: #f3f4f6; text-align: center; cursor: pointer;" onclick="viewDrugsInCategory('{{ cat_key }}', '{{ cat_data.drugs_in_stock|length }}')">
+                                <strong>+{{ remaining }} more drugs</strong>
+                                <div style="font-size: 11px;">Click to view all</div>
+                            </div>
+                            {% endwith %}
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-warning mt-3">
+                        <i class="bi bi-exclamation-triangle"></i> No drugs available in this category.
+                        {% if cat_data.alternatives %}
+                        <div class="alternatives-box mt-2">
+                            <div class="alternatives-title">💡 Suggested Alternatives:</div>
+                            {% for alt in cat_data.alternatives %}
+                            <button class="btn btn-sm btn-outline-warning me-2 mb-2" onclick="viewCategory('{{ alt }}')">
+                                {{ alt }}
+                            </button>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div id="noResults" class="no-results d-none">
+        <div class="no-results-icon">🔍</div>
+        <h3>No results found</h3>
+        <p>Try searching with different keywords</p>
+    </div>
+
+    <!-- All Drugs by Database Category Section -->
+    {% if all_drugs_by_category %}
+    <div class="system-card" style="margin-top: 40px; border-top: 3px solid #6366f1;">
+        <div class="system-header" onclick="toggleSystem(this)" data-system="all-categories" data-keywords="all drugs database category inventory">
+            <div class="system-title">
+                <span style="font-size: 24px;">📦</span>
+                <div>
+                    <div>All Drugs by Category (From Inventory)</div>
+                    <div style="font-size: 13px; opacity: 0.8; font-weight: normal; margin-top: 4px;">
+                        Complete list of all drugs in inventory organized by their database category
+                    </div>
+                </div>
+            </div>
+            <i class="bi bi-chevron-down collapse-icon"></i>
+        </div>
+        <div class="system-content">
+            {% for category_code, category_info in all_drugs_by_category.items %}
+            <div class="category-item" data-category="{{ category_info.name|lower }}" data-keywords="{{ category_info.name|lower }}">
+                <div class="category-header" onclick="viewDrugsInCategory('{{ category_info.name }}', '{{ category_info.total_count }}')">
+                    <i class="bi bi-capsule"></i>
+                    {{ category_info.name }}
+                    <span class="drug-count-badge">{{ category_info.in_stock_count }}/{{ category_info.total_count }} in stock</span>
+                </div>
+                <div class="category-content">
+                    {% if category_info.drugs %}
+                    <div class="drugs-in-stock">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <div class="drugs-in-stock-title">
+                                <i class="bi bi-check-circle"></i> Available in Pharmacy Inventory:
+                                <strong>{{ category_info.in_stock_count }}</strong> in stock
+                            </div>
+                            <button class="view-drugs-btn" onclick="viewDrugsInCategory('{{ category_info.name }}', '{{ category_info.total_count }}')">
+                                <i class="bi bi-eye"></i> View All Drugs
+                            </button>
+                        </div>
+                        <div class="drug-list-grid">
+                            {% for drug in category_info.drugs|slice:":10" %}
+                            <div class="stock-drug-item {{ drug.stock_status }}" 
+                                 onclick="selectDrugForPrescription('{{ drug.id }}', '{{ drug.name }}', '{{ drug.strength }}', '{{ drug.form }}', {{ drug.has_stock|yesno:"true,false" }})"
+                                 title="Click to prescribe {{ drug.name }}">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div style="flex: 1;">
+                                        <div style="font-weight: 600; color: #1e293b;">{{ drug.name }}</div>
+                                        <div style="font-size: 11px; opacity: 0.8; margin-top: 4px;">
+                                            {{ drug.strength }} · {{ drug.form }}
+                                            {% if drug.stock_quantity > 0 %}
+                                            <span style="color: #10b981; font-weight: 600;">({{ drug.stock_quantity }} in stock)</span>
+                                            {% else %}
+                                            <span style="color: #ef4444;">(Out of Stock)</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    <div style="margin-left: 8px;">
+                                        <i class="bi bi-prescription" style="color: #6366f1; font-size: 18px;"></i>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                            {% if category_info.drugs|length > 10 %}
+                            {% with remaining=category_info.drugs|length|add:"-10" %}
+                            <div class="stock-drug-item" style="background: #f3f4f6; text-align: center; cursor: pointer;" onclick="viewDrugsInCategory('{{ category_info.name }}', '{{ category_info.total_count }}')">
+                                <strong>+{{ remaining }} more drugs</strong>
+                                <div style="font-size: 11px;">Click to view all</div>
+                            </div>
+                            {% endwith %}
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-warning mt-3">
+                        <i class="bi bi-exclamation-triangle"></i> No drugs available in this category.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+    function toggleSystem(header) {
+        const content = header.nextElementSibling;
+        const icon = header.querySelector('.collapse-icon');
+        const isExpanded = content.classList.contains('expanded');
+        
+        if (isExpanded) {
+            content.classList.remove('expanded');
+            header.classList.remove('active');
+            icon.classList.remove('rotated');
+        } else {
+            content.classList.add('expanded');
+            header.classList.add('active');
+            icon.classList.add('rotated');
+        }
+    }
+
+    // Search functionality
+    const searchInput = document.getElementById('searchInput');
+    const drugGuideContent = document.getElementById('drugGuideContent');
+    const noResults = document.getElementById('noResults');
+
+    searchInput.addEventListener('input', function(e) {
+        const searchTerm = e.target.value.toLowerCase().trim();
+        
+        if (searchTerm === '') {
+            // Show all systems
+            document.querySelectorAll('.system-card').forEach(card => {
+                card.style.display = 'block';
+            });
+            noResults.style.display = 'none';
+            drugGuideContent.style.display = 'block';
+            return;
+        }
+
+        let hasResults = false;
+
+        document.querySelectorAll('.system-card').forEach(systemCard => {
+            const systemHeader = systemCard.querySelector('.system-header');
+            const systemName = systemHeader.getAttribute('data-system') || '';
+            const systemKeywords = systemHeader.getAttribute('data-keywords') || '';
+            
+            let systemMatches = systemName.includes(searchTerm) || systemKeywords.includes(searchTerm);
+            let categoryMatches = false;
+
+            // Check categories within this system
+            systemCard.querySelectorAll('.category-item').forEach(category => {
+                const categoryKeywords = category.getAttribute('data-keywords') || '';
+                const categoryName = category.getAttribute('data-category') || '';
+                
+                if (categoryName.includes(searchTerm) || categoryKeywords.includes(searchTerm)) {
+                    categoryMatches = true;
+                    category.style.display = 'block';
+                } else {
+                    // Check subcategories and drugs
+                    let subcategoryMatches = false;
+                    category.querySelectorAll('.subcategory-item, .drug-badge').forEach(item => {
+                        const itemText = item.textContent.toLowerCase();
+                        if (itemText.includes(searchTerm)) {
+                            subcategoryMatches = true;
+                        }
+                    });
+                    
+                    if (subcategoryMatches) {
+                        categoryMatches = true;
+                        category.style.display = 'block';
+                    } else {
+                        category.style.display = 'none';
+                    }
+                }
+            });
+
+            if (systemMatches || categoryMatches) {
+                systemCard.style.display = 'block';
+                // Expand the system
+                const content = systemCard.querySelector('.system-content');
+                if (!content.classList.contains('expanded')) {
+                    toggleSystem(systemHeader);
+                }
+                hasResults = true;
+            } else {
+                systemCard.style.display = 'none';
+            }
+        });
+
+        if (hasResults) {
+            noResults.style.display = 'none';
+            drugGuideContent.style.display = 'block';
+        } else {
+            noResults.style.display = 'block';
+            drugGuideContent.style.display = 'none';
+        }
+    });
+
+    // Highlight search terms in drug badges
+    searchInput.addEventListener('input', function(e) {
+        const searchTerm = e.target.value.toLowerCase().trim();
+        if (searchTerm === '') return;
+
+        document.querySelectorAll('.drug-badge').forEach(badge => {
+            const drugName = badge.textContent.toLowerCase();
+            if (drugName.includes(searchTerm)) {
+                badge.style.background = '#10b981';
+                badge.style.transform = 'scale(1.05)';
+            } else {
+                badge.style.background = '#6366f1';
+                badge.style.transform = 'scale(1)';
+            }
+        });
+    });
+
+    // View drugs in a category
+    function viewDrugsInCategory(categoryName, count) {
+        // Find the category mapping
+        const categoryMapping = {
+            'Analgesics': 'analgesic',
+            'Antipyretics': 'antipyretic',
+            'Antihypertensives': 'antihypertensive',
+            'Antianginal Drugs': 'beta_blocker',
+            'Antiarrhythmics': 'antiarrhythmic',
+            'Anticoagulants': 'anticoagulant',
+            'Thrombolytics (Fibrinolytics)': 'thrombolytic',
+            'Antiplatelet Drugs': 'anticoagulant',
+            'Antibiotics': 'antibiotic',
+            'Antibacterials': 'antibacterial',
+            'Antivirals': 'antiviral',
+            'Antifungals': 'antifungal',
+            'Antacids': 'antacid',
+            'Antiemetics': 'antiemetic',
+            'Antidiarrheals': 'antidiarrheal',
+            'Laxatives': 'laxative',
+            'Bronchodilators': 'bronchodilator',
+            'Expectorants': 'expectorant',
+            'Cough Suppressants': 'cough_suppressant',
+            'Decongestants': 'decongestant',
+            'Cold Cures': 'antipyretic',
+            'Anticonvulsants': 'anticonvulsant',
+            'Antidepressants': 'antidepressant',
+            'Antipsychotics': 'antipsychotic',
+            'Antianxiety/Sedatives': 'antianxiety',
+            'Sleeping Drugs (Barbiturates & Benzodiazepines)': 'sleeping_drug',
+            'Tranquilizers': 'antianxiety',
+            'Antihistamines': 'antihistamine',
+            'Corticosteroids': 'corticosteroid',
+            'Muscle Relaxants': 'muscle_relaxant',
+            'Diuretics': 'diuretic',
+            'Anti-Inflammatories': 'anti_inflammatory',
+        };
+
+        const categoryCode = categoryMapping[categoryName] || categoryName.toLowerCase().replace(/\s+/g, '_');
+        
+        // Get encounter ID from URL if available
+        const urlParams = new URLSearchParams(window.location.search);
+        const encounterId = urlParams.get('encounter_id');
+        
+        // Build URL
+        let url = `/hms/drugs/category/${categoryCode}/`;
+        if (encounterId) {
+            url += `?encounter_id=${encounterId}`;
+        }
+        
+        // Open in new window or redirect
+        window.open(url, '_blank', 'width=1200,height=800,scrollbars=yes');
+    }
+
+    // Store selected drug info for prescription
+    let selectedDrugForPrescription = null;
+
+    // Select drug for prescription
+    function selectDrugForPrescription(drugId, drugName, strength, form, hasStock) {
+        if (!hasStock) {
+            if (!confirm(`⚠️ ${drugName} is currently out of stock. Do you want to proceed with prescription anyway?`)) {
+                return;
+            }
+        }
+
+        // Store drug info
+        selectedDrugForPrescription = {
+            id: drugId,
+            name: drugName,
+            strength: strength,
+            form: form,
+            hasStock: hasStock
+        };
+
+        // Get encounter ID from URL if available
+        const urlParams = new URLSearchParams(window.location.search);
+        const encounterId = urlParams.get('encounter_id');
+        
+        if (encounterId) {
+            // Redirect to consultation with drug pre-selected
+            window.location.href = `/hms/consultation/${encounterId}/?drug_id=${drugId}&action=prescribe`;
+        } else {
+            // Show patient/encounter selection modal
+            showPatientSelectionModal();
+        }
+    }
+
+    // Show patient/encounter selection modal
+    function showPatientSelectionModal() {
+        const modal = document.getElementById('patientSelectionModal');
+        if (modal) {
+            // Reset search
+            document.getElementById('encounterSearchInput').value = '';
+            document.getElementById('encounterSearchResults').innerHTML = '<div class="text-center text-muted py-4">Start typing to search for active encounters...</div>';
+            
+            // Show modal
+            const bsModal = new bootstrap.Modal(modal);
+            bsModal.show();
+            
+            // Focus search input
+            setTimeout(() => {
+                document.getElementById('encounterSearchInput').focus();
+            }, 300);
+        }
+    }
+
+    // Search for active encounters
+    let encounterSearchTimeout;
+    function searchActiveEncounters() {
+        clearTimeout(encounterSearchTimeout);
+        const query = document.getElementById('encounterSearchInput').value.trim();
+        const resultsDiv = document.getElementById('encounterSearchResults');
+        
+        if (query.length < 2) {
+            resultsDiv.innerHTML = '<div class="text-center text-muted py-4">Type at least 2 characters to search...</div>';
+            return;
+        }
+        
+        encounterSearchTimeout = setTimeout(() => {
+            // Direct URL path - matches hospital/urls.py line 1297
+            const apiUrl = '/hms/api/encounters/search-active/';
+            fetch(`${apiUrl}?q=${encodeURIComponent(query)}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.encounters.length === 0) {
+                        resultsDiv.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-inbox"></i><br>No active encounters found</div>';
+                        return;
+                    }
+                    
+                    resultsDiv.innerHTML = data.encounters.map(enc => `
+                        <div class="encounter-select-item" onclick="selectEncounterForPrescription('${enc.id}', '${enc.patient_name}', '${enc.patient_mrn}')">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <h6 class="mb-1" style="font-weight: 600;">${enc.patient_name}</h6>
+                                    <div class="text-muted small">
+                                        MRN: ${enc.patient_mrn} · ${enc.patient_age}y · ${enc.patient_gender}
+                                    </div>
+                                    <div class="mt-2" style="font-size: 13px;">
+                                        <strong>Complaint:</strong> ${enc.chief_complaint}
+                                    </div>
+                                    <div class="mt-1" style="font-size: 12px; color: #666;">
+                                        <i class="bi bi-clock"></i> ${enc.started_at} · ${enc.encounter_type}
+                                    </div>
+                                </div>
+                                <div>
+                                    <span class="badge bg-primary">${enc.encounter_type}</span>
+                                </div>
+                            </div>
+                        </div>
+                    `).join('');
+                })
+                .catch(error => {
+                    console.error('Error searching encounters:', error);
+                    resultsDiv.innerHTML = '<div class="text-center text-danger py-4">Error searching encounters. Please try again.</div>';
+                });
+        }, 300);
+    }
+
+    // Select encounter and redirect to consultation
+    function selectEncounterForPrescription(encounterId, patientName, patientMRN) {
+        if (!selectedDrugForPrescription) {
+            alert('Error: Drug information not found. Please try again.');
+            return;
+        }
+        
+        // Close modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('patientSelectionModal'));
+        if (modal) {
+            modal.hide();
+        }
+        
+        // Redirect to consultation with drug pre-selected
+        const drugId = selectedDrugForPrescription.id;
+        window.location.href = `/hms/consultation/${encounterId}/?drug_id=${drugId}&action=prescribe`;
+    }
+
+    // View category (for alternatives)
+    function viewCategory(categoryName) {
+        viewDrugsInCategory(categoryName, 0);
+    }
+
+</script>
+
+<!-- Patient/Encounter Selection Modal for Prescription -->
+<div class="modal fade" id="patientSelectionModal" tabindex="-1" aria-labelledby="patientSelectionModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header" style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white;">
+                <h5 class="modal-title" id="patientSelectionModalLabel">
+                    <i class="bi bi-person-plus me-2"></i>Select Patient for Prescription
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                {% if selectedDrugForPrescription %}
+                <div class="alert alert-info mb-3">
+                    <i class="bi bi-capsule-pill me-2"></i>
+                    <strong>Selected Drug:</strong> {{ selectedDrugForPrescription.name }}
+                    {% if selectedDrugForPrescription.strength %}{{ selectedDrugForPrescription.strength }}{% endif %}
+                    {% if selectedDrugForPrescription.form %}{{ selectedDrugForPrescription.form }}{% endif %}
+                </div>
+                {% endif %}
+                
+                <div class="mb-3">
+                    <label for="encounterSearchInput" class="form-label">
+                        <i class="bi bi-search me-1"></i>Search Active Encounters
+                    </label>
+                    <input type="text" 
+                           class="form-control form-control-lg" 
+                           id="encounterSearchInput" 
+                           placeholder="Search by patient name, MRN, or complaint..."
+                           oninput="searchActiveEncounters()"
+                           autocomplete="off">
+                    <small class="text-muted">Search for active patient encounters from the last 7 days</small>
+                </div>
+                
+                <div id="encounterSearchResults" style="max-height: 400px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px;">
+                    <div class="text-center text-muted py-4">
+                        <i class="bi bi-search" style="font-size: 32px;"></i>
+                        <p class="mt-2">Start typing to search for active encounters...</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <a href="{% url 'hospital:patient_list' %}" class="btn btn-outline-primary">
+                    <i class="bi bi-plus-circle me-1"></i>Create New Visit
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .encounter-select-item {
+        padding: 16px;
+        margin-bottom: 12px;
+        border: 2px solid #e2e8f0;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s;
+        background: white;
+    }
+    
+    .encounter-select-item:hover {
+        border-color: #6366f1;
+        background: #f8f9ff;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+    }
+    
+    .encounter-select-item:active {
+        transform: translateY(0);
+    }
+    
+</style>
+
+{% endblock %}
+

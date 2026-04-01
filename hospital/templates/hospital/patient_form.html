@@ -1,16 +1,22 @@
 {% extends 'hospital/base.html' %}
 {% load crispy_forms_tags %}
 
-{% block title %}Register New Patient - PrimeCare Medical Center{% endblock %}
+{% block title %}{% if patient %}Edit Patient — {{ patient.mrn }}{% else %}Register New Patient{% endif %} - PrimeCare Medical Center{% endblock %}
 
-{% block page_title %}Register New Patient{% endblock %}
-{% block page_subtitle %}Patient ID will be automatically generated after registration{% endblock %}
+{% block page_title %}{% if patient %}Edit Patient{% else %}Register New Patient{% endif %}{% endblock %}
+{% block page_subtitle %}{% if patient %}MRN {{ patient.mrn }}. Change <strong>Payment Type</strong> below to route new bills to Cash, Insurance, or Corporate.{% else %}Patient ID will be automatically generated after registration{% endif %}{% endblock %}
 
 {% block content %}
 <div class="modern-card">
+    {% if not patient %}
     <div class="alert alert-info" style="border-radius: 12px; margin-bottom: 24px; border: none;">
         <i class="bi bi-info-circle"></i> <strong>Note:</strong> Patient ID (MRN) will be automatically generated as <strong>PMC[Year][000001]</strong> after registration. You don't need to enter it manually.
     </div>
+    {% else %}
+    <div class="alert alert-info" style="border-radius: 12px; margin-bottom: 24px; border: none;">
+        <i class="bi bi-info-circle"></i> <strong>Billing payer:</strong> Saving updates the patient’s primary payer. <strong>Open bills</strong> for <strong>today’s visit date</strong> (and any <strong>active</strong> visit) are switched to this payer. Paid or cancelled invoices are left unchanged.
+    </div>
+    {% endif %}
     
     {% if form.non_field_errors %}
     <div class="alert alert-warning" style="border-radius: 12px; margin-bottom: 24px; border: 2px solid #ffc107;">
@@ -57,7 +63,7 @@
         </div>
         <div class="mt-3">
             <p class="mb-3"><strong>What would you like to do?</strong></p>
-            <form method="post" id="proceedForm" style="display: inline;">
+            <form method="post" id="proceedForm" class="d-inline">
                 {% csrf_token %}
                 <input type="hidden" name="proceed_with_duplicate" value="true">
                 <button type="button" class="btn btn-warning me-2" onclick="if(window.proceedWithDuplicateForm) { window.proceedWithDuplicateForm(); } else if(window.proceedWithDuplicate) { window.proceedWithDuplicate(); } else { alert('Function not loaded. Please refresh the page.'); } return false;">
@@ -78,6 +84,72 @@
     
     {% crispy form %}
 </div>
+
+{% if duplicate_warning and show_modal %}
+<!-- Duplicate Patient Modal -->
+<div class="modal fade show" id="duplicateModal" tabindex="-1" role="dialog" aria-labelledby="duplicateModalLabel" aria-hidden="false" style="display: block; background-color: rgba(0,0,0,0.5);">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content" style="border-radius: 12px; border: 2px solid #ffc107;">
+            <div class="modal-header" style="background-color: #fff3cd; border-bottom: 2px solid #ffc107;">
+                <h5 class="modal-title" id="duplicateModalLabel">
+                    <i class="bi bi-exclamation-triangle-fill text-warning me-2"></i>
+                    <strong>⚠️ Duplicate Patient Detected</strong>
+                </h5>
+                <button type="button" class="btn-close" onclick="closeDuplicateModal()" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning mb-3">
+                    <strong>{{ duplicate_reason }}</strong>
+                </div>
+                {% if existing_mrn %}
+                <div class="alert alert-info">
+                    <strong>Existing Patient MRN:</strong> {{ existing_mrn }}
+                    <br><small class="text-muted">Please check if this patient already exists before proceeding.</small>
+                </div>
+                {% endif %}
+                <div class="alert alert-info" style="background-color: #e7f3ff;">
+                    <strong>💡 Note:</strong> This could be a family member or different person sharing the same contact information.
+                    <br><strong>If this is a different person, you can proceed with registration.</strong>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <form method="post" id="proceedFormModal" class="d-inline">
+                    {% csrf_token %}
+                    <input type="hidden" name="proceed_with_duplicate" value="true">
+                    {% for field in form %}
+                        {% if field.value %}
+                            <input type="hidden" name="{{ field.name }}" value="{{ field.value }}">
+                        {% endif %}
+                    {% endfor %}
+                    <button type="button" class="btn btn-secondary" onclick="closeDuplicateModal()">
+                        <i class="bi bi-x-circle me-2"></i>Cancel
+                    </button>
+                    <button type="submit" class="btn btn-warning">
+                        <i class="bi bi-check-circle me-2"></i>Proceed Anyway (Different Person)
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function closeDuplicateModal() {
+    const modal = document.getElementById('duplicateModal');
+    if (modal) {
+        modal.style.display = 'none';
+        modal.classList.remove('show');
+    }
+}
+
+// Close modal on escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closeDuplicateModal();
+    }
+});
+</script>
+{% endif %}
 
 <script>
 // Prevent double-submission of patient registration form
@@ -284,6 +356,54 @@
     console.log('Duplicate handling functions initialized');
 })();
 
+// Cascading insurance plan: load plans when company is selected
+(function() {
+    const companySelect = document.getElementById('id_selected_insurance_company');
+    const planSelect = document.getElementById('id_selected_insurance_plan');
+    
+    function loadPlansForCompany(companyId) {
+        if (!planSelect) return;
+        var currentPlan = planSelect.value;
+        planSelect.innerHTML = '<option value="">Select plan...</option>';
+        planSelect.disabled = true;
+        if (!companyId) {
+            planSelect.innerHTML = '<option value="">Select insurance company first</option>';
+            planSelect.disabled = false;
+            return;
+        }
+        fetch('/hms/api/insurance/companies/' + companyId + '/plans/')
+            .then(r => r.json())
+            .then(data => {
+                planSelect.innerHTML = '<option value="">Select plan...</option>';
+                (data.plans || []).forEach(function(p) {
+                    const opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.textContent = p.plan_name + (p.plan_code ? ' (' + p.plan_code + ')' : '');
+                    planSelect.appendChild(opt);
+                });
+                if (currentPlan) planSelect.value = currentPlan;
+                planSelect.disabled = false;
+            })
+            .catch(function(err) {
+                console.error('Error loading plans:', err);
+                planSelect.innerHTML = '<option value="">Error loading plans</option>';
+                planSelect.disabled = false;
+            });
+    }
+    
+    if (companySelect && planSelect) {
+        companySelect.addEventListener('change', function() {
+            loadPlansForCompany(this.value);
+        });
+        // If company pre-selected (e.g. edit), load plans
+        if (companySelect.value) {
+            loadPlansForCompany(companySelect.value);
+        } else {
+            planSelect.innerHTML = '<option value="">Select insurance company first</option>';
+        }
+    }
+})();
+
 // Toggle payer type fields based on selection
 (function() {
     'use strict';
@@ -300,12 +420,12 @@
         const corporateFields = document.getElementById('corporate_fields');
         const cashFields = document.getElementById('cash_fields');
         
-        // Hide all fields first
+        // Hide all first, then show only the selected type
         if (insuranceFields) insuranceFields.style.display = 'none';
         if (corporateFields) corporateFields.style.display = 'none';
         if (cashFields) cashFields.style.display = 'none';
         
-        // Show relevant fields based on selection
+        // Show only the relevant section for selected payment type
         if (payerType === 'insurance' && insuranceFields) {
             insuranceFields.style.display = 'block';
         } else if (payerType === 'corporate' && corporateFields) {

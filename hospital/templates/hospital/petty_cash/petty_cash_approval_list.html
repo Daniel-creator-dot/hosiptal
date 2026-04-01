@@ -1,0 +1,103 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Petty Cash Approvals{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-shield-check me-2"></i>Petty Cash Approvals</h2>
+        <a href="{% url 'hospital:petty_cash_list' %}" class="btn btn-secondary">
+            <i class="bi bi-arrow-left me-2"></i>Back to List
+        </a>
+    </div>
+
+    <div class="alert alert-warning">
+        <i class="bi bi-exclamation-triangle me-2"></i>
+        <strong>Approval Required:</strong> All petty cash transactions require your approval. 
+        Transactions over <strong>GHS 500.00</strong> require mandatory review.
+    </div>
+
+    <!-- Statistics -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm border-start border-warning border-3">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Pending Approvals</h6>
+                    <h3 class="mb-0 text-warning">{{ stats.total }}</h3>
+                    <small class="text-muted">GHS {{ stats.total_amount|floatformat:2 }}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm border-start border-danger border-3">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Over GHS 500.00</h6>
+                    <h3 class="mb-0 text-danger">{{ stats.over_500 }}</h3>
+                    <small class="text-muted">GHS {{ stats.over_500_amount|floatformat:2 }}</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Transactions Table -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Transaction #</th>
+                            <th>Date</th>
+                            <th>Payee</th>
+                            <th>Description</th>
+                            <th>Amount</th>
+                            <th>Expense Account</th>
+                            <th>Created By</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for txn in transactions %}
+                        <tr class="{% if txn.amount > high_amount_threshold %}table-warning{% endif %}">
+                            <td><strong>{{ txn.transaction_number }}</strong></td>
+                            <td>{{ txn.transaction_date|date:"M d, Y" }}</td>
+                            <td>{{ txn.payee_name }}</td>
+                            <td>{{ txn.description|truncatewords:10 }}</td>
+                            <td>
+                                <strong class="{% if txn.amount > high_amount_threshold %}text-danger{% else %}text-primary{% endif %}">
+                                    GHS {{ txn.amount|floatformat:2 }}
+                                </strong>
+                                {% if txn.amount > high_amount_threshold %}
+                                    <br><small class="text-danger"><i class="bi bi-exclamation-triangle"></i> High Amount</small>
+                                {% endif %}
+                            </td>
+                            <td>{{ txn.expense_account.account_code }} - {{ txn.expense_account.account_name }}</td>
+                            <td>{{ txn.created_by.get_full_name|default:txn.created_by.username }}</td>
+                            <td>
+                                <a href="{% url 'hospital:petty_cash_detail' txn.id %}" class="btn btn-sm btn-primary">
+                                    <i class="bi bi-eye"></i> Review
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="8" class="text-center text-muted py-4">
+                                <i class="bi bi-check-circle fs-1 d-block mb-2 text-success"></i>
+                                No transactions pending approval.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+
+
+
+

@@ -46,13 +46,13 @@ class PatientForm(forms.ModelForm):
         help_text="Select the insurance plan"
     )
     
-    # Corporate fields
+    # Corporate fields - using Payer model with payer_type='corporate'
     selected_corporate_company = forms.ModelChoiceField(
         queryset=None,
         required=False,
         label="Corporate Company",
         widget=forms.Select(attrs={'class': 'form-select', 'id': 'id_selected_corporate_company'}),
-        help_text="Select the corporate company"
+        help_text="Select the corporate company (Payer or corporate account)",
     )
     employee_id = forms.CharField(
         required=False,
@@ -87,7 +87,7 @@ class PatientForm(forms.ModelForm):
             'phone_number', 'email', 'address',
             'national_id',
             'next_of_kin_name', 'next_of_kin_phone', 'next_of_kin_relationship',
-            'insurance_company', 'insurance_id', 'insurance_member_id', 'primary_insurance',
+            'insurance_company', 'insurance_id', 'insurance_member_id',
             'allergies', 'chronic_conditions', 'medications'
         ]
         widgets = {
@@ -97,7 +97,6 @@ class PatientForm(forms.ModelForm):
             'insurance_company': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Enter insurance company name (or select above)'}),
             'insurance_id': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Insurance ID/Policy Number'}),
             'insurance_member_id': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Member ID'}),
-            'primary_insurance': forms.Select(attrs={'class': 'form-select'}),
             'allergies': forms.Textarea(attrs={'rows': 2}),
             'chronic_conditions': forms.Textarea(attrs={'rows': 2}),
             'medications': forms.Textarea(attrs={'rows': 2}),
@@ -108,9 +107,7 @@ class PatientForm(forms.ModelForm):
         self.helper = FormHelper()
         # CRITICAL: Disable auto-save on patient registration form to prevent duplicate submissions
         self.helper.attrs = {'data-no-autosave': ''}
-        self.fields['primary_insurance'].queryset = self.fields['primary_insurance'].queryset.filter(is_active=True)
-        self.fields['primary_insurance'].required = False
-        
+
         # Make sure fields match model defaults (not required if model has defaults)
         self.fields['address'].required = False  # Model has default=''
         self.fields['next_of_kin_name'].required = False  # Model has default=''
@@ -133,17 +130,98 @@ class PatientForm(forms.ModelForm):
             self.fields['selected_insurance_company'].queryset = self.fields['selected_insurance_company'].queryset.none()
             self.fields['selected_insurance_plan'].queryset = self.fields['selected_insurance_plan'].queryset.none()
         
-        # Load corporate companies
+        # Load corporate companies from Payer model (corporate payers)
         try:
-            from .models_enterprise_billing import CorporateAccount
-            self.fields['selected_corporate_company'].queryset = CorporateAccount.objects.filter(
+            from .models import Payer
+            corporate_payers = Payer.objects.filter(
+                payer_type='corporate',
                 is_active=True,
-                is_deleted=False,
-                credit_status='active'
-            ).order_by('company_name')
-        except:
-            self.fields['selected_corporate_company'].queryset = self.fields['selected_corporate_company'].queryset.none()
-        
+                is_deleted=False
+            ).order_by('name')
+            
+            if corporate_payers.exists():
+                self.fields['selected_corporate_company'].queryset = corporate_payers
+            else:
+                # Fallback to CorporateAccount if no corporate payers exist
+                from .models_enterprise_billing import CorporateAccount
+                self.fields['selected_corporate_company'].queryset = CorporateAccount.objects.filter(
+                    is_active=True,
+                    is_deleted=False
+                ).order_by('company_name')
+        except Exception as e:
+            # If CorporateAccount doesn't exist or error, use Payer
+            try:
+                from .models import Payer
+                self.fields['selected_corporate_company'].queryset = Payer.objects.filter(
+                    payer_type='corporate',
+                    is_active=True,
+                    is_deleted=False
+                ).order_by('name')
+            except:
+                self.fields['selected_corporate_company'].queryset = self.fields['selected_corporate_company'].queryset.none()
+
+        # Editing: pre-fill payment type and selectors from patient.primary_insurance (drives billing)
+        if self.instance and self.instance.pk:
+            try:
+                self.instance.refresh_from_db(fields=['primary_insurance'])
+            except Exception:
+                pass
+            payer = getattr(self.instance, 'primary_insurance', None)
+            if payer and not payer.is_deleted:
+                pt = (payer.payer_type or '').strip().lower()
+                if pt == 'cash':
+                    self.fields['payer_type'].initial = 'cash'
+                elif pt == 'corporate':
+                    self.fields['payer_type'].initial = 'corporate'
+                    corp_qs = self.fields['selected_corporate_company'].queryset
+                    corp_model = corp_qs.model
+                    try:
+                        from .models import Payer as PayerModel
+                        from .models_enterprise_billing import CorporateAccount
+
+                        if corp_model is PayerModel and corp_qs.filter(pk=payer.pk).exists():
+                            self.fields['selected_corporate_company'].initial = payer.pk
+                        elif corp_model is CorporateAccount:
+                            ca = CorporateAccount.objects.filter(
+                                company_name__iexact=payer.name,
+                                is_deleted=False,
+                            ).first()
+                            if ca and corp_qs.filter(pk=ca.pk).exists():
+                                self.fields['selected_corporate_company'].initial = ca.pk
+                    except Exception:
+                        pass
+                elif pt in ('private', 'nhis', 'insurance'):
+                    self.fields['payer_type'].initial = 'insurance'
+                    try:
+                        from .models_insurance_companies import InsuranceCompany, PatientInsurance
+
+                        ic = InsuranceCompany.objects.filter(
+                            name__iexact=payer.name,
+                            is_deleted=False,
+                        ).first()
+                        if ic:
+                            self.fields['selected_insurance_company'].initial = ic.pk
+                        enr = (
+                            PatientInsurance.objects.filter(
+                                patient=self.instance,
+                                is_primary=True,
+                                is_deleted=False,
+                            )
+                            .select_related('insurance_plan')
+                            .first()
+                        )
+                        if enr:
+                            if enr.insurance_plan_id:
+                                self.fields['selected_insurance_plan'].initial = enr.insurance_plan_id
+                    except Exception:
+                        pass
+                else:
+                    self.fields['payer_type'].initial = 'cash'
+            else:
+                self.fields['payer_type'].initial = 'cash'
+
+        submit_label = 'Save Patient' if (self.instance and self.instance.pk) else 'Register Patient'
+
         self.helper.layout = Layout(
             Fieldset('Personal Information',
                 Row(Column('first_name', css_class='form-group col-md-4'),
@@ -159,6 +237,7 @@ class PatientForm(forms.ModelForm):
                 'address',
             ),
             Fieldset('💳 Payment Type & Billing Information',
+                HTML('<div class="alert alert-info mb-3"><i class="bi bi-info-circle"></i> <strong>How Billing Works:</strong> Select "Payment Type" below. This will set the patient\'s default payer and all bills will go to this payer.</div>'),
                 'payer_type',
                 Div(
                     Row(Column('selected_insurance_company', css_class='form-group col-md-6'),
@@ -166,8 +245,8 @@ class PatientForm(forms.ModelForm):
                     Row(Column('insurance_id', css_class='form-group col-md-6'),
                         Column('insurance_member_id', css_class='form-group col-md-6')),
                     HTML('<small class="text-muted d-block mb-2">Or enter manually below:</small>'),
-                    Row(Column('insurance_company', css_class='form-group col-md-6'),
-                        Column('primary_insurance', css_class='form-group col-md-6')),
+                    Row(Column('insurance_company', css_class='form-group col-md-12')),
+                    HTML('<div class="alert alert-warning mt-2 mb-0"><small><i class="bi bi-exclamation-triangle"></i> <strong>Note:</strong> When you select an insurance company above, the patient\'s default payer will be automatically set to that insurance. All bills will go to this insurance company.</small></div>'),
                     css_id='insurance_fields',
                     css_class='mt-3',
                     style='display:none;'
@@ -194,7 +273,7 @@ class PatientForm(forms.ModelForm):
             Fieldset('Medical Information',
                 'allergies', 'chronic_conditions', 'medications'
             ),
-            Submit('submit', 'Register Patient', css_class='btn btn-primary btn-lg')
+            Submit('submit', submit_label, css_class='btn btn-primary btn-lg')
         )
     
     def clean(self):
@@ -249,49 +328,39 @@ class PatientForm(forms.ModelForm):
         normalized_phone = normalize_phone(phone_number)
         
         # Check for duplicates
-        from .models import Patient
+        # CRITICAL: Use self._meta.model instead of importing Patient locally
+        # Local imports cause variable shadowing issues in views that use this form
+        PatientModel = self._meta.model  # Get Patient model from form's Meta class
         from django.db.models import Q
         
         duplicate_checks = []
         
-        # Check 1: Same name + DOB + Phone (strongest match)
-        # Also check name + phone even without DOB (more aggressive)
-        if first_name and last_name and normalized_phone:
-            if date_of_birth:
-                existing = Patient.objects.filter(
-                    first_name__iexact=first_name,
-                    last_name__iexact=last_name,
-                    date_of_birth=date_of_birth,
-                    is_deleted=False
-                ).exclude(pk=patient_id)
-            else:
-                # If no DOB, check by name + phone only
-                existing = Patient.objects.filter(
-                    first_name__iexact=first_name,
-                    last_name__iexact=last_name,
-                    is_deleted=False
-                ).exclude(pk=patient_id)
+        # Check 1: Same name + DOB + Phone (strongest match - only block this)
+        # RELAXED: Only block if name + DOB + phone match (strong duplicate)
+        # Phone-only or name-only matches are allowed (family members can share phones/names)
+        if first_name and last_name and normalized_phone and date_of_birth and date_of_birth != '2000-01-01':
+            # Strong match: name + DOB + phone - this is likely a duplicate
+            existing = PatientModel.objects.filter(
+                first_name__iexact=first_name,
+                last_name__iexact=last_name,
+                date_of_birth=date_of_birth,
+                is_deleted=False
+            ).exclude(pk=patient_id)
             
             # Check phone number matches (normalized)
             for patient in existing:
                 if normalize_phone(patient.phone_number) == normalized_phone:
-                    if date_of_birth:
-                        duplicate_checks.append(
-                            f"A patient with the same name ({first_name} {last_name}), "
-                            f"date of birth ({date_of_birth}), and phone number ({phone_number}) already exists. "
-                            f"MRN: {patient.mrn}"
-                        )
-                    else:
-                        duplicate_checks.append(
-                            f"A patient with the same name ({first_name} {last_name}) "
-                            f"and phone number ({phone_number}) already exists. "
-                            f"MRN: {patient.mrn}"
-                        )
+                    # Strong duplicate: name + DOB + phone match
+                    duplicate_checks.append(
+                        f"⚠️ A patient with the same name ({first_name} {last_name}), "
+                        f"date of birth ({date_of_birth}), and phone number ({phone_number}) already exists. "
+                        f"MRN: {patient.mrn}. If this is a different person (e.g., family member), you can proceed."
+                    )
                     break
         
-        # Check 2: Same email (if provided)
+        # Check 2: Same email (if provided) - BLOCK this as email should be unique
         if email:
-            existing = Patient.objects.filter(
+            existing = PatientModel.objects.filter(
                 email__iexact=email,
                 is_deleted=False
             ).exclude(pk=patient_id)
@@ -303,42 +372,15 @@ class PatientForm(forms.ModelForm):
                     f"Name: {patient.full_name}, MRN: {patient.mrn}"
                 )
         
-        # Check 3: Same name + DOB (weaker match, but still important)
-        if first_name and last_name and date_of_birth and not normalized_phone:
-            existing = Patient.objects.filter(
-                first_name__iexact=first_name,
-                last_name__iexact=last_name,
-                date_of_birth=date_of_birth,
-                is_deleted=False
-            ).exclude(pk=patient_id)
-            
-            if existing.exists():
-                patient = existing.first()
-                duplicate_checks.append(
-                    f"A patient with the same name ({first_name} {last_name}) and "
-                    f"date of birth ({date_of_birth}) already exists. "
-                    f"MRN: {patient.mrn}, Phone: {patient.phone_number or 'N/A'}"
-                )
-        
-        # Check 4: Same phone number (if provided)
-        if normalized_phone:
-            existing = Patient.objects.filter(
-                is_deleted=False
-            ).exclude(pk=patient_id)
-            
-            for patient in existing:
-                if normalize_phone(patient.phone_number) == normalized_phone:
-                    duplicate_checks.append(
-                        f"A patient with the same phone number ({phone_number}) already exists. "
-                        f"Name: {patient.full_name}, MRN: {patient.mrn}"
-                    )
-                    break
+        # RELAXED: Removed Check 3 (name + DOB without phone) - too weak, allows family members
+        # RELAXED: Removed Check 4 (phone-only) - too weak, allows family members sharing phones
+        # Only strong duplicates (name + DOB + phone) and email duplicates are blocked
         
         # Check 5: Same national_id (if provided)
         national_id = cleaned_data.get('national_id') or ''
         national_id = national_id.strip() if national_id else ''
         if national_id:
-            existing = Patient.objects.filter(
+            existing = PatientModel.objects.filter(
                 national_id=national_id,
                 is_deleted=False
             ).exclude(pk=patient_id)
@@ -370,6 +412,15 @@ class PatientForm(forms.ModelForm):
             import logging
             logger = logging.getLogger(__name__)
             logger.warning(f"User proceeding with potential duplicate - bypassing form validation")
+
+        # If Payment Type stayed on "Select..." but insurance/corporate fields were filled, infer payer_type
+        # (otherwise apply_patient_payer_from_form skips and everything stays cash / null)
+        pt = (cleaned_data.get('payer_type') or '').strip()
+        if not pt:
+            if cleaned_data.get('selected_insurance_company'):
+                cleaned_data['payer_type'] = 'insurance'
+            elif cleaned_data.get('selected_corporate_company'):
+                cleaned_data['payer_type'] = 'corporate'
         
         return cleaned_data
 
@@ -400,6 +451,41 @@ class EncounterForm(forms.ModelForm):
         self.fields['provider'].queryset = Staff.objects.filter(is_active=True, is_deleted=False)
         self.helper = FormHelper()
         self.helper.add_input(Submit('submit', 'Save Encounter', css_class='btn btn-primary'))
+    
+    def clean(self):
+        """Prevent duplicate encounters at form level"""
+        cleaned_data = super().clean()
+        
+        # Only check for duplicates if this is a new encounter (no instance.pk)
+        if not self.instance.pk:
+            patient = cleaned_data.get('patient')
+            encounter_type = cleaned_data.get('encounter_type')
+            chief_complaint = cleaned_data.get('chief_complaint', '')
+            
+            if patient and encounter_type:
+                from django.utils import timezone
+                from datetime import timedelta
+                
+                # Check for very recent duplicate encounter (within 5 minutes)
+                five_minutes_ago = timezone.now() - timedelta(minutes=5)
+                existing = Encounter.objects.filter(
+                    patient=patient,
+                    encounter_type=encounter_type,
+                    chief_complaint=chief_complaint,
+                    status='active',
+                    started_at__gte=five_minutes_ago,
+                    is_deleted=False
+                ).order_by('-created').first()
+                
+                if existing:
+                    from django.core.exceptions import ValidationError
+                    raise ValidationError(
+                        f'A similar active encounter already exists for {patient.full_name} '
+                        f'created at {existing.created.strftime("%Y-%m-%d %H:%M")}. '
+                        f'Please use the existing encounter or wait a few minutes before creating a new one.'
+                    )
+        
+        return cleaned_data
 
 
 class AdmissionForm(forms.ModelForm):
@@ -420,10 +506,22 @@ class AdmissionForm(forms.ModelForm):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # Get distinct encounters - prefer most recent per patient per day
+        # Use DISTINCT ON approach since UUID fields don't support MAX()
+        from django.db import connection
+        
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT DISTINCT ON (patient_id, started_at::date) id
+                FROM hospital_encounter
+                WHERE is_deleted = false AND status = 'active'
+                ORDER BY patient_id, started_at::date, id DESC
+            """)
+            latest_ids = [row[0] for row in cursor.fetchall()]
+        
         self.fields['encounter'].queryset = Encounter.objects.filter(
-            status='active',
-            is_deleted=False
-        )
+            id__in=latest_ids
+        ).select_related('patient').order_by('-started_at', '-id')
         self.fields['ward'].queryset = Ward.objects.filter(is_active=True, is_deleted=False)
         self.fields['bed'].queryset = Bed.objects.filter(
             status='available',
@@ -540,6 +638,7 @@ class TabularLabReportForm(forms.Form):
     # Common fields
     test_type = forms.ChoiceField(
         choices=[
+            ('single', 'Single Value / Other'),
             ('fbc', 'Full Blood Count'),
             ('lft', 'Liver Function Tests'),
             ('rft', 'Renal Function Tests'),
@@ -547,9 +646,21 @@ class TabularLabReportForm(forms.Form):
             ('tft', 'Thyroid Function Tests'),
             ('glucose', 'Blood Glucose'),
             ('electrolytes', 'Electrolytes'),
+            ('urine', 'Urine Routine Examination'),
+            ('stool', 'Stool Routine Examination'),
+            ('malaria', 'Malaria (RDT/Microscopy)'),
+            ('blood_group', 'Blood Group & Rhesus'),
+            ('sickle', 'Sickle Cell'),
+            ('coagulation', 'Coagulation Panel'),
+            ('serology', 'Serology (HIV/VDRL/etc)'),
+            ('semen', 'Semen Analysis'),
+            ('afb', 'AFB / Sputum'),
         ],
         widget=forms.Select(attrs={'class': 'form-select'})
     )
+    # Single-value tests (e.g. Prolactin, hormones, other analytes)
+    result_value = forms.CharField(required=False, max_length=64)
+    result_unit = forms.CharField(required=False, max_length=32)
     
     status = forms.ChoiceField(
         choices=[
@@ -582,18 +693,28 @@ class TabularLabReportForm(forms.Form):
         widget=forms.Textarea(attrs={'rows': 4, 'class': 'form-control'})
     )
     
-    # FBC fields
+    # FBC fields (Evans Lab format: WBC, Lymph#, Mid#, Gran#, Lymph%, Mid%, Gran%, PLT, MPV, PDW, PCT)
     wbc = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
+    lymph_count = forms.DecimalField(required=False, max_digits=6, decimal_places=2, label='Lymph#')
+    mid_count = forms.DecimalField(required=False, max_digits=6, decimal_places=2, label='Mid#')
+    gran_count = forms.DecimalField(required=False, max_digits=6, decimal_places=2, label='Gran#')
+    lymph_perc = forms.DecimalField(required=False, max_digits=6, decimal_places=2, label='Lymph%')
+    mid_perc = forms.DecimalField(required=False, max_digits=6, decimal_places=2, label='Mid%')
+    gran_perc = forms.DecimalField(required=False, max_digits=6, decimal_places=2, label='Gran%')
+    plt = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
+    mpv = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
+    pdw = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
+    pct = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
+    # Classic FBC (for compatibility)
     rbc = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
     hgb = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
     hct = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
     mcv = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
     mch = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
     mchc = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
-    rdw = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
-    plt = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
+    rdw_cv = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
+    rdw_sd = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
     neut_perc = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
-    lymph_perc = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
     mono_perc = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
     eos_perc = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
     baso_perc = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
@@ -649,6 +770,83 @@ class TabularLabReportForm(forms.Form):
     rbs = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
     hba1c = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
     ppbs = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
+    
+    # Urine Routine (CHEMISTRY + MICROSCOPY) - industry standard per CLSI/IFCC
+    urine_appearance = forms.CharField(required=False, max_length=64)
+    urine_colour = forms.CharField(required=False, max_length=64)
+    urine_ph = forms.DecimalField(required=False, max_digits=4, decimal_places=1)
+    urine_sgravity = forms.DecimalField(required=False, max_digits=5, decimal_places=3)
+    urine_protein = forms.CharField(required=False, max_length=64)
+    urine_glucose = forms.CharField(required=False, max_length=64)
+    urine_ketones = forms.CharField(required=False, max_length=64)
+    urine_blood = forms.CharField(required=False, max_length=64)
+    urine_nitrite = forms.CharField(required=False, max_length=64)
+    urine_bilirubin = forms.CharField(required=False, max_length=64)
+    urine_urobilinogen = forms.CharField(required=False, max_length=64)
+    urine_leucocyte = forms.CharField(required=False, max_length=64)
+    urine_pus_cells = forms.CharField(required=False, max_length=32)
+    urine_epithelial_cells = forms.CharField(required=False, max_length=32)
+    urine_rbc = forms.CharField(required=False, max_length=32)
+    urine_cast = forms.CharField(required=False, max_length=64)
+    urine_crystals = forms.CharField(required=False, max_length=64)
+    urine_ova_cyst = forms.CharField(required=False, max_length=64)
+    urine_t_vaginalis = forms.CharField(required=False, max_length=64)
+    urine_bacteria = forms.CharField(required=False, max_length=64)
+    urine_yeast = forms.CharField(required=False, max_length=64)
+    
+    # Stool Routine Examination
+    stool_consistency = forms.CharField(required=False, max_length=64)
+    stool_colour = forms.CharField(required=False, max_length=64)
+    stool_mucus = forms.CharField(required=False, max_length=64)
+    stool_blood = forms.CharField(required=False, max_length=64)
+    stool_pus = forms.CharField(required=False, max_length=64)
+    stool_ova = forms.CharField(required=False, max_length=64)
+    stool_parasites = forms.CharField(required=False, max_length=64)
+    stool_cysts = forms.CharField(required=False, max_length=64)
+    stool_undigested_food = forms.CharField(required=False, max_length=64)
+    stool_fat_globules = forms.CharField(required=False, max_length=64)
+    stool_rbc = forms.CharField(required=False, max_length=64)
+    stool_wbc = forms.CharField(required=False, max_length=64)
+    
+    # Malaria (WHO standard)
+    malaria_result = forms.CharField(required=False, max_length=64)
+    malaria_species = forms.CharField(required=False, max_length=64)
+    malaria_count = forms.CharField(required=False, max_length=32)
+    malaria_parasitemia = forms.CharField(required=False, max_length=32)
+    malaria_stage = forms.CharField(required=False, max_length=64)
+    
+    # Blood Group & Rhesus (ISBT)
+    bg_group = forms.CharField(required=False, max_length=16)
+    bg_rhesus = forms.CharField(required=False, max_length=16)
+    
+    # Sickle Cell
+    sickle_solubility = forms.CharField(required=False, max_length=64)
+    sickle_electrophoresis = forms.CharField(required=False, max_length=64)
+    
+    # Coagulation
+    coag_pt = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
+    coag_inr = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
+    coag_aptt = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
+    coag_fibrinogen = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
+    
+    # Serology
+    serology_result = forms.CharField(required=False, max_length=64)
+    serology_titer = forms.CharField(required=False, max_length=32)
+    
+    # Semen Analysis (WHO)
+    semen_volume = forms.DecimalField(required=False, max_digits=6, decimal_places=2)
+    semen_liquefaction = forms.CharField(required=False, max_length=64)
+    semen_ph = forms.DecimalField(required=False, max_digits=4, decimal_places=1)
+    semen_count = forms.DecimalField(required=False, max_digits=10, decimal_places=0)
+    semen_motility = forms.CharField(required=False, max_length=64)
+    semen_morphology = forms.CharField(required=False, max_length=64)
+    semen_wbc = forms.CharField(required=False, max_length=64)
+    semen_vitality = forms.CharField(required=False, max_length=64)
+    
+    # AFB / Sputum
+    afb_result = forms.CharField(required=False, max_length=64)
+    afb_grade = forms.CharField(required=False, max_length=32)
+    afb_organism = forms.CharField(required=False, max_length=64)
     
     def get_details_dict(self):
         """Extract all non-empty field values as a dictionary for JSON storage"""

@@ -1,0 +1,209 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Drugs: {{ category_display }} - HMS{% endblock %}
+{% block page_title %}💊 {{ category_display }}{% endblock %}
+{% block page_subtitle %}Available drugs in pharmacy inventory{% endblock %}
+
+{% block extra_css %}
+<style>
+    .drug-card-inventory {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 16px;
+        border: 2px solid #e2e8f0;
+        transition: all 0.3s;
+        cursor: pointer;
+    }
+
+    .drug-card-inventory:hover {
+        border-color: #6366f1;
+        box-shadow: 0 8px 24px rgba(99, 102, 241, 0.15);
+        transform: translateY(-2px);
+    }
+
+    .drug-card-inventory.out-of-stock {
+        opacity: 0.7;
+        border-color: #fee2e2;
+        background: #fef2f2;
+    }
+
+    .drug-card-inventory.low-stock {
+        border-color: #fef3c7;
+        background: #fffbeb;
+    }
+
+    .stock-badge {
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+        display: inline-block;
+    }
+
+    .stock-badge.in-stock {
+        background: #d1fae5;
+        color: #065f46;
+    }
+
+    .stock-badge.low-stock {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .stock-badge.out-of-stock {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+
+    .prescribe-btn {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+
+    .prescribe-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+    }
+
+    .prescribe-btn-out-of-stock {
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        border: 1px dashed rgba(255,255,255,0.5);
+    }
+    .prescribe-btn-out-of-stock:hover {
+        background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+    }
+
+    .alternatives-section {
+        background: #fef3c7;
+        border-left: 4px solid #f59e0b;
+        padding: 20px;
+        border-radius: 12px;
+        margin-top: 24px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width: 1400px; margin: 0 auto; padding: 20px;">
+    <!-- Header Stats -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="modern-card text-center">
+                <h3 class="mb-0" style="color: #6366f1;">{{ total_drugs }}</h3>
+                <p class="text-muted mb-0">Total Drugs</p>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="modern-card text-center">
+                <h3 class="mb-0" style="color: #10b981;">{{ in_stock_count }}</h3>
+                <p class="text-muted mb-0">In Stock</p>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="modern-card text-center">
+                <h3 class="mb-0" style="color: #ef4444;">{{ total_drugs|add:"-"|add:in_stock_count }}</h3>
+                <p class="text-muted mb-0">Out of Stock</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Drugs List -->
+    {% if drugs %}
+    <div class="row">
+        {% for drug in drugs %}
+        <div class="col-md-6 col-lg-4">
+            <div class="drug-card-inventory {{ drug.stock_status }}" onclick="selectDrug('{{ drug.id }}', '{{ drug.name }}', {{ drug.has_stock|yesno:"true,false" }})">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div>
+                        <h5 class="mb-1" style="font-weight: 600; color: #1e293b;">{{ drug.name }}</h5>
+                        {% if drug.generic_name %}
+                        <p class="text-muted mb-0" style="font-size: 13px;">{{ drug.generic_name }}</p>
+                        {% endif %}
+                    </div>
+                    <span class="stock-badge {{ drug.stock_status }}">
+                        {% if drug.stock_status == 'in_stock' %}
+                        ✓ In Stock ({{ drug.stock_quantity }})
+                        {% elif drug.stock_status == 'low_stock' %}
+                        ⚠ Low Stock ({{ drug.stock_quantity }})
+                        {% else %}
+                        ✗ Out of Stock
+                        {% endif %}
+                    </span>
+                </div>
+                
+                <div class="mb-3">
+                    <div style="font-size: 14px; color: #64748b;">
+                        <strong>Strength:</strong> {{ drug.strength }}<br>
+                        <strong>Form:</strong> {{ drug.form }}<br>
+                        <strong>Price:</strong> GHS {{ drug.unit_price|floatformat:2 }}
+                    </div>
+                </div>
+
+                <button class="prescribe-btn w-100 {% if not drug.has_stock %}prescribe-btn-out-of-stock{% endif %}" 
+                        onclick="event.stopPropagation(); prescribeDrug('{{ drug.id }}', '{{ drug.name }}', '{{ drug.strength }}', '{{ drug.form }}', {{ drug.has_stock|yesno:"true,false" }})">
+                    <i class="bi bi-prescription"></i> 
+                    {% if drug.has_stock %}Prescribe{% else %}Prescribe (Out of Stock){% endif %}
+                </button>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="alert alert-info text-center">
+        <i class="bi bi-info-circle" style="font-size: 48px; color: #3b82f6;"></i>
+        <h4 class="mt-3">No drugs available in this category</h4>
+        <p>Check back later or contact pharmacy for availability.</p>
+        <a href="{% url 'hospital:drug_classification_guide' %}" class="btn btn-primary-modern mt-3">
+            <i class="bi bi-arrow-left"></i> Back to Classification Guide
+        </a>
+    </div>
+    {% endif %}
+
+    <!-- Back Button -->
+    <div class="text-center mt-4">
+        <a href="{% url 'hospital:drug_classification_guide' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Classification Guide
+        </a>
+    </div>
+</div>
+
+<script>
+    function selectDrug(drugId, drugName, hasStock) {
+        prescribeDrug(drugId, drugName, '', '', hasStock);
+    }
+
+    function prescribeDrug(drugId, drugName, strength, form, hasStock) {
+        if (!hasStock) {
+            if (!confirm(`⚠️ ${drugName} is currently out of stock. It will still go to pharmacy - they can source it or substitute. Proceed with prescription?`)) {
+                return;
+            }
+        }
+        {% if encounter_id %}
+        // If we have an encounter ID, redirect to consultation (prescription will go to pharmacy)
+        window.location.href = `/hms/consultation/{{ encounter_id }}/?drug_id=${drugId}&action=prescribe`;
+        {% else %}
+        // Otherwise, show drug info / copy to clipboard
+        const drugInfo = `${drugName}${strength ? ' ' + strength : ''}${form ? ' ' + form : ''}`;
+        
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(drugInfo);
+            alert(`✅ Drug information copied to clipboard:\n${drugInfo}\n\nYou can now paste it in your prescription form.`);
+        } else {
+            prompt('Drug Information (copy this):', drugInfo);
+        }
+        {% endif %}
+    }
+</script>
+{% endblock %}
+
+
+
+

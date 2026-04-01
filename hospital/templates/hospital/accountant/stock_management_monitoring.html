@@ -1,0 +1,306 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Stock Management & Monitoring - HMS{% endblock %}
+{% block page_title %}Stock Management & Monitoring{% endblock %}
+{% block page_subtitle %}Details, audit trails, and all drugs as they appear in pharmacy{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="alert alert-info mb-4">
+        <i class="bi bi-info-circle me-2"></i>
+        <strong>Account view:</strong> View stock across all locations and stores. Use the <strong>Location / Store</strong> filter to see a specific store (e.g. Main Pharmacy, Lab Store). You cannot edit stock; use this for oversight and reporting only.
+        <strong class="d-block mt-2">Newest stock appears at the top</strong> — when store managers add stock, it will show up at the top of both tables.
+    </div>
+
+    <!-- Summary cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Total Stock Value{% if location_filter %} ({{ location_filter }}){% else %} (All locations){% endif %}</h6>
+                    <h4 class="mb-0">GHS {{ total_value|floatformat:2|intcomma }}</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card border-0 shadow-sm border-warning">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Low Stock Items</h6>
+                    <h4 class="mb-0 text-warning">{{ low_stock_count }}</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Total Batches</h6>
+                    <h4 class="mb-0">{{ total_batch_count|intcomma }}</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Distinct Drugs</h6>
+                    <h4 class="mb-0">{{ total_drug_count|intcomma }}</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <a href="{% url 'hospital:accountant_comprehensive_dashboard' %}" class="btn btn-outline-primary">
+                        <i class="bi bi-arrow-left"></i> Back to Dashboard
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <h6 class="mb-3"><i class="bi bi-funnel"></i> Filter & Search</h6>
+            <form method="get" class="row g-3">
+                <div class="col-md-2">
+                    <label class="form-label">Search</label>
+                    <input type="text" name="q" value="{{ query }}" class="form-control" placeholder="Drug name, batch number">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Category</label>
+                    <select name="category" class="form-select">
+                        <option value="">All</option>
+                        {% for code, desc in drug_categories %}
+                        <option value="{{ code }}" {% if category_filter == code %}selected{% endif %}>{{ desc|truncatewords:4 }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Filter</label>
+                    <select name="filter" class="form-select">
+                        <option value="all" {% if filter_type == 'all' %}selected{% endif %}>All Stock</option>
+                        <option value="low_stock" {% if filter_type == 'low_stock' %}selected{% endif %}>Low Stock</option>
+                        <option value="expiring" {% if filter_type == 'expiring' %}selected{% endif %}>Expiring Soon</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Location / Store</label>
+                    <select name="location" class="form-select">
+                        <option value="">All locations</option>
+                        {% for loc in stock_locations %}
+                        <option value="{{ loc }}" {% if location_filter == loc %}selected{% endif %}>{{ loc }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Added from</label>
+                    <input type="date" name="date_from" value="{{ date_from }}" class="form-control">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Added to</label>
+                    <input type="date" name="date_to" value="{{ date_to }}" class="form-control">
+                </div>
+                <div class="col-md-1 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100">Filter</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Stock table: details + audit trail -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-box-seam"></i> Pharmacy Stock (batch-wise) — Details &amp; Audit Trail</h5>
+            <small class="text-muted">Added By, Added On, and Last modified for each batch</small>
+        </div>
+        <div class="card-body">
+            {% if stock_list %}
+            <div class="table-responsive">
+                <table class="table table-hover table-sm">
+                    <thead>
+                        <tr>
+                            <th>Drug (details)</th>
+                            <th>Batch</th>
+                            <th>Location</th>
+                            <th>Qty</th>
+                            <th>Reorder</th>
+                            <th>Expiry</th>
+                            <th>Unit Cost</th>
+                            <th>Cost Price</th>
+                            <th>Audit — Added By</th>
+                            <th>Audit — Added On</th>
+                            <th>Audit — Last modified</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stock in stock_list %}
+                        <tr>
+                            <td>
+                                <strong>{{ stock.drug.name }}</strong><br>
+                                <small class="text-muted">{{ stock.drug.strength }} {{ stock.drug.form }}</small>
+                                {% if stock.drug.generic_name %}
+                                <br><small class="text-muted">Generic: {{ stock.drug.generic_name }}</small>
+                                {% endif %}
+                                {% if stock.drug.category %}
+                                <br><span class="badge bg-secondary" style="font-size: 10px;">{{ stock.drug.get_category_display|truncatewords:3 }}</span>
+                                {% endif %}
+                            </td>
+                            <td><code>{{ stock.batch_number }}</code></td>
+                            <td>{{ stock.location }}</td>
+                            <td>
+                                {% if stock.quantity_on_hand <= stock.reorder_level %}
+                                <span class="badge bg-warning">{{ stock.quantity_on_hand }}</span>
+                                {% else %}
+                                {{ stock.quantity_on_hand }}
+                                {% endif %}
+                            </td>
+                            <td>{{ stock.reorder_level }}</td>
+                            <td>
+                                {% if stock.expiry_date|date:"Y-m-d" <= expiry_threshold %}
+                                <span class="badge bg-danger">{{ stock.expiry_date|date:"d/m/Y" }}</span>
+                                {% else %}
+                                {{ stock.expiry_date|date:"d/m/Y" }}
+                                {% endif %}
+                            </td>
+                            <td>GHS {{ stock.unit_cost|floatformat:2 }}</td>
+                            <td>GHS {{ stock.drug.cost_price|floatformat:2 }}</td>
+                            <td>
+                                {% if stock.created_by %}
+                                <span title="{{ stock.created_by.username }}">{{ stock.created_by.get_full_name|default:stock.created_by.username }}</span>
+                                <br><small class="text-muted">{{ stock.created_by.username }}</small>
+                                {% else %}
+                                <span class="text-muted" title="Legacy or system-created">System/Legacy</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ stock.created|date:"d/m/Y H:i" }}</td>
+                            <td>
+                                {% if stock.modified %}
+                                <span title="Last change">{{ stock.modified|date:"d/m/Y H:i" }}</span>
+                                {% if stock.modified != stock.created %}<br><small class="text-muted">(updated)</small>{% endif %}
+                                {% else %}
+                                <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if stock.expiry_date|date:"Y-m-d" <= expiry_threshold %}
+                                <span class="badge bg-danger">Expiring</span>
+                                {% elif stock.quantity_on_hand <= stock.reorder_level %}
+                                <span class="badge bg-warning">Low</span>
+                                {% else %}
+                                <span class="badge bg-success">OK</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if stock_list.has_other_pages %}
+            <nav class="mt-3">
+                <ul class="pagination justify-content-center">
+                    {% if stock_list.has_previous %}
+                    <li class="page-item"><a class="page-link" href="?page={{ stock_list.previous_page_number }}{% if query %}&q={{ query }}{% endif %}{% if filter_type != 'all' %}&filter={{ filter_type }}{% endif %}{% if category_filter %}&category={{ category_filter }}{% endif %}{% if location_filter %}&location={{ location_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Previous</a></li>
+                    {% endif %}
+                    <li class="page-item disabled"><span class="page-link">Page {{ stock_list.number }} of {{ stock_list.paginator.num_pages }}</span></li>
+                    {% if stock_list.has_next %}
+                    <li class="page-item"><a class="page-link" href="?page={{ stock_list.next_page_number }}{% if query %}&q={{ query }}{% endif %}{% if filter_type != 'all' %}&filter={{ filter_type }}{% endif %}{% if category_filter %}&category={{ category_filter }}{% endif %}{% if location_filter %}&location={{ location_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Next</a></li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <p class="text-center text-muted py-4">No pharmacy stock found matching your filters.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- All drugs as they appear in pharmacy (grouped by drug) -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-prescription2"></i> All drugs as in pharmacy</h5>
+            <small class="text-muted">Same view as pharmacy: drugs with batches (up to 500 batches; filters apply)</small>
+        </div>
+        <div class="card-body">
+            {% if drugs_with_batches %}
+            <p class="text-muted small mb-3">Each drug is listed with all its batches. Use for oversight and reconciliation with pharmacy inventory.</p>
+            <div class="table-responsive">
+                <table class="table table-hover table-sm">
+                    <thead>
+                        <tr>
+                            <th>Drug</th>
+                            <th>Batch</th>
+                            <th>Location</th>
+                            <th>Qty</th>
+                            <th>Reorder</th>
+                            <th>Expiry</th>
+                            <th>Unit Cost</th>
+                            <th>Cost Price</th>
+                            <th>Added By</th>
+                            <th>Added On</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in drugs_with_batches %}
+                        {% for batch in item.batches %}
+                        <tr>
+                            {% if forloop.first %}
+                            <td rowspan="{{ item.batches|length }}" class="align-top border-end">
+                                <strong>{{ item.drug.name }}</strong><br>
+                                <small class="text-muted">{{ item.drug.strength }} {{ item.drug.form }}</small>
+                                {% if item.drug.category %}
+                                <br><span class="badge bg-secondary" style="font-size: 10px;">{{ item.drug.get_category_display|truncatewords:3 }}</span>
+                                {% endif %}
+                            </td>
+                            {% endif %}
+                            <td><code>{{ batch.batch_number }}</code></td>
+                            <td>{{ batch.location }}</td>
+                            <td>
+                                {% if batch.quantity_on_hand <= batch.reorder_level %}
+                                <span class="badge bg-warning">{{ batch.quantity_on_hand }}</span>
+                                {% else %}
+                                {{ batch.quantity_on_hand }}
+                                {% endif %}
+                            </td>
+                            <td>{{ batch.reorder_level }}</td>
+                            <td>
+                                {% if batch.expiry_date|date:"Y-m-d" <= expiry_threshold %}
+                                <span class="badge bg-danger">{{ batch.expiry_date|date:"d/m/Y" }}</span>
+                                {% else %}
+                                {{ batch.expiry_date|date:"d/m/Y" }}
+                                {% endif %}
+                            </td>
+                            <td>GHS {{ batch.unit_cost|floatformat:2 }}</td>
+                            <td>GHS {{ batch.drug.cost_price|floatformat:2 }}</td>
+                            <td>
+                                {% if batch.created_by %}
+                                <span title="{{ batch.created_by.username }}">{{ batch.created_by.get_full_name|default:batch.created_by.username }}</span>
+                                {% else %}
+                                <span class="text-muted">System/Legacy</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ batch.created|date:"d/m/Y H:i" }}</td>
+                            <td>
+                                {% if batch.expiry_date|date:"Y-m-d" <= expiry_threshold %}
+                                <span class="badge bg-danger">Expiring</span>
+                                {% elif batch.quantity_on_hand <= batch.reorder_level %}
+                                <span class="badge bg-warning">Low</span>
+                                {% else %}
+                                <span class="badge bg-success">OK</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-center text-muted py-4">No pharmacy stock to display. Apply filters above or ensure stock has been added by store managers.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,151 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Expense - HMS{% endblock %}
+{% block page_title %}Expense{% endblock %}
+{% block page_subtitle %}Manage Expense Entries{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-0"><i class="bi bi-arrow-down-circle me-2"></i>Expense</h2>
+            <p class="text-muted mb-0">Manage all expense entries</p>
+        </div>
+        <a href="{% url 'hospital:expense_create' %}" class="btn btn-primary">
+            <i class="bi bi-plus-circle me-2"></i>Add Expense
+        </a>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Status</label>
+                    <select name="status" class="form-select">
+                        <option value="">All</option>
+                        <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Draft</option>
+                        <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
+                        <option value="approved" {% if status_filter == 'approved' %}selected{% endif %}>Approved</option>
+                        <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Category</label>
+                    <select name="category" class="form-select">
+                        <option value="">All Categories</option>
+                        {% for cat in categories %}
+                        <option value="{{ cat.id }}" {% if category_filter == cat.id|stringformat:"s" %}selected{% endif %}>{{ cat.code }} - {{ cat.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">From Date</label>
+                    <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">To Date</label>
+                    <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">&nbsp;</label>
+                    <div>
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="bi bi-funnel me-1"></i>Filter
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Summary -->
+    <div class="card mb-4" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white;">
+        <div class="card-body">
+            <h5 class="card-title">Total Expenses</h5>
+            <h2 class="mb-0">GHS {{ total_expenses|floatformat:2|intcomma }}</h2>
+        </div>
+    </div>
+
+    <!-- Expense List -->
+    <div class="card">
+        <div class="card-body">
+            {% if expenses %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Expense #</th>
+                            <th>Date</th>
+                            <th>Category</th>
+                            <th>Vendor</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for expense in expenses %}
+                        <tr>
+                            <td><strong>{{ expense.expense_number }}</strong></td>
+                            <td>{{ expense.expense_date|date:"M d, Y" }}</td>
+                            <td>{{ expense.category.name }}</td>
+                            <td>{{ expense.vendor_name }}</td>
+                            <td><strong>GHS {{ expense.amount|floatformat:2|intcomma }}</strong></td>
+                            <td>
+                                {% if expense.status == 'paid' %}
+                                    <span class="badge bg-success">Paid</span>
+                                {% elif expense.status == 'approved' %}
+                                    <span class="badge bg-info">Approved</span>
+                                {% elif expense.status == 'pending' %}
+                                    <span class="badge bg-warning">Pending</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ expense.get_status_display }}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:expense_detail' expense.id %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                {% if expense.status == 'draft' %}
+                                <a href="{% url 'hospital:expense_edit' expense.id %}" class="btn btn-sm btn-outline-warning">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            {% if expenses.has_other_pages %}
+            <nav aria-label="Page navigation">
+                <ul class="pagination justify-content-center">
+                    {% if expenses.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ expenses.previous_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if category_filter %}&category={{ category_filter }}{% endif %}">Previous</a>
+                    </li>
+                    {% endif %}
+                    <li class="page-item active">
+                        <span class="page-link">Page {{ expenses.number }} of {{ expenses.paginator.num_pages }}</span>
+                    </li>
+                    {% if expenses.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ expenses.next_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if category_filter %}&category={{ category_filter }}{% endif %}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>No expense entries found.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

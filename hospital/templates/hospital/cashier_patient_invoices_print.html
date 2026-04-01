@@ -1,0 +1,326 @@
+{% load humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice summary — {{ patient.full_name }} ({{ patient.mrn }})</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        @page {
+            size: A4 portrait;
+            margin: 12mm 14mm;
+        }
+        * { box-sizing: border-box; }
+        html { font-size: 11pt; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            color: #1a1a2e;
+            background: #f1f5f9;
+            line-height: 1.45;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+        .print-shell {
+            max-width: 210mm;
+            margin: 0 auto;
+            padding: 1rem 1.25rem 2rem;
+            background: #fff;
+            min-height: 100vh;
+        }
+        @media print {
+            body { background: #fff !important; }
+            .print-shell {
+                max-width: none;
+                margin: 0;
+                padding: 0;
+                min-height: auto;
+                box-shadow: none !important;
+            }
+            .no-print { display: none !important; }
+            a[href]:after { content: none !important; }
+            .table { font-size: 9.5pt; }
+            .page-break-before { page-break-before: always; }
+            tr, .card, .summary-box { page-break-inside: avoid; }
+        }
+        .doc-header {
+            border-bottom: 3px solid #1e3a5f;
+            padding-bottom: 0.75rem;
+            margin-bottom: 1rem;
+        }
+        .doc-header h1 {
+            font-size: 1.35rem;
+            font-weight: 700;
+            color: #1e3a5f;
+            letter-spacing: -0.02em;
+            margin: 0;
+        }
+        .doc-header .doc-subtitle {
+            font-size: 0.72rem;
+            font-weight: 600;
+            letter-spacing: 0.12em;
+            color: #64748b;
+            text-transform: uppercase;
+            margin-top: 0.35rem;
+        }
+        .doc-meta {
+            font-size: 0.88rem;
+            color: #475569;
+            margin-top: 0.5rem;
+        }
+        .summary-box {
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            padding: 0.65rem 0.85rem;
+            margin-bottom: 1rem;
+            background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
+        }
+        .summary-box table { margin: 0; font-size: 0.95rem; }
+        .summary-box th { font-weight: 600; color: #475569; width: 42%; }
+        .amt-due { font-size: 1.35rem; font-weight: 700; color: #c2410c; }
+        .section-title {
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: #1e3a5f;
+            border-left: 4px solid #2563eb;
+            padding-left: 0.5rem;
+            margin: 1.25rem 0 0.5rem;
+        }
+        .table thead th {
+            background: #1e3a5f !important;
+            color: #fff !important;
+            font-weight: 600;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            border: none;
+            vertical-align: middle;
+        }
+        .table-bordered td, .table-bordered th { border-color: #e2e8f0; }
+        .table tfoot th, .table tfoot td {
+            background: #f1f5f9;
+            font-weight: 600;
+        }
+        .doc-footer {
+            margin-top: 2rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid #e2e8f0;
+            font-size: 0.78rem;
+            color: #64748b;
+        }
+        .toolbar {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: #1e3a5f;
+            color: #fff;
+            padding: 0.5rem 1rem;
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            align-items: center;
+            margin: -1rem -1.25rem 1rem;
+            border-radius: 0;
+        }
+        .toolbar .hint { font-size: 0.8rem; opacity: 0.9; flex: 1; min-width: 200px; }
+    </style>
+</head>
+<body>
+<div class="print-shell shadow-sm">
+    <div class="no-print toolbar">
+        <button type="button" class="btn btn-light btn-sm" onclick="window.print();"><strong>Print</strong> or Save as PDF</button>
+        <a class="btn btn-outline-light btn-sm" href="{% url 'hospital:cashier_patient_invoices' patient.pk %}">← Back to invoices</a>
+        <span class="hint d-none d-md-inline">Tip: In the print dialog, turn <strong>off</strong> “Headers and footers” to hide the browser URL and date.</span>
+    </div>
+
+    <header class="doc-header">
+        <h1>{% if hospital_settings %}{{ hospital_settings.hospital_name }}{% else %}{{ hospital_name }}{% endif %}</h1>
+        {% if hospital_settings and hospital_settings.hospital_tagline %}
+        <p class="mb-0 text-muted small">{{ hospital_settings.hospital_tagline }}</p>
+        {% endif %}
+        <div class="doc-subtitle">Detailed invoice summary</div>
+        <div class="doc-meta">
+            <strong>{{ patient.full_name }}</strong>
+            &nbsp;·&nbsp; MRN: {{ patient.mrn }}
+            {% if patient.phone_number %}&nbsp;·&nbsp; {{ patient.phone_number }}{% endif %}
+            {% if patient.primary_insurance %}&nbsp;·&nbsp; Payer: {{ patient.primary_insurance.name }}{% endif %}
+        </div>
+        <div class="doc-meta small text-muted mt-1">Printed: {% now "M j, Y g:i A" %}</div>
+    </header>
+
+    <div class="summary-box">
+        <table class="table table-sm table-borderless">
+            <tr>
+                <th>Net amount due</th>
+                <td>
+                    <span class="amt-due">GHS {{ effective_outstanding|floatformat:2|intcomma }}</span>
+                    {% if effective_outstanding > 0 %}<span class="text-danger small ms-2">Payment required</span>{% endif %}
+                </td>
+            </tr>
+            {% if deposit_balance > 0 %}
+            <tr>
+                <th>Deposit / credit balance</th>
+                <td class="text-success fw-semibold">GHS {{ deposit_balance|floatformat:2|intcomma }} <span class="text-muted fw-normal small">(reduces amount due)</span></td>
+            </tr>
+            {% endif %}
+            <tr>
+                <th>Total amount paid</th>
+                <td class="text-success fw-semibold">GHS {{ total_paid|floatformat:2|intcomma }}
+                    {% if deposit_applied_to_bill and deposit_applied_to_bill > 0 %}
+                    <span class="text-muted fw-normal small">(includes GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }} from deposit)</span>
+                    {% endif %}
+                </td>
+            </tr>
+            <tr>
+                <th>Gross invoice total (lines)</th>
+                <td>GHS {{ combined_total|floatformat:2|intcomma }} &nbsp;·&nbsp; <span class="text-muted">{{ total_invoices }} invoice{{ total_invoices|pluralize }}</span></td>
+            </tr>
+        </table>
+    </div>
+
+    <h2 class="section-title">Invoices</h2>
+    <div class="table-responsive mb-3">
+        <table class="table table-bordered table-sm align-middle">
+            <thead>
+                <tr>
+                    <th>Invoice #</th>
+                    <th>Issued</th>
+                    <th>Payer</th>
+                    <th class="text-end">Total (GHS)</th>
+                    <th class="text-end">Balance (GHS)</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for invoice in invoices %}
+                <tr>
+                    <td><code>{{ invoice.invoice_number }}</code></td>
+                    <td>{{ invoice.issued_at|date:"M d, Y" }}</td>
+                    <td>{% if invoice.payer %}{{ invoice.payer.name }}{% else %}—{% endif %}</td>
+                    <td class="text-end">{{ invoice.total_amount|floatformat:2|intcomma }}</td>
+                    <td class="text-end fw-semibold {% if invoice.balance > 0 %}text-danger{% else %}text-success{% endif %}">{{ invoice.balance|floatformat:2|intcomma }}</td>
+                    <td>{{ invoice.get_status_display }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="6" class="text-center text-muted py-3">No invoices on file.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if combined_lines %}
+    <h2 class="section-title">All line items (combined)</h2>
+    <div class="table-responsive mb-3">
+        <table class="table table-bordered table-sm">
+            <thead>
+                <tr>
+                    <th style="width:3%">#</th>
+                    <th style="width:14%">Invoice</th>
+                    <th style="width:11%">Code</th>
+                    <th>Description</th>
+                    <th class="text-center" style="width:6%">Qty</th>
+                    <th class="text-end" style="width:10%">Unit</th>
+                    <th class="text-end" style="width:8%">Disc.</th>
+                    <th class="text-end" style="width:11%">Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in combined_lines %}
+                <tr>
+                    <td>{{ forloop.counter }}</td>
+                    <td><code>{{ item.invoice_number }}</code></td>
+                    <td>{{ item.line.service_code.code|default:"—" }}</td>
+                    <td>{{ item.line.description }}</td>
+                    <td class="text-center">{{ item.line.quantity }}</td>
+                    <td class="text-end">{{ item.line.display_unit_price|floatformat:2 }}</td>
+                    <td class="text-end">{% if item.line.discount_amount and item.line.discount_amount > 0 %}-{{ item.line.discount_amount|floatformat:2 }}{% else %}—{% endif %}</td>
+                    <td class="text-end fw-semibold">{{ item.line.display_line_total|floatformat:2|intcomma }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr>
+                    <th colspan="7" class="text-end">Subtotal</th>
+                    <th class="text-end">GHS {{ combined_total|floatformat:2|intcomma }}</th>
+                </tr>
+                <tr>
+                    <th colspan="7" class="text-end text-success">Total paid</th>
+                    <th class="text-end text-success">GHS {{ total_paid|floatformat:2|intcomma }}</th>
+                </tr>
+                <tr>
+                    <th colspan="7" class="text-end">Balance due</th>
+                    <th class="text-end {% if combined_balance > 0 %}text-danger{% else %}text-success{% endif %}">GHS {{ combined_balance|floatformat:2|intcomma }}</th>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+    {% endif %}
+
+    {% if invoices %}
+    <h2 class="section-title page-break-before">Detail by invoice</h2>
+    {% for invoice in invoices %}
+    <div class="card border mb-3">
+        <div class="card-header py-2 bg-light">
+            <strong>{{ invoice.invoice_number }}</strong>
+            <span class="text-muted ms-2">{{ invoice.issued_at|date:"M d, Y" }}</span>
+            <span class="ms-2">Total GHS {{ invoice.total_amount|floatformat:2|intcomma }}</span>
+            <span class="ms-2">Balance GHS {{ invoice.balance|floatformat:2|intcomma }}</span>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-sm table-bordered mb-0">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Code</th>
+                        <th>Description</th>
+                        <th class="text-center">Qty</th>
+                        <th class="text-end">Unit</th>
+                        <th class="text-end">Disc.</th>
+                        <th class="text-end">Line total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for line in invoice.billable_lines %}
+                    <tr>
+                        <td>{{ forloop.counter }}</td>
+                        <td>{{ line.service_code.code|default:"—" }}</td>
+                        <td>{{ line.description }}</td>
+                        <td class="text-center">{{ line.quantity }}</td>
+                        <td class="text-end">{{ line.display_unit_price|floatformat:2 }}</td>
+                        <td class="text-end">{% if line.discount_amount and line.discount_amount > 0 %}-{{ line.discount_amount|floatformat:2 }}{% else %}—{% endif %}</td>
+                        <td class="text-end fw-semibold">{{ line.display_line_total|floatformat:2|intcomma }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="7" class="text-muted text-center py-2">No billable line items on this invoice.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    <footer class="doc-footer">
+        {% if hospital_settings and hospital_settings.address %}
+        <div>{{ hospital_settings.address|linebreaksbr }}</div>
+        {% endif %}
+        {% if hospital_settings and hospital_settings.phone %}
+        <div>Tel: {{ hospital_settings.phone }}{% if hospital_settings.email %} · {{ hospital_settings.email }}{% endif %}</div>
+        {% endif %}
+        {% if hospital_settings and hospital_settings.report_footer_text %}
+        <div class="mt-1">{{ hospital_settings.report_footer_text|linebreaksbr }}</div>
+        {% endif %}
+        <div class="mt-2">This summary is for billing reference. Official receipts are issued at payment.</div>
+    </footer>
+</div>
+{% if auto_print %}
+<script>
+window.addEventListener('load', function () {
+    setTimeout(function () { window.print(); }, 300);
+});
+</script>
+{% endif %}
+</body>
+</html>

@@ -14,6 +14,7 @@ import logging
 from .models import Prescription, Patient, Staff, Drug
 from .models_payment_verification import PharmacyDispensing
 from .models_accounting import PaymentReceipt
+from .utils_billing import get_drug_price_for_prescription
 
 logger = logging.getLogger(__name__)
 
@@ -27,19 +28,19 @@ def pharmacy_quick_payment(request, prescription_id):
     prescription = get_object_or_404(Prescription, id=prescription_id, is_deleted=False)
     patient = prescription.order.encounter.patient
     drug = prescription.drug
-    
-    # Calculate total cost
-    unit_price = getattr(drug, 'unit_price', Decimal('0.00'))
+    payer = getattr(patient, 'primary_insurance', None)
+    # Use main pharmacy dispensary price (same as cashier and doctor prescribing)
+    unit_price = get_drug_price_for_prescription(drug, payer=payer)
     total_cost = unit_price * prescription.quantity
     
-    # Get or create dispensing record
+    # Pharmacy queue row must exist before payer billing (same rule as main workflow)
     from .services.auto_billing_service import AutoBillingService
+
+    AutoBillingService.create_pharmacy_dispensing_record_only(prescription)
     billing_result = AutoBillingService.create_pharmacy_bill(prescription)
-    
-    try:
-        dispensing_record = prescription.dispensing_record
-    except:
-        dispensing_record = None
+    dispensing_record = PharmacyDispensing.objects.filter(
+        prescription=prescription, is_deleted=False
+    ).first()
     
     if request.method == 'POST':
         action = request.POST.get('action')
@@ -57,14 +58,32 @@ def pharmacy_quick_payment(request, prescription_id):
                     staff = None
                 
                 # Create payment receipt
-                receipt = PaymentReceipt.objects.create(
+                # Check for duplicate receipt before creating
+                from datetime import timedelta
+                from django.utils import timezone
+                recent_cutoff = timezone.now() - timedelta(minutes=1)
+                
+                existing_receipt = PaymentReceipt.objects.filter(
                     patient=patient,
                     amount=amount_paid,
                     payment_method=payment_method,
                     payment_type='pharmacy',
-                    received_by=staff,
-                    notes=f"Pharmacy: {drug.name} x{prescription.quantity} (Prescription #{prescription.id})"
-                )
+                    receipt_date__gte=recent_cutoff,
+                    notes__icontains=f"Prescription #{prescription.id}",
+                    is_deleted=False
+                ).first()
+                
+                if not existing_receipt:
+                    receipt = PaymentReceipt.objects.create(
+                        patient=patient,
+                        amount=amount_paid,
+                        payment_method=payment_method,
+                        payment_type='pharmacy',
+                        received_by=staff,
+                        notes=f"Pharmacy: {drug.name} x{prescription.quantity} (Prescription #{prescription.id})"
+                    )
+                else:
+                    receipt = existing_receipt
                 
                 # Link receipt to dispensing record
                 if dispensing_record:
@@ -199,53 +218,33 @@ def pharmacy_quick_dispense(request, prescription_id):
             dispensing_record.dispensed_at = timezone.now()
             dispensing_record.save()
             
-            # Reduce stock
-            try:
-                from .models import PharmacyStock
-                from django.db.models import F
-                
-                # Reduce stock (FIFO)
-                stocks = PharmacyStock.objects.filter(
-                    drug=drug,
-                    quantity_on_hand__gt=0,
-                    is_deleted=False
-                ).order_by('expiry_date')
-                
-                remaining_qty = quantity
-                for stock in stocks:
-                    if remaining_qty <= 0:
-                        break
-                    
-                    if stock.quantity_on_hand >= remaining_qty:
-                        stock.quantity_on_hand = F('quantity_on_hand') - remaining_qty
-                        stock.save()
-                        remaining_qty = 0
-                    else:
-                        remaining_qty -= stock.quantity_on_hand
-                        stock.quantity_on_hand = 0
-                        stock.save()
-                
-                if remaining_qty > 0:
-                    messages.warning(request, f'⚠️ Insufficient stock. Short by {remaining_qty} units.')
-                    
-            except Exception as e:
-                logger.error(f"Error reducing stock: {str(e)}")
-            
-            # Send SMS
-            if patient.phone_number:
+            # Reduce stock (skip if already reduced at Send to Payer)
+            if not getattr(dispensing_record, 'stock_reduced_at', None):
                 try:
-                    from .services.sms_service import sms_service
-                    message = (
-                        f"Your medication {drug.name} x{quantity} has been dispensed. "
-                        f"Instructions: {instructions}. PrimeCare Medical"
-                    )
-                    sms_service.send_sms(
-                        phone_number=patient.phone_number,
-                        message=message,
-                        message_type='pharmacy_dispensing'
+                    from .pharmacy_stock_utils import reduce_pharmacy_stock
+                    drug_to_dispense = dispensing_record.drug_to_dispense or drug
+                    shortfall = reduce_pharmacy_stock(drug_to_dispense, quantity)
+                    if shortfall > 0:
+                        messages.warning(request, f'⚠️ Insufficient stock. Short by {shortfall} units.')
+                except Exception as e:
+                    logger.error(f"Error reducing stock: {str(e)}", exc_info=True)
+                    messages.error(request, f'Could not update stock: {str(e)}')
+            
+            # Do not send payment/dispensing feedback SMS for insurance/corporate billing.
+            patient_payer = getattr(patient, 'primary_insurance', None)
+            payer_type = getattr(patient_payer, 'payer_type', '') if patient_payer else ''
+            should_send_feedback_sms = payer_type not in ('insurance', 'private', 'nhis', 'corporate')
+            if should_send_feedback_sms:
+                try:
+                    from .services.patient_feedback_service import send_customer_service_review_sms
+                    send_customer_service_review_sms(
+                        patient,
+                        message_type='pharmacy_dispensing_feedback',
+                        related_object_id=dispensing_record.id if hasattr(dispensing_record, 'id') else None,
+                        related_object_type='PharmacyDispensing',
                     )
                 except Exception as e:
-                    logger.error(f"Error sending SMS: {str(e)}")
+                    logger.warning("Could not send customer service review SMS: %s", e)
             
             messages.success(
                 request,

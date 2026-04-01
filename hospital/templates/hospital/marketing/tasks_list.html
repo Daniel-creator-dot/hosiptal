@@ -1,0 +1,193 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Marketing Tasks - HMS{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-list-check me-2"></i>Marketing Tasks</h2>
+        <div>
+            <a href="{% url 'hospital:create_task_standalone' %}" class="btn btn-success">
+                <i class="bi bi-plus-circle me-1"></i>Create New Task
+            </a>
+            <a href="{% url 'hospital:marketing_dashboard' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i>Back to Dashboard
+            </a>
+        </div>
+    </div>
+    
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Status</label>
+                    <select name="status" class="form-select">
+                        <option value="">All Statuses</option>
+                        <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
+                        <option value="in_progress" {% if status_filter == 'in_progress' %}selected{% endif %}>In Progress</option>
+                        <option value="completed" {% if status_filter == 'completed' %}selected{% endif %}>Completed</option>
+                        <option value="cancelled" {% if status_filter == 'cancelled' %}selected{% endif %}>Cancelled</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Priority</label>
+                    <select name="priority" class="form-select">
+                        <option value="">All Priorities</option>
+                        <option value="low" {% if priority_filter == 'low' %}selected{% endif %}>Low</option>
+                        <option value="medium" {% if priority_filter == 'medium' %}selected{% endif %}>Medium</option>
+                        <option value="high" {% if priority_filter == 'high' %}selected{% endif %}>High</option>
+                        <option value="critical" {% if priority_filter == 'critical' %}selected{% endif %}>Critical</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Objective</label>
+                    <select name="objective" class="form-select">
+                        <option value="">All Objectives</option>
+                        {% for obj in objectives %}
+                        <option value="{{ obj.id }}" {% if objective_filter == obj.id|stringformat:"s" %}selected{% endif %}>
+                            {{ obj.title }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">&nbsp;</label>
+                    <div>
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="bi bi-funnel me-1"></i>Filter
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Tasks Table -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0">All Tasks ({{ tasks.count }})</h5>
+        </div>
+        <div class="card-body">
+            {% if tasks %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Task</th>
+                            <th>Objective</th>
+                            <th>Type</th>
+                            <th>Assigned To</th>
+                            <th>Due Date</th>
+                            <th>Status</th>
+                            <th>Priority</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for task in tasks %}
+                        <tr>
+                            <td>
+                                <strong>{{ task.title }}</strong>
+                                {% if task.description %}
+                                <br><small class="text-muted">{{ task.description|truncatewords:8 }}</small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{% url 'hospital:marketing_objective_detail' task.objective.id %}" class="text-decoration-none">
+                                    {{ task.objective.title|truncatewords:5 }}
+                                </a>
+                            </td>
+                            <td>
+                                <span class="badge bg-secondary">{{ task.get_task_type_display }}</span>
+                            </td>
+                            <td>
+                                <small>{{ task.assigned_to.get_full_name|default:task.assigned_to.username|default:"Unassigned" }}</small>
+                            </td>
+                            <td>
+                                <small>{{ task.due_date|date:"M d, Y" }}</small>
+                                {% if task.is_overdue %}
+                                <br><span class="badge bg-danger">Overdue</span>
+                                {% elif task.due_date %}
+                                <br><small class="text-muted">({{ task.days_remaining }} days left)</small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge {% if task.status == 'completed' %}bg-success{% elif task.status == 'in_progress' %}bg-primary{% elif task.status == 'pending' %}bg-warning{% else %}bg-secondary{% endif %}">
+                                    {{ task.get_status_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge {% if task.priority == 'critical' %}bg-danger{% elif task.priority == 'high' %}bg-warning{% elif task.priority == 'medium' %}bg-info{% else %}bg-secondary{% endif %}">
+                                    {{ task.get_priority_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-primary update-task-status" data-task-id="{{ task.id }}">
+                                    <i class="bi bi-check-circle"></i> Update
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox" style="font-size: 3rem; color: #ccc;"></i>
+                <p class="text-muted mt-3">No tasks found.</p>
+                <a href="{% url 'hospital:create_task_standalone' %}" class="btn btn-success">
+                    <i class="bi bi-plus-circle me-1"></i>Create Your First Task
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Update task status functionality
+    document.querySelectorAll('.update-task-status').forEach(button => {
+        button.addEventListener('click', function() {
+            const taskId = this.getAttribute('data-task-id');
+            const currentStatus = prompt('Enter new status (pending, in_progress, completed, cancelled):');
+            
+            if (currentStatus && ['pending', 'in_progress', 'completed', 'cancelled'].includes(currentStatus)) {
+                fetch(`/hms/marketing/tasks/${taskId}/update-status/`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': '{{ csrf_token }}'
+                    },
+                    body: JSON.stringify({ status: currentStatus })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        location.reload();
+                    } else {
+                        alert('Error: ' + (data.error || 'Failed to update task'));
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error updating task');
+                });
+            }
+        });
+    });
+});
+</script>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+

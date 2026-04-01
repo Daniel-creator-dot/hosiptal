@@ -1,0 +1,438 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Marketing Metrics - PrimeCare HMS{% endblock %}
+
+{% block extra_css %}
+<style>
+  :root {
+    --marketing-primary: #ec4899;
+    --marketing-secondary: #f472b6;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --info: #3b82f6;
+  }
+
+  .metrics-wrap {
+    padding: 2rem;
+    background: linear-gradient(135deg, #f8fafc 0%, #e0e7ff 100%);
+    min-height: 100vh;
+  }
+
+  .hero {
+    background: linear-gradient(135deg, var(--marketing-primary) 0%, var(--marketing-secondary) 100%);
+    color: white;
+    padding: 2.25rem 2rem;
+    border-radius: 20px;
+    box-shadow: 0 10px 30px rgba(236, 72, 153, 0.25);
+    margin-bottom: 1.5rem;
+  }
+
+  .hero h1 {
+    font-weight: 800;
+    margin: 0;
+    font-size: 2rem;
+  }
+
+  .hero .sub {
+    opacity: .92;
+    margin-top: .35rem;
+  }
+
+  .panel {
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 4px 10px rgba(0,0,0,.06);
+    padding: 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+  }
+
+  .stat {
+    border-radius: 14px;
+    background: #fff;
+    border: 1px solid #eef2ff;
+    padding: 1rem 1rem;
+  }
+
+  .stat .k {
+    color: #64748b;
+    font-size: .85rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+  }
+
+  .stat .v {
+    font-size: 1.75rem;
+    font-weight: 800;
+    color: #0f172a;
+    margin-top: .25rem;
+  }
+
+  .stat .h {
+    color: #64748b;
+    font-size: .85rem;
+    margin-top: .25rem;
+  }
+
+  .chipbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .chips {
+    display: flex;
+    gap: .5rem;
+    flex-wrap: wrap;
+  }
+
+  .chipbtn {
+    border: 1px solid #e2e8f0;
+    background: #fff;
+    border-radius: 999px;
+    padding: .4rem .8rem;
+    font-weight: 600;
+    font-size: .9rem;
+  }
+
+  .chipbtn.active {
+    border-color: rgba(236, 72, 153, .35);
+    background: rgba(236, 72, 153, .10);
+    color: #9d174d;
+  }
+
+  .muted {
+    color: #64748b;
+    font-size: .9rem;
+  }
+
+  .chart-card {
+    border: 1px solid #eef2ff;
+    border-radius: 14px;
+    padding: 1rem;
+  }
+
+  /* Fix Chart.js infinite resize/stretch by giving a real height container */
+  .chart-area {
+    position: relative;
+    height: 320px;
+    width: 100%;
+  }
+  .chart-area canvas {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+  }
+  @media (max-width: 768px) {
+    .chart-area { height: 260px; }
+  }
+
+  .loading {
+    display: inline-flex;
+    gap: .5rem;
+    align-items: center;
+    color: #64748b;
+    font-weight: 600;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="metrics-wrap">
+  <div class="hero">
+    <h1><i class="bi bi-graph-up-arrow me-2"></i>Marketing Metrics</h1>
+    <div class="sub">A real-time analytics view (objectives, tasks, campaigns, call reports).</div>
+  </div>
+
+  <div class="panel">
+    <div class="chipbar">
+      <div class="chips" role="group" aria-label="Date range">
+        <button type="button" class="chipbtn" data-days="7">7 days</button>
+        <button type="button" class="chipbtn active" data-days="30">30 days</button>
+        <button type="button" class="chipbtn" data-days="90">90 days</button>
+      </div>
+      <div class="muted">
+        Period: <strong id="periodLabel">—</strong>
+        <span class="ms-2" id="loadingState" style="display:none;">
+          <span class="loading"><i class="bi bi-arrow-repeat"></i> Loading…</span>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stat-grid">
+    <div class="stat">
+      <div class="k">Objectives</div>
+      <div class="v" id="objTotal">0</div>
+      <div class="h"><span id="objActive">0</span> active • <span id="objCompleted">0</span> completed</div>
+    </div>
+    <div class="stat">
+      <div class="k">Tasks</div>
+      <div class="v" id="taskTotal">0</div>
+      <div class="h"><span id="taskCompleted">0</span> completed • <span id="taskOverdue">0</span> overdue</div>
+    </div>
+    <div class="stat">
+      <div class="k">Campaigns</div>
+      <div class="v" id="campActive">0</div>
+      <div class="h">Budget: GHS <span id="campBudget">0.00</span> • Spent: GHS <span id="campSpent">0.00</span></div>
+    </div>
+    <div class="stat">
+      <div class="k">Call reports</div>
+      <div class="v" id="callTotal">0</div>
+      <div class="h">Follow-ups due: <span id="followupsDue">0</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="d-flex flex-wrap gap-3 align-items-center justify-content-between mb-2">
+      <div style="font-weight:800; color:#0f172a;">
+        <i class="bi bi-telephone me-2"></i>Call Reports Trend
+      </div>
+      <div class="muted">Calls per day (from call reports)</div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-area">
+        <canvas id="callsChart"></canvas>
+      </div>
+      <div class="muted mt-2" id="callsEmpty" style="display:none;">No call reports in this period.</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="d-flex flex-wrap gap-3 align-items-center justify-content-between mb-2">
+      <div style="font-weight:800; color:#0f172a;">
+        <i class="bi bi-bar-chart-line me-2"></i>Marketing Metric Trend
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <label class="muted mb-0" for="metricSelect">Metric</label>
+        <select id="metricSelect" class="form-select form-select-sm" style="min-width: 240px;">
+          <option value="new_patients">New Patients</option>
+          <option value="revenue">Revenue</option>
+          <option value="appointment_bookings">Appointment Bookings</option>
+          <option value="referrals">Referrals</option>
+          <option value="website_visits">Website Visits</option>
+          <option value="lead_generation">Lead Generation</option>
+          <option value="conversion_rate">Conversion Rate</option>
+          <option value="brand_mentions">Brand Mentions</option>
+          <option value="social_media_followers">Social Media Followers</option>
+          <option value="email_subscribers">Email Subscribers</option>
+        </select>
+      </div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-area">
+        <canvas id="metricChart"></canvas>
+      </div>
+      <div class="muted mt-2" id="metricEmpty" style="display:none;">No values recorded yet for this metric.</div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+  (function () {
+    const apiUrlBase = "{% url 'hospital:marketing_metrics_api' %}";
+    const loadingState = document.getElementById('loadingState');
+    const periodLabel = document.getElementById('periodLabel');
+
+    const els = {
+      objTotal: document.getElementById('objTotal'),
+      objActive: document.getElementById('objActive'),
+      objCompleted: document.getElementById('objCompleted'),
+      taskTotal: document.getElementById('taskTotal'),
+      taskCompleted: document.getElementById('taskCompleted'),
+      taskOverdue: document.getElementById('taskOverdue'),
+      campActive: document.getElementById('campActive'),
+      campBudget: document.getElementById('campBudget'),
+      campSpent: document.getElementById('campSpent'),
+      callTotal: document.getElementById('callTotal'),
+      followupsDue: document.getElementById('followupsDue'),
+      callsEmpty: document.getElementById('callsEmpty'),
+      metricEmpty: document.getElementById('metricEmpty'),
+      metricSelect: document.getElementById('metricSelect'),
+    };
+
+    let callsChart = null;
+    let metricChart = null;
+    let lastPayload = null;
+    let currentDays = 30;
+
+    function fmtMoney(n) {
+      const x = Number(n || 0);
+      return x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function setLoading(on) {
+      loadingState.style.display = on ? 'inline' : 'none';
+    }
+
+    function buildCallsChart(series) {
+      const labels = (series || []).map(r => r.date);
+      const values = (series || []).map(r => r.count);
+
+      els.callsEmpty.style.display = labels.length ? 'none' : 'block';
+
+      const ctx = document.getElementById('callsChart').getContext('2d');
+      if (callsChart) callsChart.destroy();
+
+      callsChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Call reports',
+            data: values,
+            borderColor: 'rgba(236, 72, 153, 0.95)',
+            backgroundColor: 'rgba(236, 72, 153, 0.15)',
+            tension: 0.35,
+            fill: true,
+            pointRadius: 2,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: { mode: 'index', intersect: false }
+          },
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            y: { beginAtZero: true, ticks: { precision: 0 } }
+          }
+        }
+      });
+    }
+
+    function buildMetricChart(metricKey) {
+      if (!lastPayload || !lastPayload.data) return;
+      const series = lastPayload.data[metricKey] || { dates: [], values: [] };
+      const labels = series.dates || [];
+      const values = (series.values || []).map(v => Number(v || 0));
+
+      els.metricEmpty.style.display = labels.length ? 'none' : 'block';
+
+      const ctx = document.getElementById('metricChart').getContext('2d');
+      if (metricChart) metricChart.destroy();
+
+      const isMoney = metricKey === 'revenue';
+      metricChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: metricKey,
+            data: values,
+            borderColor: 'rgba(59, 130, 246, 0.95)',
+            backgroundColor: 'rgba(59, 130, 246, 0.12)',
+            tension: 0.35,
+            fill: true,
+            pointRadius: 2,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              mode: 'index',
+              intersect: false,
+              callbacks: {
+                label: function(ctx) {
+                  const v = ctx.parsed.y;
+                  return isMoney ? ('GHS ' + fmtMoney(v)) : v;
+                }
+              }
+            }
+          },
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: function(v) {
+                  return isMoney ? ('GHS ' + fmtMoney(v)) : v;
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function applyPayload(payload) {
+      lastPayload = payload;
+      const p = payload.period || {};
+      periodLabel.textContent = `${p.start_date || '—'} → ${p.end_date || '—'} (${p.days || currentDays}d)`;
+
+      const s = payload.summary || {};
+      const obj = s.objectives || {};
+      const task = s.tasks || {};
+      const camp = s.campaigns || {};
+      const calls = s.call_reports || {};
+
+      els.objTotal.textContent = obj.total ?? 0;
+      els.objActive.textContent = obj.active ?? 0;
+      els.objCompleted.textContent = obj.completed ?? 0;
+
+      els.taskTotal.textContent = task.total ?? 0;
+      els.taskCompleted.textContent = task.completed ?? 0;
+      els.taskOverdue.textContent = task.overdue ?? 0;
+
+      els.campActive.textContent = camp.active ?? 0;
+      els.campBudget.textContent = fmtMoney(camp.budget_total ?? 0);
+      els.campSpent.textContent = fmtMoney(camp.spent_total ?? 0);
+
+      els.callTotal.textContent = calls.total_in_period ?? 0;
+      els.followupsDue.textContent = calls.followups_due ?? 0;
+
+      buildCallsChart((payload.series || {}).call_reports_per_day || []);
+      buildMetricChart(els.metricSelect.value);
+    }
+
+    async function load(days) {
+      currentDays = days;
+      setLoading(true);
+      try {
+        const url = `${apiUrlBase}?days=${encodeURIComponent(days)}&raw=1`;
+        const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        const data = await res.json();
+        if (!data || !data.success) throw new Error('Failed to load metrics');
+        applyPayload(data);
+      } catch (e) {
+        console.error(e);
+        periodLabel.textContent = 'Failed to load';
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    // Bind chips
+    document.querySelectorAll('.chipbtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.chipbtn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const days = parseInt(btn.getAttribute('data-days'), 10) || 30;
+        load(days);
+      });
+    });
+
+    els.metricSelect.addEventListener('change', () => buildMetricChart(els.metricSelect.value));
+
+    load(currentDays);
+  })();
+</script>
+{% endblock %}
+

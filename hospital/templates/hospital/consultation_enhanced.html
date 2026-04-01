@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load static humanize %}
+{% load static humanize hospital_extras %}
 
 {% block title %}Consultation - {{ patient.full_name }} - HMS{% endblock %}
 {% block page_title %}🩺 Clinical Consultation{% endblock %}
@@ -767,58 +767,63 @@
         <div class="row g-4">
             <div class="col-md-7">
                 <div class="prescription-builder">
-                    <h5 class="mb-4" style="color: #065F46; font-weight: 700;">
-                        <i class="bi bi-capsule-pill me-2"></i>New Prescription
-                    </h5>
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h5 class="mb-0" style="color: #065F46; font-weight: 700;">
+                            <i class="bi bi-capsule-pill me-2"></i>New Prescription
+                        </h5>
+                        <a href="{% url 'hospital:drug_classification_guide' %}?encounter_id={{ encounter.id }}" 
+                           target="_blank" 
+                           class="btn btn-outline-primary btn-sm" 
+                           style="text-decoration: none;">
+                            <i class="bi bi-book me-1"></i>Drug Guide
+                        </a>
+                    </div>
                     
                     <form method="post" id="prescriptionForm">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="prescribe_drug">
                         
-                        <!-- Drug Search -->
+                        <!-- 1. Name of drug (API search - all pharmacy drugs) -->
                         <div class="drug-search">
                             <i class="bi bi-search"></i>
-                            <input type="text" id="drugSearchInput" placeholder="Search for medications..." autocomplete="off" oninput="searchDrugs(this.value)">
-                            <div class="drug-suggestions" id="drugSuggestions">
-                                {% for drug in available_drugs|slice:":20" %}
-                                <div class="drug-suggestion-item" onclick="selectDrug('{{ drug.pk }}', '{{ drug.name }}', '{{ drug.strength }}', '{{ drug.form }}')">
-                                    <div class="drug-name">{{ drug.name }}</div>
-                                    <div class="drug-meta">{{ drug.strength }} · {{ drug.form }} · {{ drug.generic_name|default:"" }}</div>
-                                </div>
-                                {% endfor %}
+                            <input type="text" id="drugSearchInput" placeholder="Type to search all pharmacy drugs (2+ characters)..." autocomplete="off" oninput="searchDrugs(this.value)" title="Search drugs">
+                            <div class="drug-suggestions" id="drugSuggestions"></div>
+                            <div id="drugSelectedDisplay" class="mt-2 p-2 rounded border bg-light" style="display: none;">
+                                <small><i class="bi bi-check-circle text-success"></i> Selected: <strong id="drugSelectedName"></strong>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary ms-2" onclick="clearDrugSelectionEnh()">Change</button></small>
                             </div>
                             <input type="hidden" name="drug_id" id="selectedDrugId">
                         </div>
                         
-                        <!-- Prescription Details -->
+                        <!-- 2. Route · 3. Dose · 4. Frequency · 5. Duration · 6. Quantity · 7. Instructions -->
                         <div class="prescription-form-grid">
                             <div class="form-field">
-                                <label class="form-label-modern">Dose</label>
-                                <input type="text" name="dose" class="form-input-modern" placeholder="e.g., 500mg, 2 tablets">
-                            </div>
-                            
-                            <div class="form-field">
-                                <label class="form-label-modern">Quantity</label>
-                                <input type="number" name="quantity" class="form-input-modern" value="1" min="1">
-                            </div>
-                            
-                            <div class="form-field">
                                 <label class="form-label-modern">Route</label>
-                                <select name="route" class="form-input-modern">
+                                <select name="route" class="form-input-modern" title="Select option" aria-label="Select option">
                                     <option value="oral">Oral (PO)</option>
                                     <option value="IV">Intravenous (IV)</option>
                                     <option value="IM">Intramuscular (IM)</option>
                                     <option value="subcutaneous">Subcutaneous (SC)</option>
+                                    <option value="intra-articular">Intra-articular</option>
+                                    <option value="intrathecal">Intrathecal</option>
                                     <option value="topical">Topical</option>
                                     <option value="inhalation">Inhalation</option>
                                     <option value="rectal">Rectal (PR)</option>
+                                    <option value="rectally">Rectally</option>
+                                    <option value="nasal">Nasal</option>
+                                    <option value="per_vaginum">Per vaginum (PV)</option>
                                     <option value="sublingual">Sublingual (SL)</option>
                                 </select>
                             </div>
                             
                             <div class="form-field">
+                                <label class="form-label-modern">Dose</label>
+                                <input type="text" name="dose" class="form-input-modern" placeholder="e.g., 500mg, 2 tablets" title="Enter text" placeholder="Enter text">
+                            </div>
+                            
+                            <div class="form-field">
                                 <label class="form-label-modern">Frequency</label>
-                                <select name="frequency" class="form-input-modern">
+                                <select name="frequency" class="form-input-modern" title="Select option" aria-label="Select option">
                                     <option value="Once daily (OD)">Once daily (OD)</option>
                                     <option value="Twice daily (BD)">Twice daily (BD)</option>
                                     <option value="Three times daily (TDS)">Three times daily (TDS)</option>
@@ -832,10 +837,12 @@
                                 </select>
                             </div>
                             
-                            <div class="form-field" style="grid-column: 1 / -1;">
+                            <div class="form-field">
                                 <label class="form-label-modern">Duration</label>
-                                <input type="text" name="duration" class="form-input-modern" placeholder="e.g., 7 days, 2 weeks, 1 month">
+                                <input type="text" name="duration" class="form-input-modern" placeholder="e.g., 7 days, 2 weeks, 1 month" title="Enter text" placeholder="Enter text">
                             </div>
+                            
+                            <input type="hidden" name="quantity" value="1">
                             
                             <div class="form-field" style="grid-column: 1 / -1;">
                                 <label class="form-label-modern">Special Instructions</label>
@@ -866,13 +873,11 @@
                                 <div class="drug-name-large">{{ prescription.drug.name }}</div>
                                 <div class="text-muted mb-2">{{ prescription.drug.strength }} · {{ prescription.drug.form }}</div>
                             </div>
-                            <form method="post" onsubmit="return confirm('Are you sure you want to delete this prescription?');" style="display: inline;">
+                            <form method="post" onsubmit="return confirm('Are you sure you want to delete this prescription?');" class="d-inline">
                                 {% csrf_token %}
                                 <input type="hidden" name="action" value="delete_prescription">
                                 <input type="hidden" name="prescription_id" value="{{ prescription.id }}">
-                                <button type="submit" class="btn btn-sm btn-danger" title="Delete prescription" style="padding: 4px 8px; min-width: 32px;">
-                                    <i class="bi bi-trash-fill"></i>
-                                </button>
+                                <button type="submit" class="btn btn-sm btn-danger" title="Delete prescription" style="padding: 4px 8px; min-width: 32px;"><i class="bi bi-trash" aria-hidden="true"></i><span class="visually-hidden">Delete</span></button>
                             </form>
                         </div>
                         
@@ -917,7 +922,7 @@
                     <input type="hidden" name="action" value="order_lab_test">
                     
                     <div class="mb-3">
-                        <input type="text" id="labTestSearch" class="form-input-modern" placeholder="🔍 Search lab tests..." oninput="filterLabTests(this.value)">
+                        <input type="text" id="labTestSearch" class="form-input-modern" placeholder="🔍 Search lab tests..." oninput="filterLabTests(this.value)" title="Enter text" placeholder="Enter text">
                     </div>
                     
                     <div class="lab-test-grid" id="labTestGrid">
@@ -925,8 +930,8 @@
                         <div class="lab-test-checkbox-card" onclick="toggleLabTest('{{ test.pk }}')">
                             <input type="checkbox" name="test_ids" value="{{ test.pk }}" id="labtest_{{ test.pk }}" class="form-check-input lab-test-checkbox">
                             <div class="lab-test-info">
-                                <div class="lab-test-name">{{ test.name }}</div>
-                                <div class="lab-test-meta">{{ test.code }} · {{ test.specimen_type }} · GHS {{ test.price|default:0 }}</div>
+                                <div class="lab-test-name"><i class="bi bi-flask me-1"></i>{{ test.name }}{% if test.code %} <small class="text-muted">({{ test.code }})</small>{% endif %}</div>
+                                <div class="lab-test-meta">{{ test.specimen_type|default:"N/A" }} · <strong style="color: #28a745;">GHS {{ test.price|default:0|floatformat:2|intcomma }}</strong></div>
                             </div>
                         </div>
                         {% empty %}
@@ -939,7 +944,7 @@
                     <div class="row mt-3 g-3">
                         <div class="col-md-6">
                             <label class="form-label-modern">Priority</label>
-                            <select name="priority" class="form-input-modern">
+                            <select name="priority" class="form-input-modern" title="Select option" aria-label="Select option">
                                 <option value="routine">Routine</option>
                                 <option value="urgent">Urgent</option>
                                 <option value="stat">STAT (Immediate)</option>
@@ -989,7 +994,7 @@
                         </div>
                         
                         <div class="mt-2">
-                            <a href="{% url 'hospital:tabular_lab_report' result.pk %}" class="btn btn-sm btn-outline-primary">
+                            <a href="{% lab_result_entry_url result %}" class="btn btn-sm btn-outline-primary">
                                 <i class="bi bi-eye me-1"></i>View Full
                             </a>
                             <a href="{% url 'hospital:print_lab_report' result.pk %}" target="_blank" class="btn btn-sm btn-outline-secondary">
@@ -1030,7 +1035,7 @@
                                class="form-input-modern" 
                                list="diagnosisListConsult"
                                placeholder="Type to search: e.g., 'J00' or 'Common Cold'"
-                               autocomplete="off">
+                               autocomplete="off" title="Enter text" placeholder="Enter text">
                         <datalist id="diagnosisListConsult">
                             {% if diagnosis_codes %}
                             {% for code in diagnosis_codes %}
@@ -1042,7 +1047,7 @@
                     
                     <div class="form-field">
                         <label class="form-label-modern">Problem/Diagnosis</label>
-                        <input type="text" name="problem" class="form-input-modern" placeholder="e.g., Acute upper respiratory infection" required>
+                        <input type="text" name="problem" class="form-input-modern" placeholder="e.g., Acute upper respiratory infection" required title="Enter text" placeholder="Enter text">
                     </div>
                     
                     <div class="form-field">
@@ -1082,20 +1087,23 @@
                                 <div class="text-muted mt-1" style="font-size: 13px;">{{ problem.description }}</div>
                                 {% endif %}
                                 <div class="text-muted mt-2" style="font-size: 12px;">
-                                    Added {{ problem.created|naturaltime }} by {{ problem.created_by.user.get_full_name }}
+                                    Added {{ problem.created|naturaltime }} by 
+                                    {% if problem.created_by and problem.created_by.user %}
+                                        {{ problem.created_by.user.get_full_name|default:problem.created_by.user.username|default:"Not assigned" }}
+                                    {% else %}
+                                        <em>System</em>
+                                    {% endif %}
                                 </div>
                             </div>
                             <div class="d-flex gap-2 align-items-start">
                                 <span class="badge bg-{% if problem.status == 'active' %}danger{% else %}success{% endif %}">
                                     {{ problem.get_status_display|upper }}
                                 </span>
-                                <form method="post" onsubmit="return confirm('Are you sure you want to delete this diagnosis?');" style="display: inline;">
+                                <form method="post" onsubmit="return confirm('Are you sure you want to delete this diagnosis?');" class="d-inline">
                                     {% csrf_token %}
                                     <input type="hidden" name="action" value="delete_diagnosis">
                                     <input type="hidden" name="problem_id" value="{{ problem.id }}">
-                                    <button type="submit" class="btn btn-sm btn-danger" title="Delete diagnosis" style="padding: 4px 8px; min-width: 32px;">
-                                        <i class="bi bi-trash-fill"></i>
-                                    </button>
+                                    <button type="submit" class="btn btn-sm btn-danger" title="Delete diagnosis" style="padding: 4px 8px; min-width: 32px;"><i class="bi bi-trash" aria-hidden="true"></i><span class="visually-hidden">Delete</span></button>
                                 </form>
                             </div>
                         </div>
@@ -1165,16 +1173,18 @@
                             {% if note.assessment %}<p class="mb-1"><strong>A:</strong> {{ note.assessment }}</p>{% endif %}
                             {% if note.plan %}<p class="mb-1"><strong>P:</strong> {{ note.plan }}</p>{% endif %}
                             <div class="text-muted mt-2" style="font-size: 12px;">
-                                By {{ note.created_by.user.get_full_name }}
+                                By {% if note.created_by and note.created_by.user %}
+                                    {{ note.created_by.user.get_full_name|default:note.created_by.user.username|default:"Not assigned" }}
+                                {% else %}
+                                    <em>System</em>
+                                {% endif %}
                             </div>
                         </div>
                         <form method="post" onsubmit="return confirm('Are you sure you want to delete this clinical note?');" style="display: inline; margin-left: 10px;">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="delete_clinical_note">
                             <input type="hidden" name="note_id" value="{{ note.id }}">
-                            <button type="submit" class="btn btn-sm btn-danger" title="Delete note" style="padding: 4px 8px; min-width: 32px;">
-                                <i class="bi bi-trash-fill"></i>
-                            </button>
+                            <button type="submit" class="btn btn-sm btn-danger" title="Delete note" style="padding: 4px 8px; min-width: 32px;"><i class="bi bi-trash" aria-hidden="true"></i><span class="visually-hidden">Delete</span></button>
                         </form>
                     </div>
                 </div>
@@ -1188,7 +1198,9 @@
                     <div class="timeline-time">{{ encounter.started_at|naturaltime }}</div>
                     <div class="timeline-title">Encounter Started</div>
                     <p class="mb-1"><strong>Chief Complaint:</strong> {{ encounter.chief_complaint }}</p>
-                    <p class="mb-0 text-muted" style="font-size: 12px;">Provider: {{ encounter.provider.user.get_full_name }}</p>
+                    <p class="mb-0 text-muted" style="font-size: 12px;">
+                        Provider: {% if encounter.provider and encounter.provider.user %}{{ encounter.provider.user.get_full_name|default:encounter.provider.user.username|default:"Not assigned" }}{% else %}Not assigned{% endif %}
+                    </p>
                 </div>
             </div>
         </div>
@@ -1205,7 +1217,7 @@
             
             <div class="form-field">
                 <label class="form-label-modern">Imaging Type</label>
-                <select name="imaging_type" class="form-input-modern">
+                <select name="imaging_type" class="form-input-modern" title="Select option" aria-label="Select option">
                     <option value="X-Ray">X-Ray</option>
                     <option value="CT Scan">CT Scan</option>
                     <option value="MRI">MRI</option>
@@ -1217,7 +1229,7 @@
             
             <div class="form-field">
                 <label class="form-label-modern">Priority</label>
-                <select name="priority" class="form-input-modern">
+                <select name="priority" class="form-input-modern" title="Select option" aria-label="Select option">
                     <option value="routine">Routine</option>
                     <option value="urgent">Urgent</option>
                     <option value="stat">STAT</option>
@@ -1322,30 +1334,71 @@ function switchTab(tabName) {
     document.querySelector(`[data-tab="GHS {tabName}"]`).classList.add('active');
 }
 
-// Drug search
+// Drug search (API - all pharmacy drugs)
+let drugSearchTimeout;
 function searchDrugs(query) {
     const suggestions = document.getElementById('drugSuggestions');
-    if (query.length > 0) {
-        suggestions.classList.add('show');
-        // Filter suggestions
-        const items = suggestions.querySelectorAll('.drug-suggestion-item');
-        items.forEach(item => {
-            const text = item.textContent.toLowerCase();
-            if (text.includes(query.toLowerCase())) {
-                item.style.display = 'block';
-            } else {
-                item.style.display = 'none';
-            }
-        });
-    } else {
+    const searchInput = document.getElementById('drugSearchInput');
+    const selectedDiv = document.getElementById('drugSelectedDisplay');
+    if (selectedDiv && selectedDiv.style.display !== 'none') return; // Already selected
+    query = (query || '').trim();
+    if (query.length < 2) {
+        suggestions.innerHTML = '';
         suggestions.classList.remove('show');
+        return;
     }
+    clearTimeout(drugSearchTimeout);
+    drugSearchTimeout = setTimeout(function() {
+        fetch('{% url "hospital:api_search_drugs" %}?q=' + encodeURIComponent(query), { credentials: 'same-origin' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                const drugs = data.drugs || [];
+                if (drugs.length === 0) {
+                    suggestions.innerHTML = '<div class="drug-suggestion-item" style="cursor:default;padding:12px;color:#6b7280;">No drugs found. Try a different search.</div>';
+                } else {
+                    suggestions.innerHTML = drugs.map(function(d) {
+                        const meta = [(d.strength || ''), (d.form || ''), d.generic_name].filter(Boolean).join(' · ');
+                        const disp = [(d.name || ''), (d.strength || ''), (d.form || '')].filter(Boolean).join(' · ');
+                        return '<div class="drug-suggestion-item enh-drug-item" data-id="' + d.id + '" data-name="' + (d.name || '').replace(/"/g, '&quot;') + '" data-strength="' + (d.strength || '').replace(/"/g, '&quot;') + '" data-form="' + (d.form || '').replace(/"/g, '&quot;') + '">' +
+                            '<div class="drug-name">' + (d.name || '') + '</div>' +
+                            '<div class="drug-meta">' + meta + ' · Stock: ' + (d.stock_available || 0) + '</div></div>';
+                    }).join('');
+                    suggestions.querySelectorAll('.enh-drug-item').forEach(function(el) {
+                        el.addEventListener('click', function() {
+                            selectDrug(this.dataset.id, this.dataset.name.replace(/&quot;/g, '"'), this.dataset.strength.replace(/&quot;/g, '"'), this.dataset.form.replace(/&quot;/g, '"'));
+                        });
+                    });
+                }
+                suggestions.classList.add('show');
+            })
+            .catch(function() {
+                suggestions.innerHTML = '<div class="drug-suggestion-item" style="cursor:default;padding:12px;color:#dc3545;">Search failed. Please try again.</div>';
+                suggestions.classList.add('show');
+            });
+    }, 300);
 }
 
-// Select drug
+window.clearDrugSelectionEnh = function() {
+    document.getElementById('selectedDrugId').value = '';
+    document.getElementById('drugSearchInput').value = '';
+    document.getElementById('drugSearchInput').disabled = false;
+    const sd = document.getElementById('drugSelectedDisplay');
+    if (sd) sd.style.display = 'none';
+    document.getElementById('drugSuggestions').classList.remove('show');
+};
+
+// Select drug (from API results or drug guide preselection)
 function selectDrug(id, name, strength, form) {
     document.getElementById('selectedDrugId').value = id;
-    document.getElementById('drugSearchInput').value = `GHS {name} GHS {strength} GHS {form}`;
+    const disp = [name, strength, form].filter(Boolean).join(' · ');
+    document.getElementById('drugSearchInput').value = '';
+    document.getElementById('drugSearchInput').disabled = true;
+    const selectedDiv = document.getElementById('drugSelectedDisplay');
+    const selectedName = document.getElementById('drugSelectedName');
+    if (selectedDiv && selectedName) {
+        selectedName.textContent = disp;
+        selectedDiv.style.display = 'block';
+    }
     document.getElementById('drugSuggestions').classList.remove('show');
 }
 
@@ -1420,6 +1473,17 @@ function proceedToAdmission() {
 document.addEventListener('DOMContentLoaded', function() {
     updateSelectedCount();
     
+    // Auto-select drug if coming from drug guide
+    {% if preselected_drug %}
+    selectDrug('{{ preselected_drug.pk }}', '{{ preselected_drug.name }}', '{{ preselected_drug.strength }}', '{{ preselected_drug.form }}');
+    // Switch to prescribe tab
+    switchTab('prescribe');
+    // Scroll to prescription form
+    setTimeout(function() {
+        document.getElementById('prescribe-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 300);
+    {% endif %}
+    
     // Keyboard shortcuts
     document.addEventListener('keydown', function(e) {
         // Alt + 1-4 for tab switching
@@ -1436,6 +1500,9 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 </script>
+
+<!-- Prescription Assistant overlay: animated pharmacist (floating button + overlay) -->
+{% include "hospital/prescription_assistant_overlay.html" with encounter_id=encounter.id %}
 
 <!-- Admit Patient Modal -->
 <div class="modal fade" id="admitModal" tabindex="-1">

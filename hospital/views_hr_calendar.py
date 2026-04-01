@@ -316,9 +316,9 @@ def activity_calendar(request):
 
 
 @login_required
-def activity_detail(request, activity_id):
+def activity_detail(request, pk):
     """View activity details and RSVP"""
-    activity = get_object_or_404(HospitalActivity, id=activity_id, is_deleted=False)
+    activity = get_object_or_404(HospitalActivity, id=pk, is_deleted=False)
     
     # Get current user's staff profile
     try:

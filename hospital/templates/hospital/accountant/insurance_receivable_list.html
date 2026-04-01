@@ -12,17 +12,19 @@
             <form method="get" class="row g-3">
                 <div class="col-md-4">
                     <label class="form-label">Status</label>
-                    <select name="status" class="form-select">
+                    <select name="status" class="form-select" title="Select option" aria-label="Select option">
                         <option value="">All</option>
                         <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
                         <option value="submitted" {% if status_filter == 'submitted' %}selected{% endif %}>Submitted</option>
                         <option value="approved" {% if status_filter == 'approved' %}selected{% endif %}>Approved</option>
+                        <option value="matched" {% if status_filter == 'matched' %}selected{% endif %}>Matched</option>
+                        <option value="partially_paid" {% if status_filter == 'partially_paid' %}selected{% endif %}>Partially Paid</option>
                         <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid</option>
                     </select>
                 </div>
                 <div class="col-md-4">
                     <label class="form-label">Insurance Company</label>
-                    <select name="insurance" class="form-select">
+                    <select name="insurance" class="form-select" title="Select option" aria-label="Select option">
                         <option value="">All</option>
                         {% for company in insurance_companies %}
                         <option value="{{ company.id }}" {% if request.GET.insurance == company.id|stringformat:"s" %}selected{% endif %}>
@@ -44,7 +46,7 @@
     <div class="card">
         <div class="card-header d-flex justify-content-between">
             <h5><i class="bi bi-file-earmark-medical"></i> Insurance Receivables</h5>
-            <a href="{% url 'admin:hospital_insurancereceivable_add' %}" class="btn btn-primary">
+            <a href="{% url 'hospital:insurance_receivable_create' %}" class="btn btn-primary">
                 <i class="bi bi-plus-circle"></i> Add Receivable
             </a>
         </div>
@@ -71,21 +73,33 @@
                         <tr>
                             <td><strong>{{ receivable.receivable_number }}</strong></td>
                             <td>{{ receivable.insurance_company.name }}</td>
-                            <td>{{ receivable.patient.full_name }}</td>
+                            <td>
+                                {% if receivable.patient %}
+                                    {{ receivable.patient.full_name }}
+                                {% else %}
+                                    <span class="text-muted">Opening Balance</span>
+                                {% endif %}
+                            </td>
                             <td>{{ receivable.claim_number|default:"-" }}</td>
                             <td>GHS {{ receivable.total_amount|floatformat:2|intcomma }}</td>
                             <td>GHS {{ receivable.amount_paid|floatformat:2|intcomma }}</td>
                             <td><strong>GHS {{ receivable.balance_due|floatformat:2|intcomma }}</strong></td>
                             <td>
-                                <span class="badge bg-{% if receivable.status == 'paid' %}success{% elif receivable.status == 'approved' %}info{% else %}warning{% endif %}">
+                                <span class="badge bg-{% if receivable.status == 'paid' %}success{% elif receivable.status == 'approved' or receivable.status == 'matched' %}info{% else %}warning{% endif %}">
                                     {{ receivable.get_status_display }}
                                 </span>
                             </td>
                             <td>{{ receivable.due_date|date:"M d, Y" }}</td>
                             <td>
-                                <a href="{% url 'admin:hospital_insurancereceivable_change' receivable.id %}" class="btn btn-sm btn-outline-primary">
-                                    <i class="bi bi-eye"></i>
-                                </a>
+                                {% if receivable.is_entry %}
+                                    <a href="{% url 'receivable_entry_detail' entry_id=receivable.id %}" class="btn btn-sm btn-outline-primary" title="View receivable entry in HMS">
+                                        <i class="bi bi-eye"></i>
+                                    </a>
+                                {% else %}
+                                    <a href="{% url 'hospital:insurance_receivable_edit' receivable.id %}" class="btn btn-sm btn-outline-primary" title="Edit in HMS">
+                                        <i class="bi bi-pencil"></i> Edit
+                                    </a>
+                                {% endif %}
                             </td>
                         </tr>
                         {% endfor %}

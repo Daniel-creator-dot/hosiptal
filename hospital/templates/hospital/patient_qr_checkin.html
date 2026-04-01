@@ -101,6 +101,12 @@
                         <small id="scan-status" class="text-muted">Camera idle</small>
                     </div>
                     <div class="scan-actions">
+                        <select id="camera-select" class="form-select form-select-sm me-2" style="display: none; max-width: 200px;" title="Select camera">
+                            <option value="">Auto-detect Camera</option>
+                        </select>
+                        <button id="refresh-cameras-btn" class="btn btn-outline-info btn-sm me-2" type="button" title="Refresh camera list" onclick="refreshCameras()" style="display: none;">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                        </button>
                         <button id="start-scan-btn" class="btn btn-primary me-2" type="button">
                             <i class="bi bi-camera-video"></i> Start Camera
                         </button>
@@ -120,14 +126,14 @@
                         <i class="bi bi-keyboard"></i> Manual Entry (optional)
                     </label>
                     <div class="input-group">
-                        <input type="text" id="manual-input" class="form-control" placeholder="Paste QR payload data">
+                        <input type="text" id="manual-input" class="form-control" placeholder="Paste QR payload data" title="Enter text" placeholder="Enter text">
                         <button class="btn btn-outline-primary" id="manual-submit" type="button">
                             Process
                         </button>
                     </div>
                     <small class="text-muted">Use this if the QR label is scratched. Format: PCMCARD|patient_id|token</small>
                 </div>
-                <div class="mt-4" id="result-wrapper" style="display:none;">
+                <div class="mt-4" id="result-wrapper" class="d-none">
                     <div id="result-card" class="result-card">
                         <div id="result-content"></div>
                     </div>
@@ -139,15 +145,16 @@
                 <h5>Visit Preferences</h5>
                 <div class="mb-3">
                     <label class="form-label">Encounter Type</label>
-                    <select id="encounter-type" class="form-select">
+                    <select id="encounter-type" class="form-select" title="Select option" aria-label="Select option">
                         <option value="outpatient" selected>Outpatient</option>
+                        <option value="specialist">Special Consultation *sp</option>
                         <option value="emergency">Emergency</option>
                         <option value="inpatient">Inpatient</option>
                     </select>
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Department</label>
-                    <select id="department-select" class="form-select">
+                    <select id="department-select" class="form-select" title="Select option" aria-label="Select option">
                         {% for department in departments %}
                             <option value="{{ department.pk }}" {% if default_department and default_department.pk == department.pk %}selected{% endif %}>
                                 {{ department.name }}
@@ -155,9 +162,26 @@
                         {% endfor %}
                     </select>
                 </div>
-                <div class="mb-0">
+                <div class="mb-3">
                     <label class="form-label">Chief Complaint / Reason</label>
                     <textarea id="chief-complaint" class="form-control" rows="3" placeholder="eg. Follow-up review, BP check, etc."></textarea>
+                </div>
+                <div class="mb-0">
+                    <label class="form-label">Assign Doctor (Optional)</label>
+                    <select id="assigned-doctor" class="form-select" title="Select doctor" aria-label="Select doctor">
+                        <option value="">No doctor assignment</option>
+                        {% for doctor in available_doctors %}
+                            <option value="{{ doctor.id }}">
+                                {% if doctor.user.get_full_name %}
+                                    Dr. {{ doctor.user.get_full_name }}
+                                {% else %}
+                                    Dr. {{ doctor.user.username }}
+                                {% endif %}
+                                {% if doctor.department %} - {{ doctor.department.name }}{% endif %}
+                            </option>
+                        {% endfor %}
+                    </select>
+                    <small class="text-muted">Select a doctor to assign this patient to. Doctor will receive notification.</small>
                 </div>
             </div>
             <div class="card config-card">
@@ -183,8 +207,14 @@
 {% endblock %}
 
 {% block extra_js %}
+<!-- Use latest stable version of html5-qrcode -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
+    // Verify library loaded
+    if (typeof Html5Qrcode === 'undefined') {
+        console.error('html5-qrcode library failed to load!');
+        alert('QR Scanner library failed to load. Please refresh the page or check your internet connection.');
+    }
     const scanStatus = document.getElementById('scan-status');
     const startBtn = document.getElementById('start-scan-btn');
     const stopBtn = document.getElementById('stop-scan-btn');
@@ -193,8 +223,10 @@
     const resultWrapper = document.getElementById('result-wrapper');
     const resultCard = document.getElementById('result-card');
     const resultContent = document.getElementById('result-content');
+    const cameraSelect = document.getElementById('camera-select');
     let html5QrCode = null;
     let isScanning = false;
+    let availableCameras = [];
     
     function updateStatus(message, state = 'muted') {
         scanStatus.textContent = message;
@@ -205,71 +237,430 @@
         if (isScanning) return;
         
         try {
+            // Verify library is loaded
+            if (typeof Html5Qrcode === 'undefined') {
+                throw new Error('QR Scanner library not loaded. Please refresh the page.');
+            }
+            
+            // Check secure context (but don't block - let browser handle it)
+            const isSecureContext = window.isSecureContext || 
+                                   location.protocol === 'https:' || 
+                                   location.hostname === 'localhost' || 
+                                   location.hostname === '127.0.0.1' ||
+                                   location.hostname === '[::1]';
+            
+            if (!isSecureContext) {
+                console.warn('Not in secure context, but proceeding - browser will handle it');
+            }
+            
+            // Check if getUserMedia is available
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                // Try legacy API
+                const getUserMedia = navigator.getUserMedia || 
+                                  navigator.webkitGetUserMedia || 
+                                  navigator.mozGetUserMedia || 
+                                  navigator.msGetUserMedia;
+                if (!getUserMedia) {
+                    throw new Error('Camera API not available in this browser. Please use Chrome, Firefox, or Edge.');
+                }
+            }
+            
             updateStatus('Requesting camera access...', 'info');
             
-            // First, try to get available cameras
-            const cameras = await Html5Qrcode.getCameras();
-            if (cameras.length === 0) {
-                throw new Error('No cameras found. Please connect a camera device.');
+            // IMPORTANT: Request camera permission FIRST before enumeration
+            // This ensures newly installed cameras are detected
+            let cameras = [];
+            let hasPermission = false;
+            
+            try {
+                // Step 1: Request camera permission first (required for device enumeration)
+                // This is critical for detecting newly installed cameras
+                updateStatus('Requesting camera permission...', 'info');
+                
+                // Use the most compatible method
+                let getUserMediaFunc;
+                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                    getUserMediaFunc = (constraints) => navigator.mediaDevices.getUserMedia(constraints);
+                } else {
+                    // Legacy API
+                    getUserMediaFunc = (constraints) => {
+                        return new Promise((resolve, reject) => {
+                            const legacyGetUserMedia = navigator.getUserMedia || 
+                                                      navigator.webkitGetUserMedia || 
+                                                      navigator.mozGetUserMedia;
+                            if (legacyGetUserMedia) {
+                                legacyGetUserMedia.call(navigator, constraints, resolve, reject);
+                            } else {
+                                reject(new Error('getUserMedia not supported'));
+                            }
+                        });
+                    };
+                }
+                
+                const testStream = await getUserMediaFunc({ 
+                    video: true // Request any camera to get permission
+                });
+                
+                // Stop test stream immediately (we just needed permission)
+                testStream.getTracks().forEach(track => track.stop());
+                hasPermission = true;
+                console.log('Camera permission granted');
+                updateStatus('Camera permission granted, detecting cameras...', 'success');
+            } catch (permErr) {
+                console.error('Permission request failed:', permErr);
+                const errName = permErr.name || '';
+                const errMessage = permErr.message || permErr.toString() || '';
+                
+                if (errName === 'NotAllowedError' || errMessage.includes('permission') || errMessage.includes('Permission')) {
+                    throw new Error('Camera permission denied. Please allow camera access and try again.');
+                } else if (errName === 'NotFoundError' || errMessage.includes('no devices') || errMessage.includes('not found')) {
+                    throw new Error('No camera found. Please connect a camera device.');
+                } else if (errMessage.includes('secure context') || errMessage.includes('HTTPS')) {
+                    throw new Error('Camera requires secure context. Please use https:// or localhost. Current: ' + location.protocol + '//' + location.hostname);
+                } else {
+                    throw new Error('Camera access failed: ' + errMessage);
+                }
+            }
+            
+            // Step 2: Now enumerate all available cameras (requires permission first)
+            // NOTE: Enumeration is OPTIONAL - if it fails, we'll use facingMode which works without enumeration
+            updateStatus('Detecting cameras...', 'info');
+            
+            // Method 1: Use Html5Qrcode's built-in method (handles browser compatibility)
+            try {
+                cameras = await Html5Qrcode.getCameras();
+                availableCameras = cameras;
+                console.log('Found cameras via Html5Qrcode:', cameras);
+            } catch (libErr) {
+                // Html5Qrcode.getCameras() failed - this is OK, try direct enumeration
+                console.warn('Html5Qrcode.getCameras() failed (non-critical):', libErr);
+                
+                // Method 2: Direct device enumeration (optional - not required)
+                if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+                    try {
+                        const devices = await navigator.mediaDevices.enumerateDevices();
+                        cameras = devices
+                            .filter(device => device.kind === 'videoinput')
+                            .map((device, index) => ({ 
+                                id: device.deviceId, 
+                                label: device.label || `Camera ${index + 1}` 
+                            }));
+                        availableCameras = cameras;
+                        console.log('Found cameras via enumerateDevices:', cameras);
+                    } catch (enumErr) {
+                        // Enumeration failed - this is OK, we'll use facingMode
+                        console.warn('enumerateDevices failed (non-critical):', enumErr);
+                        cameras = [];
+                        availableCameras = [];
+                    }
+                } else {
+                    // enumerateDevices not available - this is OK, we'll use facingMode
+                    console.log('enumerateDevices not available - will use facingMode (this is OK)');
+                    cameras = [];
+                    availableCameras = [];
+                }
+            }
+                
+            // If no cameras found but we have permission, try one more time (optional)
+            if (cameras.length === 0 && hasPermission && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+                updateStatus('No cameras enumerated, refreshing device list...', 'info');
+                // Wait a moment for system to detect new camera
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // Try enumeration again (if supported) - this is optional
+                try {
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    cameras = devices
+                        .filter(device => device.kind === 'videoinput')
+                        .map((device, index) => ({ 
+                            id: device.deviceId, 
+                            label: device.label || `Camera ${index + 1}` 
+                        }));
+                    availableCameras = cameras;
+                    console.log('Found cameras after refresh:', cameras);
+                } catch (refreshErr) {
+                    // Refresh failed - this is OK, we'll use facingMode
+                    console.warn('Refresh enumeration failed (non-critical):', refreshErr);
+                }
+            }
+            
+            // Populate camera select dropdown
+            if (cameras.length > 0) {
+                cameraSelect.innerHTML = '<option value="">Auto-detect Camera</option>';
+                cameras.forEach((cam, index) => {
+                    const option = document.createElement('option');
+                    option.value = cam.id || '';
+                    option.textContent = cam.label || `Camera ${index + 1}`;
+                    cameraSelect.appendChild(option);
+                });
+                cameraSelect.style.display = 'inline-block';
+                document.getElementById('refresh-cameras-btn').style.display = 'inline-block';
+                
+                updateStatus(`Found ${cameras.length} camera(s)`, 'success');
+            } else {
+                cameraSelect.style.display = 'none';
+                document.getElementById('refresh-cameras-btn').style.display = 'inline-block';
+                updateStatus('No cameras detected. Click Refresh to scan again.', 'warning');
+                // Don't throw error - let the library try with default config
             }
             
             updateStatus('Initializing scanner...', 'info');
             html5QrCode = new Html5Qrcode('qr-video-container');
             
-            // Try back camera first (environment), then front camera (user)
-            let cameraConfig = { facingMode: "environment" };
+            // Determine camera configuration
             let cameraId = null;
+            let cameraConfig = null;
+            let lastError = null;
             
-            // Try to use specific camera ID if available
-            if (cameras.length > 0) {
-                // Prefer back camera for QR scanning
-                const backCamera = cameras.find(cam => cam.label.toLowerCase().includes('back') || cam.label.toLowerCase().includes('rear'));
-                if (backCamera) {
+            // Check if user selected a specific camera
+            const selectedCameraId = cameraSelect.value;
+            if (selectedCameraId) {
+                cameraId = selectedCameraId;
+                cameraConfig = cameraId;
+            } else if (cameras.length > 0) {
+                // We have enumerated cameras - use specific device ID
+                // Method 1: Try to find back camera (best for QR scanning)
+                const backCamera = cameras.find(cam => 
+                    cam.label && (
+                        cam.label.toLowerCase().includes('back') || 
+                        cam.label.toLowerCase().includes('rear') ||
+                        cam.label.toLowerCase().includes('environment')
+                    )
+                );
+                if (backCamera && backCamera.id) {
                     cameraId = backCamera.id;
-                    cameraConfig = { deviceId: { exact: cameraId } };
+                    cameraConfig = cameraId;
+                } else {
+                    // Use first available camera
+                    cameraId = cameras[0].id;
+                    cameraConfig = cameraId;
+                }
+            } else {
+                // No cameras enumerated (enumeration not supported or no devices found)
+                // Use facingMode - library will handle device selection automatically
+                // This works even when enumerateDevices is not available
+                cameraConfig = { facingMode: "environment" }; // Prefer back camera
+                console.log('Using facingMode (enumeration not available)');
+            }
+            
+            // Scanner configuration - use simpler config for better compatibility
+            const config = {
+                fps: 10,
+                qrbox: { width: 250, height: 250 }, // Slightly smaller for better compatibility
+                aspectRatio: 1.0
+            };
+            
+            // Callback for successful QR code scan
+            const onScanSuccess = (decodedText, decodedResult) => {
+                console.log('QR Code scanned:', decodedText);
+                stopCamera();
+                processQr(decodedText);
+            };
+            
+            // Error callback (ignore frame errors - they're normal)
+            const onScanError = (errorMessage) => {
+                // Ignore frame scan errors (normal during scanning)
+                // Only log if it's a critical error
+                if (errorMessage) {
+                    const lowerMsg = errorMessage.toLowerCase();
+                    if (!lowerMsg.includes('no qr code') && 
+                        !lowerMsg.includes('not found') && 
+                        !lowerMsg.includes('scanning')) {
+                        console.debug('Scan error:', errorMessage);
+                    }
+                }
+            };
+            
+            // Try starting with the selected config
+            try {
+                await html5QrCode.start(
+                    cameraConfig,
+                    config,
+                    onScanSuccess,
+                    onScanError
+                );
+                
+                isScanning = true;
+                startBtn.disabled = true;
+                stopBtn.disabled = true;
+                updateStatus('Camera active - align QR within the frame', 'success');
+                return; // Success!
+            } catch (startErr) {
+                console.warn('Failed with preferred camera, trying fallback:', startErr);
+                lastError = startErr;
+                
+                // Fallback 1: Try user-facing camera (front camera)
+                if (!cameraId) { // Only if we didn't use a specific camera ID
+                    try {
+                        await html5QrCode.start(
+                            { facingMode: "user" },
+                            config,
+                            onScanSuccess,
+                            onScanError
+                        );
+                        
+                        isScanning = true;
+                        startBtn.disabled = true;
+                        stopBtn.disabled = true;
+                        updateStatus('Camera active (front camera) - align QR within the frame', 'success');
+                        return; // Success with fallback!
+                    } catch (fallbackErr) {
+                        console.warn('Fallback camera also failed:', fallbackErr);
+                        lastError = fallbackErr;
+                    }
+                }
+                
+                // Fallback 2: Try first available camera by ID (if we have enumerated cameras)
+                if (cameras.length > 0 && cameras[0].id) {
+                    try {
+                        await html5QrCode.start(
+                            cameras[0].id,
+                            config,
+                            onScanSuccess,
+                            onScanError
+                        );
+                        
+                        isScanning = true;
+                        startBtn.disabled = true;
+                        stopBtn.disabled = true;
+                        updateStatus('Camera active - align QR within the frame', 'success');
+                        return; // Success with first camera!
+                    } catch (lastErr) {
+                        console.warn('First camera ID failed, trying next fallback:', lastErr);
+                        lastError = lastErr;
+                    }
+                }
+                
+                // Fallback 3: Try with minimal config (let library handle everything)
+                // This works even when enumerateDevices is not supported
+                try {
+                    await html5QrCode.start(
+                        { facingMode: "environment" },
+                        { fps: 10, qrbox: { width: 250, height: 250 } },
+                        onScanSuccess,
+                        onScanError
+                    );
+                    
+                    isScanning = true;
+                    startBtn.disabled = true;
+                    stopBtn.disabled = true;
+                    updateStatus('Camera active - align QR within the frame', 'success');
+                    return; // Success with minimal config!
+                } catch (minimalErr) {
+                    console.warn('Environment facingMode failed, trying user facingMode:', minimalErr);
+                    lastError = minimalErr;
+                    
+                    // Final fallback: Try user-facing camera (front camera)
+                    try {
+                        await html5QrCode.start(
+                            { facingMode: "user" },
+                            { fps: 10, qrbox: { width: 250, height: 250 } },
+                            onScanSuccess,
+                            onScanError
+                        );
+                        
+                        isScanning = true;
+                        startBtn.disabled = true;
+                        stopBtn.disabled = true;
+                        updateStatus('Camera active (front camera) - align QR within the frame', 'success');
+                        return; // Success with user-facing camera!
+                    } catch (userErr) {
+                        console.warn('User facingMode also failed, trying default camera:', userErr);
+                        lastError = userErr;
+                        
+                        // Last resort: Try with true (default camera) - most compatible
+                        try {
+                            updateStatus('Trying default camera (any available)...', 'info');
+                            await html5QrCode.start(
+                                true, // Use default camera - library picks first available
+                                { fps: 10, qrbox: { width: 250, height: 250 } },
+                                onScanSuccess,
+                                onScanError
+                            );
+                            
+                            isScanning = true;
+                            startBtn.disabled = true;
+                            stopBtn.disabled = true;
+                            updateStatus('Camera active - align QR within the frame', 'success');
+                            return; // Success with default camera!
+                        } catch (defaultErr) {
+                            console.error('Default camera also failed:', defaultErr);
+                            lastError = defaultErr;
+                        }
+                    }
                 }
             }
             
-            await html5QrCode.start(
-                cameraId || cameraConfig,
-                {
-                    fps: 10,
-                    qrbox: { width: 280, height: 280 },
-                    aspectRatio: 1.0,
-                    disableFlip: false
-                },
-                decodedText => {
-                    stopCamera();
-                    processQr(decodedText);
-                },
-                errorMessage => {
-                    // Ignore frame scan errors (normal during scanning)
-                }
-            );
-            
-            isScanning = true;
-            startBtn.disabled = true;
-            stopBtn.disabled = false;
-            updateStatus('Camera active - align QR within the frame', 'success');
+            // If we get here, all methods failed
+            throw lastError || new Error('Unable to start camera after trying all methods');
             
         } catch (err) {
             console.error('Camera error:', err);
             let errorMsg = 'Unable to access camera. ';
             
-            if (err.name === 'NotAllowedError' || err.message.includes('permission')) {
-                errorMsg += 'Please allow camera permissions and try again.';
-            } else if (err.name === 'NotFoundError' || err.message.includes('No camera')) {
-                errorMsg += 'No camera found. Please connect a camera device.';
-            } else if (err.name === 'NotReadableError' || err.message.includes('busy')) {
-                errorMsg += 'Camera is busy or in use by another application.';
+            // Safely get error message and name
+            const errName = err.name || '';
+            const errMessage = err.message || err.toString() || '';
+            const errString = err.toString() || '';
+            
+            if (errName === 'NotAllowedError' || (errMessage && (errMessage.includes('permission') || errMessage.includes('Permission')))) {
+                errorMsg = '❌ Camera permission denied. Please:\n';
+                errorMsg += '1. Click the camera icon in your browser\'s address bar\n';
+                errorMsg += '2. Allow camera access for this site\n';
+                errorMsg += '3. Refresh the page and try again';
+            } else if (errName === 'NotFoundError' || (errMessage && (errMessage.includes('No camera') || errMessage.includes('not found') || errMessage.includes('no devices')))) {
+                errorMsg = '❌ No camera found. Please:\n';
+                errorMsg += '1. Connect a camera device (USB webcam or built-in camera)\n';
+                errorMsg += '2. Make sure no other application is using the camera\n';
+                errorMsg += '3. Check device manager to ensure camera is working\n';
+                errorMsg += '4. Try refreshing the page';
+            } else if (errName === 'NotReadableError' || (errMessage && (errMessage.includes('busy') || errMessage.includes('in use') || errMessage.includes('could not start')))) {
+                errorMsg = '❌ Camera is busy or cannot be accessed. Please:\n';
+                errorMsg += '1. Close other applications using the camera (Zoom, Teams, etc.)\n';
+                errorMsg += '2. Refresh this page and try again\n';
+                errorMsg += '3. Restart your browser if the problem persists';
+            } else if (errMessage && (errMessage.includes('HTTPS') || errMessage.includes('secure context') || errMessage.includes('localhost'))) {
+                errorMsg = '❌ Camera access requires secure connection:\n';
+                errorMsg += 'Current URL: ' + location.protocol + '//' + location.hostname + '\n';
+                errorMsg += '1. Access this page via HTTPS (https://...)\n';
+                errorMsg += '2. Or use localhost/127.0.0.1\n';
+                errorMsg += '3. HTTP connections cannot access camera for security reasons';
+            } else if (errMessage && (errMessage.includes('streaming not supported') || errMessage.includes('Camera streaming'))) {
+                errorMsg = '❌ Camera streaming not supported:\n';
+                errorMsg += '1. Make sure you\'re using a modern browser (Chrome, Firefox, Edge)\n';
+                errorMsg += '2. Check if you\'re on HTTPS or localhost\n';
+                errorMsg += '3. Try refreshing the page\n';
+                errorMsg += '4. Check browser console (F12) for more details';
+            } else if (errMessage && (errMessage.includes('library not loaded') || errMessage.includes('Html5Qrcode'))) {
+                errorMsg = '❌ QR Scanner library error:\n';
+                errorMsg += '1. Check your internet connection\n';
+                errorMsg += '2. Refresh the page to reload the library\n';
+                errorMsg += '3. Check browser console for detailed errors';
             } else {
-                errorMsg += err.message || 'Unknown error occurred.';
+                errorMsg = '❌ Camera Error:\n';
+                errorMsg += 'Error: ' + (errMessage || errString || 'Unknown error occurred');
+                errorMsg += '\n\nTroubleshooting:\n';
+                errorMsg += '1. Make sure you\'re using HTTPS or localhost (Current: ' + location.protocol + '//' + location.hostname + ')\n';
+                errorMsg += '2. Check browser camera permissions (click camera icon in address bar)\n';
+                errorMsg += '3. Try a different browser (Chrome/Firefox/Edge recommended)\n';
+                errorMsg += '4. Check browser console (F12) for detailed error messages';
             }
             
             updateStatus(errorMsg, 'danger');
             isScanning = false;
             startBtn.disabled = false;
             stopBtn.disabled = true;
+            
+            // Show error in result card too
+            resultWrapper.style.display = 'block';
+            resultCard.className = 'result-card error';
+            resultContent.innerHTML = `
+                <div class="text-center py-3">
+                    <i class="bi bi-camera-video-off" style="font-size: 3rem; color: #dc3545;"></i>
+                    <h5 class="mt-3 mb-2">Camera Access Failed</h5>
+                    <p class="text-muted mb-0" style="white-space: pre-line; text-align: left;">${errorMsg}</p>
+                </div>
+            `;
         }
     }
     
@@ -311,6 +702,7 @@
         payload.append('encounter_type', document.getElementById('encounter-type').value);
         payload.append('department_id', document.getElementById('department-select').value || '');
         payload.append('chief_complaint', document.getElementById('chief-complaint').value);
+        payload.append('assigned_doctor', document.getElementById('assigned-doctor').value || '');
         
         fetch("{% url 'hospital:patient_qr_checkin_api' %}", {
             method: 'POST',
@@ -349,10 +741,22 @@
                 throw { status, body };
             }
         })
-        .catch(({ body }) => {
+        .catch((err) => {
+            console.error('QR check-in error:', err);
             resultCard.className = 'result-card error';
             updateStatus('Unable to complete check-in', 'danger');
+            
+            // Handle different error types
+            let errorMessage = 'Unknown error occurred.';
             let debugInfo = '';
+            let body = err.body || err;
+            
+            if (body?.error) {
+                errorMessage = body.error;
+            } else if (err.message) {
+                errorMessage = err.message;
+            }
+            
             if (body?.debug) {
                 debugInfo = `
                     <div class="mt-3 p-2 bg-light rounded">
@@ -363,10 +767,27 @@
                     </div>
                 `;
             }
+            
+            // Show helpful hints based on error
+            let hint = '';
+            if (errorMessage.includes('not found') || errorMessage.includes('Patient not found')) {
+                hint = `
+                    <div class="alert alert-info mt-3">
+                        <strong>Tip:</strong> Make sure you entered:
+                        <ul class="mb-0 mt-2">
+                            <li>Full MRN (e.g., PMC2026000031)</li>
+                            <li>Or complete QR code data</li>
+                            <li>Or patient UUID</li>
+                        </ul>
+                    </div>
+                `;
+            }
+            
             resultContent.innerHTML = `
                 <h5 class="text-danger">Check-in Failed</h5>
-                <p class="mb-2">${body?.error || 'Unknown error occurred.'}</p>
+                <p class="mb-2">${errorMessage}</p>
                 ${debugInfo}
+                ${hint}
                 <div class="mt-3">
                     <button class="btn btn-outline-danger btn-sm me-2" onclick="startCamera()">
                         <i class="bi bi-arrow-repeat"></i> Retry Scan
@@ -379,15 +800,85 @@
         });
     }
     
+    // Function to refresh camera list (useful for newly installed cameras)
+    async function refreshCameras() {
+        if (isScanning) {
+            alert('Please stop the camera first before refreshing the camera list.');
+            return;
+        }
+        
+        updateStatus('Refreshing camera list...', 'info');
+        availableCameras = [];
+        
+        try {
+            // Request permission again to refresh device list
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                const testStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                testStream.getTracks().forEach(track => track.stop());
+                
+                // Wait a moment for system to update
+                await new Promise(resolve => setTimeout(resolve, 300));
+                
+                // Enumerate devices (if supported)
+                if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const cameras = devices
+                        .filter(device => device.kind === 'videoinput')
+                        .map((device, index) => ({ 
+                            id: device.deviceId, 
+                            label: device.label || `Camera ${index + 1}` 
+                        }));
+                    
+                    availableCameras = cameras;
+                    
+                    // Update dropdown
+                    if (cameras.length > 0) {
+                        cameraSelect.innerHTML = '<option value="">Auto-detect Camera</option>';
+                        cameras.forEach((cam, index) => {
+                            const option = document.createElement('option');
+                            option.value = cam.id || '';
+                            option.textContent = cam.label || `Camera ${index + 1}`;
+                            cameraSelect.appendChild(option);
+                        });
+                        cameraSelect.style.display = 'inline-block';
+                        updateStatus(`Found ${cameras.length} camera(s) - Ready to scan`, 'success');
+                    } else {
+                        cameraSelect.style.display = 'none';
+                        updateStatus('No cameras enumerated, but camera access available. Try starting camera.', 'info');
+                    }
+                } else {
+                    // enumerateDevices not supported - that's OK, we can still use cameras
+                    updateStatus('Camera access available. Device enumeration not supported, but camera will work.', 'info');
+                }
+            }
+        } catch (err) {
+            console.error('Error refreshing cameras:', err);
+            updateStatus('Error refreshing cameras: ' + err.message, 'danger');
+        }
+    }
+    
+    // Make refresh function globally available
+    window.refreshCameras = refreshCameras;
+    
     startBtn.addEventListener('click', startCamera);
     stopBtn.addEventListener('click', stopCamera);
     manualSubmit.addEventListener('click', () => {
         const text = manualInput.value.trim();
         if (!text) {
-            updateStatus('Enter QR payload to process manually.', 'warning');
+            updateStatus('Enter QR payload or MRN to process manually.', 'warning');
+            manualInput.focus();
             return;
         }
+        updateStatus('Processing manual entry...', 'info');
         processQr(text);
+    });
+    
+    // Allow Enter key to submit manual entry
+    manualInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            manualSubmit.click();
+        }
     });
     window.addEventListener('beforeunload', stopCamera);
 </script>

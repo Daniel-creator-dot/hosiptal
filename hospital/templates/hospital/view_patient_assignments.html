@@ -1,0 +1,137 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}View Patient Assignments - Nurse{% endblock %}
+
+{% block extra_css %}
+<style>
+    .assignment-card {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+    
+    .doctor-header {
+        background: linear-gradient(135deg, #065F46 0%, #10B981 100%);
+        color: white;
+        padding: 16px;
+        border-radius: 8px;
+        margin-bottom: 16px;
+    }
+    
+    .patient-assignment-item {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        border-left: 4px solid #28a745;
+    }
+    
+    .assignment-source {
+        font-size: 0.75rem;
+        color: #6c757d;
+        margin-top: 4px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2 class="mb-2">
+                <i class="bi bi-eye me-2"></i>View Patient Assignments
+            </h2>
+            <p class="text-muted">View all patient assignments (Front Desk and Nurse assignments)</p>
+        </div>
+    </div>
+
+    {% if assignments_by_doctor %}
+    <!-- Grouped by Doctor -->
+    {% for doctor_name, assignment_data in assignments_by_doctor.items %}
+    <div class="assignment-card">
+        <div class="doctor-header">
+            <h5 class="mb-0">
+                <i class="bi bi-person-badge me-2"></i>
+                Dr. {{ doctor_name }}
+                <span class="badge bg-light text-dark ms-2">{{ assignment_data.entries|length }} patient(s)</span>
+            </h5>
+        </div>
+
+        <div class="patient-assignments">
+            {% for entry in assignment_data.entries %}
+            <div class="patient-assignment-item">
+                <div class="row align-items-center">
+                    <div class="col-md-4">
+                        <h6 class="mb-1">
+                            <a href="{% url 'hospital:patient_detail' entry.patient.pk %}" target="_blank">
+                                {{ entry.patient.full_name }}
+                            </a>
+                        </h6>
+                        <p class="text-muted mb-1 small">
+                            <i class="bi bi-person-badge me-1"></i>{{ entry.patient.mrn }}
+                        </p>
+                        <p class="text-muted mb-0 small">
+                            <i class="bi bi-clock me-1"></i>{{ entry.check_in_time|date:"M d, Y H:i" }}
+                        </p>
+                    </div>
+                    <div class="col-md-3">
+                        <span class="badge bg-info">{{ entry.get_status_display }}</span>
+                        {% if entry.department %}
+                        <p class="text-muted mb-0 small mt-1">
+                            <i class="bi bi-building me-1"></i>{{ entry.department.name }}
+                        </p>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-3">
+                        <p class="mb-0 small">
+                            <strong>Queue:</strong> {{ entry.display_ticket_number }}
+                        </p>
+                        {% if entry.called_time %}
+                        <p class="mb-0 small text-muted">
+                            Called: {{ entry.called_time|date:"H:i" }}
+                        </p>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-2 text-end">
+                        <a href="{% url 'hospital:encounter_detail' entry.encounter.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </div>
+                </div>
+                {% if entry.notes %}
+                <div class="assignment-source mt-2">
+                    <i class="bi bi-info-circle me-1"></i>{{ entry.notes|truncatewords:20 }}
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="assignment-card">
+        <div class="text-center py-5">
+            <i class="bi bi-inbox text-muted" style="font-size: 3rem;"></i>
+            <p class="text-muted mt-3">No patient assignments found</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Quick Links -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="d-flex gap-2">
+                <a href="{% url 'hospital:nurse_patient_assignment' %}" class="btn btn-primary">
+                    <i class="bi bi-person-check me-2"></i>Assign Patients
+                </a>
+                <a href="{% url 'hospital:nurse_dashboard' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left me-2"></i>Back to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

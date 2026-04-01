@@ -6,11 +6,13 @@ from datetime import timedelta
 import logging
 
 from django.shortcuts import render, get_object_or_404, redirect
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib import messages
 from django.db.models import Q, Count, F
 from django.utils import timezone
 from django.http import JsonResponse
+from django.db import IntegrityError
+from django.db.utils import DataError
 
 from .models import Patient, Encounter, Bed, Ward, Admission, Staff, Department
 from .forms import AdmissionForm
@@ -244,12 +246,29 @@ def admission_create_enhanced(request):
         is_deleted=False
     ).select_related('ward', 'ward__department').order_by('ward__name', 'bed_number')
     
-    # Get active encounters without admission
+    # Get encounters without admission (active OR completed - all patients can be admitted)
+    # Get distinct encounters - prefer most recent per patient per day
+    # Handle exact timestamp matches by using ID as tie-breaker
+    from django.db import connection
+    
+    # Get most recent encounter ID per patient per day using DISTINCT ON (UUID-compatible)
+    # Include both 'active' and 'completed' so all patients with encounters can be admitted
+    with connection.cursor() as cursor:
+        cursor.execute("""
+            SELECT DISTINCT ON (e.patient_id, e.started_at::date) e.id
+            FROM hospital_encounter e
+            LEFT JOIN hospital_admission a ON a.encounter_id = e.id AND a.is_deleted = false
+            WHERE e.is_deleted = false 
+              AND e.status IN ('active', 'completed')
+              AND a.id IS NULL
+            ORDER BY e.patient_id, e.started_at::date, e.id DESC
+            LIMIT 200
+        """)
+        latest_ids = [row[0] for row in cursor.fetchall()]
+    
     encounters_without_admission = Encounter.objects.filter(
-        status='active',
-        is_deleted=False,
-        admission__isnull=True
-    ).select_related('patient', 'provider').order_by('-started_at')[:50]
+        id__in=latest_ids
+    ).select_related('patient', 'provider').order_by('-started_at', '-id')
     
     # Pre-select bed if provided (from bed management)
     bed_id = request.GET.get('bed')
@@ -266,35 +285,168 @@ def admission_create_enhanced(request):
     if encounter_id:
         try:
             selected_encounter = Encounter.objects.get(pk=encounter_id, is_deleted=False)
+            # If this encounter is already admitted (active), redirect to existing admission
+            existing = Admission.objects.filter(encounter_id=selected_encounter.pk).first()
+            if existing and not existing.is_deleted:
+                messages.info(
+                    request,
+                    f'This encounter is already admitted. Redirecting to admission details.'
+                )
+                return redirect('hospital:admission_detail', pk=existing.pk)
         except Encounter.DoesNotExist:
             pass
     
     if request.method == 'POST':
         encounter_id = request.POST.get('encounter_id')
+        patient_id = request.POST.get('patient_id')  # Alternative: admit any patient (creates encounter if needed)
         bed_id = request.POST.get('bed_id')
-        diagnosis = request.POST.get('diagnosis_icd10', '')
+        diagnosis = (request.POST.get('diagnosis_icd10') or '').strip()[:255]
         notes = request.POST.get('notes', '')
         
         try:
-            encounter = Encounter.objects.get(pk=encounter_id, is_deleted=False)
+            # Resolve encounter: from encounter_id, or from patient_id (find or create)
+            if encounter_id:
+                encounter = Encounter.objects.get(pk=encounter_id, is_deleted=False)
+            elif patient_id:
+                patient = Patient.objects.get(pk=patient_id, is_deleted=False)
+                # Find patient's most recent encounter without admission (active or completed)
+                encounter = Encounter.objects.filter(
+                    patient=patient, is_deleted=False,
+                    status__in=('active', 'completed')
+                ).exclude(
+                    id__in=Admission.objects.filter(is_deleted=False).values_list('encounter_id', flat=True)
+                ).order_by('-started_at', '-id').first()
+                if not encounter:
+                    # Create new encounter for direct admission
+                    try:
+                        staff = Staff.objects.get(user=request.user, is_deleted=False)
+                    except Staff.DoesNotExist:
+                        staff = None
+                    encounter = Encounter.objects.create(
+                        patient=patient,
+                        encounter_type='outpatient',  # Will be set to inpatient below
+                        chief_complaint='Direct admission',
+                        status='active',
+                        provider=staff,
+                    )
+            else:
+                messages.error(request, 'Please select a patient.')
+                return redirect('hospital:admission_create')
+            
             bed = Bed.objects.get(pk=bed_id, is_deleted=False)
             
-            # Get current staff
+            # Get current staff (needed for both create and restore paths)
             try:
                 staff = Staff.objects.get(user=request.user, is_deleted=False)
             except Staff.DoesNotExist:
                 staff = None
             
+            # Avoid duplicate: one admission per encounter (DB unique on encounter_id)
+            # Use encounter_id (pk) so we always see the row regardless of manager/soft-delete
+            existing_admission = Admission.objects.filter(encounter_id=encounter.pk).first()
+            if existing_admission:
+                if not existing_admission.is_deleted:
+                    messages.info(
+                        request,
+                        'This encounter is already admitted. Redirecting to admission details.'
+                    )
+                    return redirect('hospital:admission_detail', pk=existing_admission.pk)
+                # Restore soft-deleted admission and assign new bed (avoids unique constraint violation)
+                existing_admission.is_deleted = False
+                existing_admission.ward = bed.ward
+                existing_admission.bed = bed
+                existing_admission.admitting_doctor = staff or encounter.provider
+                existing_admission.diagnosis_icd10 = diagnosis
+                existing_admission.notes = notes
+                existing_admission.status = 'admitted'
+                existing_admission.save()
+                admission = existing_admission
+                bed.occupy()
+                encounter.encounter_type = 'inpatient'
+                encounter.save()
+                from .models_workflow import PatientFlowStage
+                if not PatientFlowStage.objects.filter(
+                    encounter=encounter, stage_type='admission', is_deleted=False
+                ).exists():
+                    PatientFlowStage.objects.create(
+                        encounter=encounter,
+                        stage_type='admission',
+                        status='completed',
+                        started_at=timezone.now(),
+                        completed_at=timezone.now(),
+                        completed_by=staff,
+                    )
+                try:
+                    from .services.bed_billing_service import bed_billing_service
+                    billing_result = bed_billing_service.create_admission_bill(admission, days=1)
+                    if billing_result.get('success'):
+                        messages.success(
+                            request,
+                            f'✅ Patient {encounter.patient.full_name} admitted to {bed.ward.name} - Bed {bed.bed_number}. '
+                            f'💰 Provisional charge: GHS {billing_result["total_charge"]}'
+                        )
+                    else:
+                        messages.success(request, f'✅ Patient {encounter.patient.full_name} admitted to {bed.ward.name} - Bed {bed.bed_number}.')
+                except Exception:
+                    messages.success(request, f'✅ Patient {encounter.patient.full_name} admitted to {bed.ward.name} - Bed {bed.bed_number}.')
+                return redirect('hospital:admission_detail', pk=admission.pk)
+            
             # Create admission
-            admission = Admission.objects.create(
-                encounter=encounter,
-                ward=bed.ward,
-                bed=bed,
-                admitting_doctor=staff or encounter.provider,
-                diagnosis_icd10=diagnosis,
-                notes=notes,
-                status='admitted'
-            )
+            try:
+                admission = Admission.objects.create(
+                    encounter=encounter,
+                    ward=bed.ward,
+                    bed=bed,
+                    admitting_doctor=staff or encounter.provider,
+                    diagnosis_icd10=diagnosis,
+                    notes=notes,
+                    status='admitted'
+                )
+            except IntegrityError as e:
+                if 'hospital_admission_encounter_id_key' in str(e) or 'encounter_id' in str(e):
+                    existing_admission = Admission.objects.filter(encounter_id=encounter.pk).first()
+                    if existing_admission:
+                        if not existing_admission.is_deleted:
+                            messages.info(
+                                request,
+                                'This encounter is already admitted. Redirecting to admission details.'
+                            )
+                            return redirect('hospital:admission_detail', pk=existing_admission.pk)
+                        existing_admission.is_deleted = False
+                        existing_admission.ward = bed.ward
+                        existing_admission.bed = bed
+                        existing_admission.admitting_doctor = staff or encounter.provider
+                        existing_admission.diagnosis_icd10 = diagnosis
+                        existing_admission.notes = notes
+                        existing_admission.status = 'admitted'
+                        existing_admission.save()
+                        admission = existing_admission
+                        bed.occupy()
+                        encounter.encounter_type = 'inpatient'
+                        encounter.save()
+                        from .models_workflow import PatientFlowStage
+                        if not PatientFlowStage.objects.filter(
+                            encounter=encounter, stage_type='admission', is_deleted=False
+                        ).exists():
+                            PatientFlowStage.objects.create(
+                                encounter=encounter,
+                                stage_type='admission',
+                                status='completed',
+                                started_at=timezone.now(),
+                                completed_at=timezone.now(),
+                                completed_by=staff,
+                            )
+                        try:
+                            from .services.bed_billing_service import bed_billing_service
+                            bed_billing_service.create_admission_bill(admission, days=1)
+                        except Exception:
+                            pass
+                        messages.success(
+                            request,
+                            f'✅ Patient {encounter.patient.full_name} admitted to {bed.ward.name} - Bed {bed.bed_number}.'
+                        )
+                        return redirect('hospital:admission_detail', pk=admission.pk)
+                raise
             
             # Update bed status
             bed.occupy()
@@ -305,16 +457,24 @@ def admission_create_enhanced(request):
             
             # Create flow stage
             from .models_workflow import PatientFlowStage
-            PatientFlowStage.objects.create(
+            # Check for existing admission stage before creating
+            existing_stage = PatientFlowStage.objects.filter(
                 encounter=encounter,
                 stage_type='admission',
-                status='completed',
-                started_at=timezone.now(),
-                completed_at=timezone.now(),
-                completed_by=staff
-            )
+                is_deleted=False
+            ).first()
             
-            # 💰 AUTO-BILLING: Create bed charges (GHS 120 per day)
+            if not existing_stage:
+                PatientFlowStage.objects.create(
+                    encounter=encounter,
+                    stage_type='admission',
+                    status='completed',
+                    started_at=timezone.now(),
+                    completed_at=timezone.now(),
+                    completed_by=staff
+                )
+            
+            # 💰 AUTO-BILLING: Create provisional accommodation charges (final on discharge)
             try:
                 from .services.bed_billing_service import bed_billing_service
                 billing_result = bed_billing_service.create_admission_bill(admission, days=1)
@@ -327,7 +487,7 @@ def admission_create_enhanced(request):
                     messages.success(
                         request,
                         f'✅ Patient {encounter.patient.full_name} admitted to {bed.ward.name} - Bed {bed.bed_number}. '
-                        f'💰 Bed charges: GHS {billing_result["total_charge"]} ({billing_result["days"]} day @ GHS {billing_result["daily_rate"]}/day)'
+                        f'💰 Provisional charge: GHS {billing_result["total_charge"]} (final on discharge: detention GHS 120 if < 12 hrs, or admission + doctor/nursing care + consumables, billed per night if ≥12 hrs)'
                     )
                 else:
                     logger.warning(f"Bed billing failed: {billing_result.get('error')}")
@@ -350,8 +510,16 @@ def admission_create_enhanced(request):
             messages.error(request, 'Encounter not found')
         except Bed.DoesNotExist:
             messages.error(request, 'Bed not found')
+        except DataError as e:
+            logger.exception('Admission create failed (database value error)')
+            hint = ''
+            err = str(e).lower()
+            if 'varying(10)' in err or 'character varying' in err:
+                hint = ' If this mentions varchar length, run database migrations (python manage.py migrate) on the server.'
+            messages.error(request, f'Error creating admission: {e!s}.{hint}')
         except Exception as e:
-            messages.error(request, f'Error creating admission: {str(e)}')
+            logger.exception('Admission create failed')
+            messages.error(request, f'Error creating admission: {e!s}')
     
     # Get diagnosis codes for dropdown
     try:
@@ -411,12 +579,22 @@ def discharge_patient(request, admission_id):
             
             if billing_result.get('success'):
                 charge_info = billing_result['charge_breakdown']
+                log_msg = (
+                    f"Detention GHS {charge_info['total_charge']}"
+                    if charge_info.get('is_detention')
+                    else f"Admission {charge_info['days']} night(s) @ GHS {charge_info['daily_rate']} + care = GHS {charge_info['total_charge']}"
+                )
                 logger.info(
-                    f"✅ Final bed charges calculated: {admission.encounter.patient.full_name} - "
-                    f"{charge_info['days']} days @ GHS {charge_info['daily_rate']} = GHS {charge_info['total_charge']}"
+                    f"✅ Final bed charges calculated: {admission.encounter.patient.full_name} - {log_msg}"
                 )
         except Exception as e:
             logger.error(f"Error updating bed charges on discharge: {str(e)}", exc_info=True)
+
+        # Close billing for this encounter so no new charges can be added (plan §5)
+        encounter = admission.encounter
+        if encounter and not encounter.billing_closed_at:
+            encounter.billing_closed_at = timezone.now()
+            encounter.save(update_fields=['billing_closed_at', 'modified'])
         
         # Discharge
         admission.discharge()
@@ -430,26 +608,40 @@ def discharge_patient(request, admission_id):
             staff = None
         
         from .models_workflow import PatientFlowStage
-        PatientFlowStage.objects.create(
+        # Check for existing discharge stage before creating
+        existing_stage = PatientFlowStage.objects.filter(
             encounter=admission.encounter,
             stage_type='discharge',
-            status='completed',
-            started_at=timezone.now(),
-            completed_at=timezone.now(),
-            completed_by=staff
-        )
+            is_deleted=False
+        ).first()
+        
+        if not existing_stage:
+            PatientFlowStage.objects.create(
+                encounter=admission.encounter,
+                stage_type='discharge',
+                status='completed',
+                started_at=timezone.now(),
+                completed_at=timezone.now(),
+                completed_by=staff
+            )
         
         # Show discharge message with final charges
         try:
             from .services.bed_billing_service import bed_billing_service
             charge_summary = bed_billing_service.get_bed_charges_summary(admission)
+            if charge_summary.get('is_detention'):
+                charge_msg = f'Detention (< 12 hrs): GHS {charge_summary["current_charges"]}'
+            else:
+                charge_msg = (
+                    f'Admission {charge_summary["days_admitted"]} night(s): accommodation @ GHS {charge_summary["daily_rate"]}/night '
+                    f'+ Doctor care (GHS 80/day) + Nursing care (GHS 70/day) + Consumables (GHS 50/day) = GHS {charge_summary["current_charges"]}'
+                )
             messages.success(
                 request,
                 f'✅ Patient discharged successfully. Bed {admission.bed.bed_number} is now available. '
-                f'💰 Total bed charges: GHS {charge_summary["current_charges"]} '
-                f'({charge_summary["days_admitted"]} days @ GHS {charge_summary["daily_rate"]}/day)'
+                f'💰 {charge_msg}'
             )
-        except:
+        except Exception:
             messages.success(request, f'✅ Patient discharged successfully. Bed {admission.bed.bed_number} is now available.')
         
         return redirect('hospital:bed_management_worldclass')
@@ -459,6 +651,49 @@ def discharge_patient(request, admission_id):
     }
     
     return render(request, 'hospital/discharge_form.html', context)
+
+
+@login_required
+def api_admission_patient_search(request):
+    """
+    Search any patient for admission. Returns patients with optional encounter_id.
+    Use encounter_id when available; otherwise use patient_id (backend creates encounter on submit).
+    """
+    query = request.GET.get('q', '').strip()
+    if len(query) < 2:
+        return JsonResponse({'results': []})
+
+    from django.db.models import Q
+    query_parts = query.split()
+    search_q = Q(
+        Q(first_name__icontains=query) |
+        Q(last_name__icontains=query) |
+        Q(middle_name__icontains=query) |
+        Q(mrn__icontains=query) |
+        Q(phone_number__icontains=query)
+    )
+    if len(query_parts) >= 2:
+        fp, lp = query_parts[0], ' '.join(query_parts[1:])
+        search_q |= Q(first_name__icontains=fp, last_name__icontains=lp)
+        search_q |= Q(first_name__icontains=lp, last_name__icontains=fp)
+
+    admitted_ids = set(Admission.objects.filter(is_deleted=False).values_list('encounter_id', flat=True))
+    patients = Patient.objects.filter(search_q, is_deleted=False).distinct()[:30]
+
+    results = []
+    for p in patients:
+        enc = Encounter.objects.filter(
+            patient=p, is_deleted=False,
+            status__in=('active', 'completed')
+        ).exclude(id__in=admitted_ids).order_by('-started_at', '-id').first()
+        results.append({
+            'id': str(p.id),
+            'name': p.full_name,
+            'mrn': p.mrn or 'N/A',
+            'display': f"{p.full_name} (MRN: {p.mrn or 'N/A'})",
+            'encounter_id': str(enc.id) if enc else None,
+        })
+    return JsonResponse({'results': results})
 
 
 @login_required

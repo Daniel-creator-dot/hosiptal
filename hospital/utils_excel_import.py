@@ -136,6 +136,9 @@ def import_gl_from_excel(
         raise RuntimeError("pandas is required for Excel import. pip install pandas openpyxl")
 
     from .models_accounting import Account, CostCenter, JournalEntry, JournalEntryLine
+    from .models_accounting_advanced import (
+        AdvancedJournalEntry, AdvancedJournalEntryLine, AdvancedGeneralLedger, Journal
+    )
 
     xl = pd.ExcelFile(xlsx_path)
 
@@ -203,6 +206,8 @@ def import_gl_from_excel(
     df["_acct_code"] = acct_code_series
     df["_debit"] = df.iloc[:, colmap["debit"]].apply(_to_decimal) if colmap["debit"] is not None else Decimal("0")
     df["_credit"] = df.iloc[:, colmap["credit"]].apply(_to_decimal) if colmap["credit"] is not None else Decimal("0")
+    # Check if Excel has a balance column (for opening balances)
+    df["_balance"] = df.iloc[:, colmap["balance"]].apply(_to_decimal) if colmap["balance"] is not None else None
     df["_cost_center"] = cost_center_series
 
     # Drop blank lines
@@ -232,15 +237,30 @@ def import_gl_from_excel(
             total_credit = g["_credit"].sum()
             is_balanced = total_debit == total_credit
             
-            journal_entry = JournalEntry.objects.create(
+            # Get or create General Journal
+            general_journal, _ = Journal.objects.get_or_create(
+                journal_type='general',
+                defaults={
+                    'name': 'General Journal',
+                    'code': 'GJ',
+                    'description': 'General journal entries'
+                }
+            )
+            
+            # Use AdvancedJournalEntry for better integration
+            journal_entry = AdvancedJournalEntry.objects.create(
+                journal=general_journal,
                 entry_date=entry_date,
-                ref=str(ref)[:64] if ref else None,
                 description=description,
-                source="Excel GL Import",
-                entered_by=entered_by,
-                is_posted=auto_post if is_balanced else False,  # Only auto-post if balanced
+                reference=str(ref)[:100] if ref else f"Excel Import {entry_date}",
+                status='posted' if (auto_post and is_balanced) else 'draft',
+                total_debit=total_debit,
+                total_credit=total_credit,
+                created_by=entered_by,
+                posted_by=entered_by if (auto_post and is_balanced) else None,
             )
 
+            line_number = 1
             for _, r in g.iterrows():
                 code = str(r["_acct_code"]).strip()
                 name = str(r["_acct_name"]).strip() or code
@@ -268,15 +288,50 @@ def import_gl_from_excel(
                         defaults={"name": cc_val[:128]},
                     )
 
-                JournalEntryLine.objects.create(
+                # Create journal entry line
+                line = AdvancedJournalEntryLine.objects.create(
                     journal_entry=journal_entry,
+                    line_number=line_number,
                     account=acc,
                     cost_center=cc,
                     description=(str(r.get("_memo", "")) or "")[:500],
                     debit_amount=r["_debit"],
                     credit_amount=r["_credit"],
                 )
+                line_number += 1
                 created_lines += 1
+                
+                # Post to AdvancedGeneralLedger with balance
+                # For Excel: debit/credit amounts ARE the balances (not transactions)
+                # Each entry represents a different company's balance (independent entries)
+                # Use debit amount as balance (for Accounts Payable/Receivable)
+                if r["_debit"] > 0:
+                    # Debit amount IS the balance (for asset accounts like AR, or AP balances)
+                    entry_balance = r["_debit"]
+                elif r["_credit"] > 0:
+                    # Credit amount IS the balance (for liability accounts like AP)
+                    entry_balance = r["_credit"]
+                else:
+                    entry_balance = Decimal("0.00")
+                
+                # Also check if Excel has explicit balance column
+                if "_balance" in r and r["_balance"] is not None and r["_balance"] != 0:
+                    entry_balance = r["_balance"]
+                
+                # For Excel imports: Keep debit/credit as-is, but balance is the actual balance
+                # These are opening balances from different companies, not transactions
+                AdvancedGeneralLedger.objects.create(
+                    journal_entry=journal_entry,
+                    journal_entry_line=line,
+                    account=acc,
+                    cost_center=cc,
+                    transaction_date=entry_date,
+                    posting_date=entry_date,
+                    description=line.description,
+                    debit_amount=r["_debit"],  # Keep Excel value (may be balance, not transaction)
+                    credit_amount=r["_credit"],  # Keep Excel value (may be balance, not transaction)
+                    balance=entry_balance,  # Store balance directly (from Excel debit/credit)
+                )
 
             # Warn if not balanced
             if not is_balanced:
@@ -294,6 +349,7 @@ def import_gl_from_excel(
         "lines": created_lines,
         "accounts_created": accounts_created,
         "unbalanced_warnings": unbalanced_warnings,
+        "gl_entries_created": created_lines,  # Each line creates a GL entry
     }
     
     return result

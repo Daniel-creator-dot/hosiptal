@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load humanize static %}
+{% load humanize static hospital_extras %}
 
 {% block title %}{{ patient.full_name }} - HMS{% endblock %}
 
@@ -127,14 +127,15 @@
 <div class="profile-header">
     <div class="row align-items-center">
         <div class="col-md-8">
-            <h1 style="font-weight: 700; margin: 0 0 10px 0; font-size: 2.5rem;">
+            <h1 class="patient-name-header">
                 {{ patient.full_name }}
+                {% patient_payer_badges patient %}
             </h1>
-            <div style="font-size: 1.2rem; opacity: 0.9;">
-                <span style="background: rgba(255,255,255,0.2); padding: 5px 15px; border-radius: 20px; margin-right: 10px;">
+            <div class="patient-info-text">
+                <span class="patient-badge">
                     Patient ID: {{ patient.mrn }}
                 </span>
-                <span style="background: rgba(255,255,255,0.2); padding: 5px 15px; border-radius: 20px;">
+                <span class="patient-badge">
                     Age: {{ patient.age }} years
                 </span>
             </div>
@@ -167,7 +168,7 @@
     <div class="col-md-4">
         <!-- Personal Information -->
         <div class="info-card">
-            <h5 style="color: #2d3748; margin-bottom: 20px; font-weight: 700; border-bottom: 2px solid #667eea; padding-bottom: 10px;">
+            <h5 class="info-section-header">
                 👤 Personal Information
             </h5>
             <div class="info-item">
@@ -197,7 +198,7 @@
         <!-- Insurance Information -->
         {% if patient.insurance_company or patient.insurance_id or patient.primary_insurance %}
         <div class="info-card">
-            <h5 style="color: #2d3748; margin-bottom: 20px; font-weight: 700; border-bottom: 2px solid #667eea; padding-bottom: 10px;">
+            <h5 class="info-section-header">
                 🏥 Insurance Information
             </h5>
             {% if patient.insurance_company %}
@@ -235,7 +236,7 @@
         
         <!-- Contact Information -->
         <div class="info-card">
-            <h5 style="color: #2d3748; margin-bottom: 20px; font-weight: 700; border-bottom: 2px solid #667eea; padding-bottom: 10px;">
+            <h5 class="info-section-header">
                 📞 Contact Information
             </h5>
             {% if patient.phone_number %}
@@ -260,7 +261,7 @@
         
         <!-- Emergency Contact -->
         <div class="info-card">
-            <h5 style="color: #2d3748; margin-bottom: 20px; font-weight: 700; border-bottom: 2px solid #667eea; padding-bottom: 10px;">
+            <h5 class="info-section-header">
                 🚨 Emergency Contact
             </h5>
             {% if patient.next_of_kin_name %}
@@ -285,20 +286,34 @@
         
         <!-- Financial Summary -->
         <div class="info-card" style="border-left: 4px solid #ed8936;">
-            <h5 style="color: #2d3748; margin-bottom: 20px; font-weight: 700;">
+            <h5 class="info-section-header-no-border">
                 💰 Financial Summary
             </h5>
             <div class="info-item">
                 <span class="info-label">Total Invoiced</span>
-                <span class="info-value" style="color: #48bb78; font-weight: 700;">
+                <span class="info-value info-value-success">
                     GHS {{ patient.get_total_invoice_amount|floatformat:2|intcomma }}
                 </span>
             </div>
             <div class="info-item">
                 <span class="info-label">Outstanding</span>
-                <span class="info-value" style="color: #f56565; font-weight: 700;">
+                <span class="info-value info-value-danger">
                     GHS {{ patient.get_outstanding_balance|floatformat:2|intcomma }}
                 </span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Deposit Balance</span>
+                <span class="info-value" style="color: #28a745; font-weight: 600;">
+                    GHS {{ patient.deposit_balance|floatformat:2|intcomma }}
+                </span>
+            </div>
+            <div class="mt-3">
+                <a href="{% url 'hospital:patient_deposit_history' patient.pk %}" class="btn btn-sm btn-outline-primary me-2">
+                    <i class="bi bi-wallet2"></i> View Deposits
+                </a>
+                <a href="{% url 'hospital:record_patient_deposit' patient.pk %}" class="btn btn-sm btn-outline-success">
+                    <i class="bi bi-plus-circle"></i> Record Deposit
+                </a>
             </div>
         </div>
     </div>
@@ -307,25 +322,25 @@
     <div class="col-md-8">
         <!-- Medical Information -->
         <div class="info-card">
-            <h5 style="color: #2d3748; margin-bottom: 20px; font-weight: 700; border-bottom: 2px solid #667eea; padding-bottom: 10px;">
+            <h5 class="info-section-header">
                 🏥 Medical Information
             </h5>
             {% if patient.allergies %}
             <div class="mb-3">
-                <strong style="color: #f56565;">⚠️ Allergies:</strong>
-                <p style="margin: 5px 0; color: #2d3748;">{{ patient.allergies|linebreaks }}</p>
+                <strong class="info-value-danger">⚠️ Allergies:</strong>
+                <p class="info-text">{{ patient.allergies|linebreaks }}</p>
             </div>
             {% endif %}
             {% if patient.chronic_conditions %}
             <div class="mb-3">
-                <strong style="color: #ed8936;">📋 Chronic Conditions:</strong>
-                <p style="margin: 5px 0; color: #2d3748;">{{ patient.chronic_conditions|linebreaks }}</p>
+                <strong class="info-value-warning">📋 Chronic Conditions:</strong>
+                <p class="info-text">{{ patient.chronic_conditions|linebreaks }}</p>
             </div>
             {% endif %}
             {% if patient.medications %}
             <div class="mb-3">
-                <strong style="color: #667eea;">💊 Current Medications:</strong>
-                <p style="margin: 5px 0; color: #2d3748;">{{ patient.medications|linebreaks }}</p>
+                <strong class="info-value-primary">💊 Current Medications:</strong>
+                <p class="info-text">{{ patient.medications|linebreaks }}</p>
             </div>
             {% endif %}
             {% if not patient.allergies and not patient.chronic_conditions and not patient.medications %}
@@ -336,7 +351,7 @@
         <!-- Active Encounters -->
         {% if active_encounters %}
         <div class="info-card">
-            <h5 style="color: #2d3748; margin-bottom: 20px; font-weight: 700; border-bottom: 2px solid #667eea; padding-bottom: 10px;">
+            <h5 class="info-section-header">
                 🏥 Active Encounters ({{ active_encounters.count }})
             </h5>
             {% for encounter in active_encounters %}
@@ -344,7 +359,7 @@
                 <div class="d-flex justify-content-between align-items-start">
                     <div style="flex: 1;">
                         <strong style="color: #2d3748;">
-                            <a href="{% url 'hospital:encounter_detail' encounter.pk %}" style="text-decoration: none; color: inherit;">
+                            <a href="{% url 'hospital:encounter_detail' encounter.pk %}" class="info-link">
                                 {{ encounter.get_encounter_type_display }}
                             </a>
                         </strong>
@@ -358,8 +373,8 @@
                         </div>
                         <br>
                         <small class="text-muted">{{ encounter.started_at|date:"M d, Y H:i" }}</small>
-                        {% if encounter.provider %}
-                        <br><small class="text-muted">Provider: {{ encounter.provider.user.get_full_name }}</small>
+                        {% if encounter.provider and encounter.provider.user %}
+                        <br><small class="text-muted">Provider: {{ encounter.provider.user.get_full_name|default:encounter.provider.user.username|default:"Not assigned" }}</small>
                         {% endif %}
                     </div>
                     <span class="badge bg-success">Active</span>
@@ -371,7 +386,7 @@
         
         <!-- Encounter Timeline -->
         <div class="info-card">
-            <h5 style="color: #2d3748; margin-bottom: 20px; font-weight: 700; border-bottom: 2px solid #667eea; padding-bottom: 10px;">
+            <h5 class="info-section-header">
                 📅 Encounter History
             </h5>
             {% if encounters %}
@@ -379,7 +394,7 @@
                 <div class="timeline-item">
                     <div class="d-flex justify-content-between align-items-start">
                         <div>
-                            <strong style="color: #2d3748;">
+                            <strong style="color: #2d3748;" class="text-dark">
                                 <a href="{% url 'hospital:encounter_detail' encounter.pk %}" style="text-decoration: none; color: inherit;">
                                     {{ encounter.get_encounter_type_display }}
                                 </a>
@@ -404,7 +419,7 @@
         <!-- Invoice History -->
         {% if invoices %}
         <div class="info-card">
-            <h5 style="color: #2d3748; margin-bottom: 20px; font-weight: 700; border-bottom: 2px solid #667eea; padding-bottom: 10px;">
+            <h5 class="info-section-header">
                 💰 Invoice History
             </h5>
             <div class="table-responsive">

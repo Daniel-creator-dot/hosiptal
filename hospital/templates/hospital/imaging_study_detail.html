@@ -43,12 +43,25 @@
         font-weight: 600;
         font-size: 14px;
         margin-bottom: 4px;
-        color: var(--dark);
+        color: #1F2937 !important; /* Dark gray for visibility */
     }
     
     .image-card-meta {
         font-size: 11px;
-        color: var(--gray);
+        color: #4B5563 !important; /* Medium gray for visibility */
+    }
+    
+    /* Fix text visibility throughout */
+    .modern-card strong {
+        color: #111827 !important; /* Very dark for strong text */
+    }
+    
+    .modern-card {
+        color: #1F2937 !important; /* Dark text for readability */
+    }
+    
+    .text-muted {
+        color: #6B7280 !important; /* Visible muted text */
     }
     
     .image-viewer-modal .modal-body img {
@@ -80,11 +93,31 @@
 {% endblock %}
 
 {% block content %}
+{% if payment_required_message and not can_view_results %}
+<div class="alert alert-danger alert-dismissible fade show" role="alert">
+    <h5 class="alert-heading"><i class="bi bi-exclamation-triangle-fill me-2"></i>Payment Required</h5>
+    <p class="mb-2">{{ payment_required_message }}</p>
+    <hr>
+    <p class="mb-0">
+        <strong>Next Steps:</strong>
+        <ol class="mb-0">
+            <li>Proceed to the cashier to make payment</li>
+            <li>Present your receipt number to the imaging department</li>
+            <li>Once payment is verified, you can view and print your results</li>
+        </ol>
+    </p>
+    <a href="{% url 'hospital:cashier_process_service_payment' 'imaging' study.id %}" class="btn btn-primary mt-3">
+        <i class="bi bi-credit-card me-2"></i>Go to Cashier for Payment
+    </a>
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+</div>
+{% endif %}
+
 <div class="row g-4 mb-4">
     <!-- Study Information -->
     <div class="col-md-4">
         <div class="modern-card">
-            <h6 style="font-weight: 600; margin-bottom: 16px; color: var(--dark);">
+            <h6 style="font-weight: 600; margin-bottom: 16px; color: #1F2937 !important;">
                 <i class="bi bi-info-circle"></i> Study Information
             </h6>
             <div style="margin-bottom: 12px;">
@@ -113,7 +146,33 @@
         </div>
         
         <div class="modern-card mt-3">
-            <h6 style="font-weight: 600; margin-bottom: 16px; color: var(--dark);">
+            <h6 style="font-weight: 600; margin-bottom: 16px; color: #1F2937 !important;">
+                <i class="bi bi-person-badge"></i> Referring / Clinical
+            </h6>
+            <div>
+                <strong>Requested by:</strong>
+                {% if study.order and study.order.requested_by %}
+                    {{ study.order.requested_by.user.get_full_name|default:study.order.requested_by.user.username }}
+                {% else %}
+                    <span class="text-muted">Not recorded</span>
+                {% endif %}
+                <br>
+                <strong>Clinical indication:</strong>
+                {% if study.clinical_indication %}
+                    <div style="margin-top: 6px; white-space: pre-wrap; background: #f8f9fa; padding: 10px; border-radius: 6px; border-left: 3px solid var(--primary); font-size: 14px;">{{ study.clinical_indication }}</div>
+                {% else %}
+                    <span class="text-muted">None documented</span>
+                {% endif %}
+                {% if study.order and study.order.encounter %}
+                <br><a href="{% url 'hospital:encounter_detail' study.order.encounter.pk %}" class="btn btn-sm btn-outline-secondary mt-2">
+                    <i class="bi bi-journal-text"></i> View encounter / history
+                </a>
+                {% endif %}
+            </div>
+        </div>
+        
+        <div class="modern-card mt-3">
+            <h6 style="font-weight: 600; margin-bottom: 16px; color: #1F2937 !important;">
                 <i class="bi bi-person-circle"></i> Patient
             </h6>
             <div>
@@ -134,41 +193,67 @@
                 <h5 style="font-weight: 600; margin: 0;">
                     <i class="bi bi-images"></i> Study Images ({{ images.count }})
                 </h5>
+                {% if can_view_results %}
                 <button class="btn btn-primary-modern" onclick="showUploadModal()">
                     <i class="bi bi-cloud-upload"></i> Upload Image
                 </button>
+                {% endif %}
             </div>
             
-            {% if images %}
-            <div class="image-gallery imaging-gallery">
-                {% for img in images %}
-                <div class="image-card" onclick="viewImage('{{ img.image.url }}', 'Image #{{ img.sequence_number }}{% if img.description %} - {{ img.description }}{% endif %}')">
-                    <img src="{{ img.image.url }}" alt="{{ img.description|default:'Image' }}" loading="lazy">
-                    <div class="image-card-body">
-                        <div class="image-card-title">
-                            Image #{{ img.sequence_number }}
+            {% if can_view_results %}
+                {% if images %}
+                <div class="image-gallery imaging-gallery">
+                    {% for img in images %}
+                    <div class="image-card">
+                        <div onclick="viewImage('{{ img.image.url }}', 'Image #{{ img.sequence_number }}{% if img.description %} - {{ img.description }}{% endif %}')" style="cursor: pointer;">
+                            <img src="{{ img.image.url }}" alt="{{ img.description|default:'Image' }}" loading="lazy">
+                            <div class="image-card-body">
+                                <div class="image-card-title">
+                                    Image #{{ img.sequence_number }}
+                                </div>
+                                {% if img.description %}
+                                <div class="image-card-meta">{{ img.description }}</div>
+                                {% endif %}
+                                <div class="image-card-meta">
+                                    Uploaded {{ img.uploaded_at|date:"M d, Y" }}
+                                    {% if img.uploaded_by %}
+                                    by {{ img.uploaded_by.user.get_full_name|default:img.uploaded_by.user.username }}
+                                    {% endif %}
+                                </div>
+                            </div>
                         </div>
-                        {% if img.description %}
-                        <div class="image-card-meta">{{ img.description }}</div>
-                        {% endif %}
-                        <div class="image-card-meta">
-                            Uploaded {{ img.uploaded_at|date:"M d, Y" }}
-                            {% if img.uploaded_by %}
-                            by {{ img.uploaded_by.user.get_full_name|default:img.uploaded_by.user.username }}
-                            {% endif %}
+                        <div style="padding: 8px; border-top: 1px solid var(--border);">
+                            <form method="post" action="{% url 'hospital:imaging_study_detail' study.id %}" style="margin: 0;" onsubmit="return confirm('Are you sure you want to delete this image?');">
+                                {% csrf_token %}
+                                <input type="hidden" name="delete_image" value="1">
+                                <input type="hidden" name="image_id" value="{{ img.id }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger w-100">
+                                    <i class="bi bi-trash"></i> Delete
+                                </button>
+                            </form>
                         </div>
                     </div>
+                    {% endfor %}
                 </div>
-                {% endfor %}
-            </div>
+                {% else %}
+                <div class="text-center py-5 imaging-gallery">
+                    <i class="bi bi-image" style="font-size: 64px; color: var(--gray); opacity: 0.3;"></i>
+                    <div style="margin-top: 16px; color: var(--gray);">No images uploaded yet</div>
+                    {% if study.status != 'completed' %}
+                    <button class="btn btn-primary-modern mt-3" onclick="showUploadModal()">
+                        <i class="bi bi-cloud-upload"></i> Upload First Image
+                    </button>
+                    {% endif %}
+                </div>
+                {% endif %}
             {% else %}
-            <div class="text-center py-5 imaging-gallery">
-                <i class="bi bi-image" style="font-size: 64px; color: var(--gray); opacity: 0.3;"></i>
-                <div style="margin-top: 16px; color: var(--gray);">No images uploaded yet</div>
-                <button class="btn btn-primary-modern mt-3" onclick="showUploadModal()">
-                    <i class="bi bi-cloud-upload"></i> Upload First Image
-                </button>
-            </div>
+                <div class="alert alert-warning">
+                    <h6><i class="bi bi-lock-fill me-2"></i>Images Locked</h6>
+                    <p class="mb-2">Payment is required before you can view imaging images.</p>
+                    <a href="{% url 'hospital:cashier_process_service_payment' 'imaging' study.id %}" class="btn btn-primary btn-sm">
+                        <i class="bi bi-credit-card me-2"></i>Make Payment
+                    </a>
+                </div>
             {% endif %}
         </div>
         
@@ -182,69 +267,137 @@
                     <a href="{% url 'hospital:edit_imaging_report' study.id %}" class="btn btn-sm btn-outline-primary">
                         <i class="bi bi-pencil"></i> Edit Report
                     </a>
-                    {% if not study.report_verified_by %}
-                    <a href="{% url 'hospital:verify_imaging_report' study.id %}" class="btn btn-sm btn-success" 
-                       onclick="return confirm('Are you sure you want to verify this report?')">
-                        <i class="bi bi-check-circle"></i> Verify
-                    </a>
+                    {% if not study.report_verified_at %}
+                        {% if study.report_text or study.findings or study.impression %}
+                        <form method="post" action="{% url 'hospital:verify_imaging_report' study.id %}" style="display: inline;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-success"
+                                   onclick="return confirm('Are you sure you want to verify this report? This action cannot be undone.');">
+                                <i class="bi bi-check-circle"></i> Verify
+                            </button>
+                        </form>
+                        {% else %}
+                        <span class="text-muted small" title="Create a report first to enable verification">
+                            <i class="bi bi-info-circle"></i> Report required
+                        </span>
+                        {% endif %}
+                    {% else %}
+                    <span class="badge bg-success ms-2">
+                        <i class="bi bi-check-circle"></i> Verified
+                    </span>
                     {% endif %}
                 </div>
             </div>
             
-            {% if study.findings or study.impression or study.report_text %}
-                {% if study.report_text %}
-                <div style="margin-bottom: 16px;">
-                    <strong>Report:</strong>
-                    <div style="margin-top: 8px; white-space: pre-wrap; background: #f8f9fa; padding: 12px; border-radius: 4px; border-left: 4px solid var(--primary);">{{ study.report_text }}</div>
-                </div>
-                {% endif %}
-                {% if study.findings %}
-                <div style="margin-bottom: 16px;">
-                    <strong>Findings:</strong>
-                    <div style="margin-top: 8px; white-space: pre-wrap; background: #f8f9fa; padding: 12px; border-radius: 4px; border-left: 4px solid var(--success);">{{ study.findings }}</div>
-                </div>
-                {% endif %}
-                {% if study.impression %}
-                <div style="margin-bottom: 16px;">
-                    <strong>Impression:</strong>
-                    <div style="margin-top: 8px; white-space: pre-wrap; background: #f8f9fa; padding: 12px; border-radius: 4px; border-left: 4px solid var(--warning);">{{ study.impression }}</div>
-                </div>
-                {% endif %}
-                
-                <!-- Report Status -->
-                <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #dee2e6;">
-                    <div class="row">
-                        <div class="col-md-6">
-                            <small class="text-muted">
-                                <strong>Dictated by:</strong> 
-                                {% if study.report_dictated_by %}
-                                    {{ study.report_dictated_by.user.get_full_name|default:study.report_dictated_by.user.username }}
-                                {% else %}
-                                    Not dictated
-                                {% endif %}
-                            </small>
-                        </div>
-                        <div class="col-md-6">
-                            <small class="text-muted">
-                                <strong>Verified by:</strong> 
-                                {% if study.report_verified_by %}
-                                    {{ study.report_verified_by.user.get_full_name|default:study.report_verified_by.user.username }}
-                                    {% if study.report_verified_at %}
-                                        ({{ study.report_verified_at|date:"M d, Y H:i" }})
-                                    {% endif %}
-                                {% else %}
-                                    Not verified
-                                {% endif %}
-                            </small>
-                        </div>
+            {% if can_view_results %}
+                {% if study.findings or study.impression or study.report_text or result_documents or pdf_report_doc %}
+                    {% if study.report_text %}
+                    <div style="margin-bottom: 16px;">
+                        <strong>Report:</strong>
+                        <div style="margin-top: 8px; white-space: pre-wrap; background: #f8f9fa; padding: 12px; border-radius: 4px; border-left: 4px solid var(--primary);">{{ study.report_text }}</div>
                     </div>
-                </div>
+                    {% endif %}
+                    {% if study.findings %}
+                    <div style="margin-bottom: 16px;">
+                        <strong>Findings:</strong>
+                        <div style="margin-top: 8px; white-space: pre-wrap; background: #f8f9fa; padding: 12px; border-radius: 4px; border-left: 4px solid var(--success);">{{ study.findings }}</div>
+                    </div>
+                    {% endif %}
+                    {% if study.impression %}
+                    <div style="margin-bottom: 16px;">
+                        <strong>Impression:</strong>
+                        <div style="margin-top: 8px; white-space: pre-wrap; background: #f8f9fa; padding: 12px; border-radius: 4px; border-left: 4px solid var(--warning);">{{ study.impression }}</div>
+                    </div>
+                    {% endif %}
+                    
+                    <!-- Report Status -->
+                    <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #dee2e6;">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <small class="text-muted">
+                                    <strong>Dictated by:</strong> 
+                                    {% if study.report_dictated_by %}
+                                        {{ study.report_dictated_by.user.get_full_name|default:study.report_dictated_by.user.username }}
+                                    {% else %}
+                                        Not dictated
+                                    {% endif %}
+                                </small>
+                            </div>
+                            <div class="col-md-6">
+                                <small class="text-muted">
+                                    <strong>Verified by:</strong> 
+                                    {% if study.report_verified_by %}
+                                        {{ study.report_verified_by.user.get_full_name|default:study.report_verified_by.user.username }}
+                                        {% if study.report_verified_at %}
+                                            ({{ study.report_verified_at|date:"M d, Y H:i" }})
+                                        {% endif %}
+                                    {% else %}
+                                        Not verified
+                                    {% endif %}
+                                </small>
+                            </div>
+                        </div>
+                        {% if result_documents %}
+                        <div class="mt-3">
+                            <strong class="d-block mb-2">Attached Result Files ({{ result_documents|length }})</strong>
+                            {% for doc in result_documents %}
+                            {% if doc.file %}
+                            <div class="alert alert-info d-flex align-items-center mb-2">
+                                <i class="bi bi-file-earmark-{% if 'pdf' in doc.file_type %}pdf{% elif 'image' in doc.file_type %}image{% else %}text{% endif %} me-2" style="font-size: 1.5rem;"></i>
+                                <div class="flex-grow-1">
+                                    <strong>{{ doc.title|truncatechars:60 }}</strong><br>
+                                    <small class="text-muted">Uploaded: {{ doc.created|date:"M d, Y H:i" }}
+                                        {% if doc.uploaded_by %} by {{ doc.uploaded_by.user.get_full_name|default:doc.uploaded_by.user.username }}{% endif %}
+                                    </small>
+                                </div>
+                                <a href="{{ doc.file.url }}" target="_blank" class="btn btn-sm btn-outline-primary me-1">
+                                    <i class="bi bi-eye me-1"></i>View
+                                </a>
+                                <a href="{{ doc.file.url }}" download class="btn btn-sm btn-outline-success">
+                                    <i class="bi bi-download me-1"></i>Download
+                                </a>
+                            </div>
+                            {% endif %}
+                            {% endfor %}
+                        </div>
+                        {% elif pdf_report_doc and pdf_report_doc.file %}
+                        <div class="mt-3">
+                            <div class="alert alert-info d-flex align-items-center">
+                                <i class="bi bi-file-earmark-pdf me-2" style="font-size: 1.5rem;"></i>
+                                <div class="flex-grow-1">
+                                    <strong>Report Available:</strong> {{ pdf_report_doc.title }}<br>
+                                    <small class="text-muted">Uploaded: {{ pdf_report_doc.created|date:"M d, Y" }}
+                                        {% if pdf_report_doc.uploaded_by %} by {{ pdf_report_doc.uploaded_by.user.get_full_name|default:pdf_report_doc.uploaded_by.user.username }}{% endif %}
+                                    </small>
+                                </div>
+                                <a href="{{ pdf_report_doc.file.url }}" target="_blank" class="btn btn-sm btn-outline-primary me-1"><i class="bi bi-eye"></i> View</a>
+                                <a href="{{ pdf_report_doc.file.url }}" download class="btn btn-sm btn-outline-success"><i class="bi bi-download"></i> Download</a>
+                            </div>
+                        </div>
+                        {% endif %}
+                        {% if study.report_text or study.findings or study.impression %}
+                        <div class="mt-3">
+                            <a href="{% url 'hospital:print_imaging_report' study.id %}" target="_blank" class="btn btn-outline-primary btn-sm">
+                                <i class="bi bi-printer me-1"></i>Print Report
+                            </a>
+                        </div>
+                        {% endif %}
+                    </div>
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-file-earmark-medical" style="font-size: 48px; color: var(--gray); opacity: 0.3;"></i>
+                        <div style="margin-top: 16px; color: var(--gray);">No report available yet</div>
+                        <a href="{% url 'hospital:edit_imaging_report' study.id %}" class="btn btn-primary-modern mt-3">
+                            <i class="bi bi-pencil"></i> Create Report
+                        </a>
+                    </div>
+                {% endif %}
             {% else %}
-                <div class="text-center py-4">
-                    <i class="bi bi-file-earmark-medical" style="font-size: 48px; color: var(--gray); opacity: 0.3;"></i>
-                    <div style="margin-top: 16px; color: var(--gray);">No report available yet</div>
-                    <a href="{% url 'hospital:edit_imaging_report' study.id %}" class="btn btn-primary-modern mt-3">
-                        <i class="bi bi-pencil"></i> Create Report
+                <div class="alert alert-warning">
+                    <h6><i class="bi bi-lock-fill me-2"></i>Results Locked</h6>
+                    <p class="mb-2">Payment is required before you can view imaging results and reports.</p>
+                    <a href="{% url 'hospital:cashier_process_service_payment' 'imaging' study.id %}" class="btn btn-primary btn-sm">
+                        <i class="bi bi-credit-card me-2"></i>Make Payment
                     </a>
                 </div>
             {% endif %}
@@ -271,12 +424,12 @@
                                 Supports: JPG, PNG, DICOM images
                             </div>
                         </div>
-                        <input type="file" name="image" id="imageInput" accept="image/*" required style="display: none;" onchange="handleFileSelect(event)">
+                        <input type="file" name="image" id="imageInput" accept="image/*" required class="d-none" onchange="handleFileSelect(event)">
                         <div id="fileName" style="display: none; margin-top: 12px; font-weight: 600; color: var(--primary);"></div>
                     </div>
                     <div class="mb-3 mt-3">
                         <label class="form-label">Description (optional)</label>
-                        <input type="text" class="form-control-modern" name="description" placeholder="e.g., Anterior view, Lateral view">
+                        <input type="text" class="form-control-modern" name="description" placeholder="e.g., Anterior view, Lateral view" title="Enter text" placeholder="Enter text">
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -349,14 +502,32 @@
     
     uploadArea.addEventListener('drop', (e) => {
         e.preventDefault();
+        e.stopPropagation();
         uploadArea.classList.remove('dragover');
         uploadArea.style.borderColor = '#dee2e6';
         uploadArea.style.backgroundColor = 'transparent';
         
         const files = e.dataTransfer.files;
         if (files.length > 0) {
-            imageInput.files = files;
-            handleFileSelect({ target: { files: files } });
+            const file = files[0];
+            // Validate file type
+            const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
+            const allowedExtensions = ['.jpg', '.jpeg', '.png', '.dcm', '.dicom'];
+            const fileName = file.name.toLowerCase();
+            const hasValidExtension = allowedExtensions.some(ext => fileName.endsWith(ext));
+            
+            if (!allowedTypes.includes(file.type) && !hasValidExtension) {
+                showAlert('Invalid file type. Please upload JPG, PNG, or DICOM images.', 'danger');
+                return;
+            }
+            
+            // Set the file in the input using DataTransfer API
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(file);
+            imageInput.files = dataTransfer.files;
+            
+            // Trigger change event to update UI
+            handleFileSelect({ target: imageInput });
         }
     });
     
@@ -378,14 +549,42 @@
         progressDiv.innerHTML = '<div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>';
         uploadButton.parentNode.appendChild(progressDiv);
         
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]');
+        if (!csrfToken) {
+            showAlert('CSRF token not found. Please refresh the page.', 'danger');
+            uploadButton.innerHTML = originalText;
+            uploadButton.disabled = false;
+            return;
+        }
+        
         fetch(this.action, {
             method: 'POST',
             body: formData,
             headers: {
-                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
-            }
+                'X-CSRFToken': csrfToken.value,
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            credentials: 'same-origin'
         })
-        .then(response => response.json())
+        .then(response => {
+            // Check if response is JSON
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                return response.text().then(text => {
+                    console.error('Non-JSON response:', text);
+                    throw new Error('Server returned invalid response. Please check console for details.');
+                });
+            }
+            
+            if (!response.ok) {
+                return response.json().then(data => {
+                    throw new Error(data.error || `Upload failed with status ${response.status}`);
+                }).catch(() => {
+                    throw new Error(`Upload failed with status ${response.status}`);
+                });
+            }
+            return response.json();
+        })
         .then(data => {
             if (data.success) {
                 // Show success message
@@ -396,18 +595,29 @@
                 
                 // Reset form
                 this.reset();
-                document.getElementById('fileName').style.display = 'none';
+                const fileNameDiv = document.getElementById('fileName');
+                if (fileNameDiv) {
+                    fileNameDiv.style.display = 'none';
+                    fileNameDiv.textContent = '';
+                }
+                
+                // Reload page after short delay to show new image
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1500);
                 
                 // Close modal
                 const modal = bootstrap.Modal.getInstance(document.getElementById('uploadImageModal'));
-                modal.hide();
+                if (modal) {
+                    modal.hide();
+                }
             } else {
-                showAlert('Error uploading image: ' + data.error, 'danger');
+                showAlert('Error uploading image: ' + (data.error || 'Unknown error'), 'danger');
             }
         })
         .catch(error => {
-            console.error('Error:', error);
-            showAlert('Error uploading image. Please try again.', 'danger');
+            console.error('Upload error:', error);
+            showAlert('Error uploading image: ' + error.message, 'danger');
         })
         .finally(() => {
             // Reset button state
@@ -449,17 +659,19 @@
             gallery.insertAdjacentHTML('beforeend', imageHtml);
             
             // Update the image count in the header
-            const countElement = document.querySelector('h5 i.bi-images').parentElement;
-            const currentCount = parseInt(countElement.textContent.match(/\((\d+)\)/)?.[1] || '0');
-            countElement.innerHTML = `<i class="bi bi-images"></i> Study Images (GHS {currentCount + 1})`;
+            const countElement = document.querySelector('h5 i.bi-images')?.parentElement;
+            if (countElement) {
+                const currentCount = parseInt(countElement.textContent.match(/\((\d+)\)/)?.[1] || '0');
+                countElement.innerHTML = `<i class="bi bi-images"></i> Study Images (${currentCount + 1})`;
+            }
         }
     }
     
     function showAlert(message, type) {
         const alertDiv = document.createElement('div');
-        alertDiv.className = `alert alert-GHS {type} alert-dismissible fade show`;
+        alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
         alertDiv.innerHTML = `
-            GHS {message}
+            ${message}
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         `;
         

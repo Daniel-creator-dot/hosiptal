@@ -1,0 +1,547 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}POS Receipt - {{ receipt.receipt_number }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* POS receipt: default 80 (78) × 810 mm – 78mm width fills paper horizontally. */
+    @page {
+        size: {{ receipt_config.width_mm|default:80 }}mm {{ receipt_config.length_mm|default:810 }}mm;
+        margin: 0;
+        padding: 0;
+    }
+    
+    @media print {
+        /* Thermal (BiRCH): large, bold text + no smoothing = clear print */
+        * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            color-adjust: exact !important;
+            -webkit-font-smoothing: none !important;
+            font-smoothing: none !important;
+        }
+        html {
+            width: {{ receipt_config.printable_width_mm|default:78 }}mm !important;
+            height: auto !important;
+            zoom: 1 !important;
+            transform: none !important;
+        }
+        body {
+            width: {{ receipt_config.printable_width_mm|default:78 }}mm !important;
+            max-width: {{ receipt_config.printable_width_mm|default:78 }}mm !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: white !important;
+            overflow: visible !important;
+            zoom: 1 !important;
+            transform: none !important;
+            font-family: Arial, Helvetica, sans-serif !important;
+            font-size: 24pt !important;
+            font-weight: bold !important;
+            line-height: 1.35 !important;
+        }
+        
+        .no-print {
+            display: none !important;
+        }
+        .receipt-preview-zoom {
+            padding: 0 !important;
+            transform: none !important;
+        }
+        .receipt-preview-zoom .pos-receipt {
+            transform: none !important;
+        }
+        
+        .pos-receipt {
+            width: {{ receipt_config.printable_width_mm|default:78 }}mm !important;
+            max-width: {{ receipt_config.printable_width_mm|default:78 }}mm !important;
+            margin: 0 !important;
+            padding: 2mm {{ receipt_config.margin_mm|default:4 }}mm !important;
+            box-shadow: none !important;
+            border: none !important;
+            font-family: Arial, Helvetica, sans-serif !important;
+            font-size: 24pt !important;
+            font-weight: bold !important;
+            line-height: 1.35 !important;
+            page-break-after: avoid;
+        }
+        
+        .receipt-header {
+            padding-bottom: 1mm !important;
+            margin-bottom: 1mm !important;
+        }
+        .receipt-header h1 {
+            font-size: 34pt !important;
+            font-weight: bold !important;
+            margin: 0.5mm 0 !important;
+            letter-spacing: 0.5pt !important;
+        }
+        .receipt-header .hospital-name {
+            font-size: 26pt !important;
+            font-weight: bold !important;
+            margin: 0.25mm 0 !important;
+        }
+        .receipt-header .hospital-info {
+            font-size: 20pt !important;
+            font-weight: bold !important;
+            margin: 0.25mm 0 !important;
+            line-height: 1.3 !important;
+        }
+        
+        .receipt-divider {
+            margin: 1mm 0 !important;
+            border-top-width: 2px !important;
+        }
+        .receipt-line {
+            margin: 0.5mm 0 !important;
+            font-size: 22pt !important;
+            font-weight: bold !important;
+            line-height: 1.35 !important;
+        }
+        .receipt-section {
+            margin: 1mm 0 !important;
+            padding: 0.5mm 0 !important;
+        }
+        .receipt-section-title {
+            font-size: 22pt !important;
+            font-weight: bold !important;
+            margin-bottom: 0.5mm !important;
+            padding-bottom: 0.25mm !important;
+        }
+        .amount-total {
+            margin: 1.5mm 0 !important;
+            padding: 1mm 0 !important;
+            border-top-width: 3px !important;
+            border-bottom-width: 3px !important;
+        }
+        .amount-total-label {
+            font-size: 22pt !important;
+            font-weight: bold !important;
+            margin-bottom: 0.5mm !important;
+        }
+        .amount-total-value {
+            font-size: 40pt !important;
+            font-weight: bold !important;
+        }
+        .qr-code-mini {
+            margin: 1.5mm 0 !important;
+            padding: 1mm 0 !important;
+        }
+        .qr-code-mini img {
+            width: 24mm !important;
+            height: 24mm !important;
+            image-rendering: pixelated !important;
+            image-rendering: -moz-crisp-edges !important;
+        }
+        .receipt-footer {
+            margin-top: 1.5mm !important;
+            padding-top: 1mm !important;
+            font-size: 20pt !important;
+            font-weight: bold !important;
+            line-height: 1.35 !important;
+        }
+    }
+    
+    body {
+        background: #e8e8e8;
+        font-family: 'Courier New', monospace;
+        overflow-x: auto;
+    }
+    
+    .pos-receipt {
+        width: {{ receipt_config.printable_width_mm|default:78 }}mm;
+        max-width: {{ receipt_config.printable_width_mm|default:78 }}mm;
+        margin: 20px auto;
+        background: white;
+        padding: 8px {{ receipt_config.margin_mm|default:4 }}mm;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        font-family: 'Courier New', monospace;
+        font-size: {{ receipt_config.font_body|default:14 }}px;
+        line-height: 1.35;
+        color: #111;
+    }
+    
+    .receipt-header {
+        text-align: center;
+        border-bottom: 1px dashed #000;
+        padding-bottom: 2px;
+        margin-bottom: 2px;
+    }
+    
+    .receipt-header h1 {
+        font-size: {{ receipt_config.font_header|default:16 }}px;
+        font-weight: bold;
+        margin: 1px 0;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .receipt-header .hospital-name {
+        font-size: {{ receipt_config.font_body|default:12 }}px;
+        font-weight: bold;
+        margin: 0.5px 0;
+    }
+    
+    .receipt-header .hospital-info {
+        font-size: {{ receipt_config.font_footer|default:10 }}px;
+        margin: 0.5px 0;
+        line-height: 1.15;
+    }
+    
+    .receipt-divider {
+        border-top: 1px dashed #000;
+        margin: 1px 0;
+    }
+    
+    .receipt-line {
+        margin: 1px 0;
+        font-size: {{ receipt_config.font_body|default:12 }}px;
+        line-height: 1.2;
+    }
+    
+    .receipt-line-label {
+        font-weight: bold;
+        display: inline-block;
+        max-width: 48%;
+        word-wrap: break-word;
+    }
+    
+    .receipt-line-value {
+        float: right;
+        text-align: right;
+        max-width: 50%;
+        word-wrap: break-word;
+    }
+    
+    .receipt-line::after {
+        content: "";
+        display: table;
+        clear: both;
+    }
+    
+    /* Ensure text doesn't overflow on narrow paper */
+    .pos-receipt * {
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        max-width: 100%;
+    }
+    
+    .receipt-section {
+        margin: 2px 0;
+        padding: 1px 0;
+    }
+    
+    .receipt-section-title {
+        font-weight: bold;
+        text-transform: uppercase;
+        font-size: {{ receipt_config.font_body|default:12 }}px;
+        margin-bottom: 1px;
+        border-bottom: 1px solid #000;
+        padding-bottom: 0.5px;
+    }
+    
+    .amount-total {
+        text-align: center;
+        margin: 3px 0;
+        padding: 2px 0;
+        border-top: 2px solid #000;
+        border-bottom: 2px solid #000;
+    }
+    
+    .amount-total-label {
+        font-size: {{ receipt_config.font_body|default:12 }}px;
+        font-weight: bold;
+        text-transform: uppercase;
+        margin-bottom: 1px;
+    }
+    
+    .amount-total-value {
+        font-size: 20px;
+        font-weight: bold;
+        letter-spacing: 0.5px;
+    }
+    
+    .qr-code-mini {
+        text-align: center;
+        margin: 2px 0;
+        padding: 1px 0;
+    }
+    
+    .qr-code-mini img {
+        width: {{ receipt_config.qr_size_px|default:56 }}px;
+        height: {{ receipt_config.qr_size_px|default:56 }}px;
+        border: 1px solid #000;
+    }
+    
+    .receipt-footer {
+        text-align: center;
+        margin-top: 3px;
+        padding-top: 2px;
+        border-top: 1px dashed #000;
+        font-size: {{ receipt_config.font_footer|default:10 }}px;
+        line-height: 1.2;
+    }
+    
+    .receipt-footer .thank-you {
+        font-weight: bold;
+        margin: 5px 0;
+        text-transform: uppercase;
+    }
+    
+    .print-actions {
+        text-align: center;
+        margin: 20px 0;
+        padding: 20px;
+    }
+    
+    .btn-pos-print {
+        background: #28a745;
+        color: white;
+        border: none;
+        padding: 12px 30px;
+        font-size: 16px;
+        font-weight: bold;
+        border-radius: 5px;
+        cursor: pointer;
+        margin: 5px;
+    }
+    
+    .btn-pos-print:hover {
+        background: #218838;
+    }
+    
+    .btn-digital {
+        background: #007bff;
+        color: white;
+        border: none;
+        padding: 12px 30px;
+        font-size: 16px;
+        font-weight: bold;
+        border-radius: 5px;
+        cursor: pointer;
+        margin: 5px;
+    }
+    
+    .btn-digital:hover {
+        background: #0056b3;
+    }
+    
+    /* Zoom receipt on screen so it's readable (not applied when printing) */
+    .receipt-preview-zoom {
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        padding: 24px 16px;
+        min-height: 200px;
+        overflow: visible;
+    }
+    .receipt-preview-zoom .pos-receipt {
+        transform: scale(2.8);
+        transform-origin: top center;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    }
+    @media print {
+        .receipt-preview-zoom {
+            padding: 0 !important;
+            display: block !important;
+        }
+        .receipt-preview-zoom .pos-receipt {
+            transform: none !important;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="receipt-preview-zoom">
+<div class="pos-receipt">
+    <!-- Header -->
+    <div class="receipt-header">
+        <h1>PAYMENT RECEIPT</h1>
+        <div class="hospital-name">{{ hospital_settings.hospital_name|default:"PRIMECARE MEDICAL CENTER"|upper }}</div>
+        {% if hospital_settings.address %}
+        <div class="hospital-info">{{ hospital_settings.address|linebreaksbr }}</div>
+        {% endif %}
+        {% if hospital_settings.phone %}
+        <div class="hospital-info">Tel: {{ hospital_settings.phone }}</div>
+        {% endif %}
+        {% if hospital_settings.email %}
+        <div class="hospital-info">Email: {{ hospital_settings.email }}</div>
+        {% endif %}
+    </div>
+    
+    <div class="receipt-divider"></div>
+    
+    <!-- Receipt Number -->
+    <div class="receipt-line">
+        <span class="receipt-line-label">Receipt No:</span>
+        <span class="receipt-line-value">{{ receipt.receipt_number|truncatechars:20 }}</span>
+    </div>
+    
+    <!-- Date & Time -->
+    <div class="receipt-line">
+        <span class="receipt-line-label">Date:</span>
+        <span class="receipt-line-value">{{ receipt.receipt_date|date:"d/m/Y" }}</span>
+    </div>
+    
+    <div class="receipt-line">
+        <span class="receipt-line-label">Time:</span>
+        <span class="receipt-line-value">{{ receipt.receipt_date|date:"H:i" }}</span>
+    </div>
+    
+    <div class="receipt-divider"></div>
+    
+    <!-- Patient Information -->
+    <div class="receipt-section">
+        <div class="receipt-section-title">Patient Information</div>
+        <div class="receipt-line" style="word-wrap: break-word;">
+            <div><strong>{{ receipt.patient.full_name|upper|truncatechars:30 }}</strong></div>
+        </div>
+        <div class="receipt-line">
+            <span class="receipt-line-label">MRN:</span>
+            <span class="receipt-line-value">{{ receipt.patient.mrn }}</span>
+        </div>
+        {% if receipt.patient.phone_number %}
+        <div class="receipt-line">
+            <span class="receipt-line-label">Phone:</span>
+            <span class="receipt-line-value">{{ receipt.patient.phone_number }}</span>
+        </div>
+        {% endif %}
+    </div>
+    
+    <div class="receipt-divider"></div>
+    
+    <!-- Payment Details -->
+    <div class="receipt-section">
+        <div class="receipt-section-title">Payment Details</div>
+        <div class="receipt-line">
+            <span class="receipt-line-label">Payment Method:</span>
+            <span class="receipt-line-value">{% if is_deposit_applied|default:False %}DEPOSIT APPLIED{% else %}{{ receipt.get_payment_method_display|upper }}{% endif %}</span>
+        </div>
+        {% if receipt.payment_method == 'deposit' or is_deposit_applied|default:False %}
+        <div class="receipt-line">
+            <span class="receipt-line-label">Note:</span>
+            <span class="receipt-line-value">Deposit applied to bill</span>
+        </div>
+        {% endif %}
+        {% if receipt.transaction.reference_number %}
+        <div class="receipt-line">
+            <span class="receipt-line-label">Reference:</span>
+            <span class="receipt-line-value">{{ receipt.transaction.reference_number }}</span>
+        </div>
+        {% endif %}
+        <div class="receipt-line">
+            <span class="receipt-line-label">Received By:</span>
+            <span class="receipt-line-value">{% if receipt.received_by %}{{ receipt.received_by.get_full_name|default:receipt.received_by.username|upper }}{% else %}N/A{% endif %}</span>
+        </div>
+    </div>
+    
+    <div class="receipt-divider"></div>
+    
+    <!-- Service Details (single line when not combined) -->
+    {% if receipt.service_type and receipt.service_type != 'combined' %}
+    <div class="receipt-section">
+        <div class="receipt-section-title">Service</div>
+        <div class="receipt-line" style="word-wrap: break-word;">
+            {{ receipt.get_service_type_display|upper }}
+        </div>
+    </div>
+    <div class="receipt-divider"></div>
+    {% endif %}
+    
+    <!-- Items paid for -->
+    <div class="receipt-section">
+        <div class="receipt-section-title">Items Paid For</div>
+        {% for item in receipt_items %}
+        <div class="receipt-line" style="display: flex; justify-content: space-between; gap: 4px;">
+            <span style="word-wrap: break-word; flex: 1;">{{ item.description|truncatechars:28 }}</span>
+            <span style="flex-shrink: 0; font-weight: bold;">GHS {{ item.amount|floatformat:2 }}</span>
+        </div>
+        {% endfor %}
+    </div>
+    <div class="receipt-divider"></div>
+    
+    <!-- Amount -->
+    <div class="amount-total">
+        <div class="amount-total-label">Total Paid</div>
+        <div class="amount-total-value">GHS {{ receipt.amount_paid|floatformat:2 }}</div>
+    </div>
+    
+    <!-- QR Code -->
+    {% if qr_code and qr_code.qr_code_image %}
+    <div class="qr-code-mini">
+        <img src="{{ qr_code.qr_code_image.url }}" alt="QR Code" style="width: {{ receipt_config.qr_size_px|default:56 }}px; height: {{ receipt_config.qr_size_px|default:56 }}px;">
+        <div style="font-size: 9px; margin-top: 2px; line-height: 1.1;">Scan to Verify</div>
+    </div>
+    {% endif %}
+    
+    <!-- Notes -->
+    {% if receipt.notes %}
+    <div class="receipt-section">
+        <div class="receipt-section-title">Notes</div>
+        <div style="font-size: 10px; line-height: 1.2; word-wrap: break-word;">{{ receipt.notes|truncatewords:20 }}</div>
+    </div>
+    {% endif %}
+    
+    <!-- Footer -->
+    <div class="receipt-footer">
+        <div class="thank-you">Thank You!</div>
+        <div>This is a valid receipt for payment</div>
+        <div>Keep this receipt for your records</div>
+        {% if hospital_settings.report_footer_text %}
+        <div style="margin-top: 5px;">{{ hospital_settings.report_footer_text|linebreaks }}</div>
+        {% else %}
+        <div style="margin-top: 5px;">&copy; {{ receipt.receipt_date|date:"Y" }} {{ hospital_settings.hospital_name|default:"PrimeCare Medical Center" }}</div>
+        {% endif %}
+    </div>
+</div>
+</div>
+
+<!-- Print Actions -->
+<div class="print-actions no-print" style="background: #f8f9fa; padding: 30px; border-radius: 10px; margin: 20px 0;">
+    <div class="text-center mb-3">
+        <h4 class="text-primary"><i class="bi bi-printer"></i> Print Receipt</h4>
+        <p class="text-muted">Use <strong>Print with preview</strong>, then in the print dialog set <strong>Scale: 100%</strong> or <strong>Actual size</strong>. Do <strong>not</strong> use &quot;Fit to page&quot; or the text will print too small on your BiRCH printer.</p>
+    </div>
+    <div class="text-center">
+        <button onclick="openPrintPreview()" class="btn-pos-print" style="font-size: 18px; padding: 15px 40px; background: #0d6efd;">
+            <i class="bi bi-eye"></i> Print with preview
+        </button>
+        <button onclick="printPosReceipt()" class="btn-pos-print" style="font-size: 18px; padding: 15px 40px;">
+            <i class="bi bi-printer"></i> Print from this page
+        </button>
+    </div>
+    <div class="text-center mt-3">
+        <a href="{% url 'hospital:receipt_print' receipt.id %}" class="btn-digital" style="text-decoration: none; display: inline-block; margin: 5px;">
+            <i class="bi bi-file-text"></i> View Digital Receipt
+        </a>
+        <a href="{% url 'hospital:centralized_cashier_dashboard' %}" class="btn btn-secondary" style="text-decoration: none; display: inline-block; padding: 12px 30px; margin: 5px;">
+            <i class="bi bi-arrow-left"></i> Back to Cashier Dashboard
+        </a>
+    </div>
+</div>
+
+<script>
+function printPosReceipt() {
+    window.print();
+}
+
+function openPrintPreview() {
+    var url = "/hms/receipt/{{ receipt.id }}/pos/print-preview/";
+    window.open(url, 'ReceiptPrintPreview', 'width=420,height=700,scrollbars=yes,resizable=yes');
+}
+
+// Auto-print on load if requested
+{% if request.GET.auto_print == '1' %}
+window.addEventListener('load', function() {
+    setTimeout(function() {
+        openPrintPreview();
+    }, 500);
+});
+{% endif %}
+</script>
+{% endblock %}
+
+
+

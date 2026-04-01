@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load static %}
+{% load static hospital_extras %}
 
 {% block title %}Lab Report Entry - {{ test_name }}{% endblock %}
 {% block page_title %}Tabular Lab Report Entry{% endblock %}
@@ -132,6 +132,11 @@
         font-weight: 500;
         color: #495057;
     }
+    .unit-select {
+        min-width: 90px;
+        max-width: 140px;
+        padding: 6px 8px;
+    }
     
     .quick-actions {
         background: white;
@@ -144,12 +149,27 @@
 {% endblock %}
 
 {% block content %}
+<!-- Patient identity banner – always visible so results are never entered for the wrong patient -->
+<div class="alert alert-primary border-2 border-primary mb-4 d-flex align-items-center flex-wrap gap-3" role="alert">
+    <i class="bi bi-person-badge-fill fs-2 text-primary"></i>
+    <div class="flex-grow-1">
+        <strong class="d-block mb-1">Entering results for this patient only</strong>
+        <span class="fw-bold fs-5">{{ patient_name }}</span>
+        <span class="text-muted mx-2">|</span>
+        <span>MRN: <strong>{{ patient.mrn|default:"—" }}</strong></span>
+        {% if patient.date_of_birth %}
+        <span class="text-muted mx-2">|</span>
+        <span>DOB: <strong>{{ patient.date_of_birth|date:"d M Y" }}</strong></span>
+        {% endif %}
+    </div>
+</div>
+
 <!-- Quick Actions -->
 <div class="quick-actions">
     <div class="d-flex justify-content-between align-items-center">
         <div>
-            <h5 class="mb-1"><i class="bi bi-file-medical-fill me-2"></i>Lab Report Entry</h5>
-            <p class="mb-0 text-muted">Fill in the test results below</p>
+            <h5 class="mb-1"><i class="bi bi-file-medical-fill me-2"></i>Lab Report Entry — {{ test_name }}</h5>
+            <p class="mb-0 text-muted">Form: <strong>{{ test_type }}</strong> — Fill in the test results below. Use <strong>Change Test Type</strong> to view FBC (RDW-CV, RDW-SD), LFT, or other forms.</p>
         </div>
         <div>
             <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#testSelectorModal">
@@ -159,11 +179,70 @@
     </div>
 </div>
 
-<form method="post" id="labReportForm">
+<datalist id="urine-appearance"><option value="Clear"><option value="Hazy"><option value="Turbid"><option value="Cloudy"></datalist>
+<datalist id="urine-colour"><option value="Straw"><option value="Yellow"><option value="Dark"><option value="Pale"><option value="Amber"></datalist>
+<datalist id="urine-qual"><option value="Negative"><option value="Trace"><option value="Positive"><option value="Normal"><option value="Not seen"><option value="+"><option value="++"><option value="+++"></datalist>
+<datalist id="stool-cons"><option value="Formed"><option value="Soft"><option value="Loose"><option value="Watery"><option value="Semi-formed"></datalist>
+<datalist id="stool-col"><option value="Brown"><option value="Pale"><option value="Black"><option value="Green"><option value="Yellow"></datalist>
+<datalist id="stool-qual"><option value="Absent"><option value="Present"><option value="Not seen"></datalist>
+<datalist id="malaria-result"><option value="Positive"><option value="Negative"></datalist>
+<datalist id="malaria-species"><option value="P. falciparum"><option value="P. vivax"><option value="P. ovale"><option value="P. malariae"><option value="Mixed"></datalist>
+<datalist id="malaria-stage"><option value="Trophozoites"><option value="Schizonts"><option value="Gametocytes"></datalist>
+<datalist id="bg-group"><option value="A"><option value="B"><option value="AB"><option value="O"></datalist>
+<datalist id="bg-rhesus"><option value="Positive"><option value="Negative"></datalist>
+<datalist id="sickle-sol"><option value="Positive"><option value="Negative"></datalist>
+<datalist id="sickle-elec"><option value="AA"><option value="AS"><option value="SS"><option value="AC"><option value="SC"><option value="Sβ-thal"></datalist>
+<datalist id="serology-result"><option value="Reactive"><option value="Non-Reactive"><option value="Equivocal"><option value="Positive"><option value="Negative"></datalist>
+<datalist id="semen-liq"><option value="Complete"><option value="Incomplete"></datalist>
+<datalist id="afb-result"><option value="Positive"><option value="Negative"></datalist>
+<datalist id="afb-grade"><option value="Scanty"><option value="1+"><option value="2+"><option value="3+"></datalist>
+
+<form method="post" id="labReportForm" enctype="multipart/form-data">
     {% csrf_token %}
+    {% if form.errors %}
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <strong><i class="bi bi-exclamation-triangle me-2"></i>Please correct the errors below:</strong>
+        <ul class="mb-0 mt-2">
+            {% for field in form %}
+                {% for error in field.errors %}
+                <li><strong>{{ field.label }}:</strong> {{ error }}</li>
+                {% endfor %}
+            {% endfor %}
+            {% for error in form.non_field_errors %}
+            <li>{{ error }}</li>
+            {% endfor %}
+        </ul>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    {% endif %}
     <input type="hidden" name="test_type" id="test_type" value="{{ test_type }}">
     <input type="hidden" name="lab_result_id" value="{{ lab_result_id }}">
     
+    <!-- Single Value / Other (e.g. Prolactin, hormones, other analytes) -->
+    <div id="single-form" class="lab-report-section" style="{% if test_type != 'single' %}display:none;{% endif %}">
+        <div class="lab-report-table">
+            <table class="table modern-table mb-0">
+                <thead>
+                    <tr>
+                        <th style="width: 30%;">Parameter</th>
+                        <th style="width: 35%;">Value</th>
+                        <th style="width: 35%;">Unit (optional)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr class="section-header">
+                        <td colspan="3"><i class="bi bi-capsule me-2"></i>{{ test_name }} — Result</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Result</td>
+                        <td><input type="text" name="result_value" value="{{ details.result_value|default:'' }}" class="form-control" placeholder="e.g. 15.2 or Positive" title="Enter result value"></td>
+                        <td><input type="text" name="result_unit" value="{{ details.result_unit|default:'' }}" class="form-control" placeholder="e.g. ng/mL, g/L" title="Unit (optional)"></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
     <!-- Full Blood Count (FBC/CBC) -->
     <div id="fbc-form" class="lab-report-section" style="{% if test_type != 'fbc' %}display:none;{% endif %}">
         <div class="lab-report-table">
@@ -178,93 +257,147 @@
                 </thead>
                 <tbody>
                     <tr class="section-header">
-                        <td colspan="4"><i class="bi bi-droplet-fill me-2"></i>Complete Blood Count</td>
+                        <td colspan="4"><i class="bi bi-droplet-fill me-2"></i>Complete Blood Count (Evans Lab)</td>
                     </tr>
                     <tr>
-                        <td class="param-name">WBC (White Blood Cells)</td>
+                        <td class="param-name">WBC</td>
                         <td><input type="number" step="0.01" name="wbc" value="{{ details.wbc|default:'' }}" class="form-control" placeholder="7.2"></td>
-                        <td class="units-display">×10⁹/L</td>
+                        <td>{% lab_unit_select 'wbc' '×10⁹/L' details %}</td>
                         <td class="ref-range">4.0 - 11.0</td>
                     </tr>
                     <tr>
-                        <td class="param-name">RBC (Red Blood Cells)</td>
-                        <td><input type="number" step="0.01" name="rbc" value="{{ details.rbc|default:'' }}" class="form-control" placeholder="4.8"></td>
-                        <td class="units-display">×10¹²/L</td>
-                        <td class="ref-range">M: 4.5-5.9, F: 3.8-5.2</td>
+                        <td class="param-name">Lymph#</td>
+                        <td><input type="number" step="0.01" name="lymph_count" value="{{ details.lymph_count|default:'' }}" class="form-control" placeholder="2.1"></td>
+                        <td>{% lab_unit_select 'lymph_count' '×10⁹/L' details %}</td>
+                        <td class="ref-range">1.0 - 4.0</td>
                     </tr>
                     <tr>
-                        <td class="param-name">HGB (Hemoglobin)</td>
-                        <td><input type="number" step="0.1" name="hgb" value="{{ details.hgb|default:'' }}" class="form-control" placeholder="13.5"></td>
-                        <td class="units-display">g/dL</td>
-                        <td class="ref-range">M: 13.5-17.5, F: 12.0-16.0</td>
+                        <td class="param-name">Mid#</td>
+                        <td><input type="number" step="0.01" name="mid_count" value="{{ details.mid_count|default:'' }}" class="form-control" placeholder="0.5"></td>
+                        <td>{% lab_unit_select 'mid_count' '×10⁹/L' details %}</td>
+                        <td class="ref-range">0.2 - 1.0</td>
                     </tr>
                     <tr>
-                        <td class="param-name">HCT (Hematocrit)</td>
-                        <td><input type="number" step="0.1" name="hct" value="{{ details.hct|default:'' }}" class="form-control" placeholder="42"></td>
-                        <td class="units-display">%</td>
-                        <td class="ref-range">M: 38-52, F: 36-46</td>
+                        <td class="param-name">Gran#</td>
+                        <td><input type="number" step="0.01" name="gran_count" value="{{ details.gran_count|default:'' }}" class="form-control" placeholder="4.2"></td>
+                        <td>{% lab_unit_select 'gran_count' '×10⁹/L' details %}</td>
+                        <td class="ref-range">2.0 - 7.5</td>
                     </tr>
                     <tr>
-                        <td class="param-name">MCV (Mean Corpuscular Volume)</td>
-                        <td><input type="number" step="0.1" name="mcv" value="{{ details.mcv|default:'' }}" class="form-control" placeholder="90"></td>
-                        <td class="units-display">fL</td>
-                        <td class="ref-range">80 - 100</td>
+                        <td class="param-name">Lymph%</td>
+                        <td><input type="number" step="0.1" name="lymph_perc" value="{{ details.lymph_perc|default:'' }}" class="form-control" placeholder="30"></td>
+                        <td>{% lab_unit_select 'lymph_perc' '%' details %}</td>
+                        <td class="ref-range">20 - 45</td>
                     </tr>
                     <tr>
-                        <td class="param-name">MCH (Mean Corpuscular Hemoglobin)</td>
-                        <td><input type="number" step="0.1" name="mch" value="{{ details.mch|default:'' }}" class="form-control" placeholder="30"></td>
-                        <td class="units-display">pg</td>
-                        <td class="ref-range">27 - 33</td>
+                        <td class="param-name">Mid%</td>
+                        <td><input type="number" step="0.1" name="mid_perc" value="{{ details.mid_perc|default:'' }}" class="form-control" placeholder="6"></td>
+                        <td>{% lab_unit_select 'mid_perc' '%' details %}</td>
+                        <td class="ref-range">2 - 10</td>
                     </tr>
                     <tr>
-                        <td class="param-name">MCHC (Mean Corpuscular Hemoglobin Concentration)</td>
-                        <td><input type="number" step="0.1" name="mchc" value="{{ details.mchc|default:'' }}" class="form-control" placeholder="33"></td>
-                        <td class="units-display">g/dL</td>
-                        <td class="ref-range">31 - 36</td>
-                    </tr>
-                    <tr>
-                        <td class="param-name">RDW (Red Cell Distribution Width)</td>
-                        <td><input type="number" step="0.1" name="rdw" value="{{ details.rdw|default:'' }}" class="form-control" placeholder="13"></td>
-                        <td class="units-display">%</td>
-                        <td class="ref-range">11.5 - 14.5</td>
+                        <td class="param-name">Gran%</td>
+                        <td><input type="number" step="0.1" name="gran_perc" value="{{ details.gran_perc|default:'' }}" class="form-control" placeholder="60"></td>
+                        <td>{% lab_unit_select 'gran_perc' '%' details %}</td>
+                        <td class="ref-range">40 - 75</td>
                     </tr>
                     <tr>
                         <td class="param-name">PLT (Platelets)</td>
                         <td><input type="number" step="1" name="plt" value="{{ details.plt|default:'' }}" class="form-control" placeholder="250"></td>
-                        <td class="units-display">×10⁹/L</td>
+                        <td>{% lab_unit_select 'plt' '×10⁹/L' details %}</td>
                         <td class="ref-range">150 - 450</td>
                     </tr>
-                    <tr class="section-header">
-                        <td colspan="4"><i class="bi bi-diagram-3-fill me-2"></i>Differential Count</td>
+                    <tr>
+                        <td class="param-name">MPV</td>
+                        <td><input type="number" step="0.1" name="mpv" value="{{ details.mpv|default:'' }}" class="form-control" placeholder="9.5"></td>
+                        <td>{% lab_unit_select 'mpv' 'fL' details %}</td>
+                        <td class="ref-range">7.5 - 11.5</td>
                     </tr>
                     <tr>
-                        <td class="param-name">Neutrophils</td>
+                        <td class="param-name">PDW</td>
+                        <td><input type="number" step="0.1" name="pdw" value="{{ details.pdw|default:'' }}" class="form-control" placeholder="12"></td>
+                        <td>{% lab_unit_select 'pdw' '%' details %}</td>
+                        <td class="ref-range">9 - 17</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">PCT</td>
+                        <td><input type="number" step="0.01" name="pct" value="{{ details.pct|default:'' }}" class="form-control" placeholder="0.25"></td>
+                        <td>{% lab_unit_select 'pct' '%' details %}</td>
+                        <td class="ref-range">0.15 - 0.40</td>
+                    </tr>
+                    <tr class="section-header">
+                        <td colspan="4"><i class="bi bi-diagram-3-fill me-2"></i>Additional (Classic FBC)</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">RBC</td>
+                        <td><input type="number" step="0.01" name="rbc" value="{{ details.rbc|default:'' }}" class="form-control" placeholder="4.8"></td>
+                        <td>{% lab_unit_select 'rbc' '×10¹²/L' details %}</td>
+                        <td class="ref-range">M: 4.5-5.9, F: 3.8-5.2</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">HGB</td>
+                        <td><input type="number" step="0.1" name="hgb" value="{{ details.hgb|default:'' }}" class="form-control" placeholder="13.5"></td>
+                        <td>{% lab_unit_select 'hgb' 'g/dL' details %}</td>
+                        <td class="ref-range">M: 13.5-17.5, F: 12.0-16.0</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">HCT</td>
+                        <td><input type="number" step="0.1" name="hct" value="{{ details.hct|default:'' }}" class="form-control" placeholder="42"></td>
+                        <td>{% lab_unit_select 'hct' '%' details %}</td>
+                        <td class="ref-range">M: 38-52, F: 36-46</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">MCV</td>
+                        <td><input type="number" step="0.1" name="mcv" value="{{ details.mcv|default:'' }}" class="form-control" placeholder="90"></td>
+                        <td>{% lab_unit_select 'mcv' 'fL' details %}</td>
+                        <td class="ref-range">80 - 100</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">MCH</td>
+                        <td><input type="number" step="0.1" name="mch" value="{{ details.mch|default:'' }}" class="form-control" placeholder="30"></td>
+                        <td>{% lab_unit_select 'mch' 'pg' details %}</td>
+                        <td class="ref-range">27 - 33</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">MCHC</td>
+                        <td><input type="number" step="0.1" name="mchc" value="{{ details.mchc|default:'' }}" class="form-control" placeholder="33"></td>
+                        <td>{% lab_unit_select 'mchc' 'g/dL' details %}</td>
+                        <td class="ref-range">31 - 36</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">RDW-CV</td>
+                        <td><input type="number" step="0.1" name="rdw_cv" value="{{ details.rdw_cv|default:'' }}" class="form-control" placeholder="13"></td>
+                        <td>{% lab_unit_select 'rdw_cv' '%' details %}</td>
+                        <td class="ref-range">11.5 - 14.5</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">RDW-SD</td>
+                        <td><input type="number" step="0.1" name="rdw_sd" value="{{ details.rdw_sd|default:'' }}" class="form-control" placeholder="42"></td>
+                        <td>{% lab_unit_select 'rdw_sd' 'fL' details %}</td>
+                        <td class="ref-range">39 - 46</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Neutrophils %</td>
                         <td><input type="number" step="0.1" name="neut_perc" value="{{ details.neut_perc|default:'' }}" class="form-control" placeholder="60"></td>
-                        <td class="units-display">%</td>
+                        <td>{% lab_unit_select 'neut_perc' '%' details %}</td>
                         <td class="ref-range">40 - 75</td>
                     </tr>
                     <tr>
-                        <td class="param-name">Lymphocytes</td>
-                        <td><input type="number" step="0.1" name="lymph_perc" value="{{ details.lymph_perc|default:'' }}" class="form-control" placeholder="30"></td>
-                        <td class="units-display">%</td>
-                        <td class="ref-range">20 - 45</td>
-                    </tr>
-                    <tr>
-                        <td class="param-name">Monocytes</td>
+                        <td class="param-name">Monocytes %</td>
                         <td><input type="number" step="0.1" name="mono_perc" value="{{ details.mono_perc|default:'' }}" class="form-control" placeholder="6"></td>
-                        <td class="units-display">%</td>
+                        <td>{% lab_unit_select 'mono_perc' '%' details %}</td>
                         <td class="ref-range">2 - 10</td>
                     </tr>
                     <tr>
-                        <td class="param-name">Eosinophils</td>
+                        <td class="param-name">Eosinophils %</td>
                         <td><input type="number" step="0.1" name="eos_perc" value="{{ details.eos_perc|default:'' }}" class="form-control" placeholder="3"></td>
-                        <td class="units-display">%</td>
+                        <td>{% lab_unit_select 'eos_perc' '%' details %}</td>
                         <td class="ref-range">1 - 6</td>
                     </tr>
                     <tr>
-                        <td class="param-name">Basophils</td>
+                        <td class="param-name">Basophils %</td>
                         <td><input type="number" step="0.1" name="baso_perc" value="{{ details.baso_perc|default:'' }}" class="form-control" placeholder="1"></td>
-                        <td class="units-display">%</td>
+                        <td>{% lab_unit_select 'baso_perc' '%' details %}</td>
                         <td class="ref-range">0 - 2</td>
                     </tr>
                 </tbody>
@@ -289,70 +422,76 @@
                         <td colspan="4"><i class="bi bi-heart-pulse-fill me-2"></i>Liver Function Tests</td>
                     </tr>
                     <tr>
-                        <td class="param-name">Total Bilirubin</td>
-                        <td><input type="number" step="0.1" name="total_bili" value="{{ details.total_bili|default:'' }}" class="form-control" placeholder="0.8"></td>
-                        <td class="units-display">mg/dL</td>
-                        <td class="ref-range">0.3 - 1.2</td>
+                        <td class="param-name">Total Proteins (Serum, Colorimetry)</td>
+                        <td><input type="number" step="0.1" name="total_protein" value="{{ details.total_protein|default:'' }}" class="form-control" placeholder="72" title="Enter number"></td>
+                        <td>{% lab_unit_select 'total_protein' 'g/L' details %}</td>
+                        <td class="ref-range">64 - 83</td>
                     </tr>
                     <tr>
-                        <td class="param-name">Direct Bilirubin</td>
-                        <td><input type="number" step="0.1" name="direct_bili" value="{{ details.direct_bili|default:'' }}" class="form-control" placeholder="0.2"></td>
-                        <td class="units-display">mg/dL</td>
-                        <td class="ref-range">0.0 - 0.3</td>
+                        <td class="param-name">Albumin (Serum, Bromocresol green)</td>
+                        <td><input type="number" step="0.1" name="albumin" value="{{ details.albumin|default:'' }}" class="form-control" placeholder="44" title="Enter number"></td>
+                        <td>{% lab_unit_select 'albumin' 'g/L' details %}</td>
+                        <td class="ref-range">38 - 50</td>
                     </tr>
                     <tr>
-                        <td class="param-name">Indirect Bilirubin</td>
-                        <td><input type="number" step="0.1" name="indirect_bili" value="{{ details.indirect_bili|default:'' }}" class="form-control auto-calc-field" placeholder="0.6" readonly></td>
-                        <td class="units-display">mg/dL</td>
-                        <td class="ref-range">0.1 - 1.0</td>
+                        <td class="param-name">Globulin (Serum)</td>
+                        <td><input type="number" step="0.1" name="globulin" value="{{ details.globulin|default:'' }}" class="form-control" placeholder="31" title="Enter number"></td>
+                        <td>{% lab_unit_select 'globulin' 'g/L' details %}</td>
+                        <td class="ref-range">29 - 33</td>
                     </tr>
                     <tr>
-                        <td class="param-name">ALT (SGPT)</td>
-                        <td><input type="number" step="1" name="alt" value="{{ details.alt|default:'' }}" class="form-control" placeholder="25"></td>
-                        <td class="units-display">U/L</td>
-                        <td class="ref-range">7 - 56</td>
+                        <td class="param-name">A/G Ratio (Serum)</td>
+                        <td><input type="number" step="0.01" name="ag_ratio" value="{{ details.ag_ratio|default:'' }}" class="form-control auto-calc-field" placeholder="1.4" readonly title="Calculated"></td>
+                        <td>—</td>
+                        <td class="ref-range">1.0 - 2.3</td>
                     </tr>
                     <tr>
-                        <td class="param-name">AST (SGOT)</td>
-                        <td><input type="number" step="1" name="ast" value="{{ details.ast|default:'' }}" class="form-control" placeholder="22"></td>
-                        <td class="units-display">U/L</td>
-                        <td class="ref-range">10 - 40</td>
+                        <td class="param-name">Bilirubin-Total (Serum, Diazo)</td>
+                        <td><input type="number" step="0.01" name="total_bili" value="{{ details.total_bili|default:'' }}" class="form-control" placeholder="12" title="Enter number"></td>
+                        <td>{% lab_unit_select 'total_bili' 'µmol/L' details %}</td>
+                        <td class="ref-range">3.42 - 20.52</td>
                     </tr>
                     <tr>
-                        <td class="param-name">ALP (Alkaline Phosphatase)</td>
-                        <td><input type="number" step="1" name="alp" value="{{ details.alp|default:'' }}" class="form-control" placeholder="70"></td>
-                        <td class="units-display">U/L</td>
-                        <td class="ref-range">44 - 147</td>
+                        <td class="param-name">Bilirubin-Direct (Serum, Diazo)</td>
+                        <td><input type="number" step="0.01" name="direct_bili" value="{{ details.direct_bili|default:'' }}" class="form-control" placeholder="2" title="Enter number"></td>
+                        <td>{% lab_unit_select 'direct_bili' 'µmol/L' details %}</td>
+                        <td class="ref-range">≤ 4.3</td>
                     </tr>
                     <tr>
-                        <td class="param-name">GGT (Gamma-GT)</td>
-                        <td><input type="number" step="1" name="ggt" value="{{ details.ggt|default:'' }}" class="form-control" placeholder="35"></td>
-                        <td class="units-display">U/L</td>
-                        <td class="ref-range">M: 8-61, F: 5-36</td>
+                        <td class="param-name">Bilirubin-Indirect (Serum, Calculated)</td>
+                        <td><input type="number" step="0.01" name="indirect_bili" value="{{ details.indirect_bili|default:'' }}" class="form-control auto-calc-field" placeholder="10" readonly title="Calculated"></td>
+                        <td>{% lab_unit_select 'indirect_bili' 'µmol/L' details %}</td>
+                        <td class="ref-range">1.71 - 17.1</td>
                     </tr>
                     <tr>
-                        <td class="param-name">Total Protein</td>
-                        <td><input type="number" step="0.1" name="total_protein" value="{{ details.total_protein|default:'' }}" class="form-control" placeholder="7.0"></td>
-                        <td class="units-display">g/dL</td>
-                        <td class="ref-range">6.0 - 8.3</td>
+                        <td class="param-name">SGPT (ALT) (Serum, Enzymatic)</td>
+                        <td><input type="number" step="1" name="alt" value="{{ details.alt|default:'' }}" class="form-control" placeholder="25" title="Enter number"></td>
+                        <td>{% lab_unit_select 'alt' 'U/L' details %}</td>
+                        <td class="ref-range">0 - 42</td>
                     </tr>
                     <tr>
-                        <td class="param-name">Albumin</td>
-                        <td><input type="number" step="0.1" name="albumin" value="{{ details.albumin|default:'' }}" class="form-control" placeholder="4.2"></td>
-                        <td class="units-display">g/dL</td>
-                        <td class="ref-range">3.5 - 5.5</td>
+                        <td class="param-name">SGOT (AST) (Serum, Enzymatic)</td>
+                        <td><input type="number" step="1" name="ast" value="{{ details.ast|default:'' }}" class="form-control" placeholder="22" title="Enter number"></td>
+                        <td>{% lab_unit_select 'ast' 'U/L' details %}</td>
+                        <td class="ref-range">0 - 40</td>
                     </tr>
                     <tr>
-                        <td class="param-name">Globulin</td>
-                        <td><input type="number" step="0.1" name="globulin" value="{{ details.globulin|default:'' }}" class="form-control auto-calc-field" placeholder="2.8" readonly></td>
-                        <td class="units-display">g/dL</td>
-                        <td class="ref-range">2.0 - 3.5</td>
+                        <td class="param-name">AST/ALT Ratio</td>
+                        <td><input type="number" step="0.01" name="ast_alt_ratio" value="{{ details.ast_alt_ratio|default:'' }}" class="form-control auto-calc-field" placeholder="0.9" readonly title="Calculated"></td>
+                        <td>—</td>
+                        <td class="ref-range">&lt; 1</td>
                     </tr>
                     <tr>
-                        <td class="param-name">A/G Ratio</td>
-                        <td><input type="number" step="0.1" name="ag_ratio" value="{{ details.ag_ratio|default:'' }}" class="form-control auto-calc-field" placeholder="1.5" readonly></td>
-                        <td class="units-display">ratio</td>
-                        <td class="ref-range">1.0 - 2.5</td>
+                        <td class="param-name">Alkaline Phosphatase (Serum, PNPP, AMP Buffer)</td>
+                        <td><input type="number" step="1" name="alp" value="{{ details.alp|default:'' }}" class="form-control" placeholder="70" title="Enter number"></td>
+                        <td>{% lab_unit_select 'alp' 'U/L' details %}</td>
+                        <td class="ref-range">25 - 147</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Gamma GT (GGTP) (Serum, Catalytic)</td>
+                        <td><input type="number" step="1" name="ggt" value="{{ details.ggt|default:'' }}" class="form-control" placeholder="30" title="Enter number"></td>
+                        <td>{% lab_unit_select 'ggt' 'U/L' details %}</td>
+                        <td class="ref-range">9 - 55</td>
                     </tr>
                 </tbody>
             </table>
@@ -373,60 +512,60 @@
                 </thead>
                 <tbody>
                     <tr class="section-header">
-                        <td colspan="4"><i class="bi bi-activity me-2"></i>Renal Function Tests</td>
+                        <td colspan="4"><i class="bi bi-activity me-2"></i>Renal Function / Electrolytes (Serum)</td>
                     </tr>
                     <tr>
-                        <td class="param-name">Urea</td>
-                        <td><input type="number" step="0.1" name="urea" value="{{ details.urea|default:'' }}" class="form-control" placeholder="25"></td>
-                        <td class="units-display">mg/dL</td>
-                        <td class="ref-range">15 - 40</td>
+                        <td class="param-name">Urea (Serum)</td>
+                        <td><input type="number" step="0.1" name="urea" value="{{ details.urea|default:'' }}" class="form-control" placeholder="5.0" title="Enter number"></td>
+                        <td>{% lab_unit_select 'urea' 'mmol/L' details %}</td>
+                        <td class="ref-range">1.7 - 8.3</td>
                     </tr>
                     <tr>
-                        <td class="param-name">BUN (Blood Urea Nitrogen)</td>
-                        <td><input type="number" step="0.1" name="bun" value="{{ details.bun|default:'' }}" class="form-control" placeholder="15"></td>
-                        <td class="units-display">mg/dL</td>
-                        <td class="ref-range">7 - 20</td>
+                        <td class="param-name">Sodium (Serum, ISE)</td>
+                        <td><input type="number" step="0.1" name="sodium" value="{{ details.sodium|default:'' }}" class="form-control" placeholder="142" title="Enter number"></td>
+                        <td>{% lab_unit_select 'sodium' 'mmol/L' details %}</td>
+                        <td class="ref-range">135 - 155</td>
                     </tr>
                     <tr>
-                        <td class="param-name">Creatinine</td>
-                        <td><input type="number" step="0.01" name="creatinine" value="{{ details.creatinine|default:'' }}" class="form-control" placeholder="1.0"></td>
-                        <td class="units-display">mg/dL</td>
-                        <td class="ref-range">M: 0.7-1.3, F: 0.6-1.1</td>
+                        <td class="param-name">Potassium (Serum, ISE)</td>
+                        <td><input type="number" step="0.1" name="potassium" value="{{ details.potassium|default:'' }}" class="form-control" placeholder="4.2" title="Enter number"></td>
+                        <td>{% lab_unit_select 'potassium' 'mmol/L' details %}</td>
+                        <td class="ref-range">3.6 - 5.5</td>
                     </tr>
                     <tr>
-                        <td class="param-name">eGFR (Estimated GFR)</td>
-                        <td><input type="number" step="1" name="egfr" value="{{ details.egfr|default:'' }}" class="form-control" placeholder="90"></td>
-                        <td class="units-display">mL/min/1.73m²</td>
-                        <td class="ref-range">&gt; 60</td>
-                    </tr>
-                    <tr>
-                        <td class="param-name">Uric Acid</td>
-                        <td><input type="number" step="0.1" name="uric_acid" value="{{ details.uric_acid|default:'' }}" class="form-control" placeholder="5.5"></td>
-                        <td class="units-display">mg/dL</td>
-                        <td class="ref-range">M: 3.4-7.0, F: 2.4-6.0</td>
-                    </tr>
-                    <tr>
-                        <td class="param-name">Sodium (Na⁺)</td>
-                        <td><input type="number" step="0.1" name="sodium" value="{{ details.sodium|default:'' }}" class="form-control" placeholder="140"></td>
-                        <td class="units-display">mmol/L</td>
-                        <td class="ref-range">135 - 145</td>
-                    </tr>
-                    <tr>
-                        <td class="param-name">Potassium (K⁺)</td>
-                        <td><input type="number" step="0.1" name="potassium" value="{{ details.potassium|default:'' }}" class="form-control" placeholder="4.0"></td>
-                        <td class="units-display">mmol/L</td>
-                        <td class="ref-range">3.5 - 5.1</td>
-                    </tr>
-                    <tr>
-                        <td class="param-name">Chloride (Cl⁻)</td>
-                        <td><input type="number" step="0.1" name="chloride" value="{{ details.chloride|default:'' }}" class="form-control" placeholder="102"></td>
-                        <td class="units-display">mmol/L</td>
+                        <td class="param-name">Chloride (Serum, ISE)</td>
+                        <td><input type="number" step="0.1" name="chloride" value="{{ details.chloride|default:'' }}" class="form-control" placeholder="102" title="Enter number"></td>
+                        <td>{% lab_unit_select 'chloride' 'mmol/L' details %}</td>
                         <td class="ref-range">98 - 107</td>
                     </tr>
                     <tr>
+                        <td class="param-name">Creatinine (Serum, Jaffe)</td>
+                        <td><input type="number" step="0.1" name="creatinine" value="{{ details.creatinine|default:'' }}" class="form-control" placeholder="80" title="Enter number"></td>
+                        <td>{% lab_unit_select 'creatinine' 'µmol/L' details %}</td>
+                        <td class="ref-range">30 - 120</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">eGFR (CKD-EPI)</td>
+                        <td><input type="number" step="1" name="egfr" value="{{ details.egfr|default:'' }}" class="form-control" placeholder="90" title="Enter number"></td>
+                        <td>{% lab_unit_select 'egfr' 'mL/min/1.73m²' details %}</td>
+                        <td class="ref-range">Normal/mild: &gt;59; Moderate: 30-59; Severe: 15-29; End stage: &lt;15 (≥18y, IDMS-Traceable CKD-EPI)</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Uric Acid</td>
+                        <td><input type="number" step="0.1" name="uric_acid" value="{{ details.uric_acid|default:'' }}" class="form-control" placeholder="320" title="Enter number"></td>
+                        <td>{% lab_unit_select 'uric_acid' 'µmol/L' details %}</td>
+                        <td class="ref-range">200 - 420</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">BUN (Blood Urea Nitrogen)</td>
+                        <td><input type="number" step="0.1" name="bun" value="{{ details.bun|default:'' }}" class="form-control" placeholder="15" title="Enter number"></td>
+                        <td>{% lab_unit_select 'bun' 'mg/dL' details %}</td>
+                        <td class="ref-range">7 - 20</td>
+                    </tr>
+                    <tr>
                         <td class="param-name">Bicarbonate (HCO₃⁻)</td>
-                        <td><input type="number" step="0.1" name="bicarbonate" value="{{ details.bicarbonate|default:'' }}" class="form-control" placeholder="24"></td>
-                        <td class="units-display">mmol/L</td>
+                        <td><input type="number" step="0.1" name="bicarbonate" value="{{ details.bicarbonate|default:'' }}" class="form-control" placeholder="24" title="Enter number"></td>
+                        <td>{% lab_unit_select 'bicarbonate' 'mmol/L' details %}</td>
                         <td class="ref-range">22 - 29</td>
                     </tr>
                 </tbody>
@@ -448,55 +587,55 @@
                 </thead>
                 <tbody>
                     <tr class="section-header">
-                        <td colspan="4"><i class="bi bi-heart-fill me-2"></i>Lipid Profile</td>
+                        <td colspan="4"><i class="bi bi-heart-fill me-2"></i>Lipid Profile (Serum, mmol/L)</td>
                     </tr>
                     <tr>
-                        <td class="param-name">Total Cholesterol</td>
-                        <td><input type="number" step="1" name="total_chol" value="{{ details.total_chol|default:'' }}" class="form-control" placeholder="180"></td>
-                        <td class="units-display">mg/dL</td>
-                        <td class="ref-range">Desirable: &lt; 200</td>
+                        <td class="param-name">Cholesterol-Total</td>
+                        <td><input type="number" step="0.01" name="total_chol" value="{{ details.total_chol|default:'' }}" class="form-control" placeholder="4.5" title="Enter number"></td>
+                        <td>{% lab_unit_select 'total_chol' 'mmol/L' details %}</td>
+                        <td class="ref-range">Desirable: ≤5.13; Borderline: 5.15-6.13; High: &gt;6.13</td>
                     </tr>
                     <tr>
                         <td class="param-name">Triglycerides</td>
-                        <td><input type="number" step="1" name="triglycerides" value="{{ details.triglycerides|default:'' }}" class="form-control" placeholder="120"></td>
-                        <td class="units-display">mg/dL</td>
-                        <td class="ref-range">Normal: &lt; 150</td>
+                        <td><input type="number" step="0.01" name="triglycerides" value="{{ details.triglycerides|default:'' }}" class="form-control" placeholder="1.2" title="Enter number"></td>
+                        <td>{% lab_unit_select 'triglycerides' 'mmol/L' details %}</td>
+                        <td class="ref-range">Normal: &lt;1.65; Borderline: 1.65-2.19; Very high: ≥5.5</td>
                     </tr>
                     <tr>
-                        <td class="param-name">HDL Cholesterol (Good)</td>
-                        <td><input type="number" step="1" name="hdl" value="{{ details.hdl|default:'' }}" class="form-control" placeholder="55"></td>
-                        <td class="units-display">mg/dL</td>
-                        <td class="ref-range">M: &gt; 40, F: &gt; 50</td>
-                    </tr>
-                    <tr>
-                        <td class="param-name">LDL Cholesterol (Bad)</td>
-                        <td><input type="number" step="1" name="ldl" value="{{ details.ldl|default:'' }}" class="form-control" placeholder="100"></td>
-                        <td class="units-display">mg/dL</td>
-                        <td class="ref-range">Optimal: &lt; 100</td>
-                    </tr>
-                    <tr>
-                        <td class="param-name">VLDL Cholesterol</td>
-                        <td><input type="number" step="1" name="vldl" value="{{ details.vldl|default:'' }}" class="form-control auto-calc-field" placeholder="24" readonly></td>
-                        <td class="units-display">mg/dL</td>
-                        <td class="ref-range">2 - 30</td>
-                    </tr>
-                    <tr>
-                        <td class="param-name">Total Chol/HDL Ratio</td>
-                        <td><input type="number" step="0.1" name="chol_hdl_ratio" value="{{ details.chol_hdl_ratio|default:'' }}" class="form-control auto-calc-field" placeholder="3.3" readonly></td>
-                        <td class="units-display">ratio</td>
-                        <td class="ref-range">Desirable: &lt; 5</td>
-                    </tr>
-                    <tr>
-                        <td class="param-name">LDL/HDL Ratio</td>
-                        <td><input type="number" step="0.1" name="ldl_hdl_ratio" value="{{ details.ldl_hdl_ratio|default:'' }}" class="form-control auto-calc-field" placeholder="1.8" readonly></td>
-                        <td class="units-display">ratio</td>
-                        <td class="ref-range">Optimal: &lt; 2.0</td>
+                        <td class="param-name">HDL Cholesterol</td>
+                        <td><input type="number" step="0.01" name="hdl" value="{{ details.hdl|default:'' }}" class="form-control" placeholder="1.3" title="Enter number"></td>
+                        <td>{% lab_unit_select 'hdl' 'mmol/L' details %}</td>
+                        <td class="ref-range">Major risk: &lt;1.05; Negative risk: ≥1.55</td>
                     </tr>
                     <tr>
                         <td class="param-name">Non-HDL Cholesterol</td>
-                        <td><input type="number" step="1" name="non_hdl" value="{{ details.non_hdl|default:'' }}" class="form-control auto-calc-field" placeholder="125" readonly></td>
-                        <td class="units-display">mg/dL</td>
-                        <td class="ref-range">Optimal: &lt; 130</td>
+                        <td><input type="number" step="0.01" name="non_hdl" value="{{ details.non_hdl|default:'' }}" class="form-control auto-calc-field" placeholder="3.2" readonly title="Calculated"></td>
+                        <td>{% lab_unit_select 'non_hdl' 'mmol/L' details %}</td>
+                        <td class="ref-range">Optimal: &lt;3.4; Near: 3.4-4.1; Borderline: 4.15-4.90; High: 4.9-5.7; Very high: &gt;5.7</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">LDL Cholesterol</td>
+                        <td><input type="number" step="0.01" name="ldl" value="{{ details.ldl|default:'' }}" class="form-control" placeholder="2.5" title="Enter number"></td>
+                        <td>{% lab_unit_select 'ldl' 'mmol/L' details %}</td>
+                        <td class="ref-range">Optimal: &lt;2.56; Near: 2.56-3.30; Borderline: 3.33-4.07; High: 4.10-4.84; Very high: ≥4.87</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">LDL/HDL Ratio</td>
+                        <td><input type="number" step="0.01" name="ldl_hdl_ratio" value="{{ details.ldl_hdl_ratio|default:'' }}" class="form-control auto-calc-field" placeholder="1.9" readonly title="Calculated"></td>
+                        <td>—</td>
+                        <td class="ref-range">Target: &lt;3.5:1; Ideal: ≤2.5:1</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">CHOL/HDL Ratio</td>
+                        <td><input type="number" step="0.01" name="chol_hdl_ratio" value="{{ details.chol_hdl_ratio|default:'' }}" class="form-control auto-calc-field" placeholder="3.5" readonly title="Calculated"></td>
+                        <td>—</td>
+                        <td class="ref-range">Target: &lt;5.1; Ideal: ≤3.5</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">VLDL Cholesterol</td>
+                        <td><input type="number" step="0.01" name="vldl" value="{{ details.vldl|default:'' }}" class="form-control auto-calc-field" placeholder="0.6" readonly title="Calculated"></td>
+                        <td>{% lab_unit_select 'vldl' 'mmol/L' details %}</td>
+                        <td class="ref-range">0.16 - 1.04</td>
                     </tr>
                 </tbody>
             </table>
@@ -517,37 +656,37 @@
                 </thead>
                 <tbody>
                     <tr class="section-header">
-                        <td colspan="4"><i class="bi bi-magic me-2"></i>Thyroid Function Tests</td>
+                        <td colspan="4"><i class="bi bi-magic me-2"></i>Thyroid Panel (Serum, FIA)</td>
                     </tr>
                     <tr>
-                        <td class="param-name">TSH (Thyroid Stimulating Hormone)</td>
-                        <td><input type="number" step="0.01" name="tsh" value="{{ details.tsh|default:'' }}" class="form-control" placeholder="2.5"></td>
-                        <td class="units-display">μIU/mL</td>
-                        <td class="ref-range">0.4 - 4.0</td>
+                        <td class="param-name">Thyrotropin (TSH)-S</td>
+                        <td><input type="number" step="0.01" name="tsh" value="{{ details.tsh|default:'' }}" class="form-control" placeholder="2.0" title="Enter number"></td>
+                        <td>{% lab_unit_select 'tsh' 'mIU/L' details %}</td>
+                        <td class="ref-range">0.3 - 4.2 (general); Pregnancy: 1st 0.1-2.5, 2nd 0.2-3.0, 3rd 0.3-3.0</td>
                     </tr>
                     <tr>
-                        <td class="param-name">Free T4 (Thyroxine)</td>
-                        <td><input type="number" step="0.01" name="free_t4" value="{{ details.free_t4|default:'' }}" class="form-control" placeholder="1.2"></td>
-                        <td class="units-display">ng/dL</td>
+                        <td class="param-name">T3 (Direct)</td>
+                        <td><input type="number" step="0.01" name="total_t3" value="{{ details.total_t3|default:'' }}" class="form-control" placeholder="2.0" title="Enter number"></td>
+                        <td>{% lab_unit_select 'total_t3' 'nmol/L' details %}</td>
+                        <td class="ref-range">1.23 - 3.07 (general); Pregnancy: 1st 0.8-2.8, 2nd 0.7-2.4, 3rd 0.6-2.3</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">T4 (Thyroxine)</td>
+                        <td><input type="number" step="0.1" name="total_t4" value="{{ details.total_t4|default:'' }}" class="form-control" placeholder="100" title="Enter number"></td>
+                        <td>{% lab_unit_select 'total_t4' 'nmol/L' details %}</td>
+                        <td class="ref-range">66 - 181 (general); Pregnancy: 1st 71-175, 2nd 64.5-160, 3rd 64.5-150</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Free T4</td>
+                        <td><input type="number" step="0.01" name="free_t4" value="{{ details.free_t4|default:'' }}" class="form-control" placeholder="1.2" title="Enter number"></td>
+                        <td>{% lab_unit_select 'free_t4' 'ng/dL' details %}</td>
                         <td class="ref-range">0.8 - 1.8</td>
                     </tr>
                     <tr>
-                        <td class="param-name">Total T4</td>
-                        <td><input type="number" step="0.1" name="total_t4" value="{{ details.total_t4|default:'' }}" class="form-control" placeholder="8.0"></td>
-                        <td class="units-display">μg/dL</td>
-                        <td class="ref-range">4.5 - 12.0</td>
-                    </tr>
-                    <tr>
-                        <td class="param-name">Free T3 (Triiodothyronine)</td>
-                        <td><input type="number" step="0.01" name="free_t3" value="{{ details.free_t3|default:'' }}" class="form-control" placeholder="3.0"></td>
-                        <td class="units-display">pg/mL</td>
+                        <td class="param-name">Free T3</td>
+                        <td><input type="number" step="0.01" name="free_t3" value="{{ details.free_t3|default:'' }}" class="form-control" placeholder="3.0" title="Enter number"></td>
+                        <td>{% lab_unit_select 'free_t3' 'pg/mL' details %}</td>
                         <td class="ref-range">2.3 - 4.2</td>
-                    </tr>
-                    <tr>
-                        <td class="param-name">Total T3</td>
-                        <td><input type="number" step="1" name="total_t3" value="{{ details.total_t3|default:'' }}" class="form-control" placeholder="120"></td>
-                        <td class="units-display">ng/dL</td>
-                        <td class="ref-range">80 - 200</td>
                     </tr>
                 </tbody>
             </table>
@@ -570,30 +709,38 @@
                     <tr class="section-header">
                         <td colspan="4"><i class="bi bi-reception-4 me-2"></i>Glucose Metabolism</td>
                     </tr>
+                    {% if glucose_show_param == 'fbs' or glucose_show_param == 'ogtt' or not glucose_show_param %}
                     <tr>
                         <td class="param-name">Fasting Blood Glucose</td>
-                        <td><input type="number" step="1" name="fbs" value="{{ details.fbs|default:'' }}" class="form-control" placeholder="95"></td>
-                        <td class="units-display">mg/dL</td>
-                        <td class="ref-range">70 - 100</td>
+                        <td><input type="number" step="0.1" name="fbs" value="{{ details.fbs|default:'' }}" class="form-control" placeholder="5.0" title="Enter mmol/L"></td>
+                        <td>{% lab_unit_select 'fbs' 'mmol/L' details %}</td>
+                        <td class="ref-range">3.6 - 6.4 (OGTT/FBS)</td>
                     </tr>
+                    {% endif %}
+                    {% if glucose_show_param == 'rbs' or not glucose_show_param %}
                     <tr>
                         <td class="param-name">Random Blood Glucose</td>
-                        <td><input type="number" step="1" name="rbs" value="{{ details.rbs|default:'' }}" class="form-control" placeholder="120"></td>
-                        <td class="units-display">mg/dL</td>
-                        <td class="ref-range">&lt; 140</td>
+                        <td><input type="number" step="0.1" name="rbs" value="{{ details.rbs|default:'' }}" class="form-control" placeholder="6.5" title="Enter mmol/L"></td>
+                        <td>{% lab_unit_select 'rbs' 'mmol/L' details %}</td>
+                        <td class="ref-range">&lt; 7.8</td>
                     </tr>
+                    {% endif %}
+                    {% if glucose_show_param == 'hba1c' or not glucose_show_param %}
                     <tr>
                         <td class="param-name">HbA1c (Glycated Hemoglobin)</td>
-                        <td><input type="number" step="0.1" name="hba1c" value="{{ details.hba1c|default:'' }}" class="form-control" placeholder="5.5"></td>
-                        <td class="units-display">%</td>
+                        <td><input type="number" step="0.1" name="hba1c" value="{{ details.hba1c|default:'' }}" class="form-control" placeholder="5.5" title="Enter number" placeholder="Enter number"></td>
+                        <td>{% lab_unit_select 'hba1c' '%' details %}</td>
                         <td class="ref-range">4.0 - 5.6</td>
                     </tr>
+                    {% endif %}
+                    {% if glucose_show_param == 'ogtt' or not glucose_show_param %}
                     <tr>
                         <td class="param-name">2-Hour Post-Prandial Glucose</td>
-                        <td><input type="number" step="1" name="ppbs" value="{{ details.ppbs|default:'' }}" class="form-control" placeholder="140"></td>
-                        <td class="units-display">mg/dL</td>
-                        <td class="ref-range">&lt; 140</td>
+                        <td><input type="number" step="0.1" name="ppbs" value="{{ details.ppbs|default:'' }}" class="form-control" placeholder="6.5" title="Enter mmol/L"></td>
+                        <td>{% lab_unit_select 'ppbs' 'mmol/L' details %}</td>
+                        <td class="ref-range">&lt; 7.8</td>
                     </tr>
+                    {% endif %}
                 </tbody>
             </table>
         </div>
@@ -617,48 +764,500 @@
                     </tr>
                     <tr>
                         <td class="param-name">Sodium (Na⁺)</td>
-                        <td><input type="number" step="0.1" name="sodium" value="{{ details.sodium|default:'' }}" class="form-control" placeholder="140"></td>
-                        <td class="units-display">mmol/L</td>
+                        <td><input type="number" step="0.1" name="sodium" value="{{ details.sodium|default:'' }}" class="form-control" placeholder="140" title="Enter number" placeholder="Enter number"></td>
+                        <td>{% lab_unit_select 'sodium' 'mmol/L' details %}</td>
                         <td class="ref-range">135 - 145</td>
                     </tr>
                     <tr>
                         <td class="param-name">Potassium (K⁺)</td>
-                        <td><input type="number" step="0.1" name="potassium" value="{{ details.potassium|default:'' }}" class="form-control" placeholder="4.0"></td>
-                        <td class="units-display">mmol/L</td>
+                        <td><input type="number" step="0.1" name="potassium" value="{{ details.potassium|default:'' }}" class="form-control" placeholder="4.0" title="Enter number" placeholder="Enter number"></td>
+                        <td>{% lab_unit_select 'potassium' 'mmol/L' details %}</td>
                         <td class="ref-range">3.5 - 5.1</td>
                     </tr>
                     <tr>
                         <td class="param-name">Chloride (Cl⁻)</td>
-                        <td><input type="number" step="0.1" name="chloride" value="{{ details.chloride|default:'' }}" class="form-control" placeholder="102"></td>
-                        <td class="units-display">mmol/L</td>
+                        <td><input type="number" step="0.1" name="chloride" value="{{ details.chloride|default:'' }}" class="form-control" placeholder="102" title="Enter number" placeholder="Enter number"></td>
+                        <td>{% lab_unit_select 'chloride' 'mmol/L' details %}</td>
                         <td class="ref-range">98 - 107</td>
                     </tr>
                     <tr>
                         <td class="param-name">Bicarbonate (HCO₃⁻)</td>
-                        <td><input type="number" step="0.1" name="bicarbonate" value="{{ details.bicarbonate|default:'' }}" class="form-control" placeholder="24"></td>
-                        <td class="units-display">mmol/L</td>
+                        <td><input type="number" step="0.1" name="bicarbonate" value="{{ details.bicarbonate|default:'' }}" class="form-control" placeholder="24" title="Enter number" placeholder="Enter number"></td>
+                        <td>{% lab_unit_select 'bicarbonate' 'mmol/L' details %}</td>
                         <td class="ref-range">22 - 29</td>
                     </tr>
                     <tr>
                         <td class="param-name">Calcium (Ca²⁺)</td>
-                        <td><input type="number" step="0.1" name="calcium" value="{{ details.calcium|default:'' }}" class="form-control" placeholder="9.5"></td>
-                        <td class="units-display">mg/dL</td>
+                        <td><input type="number" step="0.1" name="calcium" value="{{ details.calcium|default:'' }}" class="form-control" placeholder="9.5" title="Enter number" placeholder="Enter number"></td>
+                        <td>{% lab_unit_select 'calcium' 'mg/dL' details %}</td>
                         <td class="ref-range">8.5 - 10.5</td>
                     </tr>
                     <tr>
                         <td class="param-name">Magnesium (Mg²⁺)</td>
-                        <td><input type="number" step="0.1" name="magnesium" value="{{ details.magnesium|default:'' }}" class="form-control" placeholder="2.0"></td>
-                        <td class="units-display">mg/dL</td>
+                        <td><input type="number" step="0.1" name="magnesium" value="{{ details.magnesium|default:'' }}" class="form-control" placeholder="2.0" title="Enter number" placeholder="Enter number"></td>
+                        <td>{% lab_unit_select 'magnesium' 'mg/dL' details %}</td>
                         <td class="ref-range">1.7 - 2.2</td>
                     </tr>
                     <tr>
                         <td class="param-name">Phosphorus (PO₄³⁻)</td>
-                        <td><input type="number" step="0.1" name="phosphorus" value="{{ details.phosphorus|default:'' }}" class="form-control" placeholder="3.5"></td>
-                        <td class="units-display">mg/dL</td>
+                        <td><input type="number" step="0.1" name="phosphorus" value="{{ details.phosphorus|default:'' }}" class="form-control" placeholder="3.5" title="Enter number" placeholder="Enter number"></td>
+                        <td>{% lab_unit_select 'phosphorus' 'mg/dL' details %}</td>
                         <td class="ref-range">2.5 - 4.5</td>
                     </tr>
                 </tbody>
             </table>
+        </div>
+    </div>
+
+    <!-- Urine Routine Examination (CHEMISTRY + MICROSCOPY) - Industry Standard -->
+    <div id="urine-form" class="lab-report-section" style="{% if test_type != 'urine' %}display:none;{% endif %}">
+        <div class="lab-report-table">
+            <table class="table modern-table mb-0">
+                <thead>
+                    <tr>
+                        <th style="width: 30%;">Parameter</th>
+                        <th style="width: 35%;">Value</th>
+                        <th style="width: 35%;">Unit / Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr class="section-header">
+                        <td colspan="3"><i class="bi bi-droplet-half me-2"></i>CHEMISTRY</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Appearance</td>
+                        <td><input type="text" name="urine_appearance" value="{{ details.urine_appearance|default:'' }}" class="form-control" placeholder="e.g. Clear, Hazy, Turbid" list="urine-appearance"></td>
+                        <td class="ref-range">Clear / Hazy / Turbid</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Colour</td>
+                        <td><input type="text" name="urine_colour" value="{{ details.urine_colour|default:'' }}" class="form-control" placeholder="e.g. Straw, Yellow, Dark" list="urine-colour"></td>
+                        <td class="ref-range">Straw / Yellow / Dark</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">pH</td>
+                        <td><input type="number" step="0.1" name="urine_ph" value="{{ details.urine_ph|default:'' }}" class="form-control" placeholder="7.0" title="Enter number"></td>
+                        <td class="ref-range">4.5 - 8.0</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Specific Gravity</td>
+                        <td><input type="number" step="0.001" name="urine_sgravity" value="{{ details.urine_sgravity|default:'' }}" class="form-control" placeholder="1.010" title="Enter number"></td>
+                        <td class="ref-range">1.005 - 1.030</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Protein</td>
+                        <td><input type="text" name="urine_protein" value="{{ details.urine_protein|default:'' }}" class="form-control" placeholder="Negative / Trace / +" list="urine-qual"></td>
+                        <td class="ref-range">Negative</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Glucose</td>
+                        <td><input type="text" name="urine_glucose" value="{{ details.urine_glucose|default:'' }}" class="form-control" placeholder="Negative / Trace / +" list="urine-qual"></td>
+                        <td class="ref-range">Negative</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Ketones</td>
+                        <td><input type="text" name="urine_ketones" value="{{ details.urine_ketones|default:'' }}" class="form-control" placeholder="Negative / Trace / +" list="urine-qual"></td>
+                        <td class="ref-range">Negative</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Blood</td>
+                        <td><input type="text" name="urine_blood" value="{{ details.urine_blood|default:'' }}" class="form-control" placeholder="Negative / Trace / +" list="urine-qual"></td>
+                        <td class="ref-range">Negative</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Nitrite</td>
+                        <td><input type="text" name="urine_nitrite" value="{{ details.urine_nitrite|default:'' }}" class="form-control" placeholder="Negative / Positive" list="urine-qual"></td>
+                        <td class="ref-range">Negative</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Bilirubin</td>
+                        <td><input type="text" name="urine_bilirubin" value="{{ details.urine_bilirubin|default:'' }}" class="form-control" placeholder="Negative / Positive" list="urine-qual"></td>
+                        <td class="ref-range">Negative</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Urobilinogen</td>
+                        <td><input type="text" name="urine_urobilinogen" value="{{ details.urine_urobilinogen|default:'' }}" class="form-control" placeholder="Normal / Increased" list="urine-qual"></td>
+                        <td class="ref-range">Normal</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Leucocyte Esterase</td>
+                        <td><input type="text" name="urine_leucocyte" value="{{ details.urine_leucocyte|default:'' }}" class="form-control" placeholder="Negative / Positive (+)" list="urine-qual"></td>
+                        <td class="ref-range">Negative</td>
+                    </tr>
+                    <tr class="section-header">
+                        <td colspan="3"><i class="bi bi-eyeglasses me-2"></i>MICROSCOPY</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Pus Cells</td>
+                        <td><input type="text" name="urine_pus_cells" value="{{ details.urine_pus_cells|default:'' }}" class="form-control" placeholder="e.g. 4/HPF or 0-2" title="Per HPF"></td>
+                        <td class="ref-range">/HPF</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Epithelial Cells</td>
+                        <td><input type="text" name="urine_epithelial_cells" value="{{ details.urine_epithelial_cells|default:'' }}" class="form-control" placeholder="e.g. 8/HPF or Few" title="Per HPF"></td>
+                        <td class="ref-range">/HPF</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">RBC (Red Blood Cells)</td>
+                        <td><input type="text" name="urine_rbc" value="{{ details.urine_rbc|default:'' }}" class="form-control" placeholder="e.g. 0/HPF" title="Per HPF"></td>
+                        <td class="ref-range">/HPF</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Cast</td>
+                        <td><input type="text" name="urine_cast" value="{{ details.urine_cast|default:'' }}" class="form-control" placeholder="Not seen / Hyaline / Granular"></td>
+                        <td class="ref-range">Not seen</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Crystals</td>
+                        <td><input type="text" name="urine_crystals" value="{{ details.urine_crystals|default:'' }}" class="form-control" placeholder="Not seen / Type"></td>
+                        <td class="ref-range">Not seen</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Ova or Cyst</td>
+                        <td><input type="text" name="urine_ova_cyst" value="{{ details.urine_ova_cyst|default:'' }}" class="form-control" placeholder="Not seen"></td>
+                        <td class="ref-range">Not seen</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">T. vaginalis</td>
+                        <td><input type="text" name="urine_t_vaginalis" value="{{ details.urine_t_vaginalis|default:'' }}" class="form-control" placeholder="Not seen"></td>
+                        <td class="ref-range">Not seen</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Bacteria</td>
+                        <td><input type="text" name="urine_bacteria" value="{{ details.urine_bacteria|default:'' }}" class="form-control" placeholder="Not seen / Few / Moderate"></td>
+                        <td class="ref-range">Not seen</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Yeast-like Cells</td>
+                        <td><input type="text" name="urine_yeast" value="{{ details.urine_yeast|default:'' }}" class="form-control" placeholder="Not seen"></td>
+                        <td class="ref-range">Not seen</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Stool Routine Examination -->
+    <div id="stool-form" class="lab-report-section" style="{% if test_type != 'stool' %}display:none;{% endif %}">
+        <div class="lab-report-table">
+            <table class="table modern-table mb-0">
+                <thead>
+                    <tr>
+                        <th style="width: 30%;">Parameter</th>
+                        <th style="width: 35%;">Value</th>
+                        <th style="width: 35%;">Reference</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr class="section-header">
+                        <td colspan="3"><i class="bi bi-droplet me-2"></i>MACROSCOPY</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Consistency</td>
+                        <td><input type="text" name="stool_consistency" value="{{ details.stool_consistency|default:'' }}" class="form-control" placeholder="e.g. Formed, Soft, Loose" list="stool-cons"></td>
+                        <td class="ref-range">Formed / Soft / Loose</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Colour</td>
+                        <td><input type="text" name="stool_colour" value="{{ details.stool_colour|default:'' }}" class="form-control" placeholder="e.g. Brown, Pale" list="stool-col"></td>
+                        <td class="ref-range">Brown</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Mucus</td>
+                        <td><input type="text" name="stool_mucus" value="{{ details.stool_mucus|default:'' }}" class="form-control" placeholder="Absent / Present" list="stool-qual"></td>
+                        <td class="ref-range">Absent</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Blood</td>
+                        <td><input type="text" name="stool_blood" value="{{ details.stool_blood|default:'' }}" class="form-control" placeholder="Absent / Present" list="stool-qual"></td>
+                        <td class="ref-range">Absent</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Pus</td>
+                        <td><input type="text" name="stool_pus" value="{{ details.stool_pus|default:'' }}" class="form-control" placeholder="Absent / Present" list="stool-qual"></td>
+                        <td class="ref-range">Absent</td>
+                    </tr>
+                    <tr class="section-header">
+                        <td colspan="3"><i class="bi bi-eyeglasses me-2"></i>MICROSCOPY</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Ova</td>
+                        <td><input type="text" name="stool_ova" value="{{ details.stool_ova|default:'' }}" class="form-control" placeholder="Not seen / Type"></td>
+                        <td class="ref-range">Not seen</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Parasites</td>
+                        <td><input type="text" name="stool_parasites" value="{{ details.stool_parasites|default:'' }}" class="form-control" placeholder="Not seen / Type"></td>
+                        <td class="ref-range">Not seen</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Cysts</td>
+                        <td><input type="text" name="stool_cysts" value="{{ details.stool_cysts|default:'' }}" class="form-control" placeholder="Not seen / Type"></td>
+                        <td class="ref-range">Not seen</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">RBC</td>
+                        <td><input type="text" name="stool_rbc" value="{{ details.stool_rbc|default:'' }}" class="form-control" placeholder="Not seen / Per HPF"></td>
+                        <td class="ref-range">Not seen</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">WBC</td>
+                        <td><input type="text" name="stool_wbc" value="{{ details.stool_wbc|default:'' }}" class="form-control" placeholder="Not seen / Per HPF"></td>
+                        <td class="ref-range">Not seen</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Undigested Food</td>
+                        <td><input type="text" name="stool_undigested_food" value="{{ details.stool_undigested_food|default:'' }}" class="form-control" placeholder="Absent / Present" list="stool-qual"></td>
+                        <td class="ref-range">Absent</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Fat Globules</td>
+                        <td><input type="text" name="stool_fat_globules" value="{{ details.stool_fat_globules|default:'' }}" class="form-control" placeholder="Absent / Present" list="stool-qual"></td>
+                        <td class="ref-range">Absent</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Malaria (WHO Standard) -->
+    <div id="malaria-form" class="lab-report-section" style="{% if test_type != 'malaria' %}display:none;{% endif %}">
+        <div class="lab-report-table">
+            <table class="table modern-table mb-0">
+                <thead><tr><th style="width:30%">Parameter</th><th style="width:35%">Value</th><th style="width:35%">Reference</th></tr></thead>
+                <tbody>
+                    <tr class="section-header"><td colspan="3"><i class="bi bi-bug me-2"></i>MALARIA PARASITOLOGY</td></tr>
+                    <tr>
+                        <td class="param-name">Result</td>
+                        <td><input type="text" name="malaria_result" value="{{ details.malaria_result|default:'' }}" class="form-control" placeholder="Positive / Negative" list="malaria-result"></td>
+                        <td class="ref-range">Positive / Negative</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Species</td>
+                        <td><input type="text" name="malaria_species" value="{{ details.malaria_species|default:'' }}" class="form-control" placeholder="P. falciparum, P. vivax, Mixed" list="malaria-species"></td>
+                        <td class="ref-range">P. falciparum / P. vivax / P. ovale / P. malariae / Mixed</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Parasite Count</td>
+                        <td><input type="text" name="malaria_count" value="{{ details.malaria_count|default:'' }}" class="form-control" placeholder="e.g. 5000/μL"></td>
+                        <td class="ref-range">/μL or /200 WBC</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">% Parasitemia</td>
+                        <td><input type="text" name="malaria_parasitemia" value="{{ details.malaria_parasitemia|default:'' }}" class="form-control" placeholder="e.g. 0.5%"></td>
+                        <td class="ref-range">% of parasitized RBCs</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Stage</td>
+                        <td><input type="text" name="malaria_stage" value="{{ details.malaria_stage|default:'' }}" class="form-control" placeholder="Trophozoites, Schizonts, Gametocytes" list="malaria-stage"></td>
+                        <td class="ref-range">Trophozoites / Schizonts / Gametocytes</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Blood Group & Rhesus (ISBT Standard) -->
+    <div id="blood_group-form" class="lab-report-section" style="{% if test_type != 'blood_group' %}display:none;{% endif %}">
+        <div class="lab-report-table">
+            <table class="table modern-table mb-0">
+                <thead><tr><th style="width:30%">Parameter</th><th style="width:35%">Value</th><th style="width:35%">Reference</th></tr></thead>
+                <tbody>
+                    <tr class="section-header"><td colspan="3"><i class="bi bi-droplet-fill me-2"></i>BLOOD GROUPING</td></tr>
+                    <tr>
+                        <td class="param-name">Blood Group</td>
+                        <td><input type="text" name="bg_group" value="{{ details.bg_group|default:'' }}" class="form-control" placeholder="A, B, AB, O" list="bg-group"></td>
+                        <td class="ref-range">A / B / AB / O</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Rhesus Factor</td>
+                        <td><input type="text" name="bg_rhesus" value="{{ details.bg_rhesus|default:'' }}" class="form-control" placeholder="Positive / Negative" list="bg-rhesus"></td>
+                        <td class="ref-range">Positive / Negative</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Sickle Cell -->
+    <div id="sickle-form" class="lab-report-section" style="{% if test_type != 'sickle' %}display:none;{% endif %}">
+        <div class="lab-report-table">
+            <table class="table modern-table mb-0">
+                <thead><tr><th style="width:30%">Parameter</th><th style="width:35%">Value</th><th style="width:35%">Reference</th></tr></thead>
+                <tbody>
+                    <tr class="section-header"><td colspan="3"><i class="bi bi-heart-pulse me-2"></i>SICKLE CELL</td></tr>
+                    <tr>
+                        <td class="param-name">Solubility Test</td>
+                        <td><input type="text" name="sickle_solubility" value="{{ details.sickle_solubility|default:'' }}" class="form-control" placeholder="Positive / Negative" list="sickle-sol"></td>
+                        <td class="ref-range">Positive / Negative</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Electrophoresis</td>
+                        <td><input type="text" name="sickle_electrophoresis" value="{{ details.sickle_electrophoresis|default:'' }}" class="form-control" placeholder="AA, AS, SS, AC" list="sickle-elec"></td>
+                        <td class="ref-range">AA / AS / SS / AC / SC / Sβ-thal</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Coagulation Panel -->
+    <div id="coagulation-form" class="lab-report-section" style="{% if test_type != 'coagulation' %}display:none;{% endif %}">
+        <div class="lab-report-table">
+            <table class="table modern-table mb-0">
+                <thead><tr><th style="width:30%">Parameter</th><th style="width:25%">Value</th><th style="width:20%">Units</th><th style="width:25%">Reference</th></tr></thead>
+                <tbody>
+                    <tr class="section-header"><td colspan="4"><i class="bi bi-droplet-half me-2"></i>COAGULATION</td></tr>
+                    <tr>
+                        <td class="param-name">PT (Prothrombin Time)</td>
+                        <td><input type="number" step="0.1" name="coag_pt" value="{{ details.coag_pt|default:'' }}" class="form-control" placeholder="12"></td>
+                        <td>{% lab_unit_select 'coag_pt' 'sec' details %}</td>
+                        <td class="ref-range">11 - 14</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">INR</td>
+                        <td><input type="number" step="0.01" name="coag_inr" value="{{ details.coag_inr|default:'' }}" class="form-control" placeholder="1.0"></td>
+                        <td>{% lab_unit_select 'coag_inr' 'ratio' details %}</td>
+                        <td class="ref-range">0.8 - 1.2</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">APTT</td>
+                        <td><input type="number" step="0.1" name="coag_aptt" value="{{ details.coag_aptt|default:'' }}" class="form-control" placeholder="30"></td>
+                        <td>{% lab_unit_select 'coag_aptt' 'sec' details %}</td>
+                        <td class="ref-range">25 - 35</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Fibrinogen</td>
+                        <td><input type="number" step="1" name="coag_fibrinogen" value="{{ details.coag_fibrinogen|default:'' }}" class="form-control" placeholder="250"></td>
+                        <td>{% lab_unit_select 'coag_fibrinogen' 'mg/dL' details %}</td>
+                        <td class="ref-range">200 - 400</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Serology (HIV, HBsAg, VDRL, etc.) -->
+    <div id="serology-form" class="lab-report-section" style="{% if test_type != 'serology' %}display:none;{% endif %}">
+        <div class="lab-report-table">
+            <table class="table modern-table mb-0">
+                <thead><tr><th style="width:30%">Parameter</th><th style="width:35%">Value</th><th style="width:35%">Reference</th></tr></thead>
+                <tbody>
+                    <tr class="section-header"><td colspan="3"><i class="bi bi-shield-check me-2"></i>SEROLOGY</td></tr>
+                    <tr>
+                        <td class="param-name">Result</td>
+                        <td><input type="text" name="serology_result" value="{{ details.serology_result|default:'' }}" class="form-control" placeholder="Reactive / Non-Reactive" list="serology-result"></td>
+                        <td class="ref-range">Reactive / Non-Reactive / Equivocal</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Titer (if applicable)</td>
+                        <td><input type="text" name="serology_titer" value="{{ details.serology_titer|default:'' }}" class="form-control" placeholder="e.g. 1:80, 1:160"></td>
+                        <td class="ref-range">VDRL, Widal, etc.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Semen Analysis (WHO) -->
+    <div id="semen-form" class="lab-report-section" style="{% if test_type != 'semen' %}display:none;{% endif %}">
+        <div class="lab-report-table">
+            <table class="table modern-table mb-0">
+                <thead><tr><th style="width:30%">Parameter</th><th style="width:25%">Value</th><th style="width:20%">Units</th><th style="width:25%">Reference</th></tr></thead>
+                <tbody>
+                    <tr class="section-header"><td colspan="4"><i class="bi bi-droplet me-2"></i>SEMEN ANALYSIS (WHO)</td></tr>
+                    <tr>
+                        <td class="param-name">Volume</td>
+                        <td><input type="number" step="0.1" name="semen_volume" value="{{ details.semen_volume|default:'' }}" class="form-control" placeholder="2.0"></td>
+                        <td>{% lab_unit_select 'semen_volume' 'mL' details %}</td>
+                        <td class="ref-range">≥ 1.5</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Liquefaction</td>
+                        <td><input type="text" name="semen_liquefaction" value="{{ details.semen_liquefaction|default:'' }}" class="form-control" placeholder="Complete / Incomplete" list="semen-liq"></td>
+                        <td class="ref-range">Complete &lt; 60 min</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">pH</td>
+                        <td><input type="number" step="0.1" name="semen_ph" value="{{ details.semen_ph|default:'' }}" class="form-control" placeholder="7.2"></td>
+                        <td>{% lab_unit_select 'semen_ph' '-' details %}</td>
+                        <td class="ref-range">≥ 7.2</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Sperm Count</td>
+                        <td><input type="number" step="1" name="semen_count" value="{{ details.semen_count|default:'' }}" class="form-control" placeholder="15"></td>
+                        <td>{% lab_unit_select 'semen_count' '×10⁶/mL' details %}</td>
+                        <td class="ref-range">≥ 15</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Motility</td>
+                        <td><input type="text" name="semen_motility" value="{{ details.semen_motility|default:'' }}" class="form-control" placeholder="e.g. 40% progressive"></td>
+                        <td class="ref-range">≥ 40% progressive</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Morphology</td>
+                        <td><input type="text" name="semen_morphology" value="{{ details.semen_morphology|default:'' }}" class="form-control" placeholder="e.g. 4% normal"></td>
+                        <td class="ref-range">≥ 4% normal forms</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">WBC</td>
+                        <td><input type="text" name="semen_wbc" value="{{ details.semen_wbc|default:'' }}" class="form-control" placeholder="&lt; 1 ×10⁶/mL"></td>
+                        <td class="ref-range">&lt; 1 ×10⁶/mL</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Vitality</td>
+                        <td><input type="text" name="semen_vitality" value="{{ details.semen_vitality|default:'' }}" class="form-control" placeholder="e.g. 58%"></td>
+                        <td class="ref-range">≥ 58% live</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- AFB / Sputum -->
+    <div id="afb-form" class="lab-report-section" style="{% if test_type != 'afb' %}display:none;{% endif %}">
+        <div class="lab-report-table">
+            <table class="table modern-table mb-0">
+                <thead><tr><th style="width:30%">Parameter</th><th style="width:35%">Value</th><th style="width:35%">Reference</th></tr></thead>
+                <tbody>
+                    <tr class="section-header"><td colspan="3"><i class="bi bi-bug me-2"></i>ACID FAST BACILLI / TB</td></tr>
+                    <tr>
+                        <td class="param-name">Result</td>
+                        <td><input type="text" name="afb_result" value="{{ details.afb_result|default:'' }}" class="form-control" placeholder="Positive / Negative" list="afb-result"></td>
+                        <td class="ref-range">Positive / Negative</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Grade</td>
+                        <td><input type="text" name="afb_grade" value="{{ details.afb_grade|default:'' }}" class="form-control" placeholder="1+, 2+, 3+ (Scanty/1+/2+/3+)" list="afb-grade"></td>
+                        <td class="ref-range">Scanty / 1+ / 2+ / 3+</td>
+                    </tr>
+                    <tr>
+                        <td class="param-name">Organism (GeneXpert)</td>
+                        <td><input type="text" name="afb_organism" value="{{ details.afb_organism|default:'' }}" class="form-control" placeholder="M. tuberculosis / MTB not detected"></td>
+                        <td class="ref-range">M. tuberculosis / NTM</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- File Attachment -->
+    <div class="modern-card mt-4">
+        <div class="row g-3">
+            <div class="col-12">
+                <label class="form-label fw-bold"><i class="bi bi-paperclip me-2"></i>Attach File (optional)</label>
+                <input type="file" name="attachment" class="form-control" accept=".pdf,.jpg,.jpeg,.png,.gif,.tiff,.doc,.docx">
+                <small class="text-muted">Scan or upload external lab reports, images, PDFs (max 10MB recommended)</small>
+                {% if lab_result.attachment %}
+                <div class="mt-2">
+                    <a href="{{ lab_result.attachment.url }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-file-earmark-arrow-down me-1"></i>View attached file
+                    </a>
+                </div>
+                {% else %}
+                <p class="mt-2 mb-0 text-muted small"><i class="bi bi-info-circle me-1"></i>No attachment file — upload PDF/image if available</p>
+                {% endif %}
+            </div>
         </div>
     </div>
 
@@ -667,7 +1266,7 @@
         <div class="row g-3">
             <div class="col-md-4">
                 <label class="form-label fw-bold">Status</label>
-                <select name="status" class="form-select">
+                <select name="status" class="form-select" title="Select option" aria-label="Select option">
                     <option value="pending">Pending</option>
                     <option value="in_progress">In Progress</option>
                     <option value="completed" selected>Completed</option>
@@ -676,8 +1275,10 @@
             </div>
             <div class="col-md-4">
                 <label class="form-label fw-bold">Qualitative Result</label>
-                <select name="qualitative_result" class="form-select">
+                <select name="qualitative_result" class="form-select" title="Select option" aria-label="Select option">
                     <option value="">-- Not Applicable --</option>
+                    <option value="Seen">Seen</option>
+                    <option value="Not seen">Not seen</option>
                     <option value="Negative">Negative</option>
                     <option value="Positive">Positive</option>
                     <option value="Reactive">Reactive</option>
@@ -688,7 +1289,7 @@
             </div>
             <div class="col-md-4">
                 <label class="form-label fw-bold">Verified By</label>
-                <input type="text" name="verified_by" value="{{ current_user }}" class="form-control" readonly>
+                <input type="text" name="verified_by" value="{{ current_user }}" class="form-control" readonly title="Enter text" placeholder="Enter text">
             </div>
             <div class="col-12">
                 <label class="form-label fw-bold">Clinical Notes / Comments</label>
@@ -769,6 +1370,66 @@
                             Electrolytes
                         </button>
                     </div>
+                    <div class="col-md-4">
+                        <button type="button" class="test-btn w-100" onclick="switchTest('urine')">
+                            <i class="bi bi-droplet-half d-block fs-3 mb-2"></i>
+                            Urine Routine
+                        </button>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="button" class="test-btn w-100" onclick="switchTest('stool')">
+                            <i class="bi bi-droplet d-block fs-3 mb-2"></i>
+                            Stool Routine
+                        </button>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="button" class="test-btn w-100" onclick="switchTest('malaria')">
+                            <i class="bi bi-bug d-block fs-3 mb-2"></i>
+                            Malaria
+                        </button>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="button" class="test-btn w-100" onclick="switchTest('blood_group')">
+                            <i class="bi bi-droplet-fill d-block fs-3 mb-2"></i>
+                            Blood Group
+                        </button>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="button" class="test-btn w-100" onclick="switchTest('sickle')">
+                            <i class="bi bi-heart-pulse d-block fs-3 mb-2"></i>
+                            Sickle Cell
+                        </button>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="button" class="test-btn w-100" onclick="switchTest('coagulation')">
+                            <i class="bi bi-droplet-half d-block fs-3 mb-2"></i>
+                            Coagulation
+                        </button>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="button" class="test-btn w-100" onclick="switchTest('serology')">
+                            <i class="bi bi-shield-check d-block fs-3 mb-2"></i>
+                            Serology
+                        </button>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="button" class="test-btn w-100" onclick="switchTest('semen')">
+                            <i class="bi bi-droplet d-block fs-3 mb-2"></i>
+                            Semen Analysis
+                        </button>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="button" class="test-btn w-100" onclick="switchTest('afb')">
+                            <i class="bi bi-bug d-block fs-3 mb-2"></i>
+                            AFB / Sputum
+                        </button>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="button" class="test-btn w-100" onclick="switchTest('single')">
+                            <i class="bi bi-capsule d-block fs-3 mb-2"></i>
+                            Single Value / Other
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -787,13 +1448,38 @@ function switchTest(testType) {
     });
     
     // Show selected test form
-    document.getElementById(testType + '-form').style.display = 'block';
+    var el = document.getElementById(testType + '-form');
+    if (el) el.style.display = 'block';
     document.getElementById('test_type').value = testType;
     
     // Close modal
     const modal = bootstrap.Modal.getInstance(document.getElementById('testSelectorModal'));
     if (modal) modal.hide();
 }
+
+// On load: show only the section for the server-provided test_type (ensures correct form is visible)
+document.addEventListener('DOMContentLoaded', function() {
+    var testTypeInput = document.getElementById('test_type');
+    if (testTypeInput && testTypeInput.value) {
+        var activeType = testTypeInput.value.trim();
+        var visibleSection = null;
+        document.querySelectorAll('.lab-report-section').forEach(section => {
+            var id = section.id;
+            var match = id === activeType + '-form';
+            section.style.display = match ? 'block' : 'none';
+            if (match) visibleSection = section;
+        });
+        // Scroll the visible form into view so it's not below the fold
+        if (visibleSection) {
+            visibleSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }
+    // If there are form validation errors, scroll the error alert into view
+    var errorAlert = document.querySelector('.alert.alert-danger');
+    if (errorAlert) {
+        errorAlert.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+});
 
 // Clear form
 function clearForm() {
@@ -802,6 +1488,9 @@ function clearForm() {
             if (!input.readOnly) {
                 input.value = '';
             }
+        });
+        document.querySelectorAll('select.unit-select').forEach(sel => {
+            if (sel.options.length) sel.selectedIndex = 0;
         });
         document.querySelector('textarea[name="notes"]').value = '';
     }
@@ -837,8 +1526,35 @@ document.addEventListener('DOMContentLoaded', function() {
                 const alb = parseFloat(albumin.value) || 0;
                 const glob = total - alb;
                 globulin.value = glob.toFixed(2);
+                if (glob > 0 && agRatio) {
+                    agRatio.value = (alb / glob).toFixed(2);
+                }
+            });
+        });
+    }
+    if (albumin && globulin && agRatio) {
+        [albumin, globulin].forEach(input => {
+            input.addEventListener('input', function() {
+                const alb = parseFloat(albumin.value) || 0;
+                const glob = parseFloat(globulin.value) || 0;
                 if (glob > 0) {
                     agRatio.value = (alb / glob).toFixed(2);
+                }
+            });
+        });
+    }
+
+    // AST/ALT Ratio (LFT)
+    const astInput = document.querySelector('[name="ast"]');
+    const altInput = document.querySelector('[name="alt"]');
+    const astAltRatio = document.querySelector('[name="ast_alt_ratio"]');
+    if (astInput && altInput && astAltRatio) {
+        [astInput, altInput].forEach(input => {
+            input.addEventListener('input', function() {
+                const ast = parseFloat(astInput.value) || 0;
+                const alt = parseFloat(altInput.value) || 0;
+                if (alt > 0) {
+                    astAltRatio.value = (ast / alt).toFixed(2);
                 }
             });
         });
@@ -857,7 +1573,11 @@ document.addEventListener('DOMContentLoaded', function() {
     if (triglycerides && vldl) {
         triglycerides.addEventListener('input', function() {
             const trig = parseFloat(triglycerides.value) || 0;
-            vldl.value = Math.round(trig / 5);
+            if (trig >= 10) {
+                vldl.value = Math.round(trig / 5);
+            } else {
+                vldl.value = (trig / 2.2).toFixed(2);
+            }
         });
     }
     
@@ -867,9 +1587,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 const total = parseFloat(totalChol.value) || 0;
                 const hdlVal = parseFloat(hdl.value) || 0;
                 if (hdlVal > 0) {
-                    cholHdlRatio.value = (total / hdlVal).toFixed(1);
+                    cholHdlRatio.value = (total / hdlVal).toFixed(2);
                 }
-                nonHdl.value = Math.round(total - hdlVal);
+                nonHdl.value = (total - hdlVal).toFixed(2);
             });
         });
     }
