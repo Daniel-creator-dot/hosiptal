@@ -7,10 +7,10 @@ services:
     name: hms-web
     env: python
     region: oregon  # Change to your preferred region: oregon, frankfurt, singapore, etc.
-    plan: starter  # Options: starter (free), standard, pro, or custom
+    plan: free  # Options: starter (free), standard, pro, or custom
     branch: main  # GitHub branch to deploy from
     buildCommand: "./build.sh"
-    startCommand: "gunicorn hms.wsgi:application --bind 0.0.0.0:$PORT --workers 4 --threads 2 --timeout 120 --access-logfile - --error-logfile - --log-level info"
+    startCommand: "gunicorn hms.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --threads 2 --timeout 120 --access-logfile - --error-logfile - --log-level info"
     healthCheckPath: /health/
     
     # Auto-deploy on push to main branch
@@ -34,12 +34,12 @@ services:
         sync: false  # You will paste your Supabase URL here in the Render dashboard
       
       - key: REDIS_URL
-        fromService:
-          type: redis
-          name: hms-redis
-          property: connectionString
+        value: ""
       
       - key: USE_REDIS_CACHE
+        value: false
+      
+      - key: CELERY_TASK_ALWAYS_EAGER
         value: true
       
       - key: DATABASE_CONN_MAX_AGE
@@ -95,89 +95,7 @@ services:
       - key: SECURE_PROXY_SSL_HEADER
         value: HTTP_X_FORWARDED_PROTO,https
 
-  # Redis Service - For caching and Celery
-  - type: redis
-    name: hms-redis
-    region: oregon  # Match your web service region
-    plan: starter  # Options: starter (free with 25MB), standard, pro
-    maxmemoryPolicy: allkeys-lru  # Eviction policy when Redis is full
-    ipAllowList: []  # Empty means only Render services can connect
 
-  # Background Worker - Celery
-  - type: worker
-    name: hms-celery-worker
-    env: python
-    region: oregon
-    plan: starter
-    branch: main
-    buildCommand: "./build.sh"
-    startCommand: "celery -A hms worker --loglevel=info --concurrency=2"
-    
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.5
-      
-      - key: DEBUG
-        value: false
-      
-      - key: SECRET_KEY
-        fromService:
-          type: web
-          name: hms-web
-          envVarKey: SECRET_KEY
-      
-      - key: DATABASE_URL
-        fromService:
-          type: web
-          name: hms-web
-          envVarKey: DATABASE_URL
-      
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: hms-redis
-          property: connectionString
-      
-      - key: USE_REDIS_CACHE
-        value: true
-
-  # Background Scheduler - Celery Beat
-  - type: worker
-    name: hms-celery-beat
-    env: python
-    region: oregon
-    plan: starter
-    branch: main
-    buildCommand: "./build.sh"
-    startCommand: "celery -A hms beat --loglevel=info"
-    
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.5
-      
-      - key: DEBUG
-        value: false
-      
-      - key: SECRET_KEY
-        fromService:
-          type: web
-          name: hms-web
-          envVarKey: SECRET_KEY
-      
-      - key: DATABASE_URL
-        fromService:
-          type: web
-          name: hms-web
-          envVarKey: DATABASE_URL
-      
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: hms-redis
-          property: connectionString
-      
-      - key: USE_REDIS_CACHE
-        value: true
 
 
 

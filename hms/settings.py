@@ -518,6 +518,7 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_ALWAYS_EAGER = config('CELERY_TASK_ALWAYS_EAGER', default=False, cast=bool)
 
 # Cacheops Configuration (if used)
 CACHEOPS_REDIS = config('CACHEOPS_REDIS', default=REDIS_URL.replace('/0', '/2') if '/0' in REDIS_URL else f'{REDIS_URL}/2')
