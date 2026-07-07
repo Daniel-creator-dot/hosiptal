@@ -24,6 +24,30 @@ pip install gunicorn whitenoise psycopg2-binary dj-database-url
 echo "🎨 Collecting static files..."
 python manage.py collectstatic --no-input --clear
 
+# Validate database configuration (Render must use external PostgreSQL)
+echo "🔍 Validating database configuration..."
+python << 'PYEOF'
+import os
+import sys
+
+url = os.environ.get("DATABASE_URL", "").strip()
+if not url:
+    print("ERROR: DATABASE_URL is not set.")
+    print("Set your Supabase PostgreSQL URL in Render Dashboard -> Environment.")
+    sys.exit(1)
+if url.startswith("sqlite"):
+    print("ERROR: DATABASE_URL cannot be SQLite on Render. Use PostgreSQL (Supabase).")
+    sys.exit(1)
+if "postgres" not in url:
+    print("ERROR: DATABASE_URL must be a PostgreSQL connection string.")
+    sys.exit(1)
+host = url.split("@")[-1].split("/")[0] if "@" in url else "configured"
+print(f"OK: DATABASE_URL host is {host}")
+PYEOF
+
+echo "🗄️  Testing database connection..."
+python test_db_connection.py
+
 # Run database migrations
 echo "🗄️  Running database migrations..."
 python manage.py migrate --no-input
