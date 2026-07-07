@@ -5,6 +5,13 @@ from django.db import migrations
 
 def backfill_empty_entry_numbers(apps, schema_editor):
     """Set a unique entry_number for any InsuranceReceivableEntry with empty entry_number."""
+    from django.db import connection
+
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass('public.hospital_insurancereceivableentry')")
+        if cursor.fetchone()[0] is None:
+            return
+
     InsuranceReceivableEntry = apps.get_model("hospital", "InsuranceReceivableEntry")
     from datetime import datetime
 
