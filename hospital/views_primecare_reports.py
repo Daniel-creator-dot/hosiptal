@@ -129,13 +129,14 @@ def primecare_balance_sheet(request):
     short_term_borrowings = get_account_balance('2011', report_date)
     trade_payables = get_account_balance('2100', report_date)
     accounts_payable = get_account_balance('2101', report_date)
+    customer_deposits = get_account_balance('2110', report_date)
     provisions = get_account_balance('2200', report_date)
     income_tax_liabilities = get_account_balance('2300', report_date)
     other_liabilities = get_account_balance('2400', report_date)
     
     total_current_liabilities = (
         bank_overdrafts + short_term_borrowings + trade_payables + accounts_payable +
-        provisions + income_tax_liabilities + other_liabilities
+        customer_deposits + provisions + income_tax_liabilities + other_liabilities
     )
     
     # NON-CURRENT LIABILITIES
@@ -197,6 +198,7 @@ def primecare_balance_sheet(request):
         'short_term_borrowings': short_term_borrowings,
         'trade_payables': trade_payables,
         'accounts_payable': accounts_payable,
+        'customer_deposits': customer_deposits,
         'provisions': provisions,
         'income_tax_liabilities': income_tax_liabilities,
         'other_liabilities': other_liabilities,
@@ -297,10 +299,11 @@ def primecare_profit_loss(request):
     radiology = get_revenue_balance('4160', start_date, end_date)
     dental = get_revenue_balance('4170', start_date, end_date)
     physiotherapy = get_revenue_balance('4180', start_date, end_date)
+    consumables_revenue = get_revenue_balance('4190', start_date, end_date)
     
     total_internal_revenue = (
         registration + consultation + laboratory + pharmacy + surgeries +
-        admissions + radiology + dental + physiotherapy
+        admissions + radiology + dental + physiotherapy + consumables_revenue
     )
     
     # COST OF SALES
@@ -319,8 +322,14 @@ def primecare_profit_loss(request):
         purchases_radiology + purchases_consumables + purchases_physiotherapy +
         purchases_others
     )
-    
-    cost_of_sales = opening_inventory + total_purchases - closing_inventory
+
+    from django.conf import settings
+    perpetual_inventory = getattr(settings, 'INVENTORY_GL_ENABLED', True)
+    if perpetual_inventory:
+        # Perpetual: 511x debits reflect COGS at dispense/issue; receipts hit 1400 not 511x.
+        cost_of_sales = total_purchases + opening_inventory - closing_inventory
+    else:
+        cost_of_sales = opening_inventory + total_purchases - closing_inventory
     gross_profit = total_internal_revenue - cost_of_sales
     
     # OTHER INCOME
@@ -380,6 +389,7 @@ def primecare_profit_loss(request):
         'radiology': radiology,
         'dental': dental,
         'physiotherapy': physiotherapy,
+        'consumables_revenue': consumables_revenue,
         'total_internal_revenue': total_internal_revenue,
         
         # Cost of Sales

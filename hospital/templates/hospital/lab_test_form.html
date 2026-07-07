@@ -372,8 +372,8 @@
                                 <div class="tat-quick-input">
                                     <div class="input-group">
                                         <label>Duration in Minutes</label>
-                                        <input type="number" class="form-control" name="tat_minutes" id="tat_minutes" 
-                                               value="{% if test %}{{ test.tat_minutes }}{% else %}60{% endif %}" 
+                                        <input type="number" class="form-control" name="tat_minutes_quick" id="tat_minutes" 
+                                               value="{% if test %}{{ test.tat_minutes|default:60 }}{% else %}60{% endif %}" 
                                                min="1" required>
                                     </div>
                                     <div class="input-group" style="max-width: 120px;">
@@ -395,7 +395,7 @@
                                         </label>
                                         <input type="datetime-local" class="form-control" id="tat_datetime" 
                                                value="">
-                                        <input type="hidden" name="tat_minutes" id="tat_minutes_extended" value="">
+                                        <input type="hidden" name="tat_minutes_extended" id="tat_minutes_extended" value="">
                                     </div>
                                     <div class="datetime-input-wrapper">
                                         <label class="form-label">
@@ -490,7 +490,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initialize datetime input with current time + default minutes
     {% if test %}
-        const testMinutes = {{ test.tat_minutes }};
+        const testMinutes = {{ test.tat_minutes|default:0 }};
         if (testMinutes >= 1440) {
             // If test takes days, set up extended mode
             const now = new Date();
@@ -511,7 +511,9 @@ document.addEventListener('DOMContentLoaded', function() {
             tatModeExtended.classList.remove('active');
             tatQuickGroup.classList.add('active');
             tatExtendedGroup.classList.remove('active');
+            tatMinutesInput.disabled = false;
             tatMinutesInput.required = true;
+            tatMinutesExtended.disabled = true;
             tatDatetimeInput.required = false;
             tatMinutesExtended.value = '';
         } else {
@@ -519,13 +521,17 @@ document.addEventListener('DOMContentLoaded', function() {
             tatModeExtended.classList.add('active');
             tatQuickGroup.classList.remove('active');
             tatExtendedGroup.classList.add('active');
+            tatMinutesInput.disabled = true;
             tatMinutesInput.required = false;
+            tatMinutesExtended.disabled = false;
             tatDatetimeInput.required = true;
+            updateExtendedPreview();
         }
     }
 
     tatModeQuick.addEventListener('click', () => switchTatMode('quick'));
     tatModeExtended.addEventListener('click', () => switchTatMode('extended'));
+    switchTatMode('quick');
 
     // Update quick preview
     function updateQuickPreview() {
@@ -654,13 +660,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             return false;
         }
-        
-        // Ensure the correct field is submitted
-        if (isQuickMode) {
-            tatMinutesExtended.value = '';
-        } else {
-            tatMinutesInput.value = tatMinutes;
-            tatMinutesExtended.value = '';
+        if (!isQuickMode) {
+            updateExtendedPreview();
         }
     });
     

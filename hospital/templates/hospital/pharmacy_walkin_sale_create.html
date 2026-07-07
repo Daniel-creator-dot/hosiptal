@@ -38,11 +38,12 @@
                             <div class="row mb-3">
                                 <div class="col-md-6">
                                     <label class="form-label">Customer Name *</label>
-                                    <input type="text" class="form-control" name="customer_name" id="customerName" required title="Enter text" placeholder="Enter customer name">
+                                    <!-- no name= here: values are copied to hidden fields below (outside display:none) so POST is reliable -->
+                                    <input type="text" class="form-control" id="customerName" required title="Enter text" placeholder="Enter customer name">
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label">Phone Number</label>
-                                    <input type="text" class="form-control" name="customer_phone" id="customerPhone" placeholder="+233..." title="Enter text">
+                                    <input type="text" class="form-control" id="customerPhone" placeholder="+233..." title="Enter text">
                                 </div>
                             </div>
                             <div class="mb-3 position-relative">
@@ -163,6 +164,9 @@
                         </div>
                         
                         <input type="hidden" name="items" id="itemsData">
+                        <!-- Submitted from here (never inside display:none) so name/phone are not dropped by the browser -->
+                        <input type="hidden" name="customer_name" id="customerNameHidden" value="">
+                        <input type="hidden" name="customer_phone" id="customerPhoneHidden" value="">
                         
                         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3 p-3 bg-light rounded">
                             <div>
@@ -216,6 +220,17 @@
 </div>
 
 <script>
+function walkinIsTabletForm(form) {
+    const f = String(form || '').trim().toLowerCase();
+    return f.startsWith('tab') || f.indexOf('tablet') !== -1;
+}
+
+function walkinTabletBadgeHtml(form) {
+    return walkinIsTabletForm(form)
+        ? '<span class="badge bg-info text-dark ms-1" title="Quantity is counted in individual tablets">Sold per tablet</span>'
+        : '';
+}
+
 // Payer options for Corporate and Insurance
 const PAYER_OPTIONS = {
     corporate: [
@@ -258,6 +273,34 @@ function syncPayerId() {
     if (select && hidden) hidden.value = select.value || '';
 }
 
+/** Set Payer Type + company from patient search (runs before DOMContentLoaded finishes). */
+function applyPayerDefaultsFromPatient(apiPayerType, payerId) {
+    const raw = String(apiPayerType || 'cash').toLowerCase();
+    let formPayer = 'cash';
+    if (raw === 'corporate') {
+        formPayer = 'corporate';
+    } else if (raw === 'nhis' || raw === 'private' || raw === 'insurance') {
+        formPayer = 'insurance';
+    }
+    const pt = document.getElementById('payerType');
+    if (!pt) return;
+    pt.value = formPayer;
+    handlePayerTypeChange(formPayer);
+    const sel = document.getElementById('payerIdSelect');
+    const pid = (payerId || '').trim();
+    if (pid && sel && (formPayer === 'corporate' || formPayer === 'insurance')) {
+        const match = Array.from(sel.options).some(o => o.value === pid);
+        if (match) {
+            sel.value = pid;
+            syncPayerId();
+        }
+    }
+    const dsi = document.getElementById('drugSearch');
+    if (dsi && dsi.value.trim().length >= 2 && typeof window.pharmacyWalkInRunDrugSearch === 'function') {
+        window.pharmacyWalkInRunDrugSearch(dsi.value.trim());
+    }
+}
+
 // Global function for inline onchange handler
 function handleCustomerTypeChange(value) {
     const walkinFields = document.getElementById('walkinFields');
@@ -287,6 +330,15 @@ function handleCustomerTypeChange(value) {
     }
 }
 
+function syncCustomerHiddenFromVisible() {
+    const v = document.getElementById('customerName');
+    const p = document.getElementById('customerPhone');
+    const hN = document.getElementById('customerNameHidden');
+    const hP = document.getElementById('customerPhoneHidden');
+    if (hN && v) hN.value = (v.value || '').trim();
+    if (hP && p) hP.value = (p.value || '').trim();
+}
+
 document.addEventListener('DOMContentLoaded', function() {
 let selectedItems = [];
 
@@ -311,8 +363,20 @@ if (customerTypeSelect) {
     // Also add event listener as backup
     customerTypeSelect.addEventListener('change', function() {
         handleCustomerTypeChange(this.value);
+        syncCustomerHiddenFromVisible();
     });
 }
+
+if (customerNameInput) {
+    customerNameInput.addEventListener('input', syncCustomerHiddenFromVisible);
+    customerNameInput.addEventListener('change', syncCustomerHiddenFromVisible);
+}
+const customerPhoneEl = document.getElementById('customerPhone');
+if (customerPhoneEl) {
+    customerPhoneEl.addEventListener('input', syncCustomerHiddenFromVisible);
+    customerPhoneEl.addEventListener('change', syncCustomerHiddenFromVisible);
+}
+syncCustomerHiddenFromVisible();
 
 // Payer Type Toggle
 const payerTypeSelect = document.getElementById('payerType');
@@ -348,19 +412,21 @@ if (patientSearchInput) {
         fetch(`{% url 'hospital:api_patient_search' %}?q=${encodeURIComponent(query)}`)
             .then(r => r.json())
             .then(data => {
-                if (data.patients.length === 0) {
+                const plist = Array.isArray(data.patients) ? data.patients : [];
+                if (plist.length === 0) {
                     patientDropdown.innerHTML = '<div class="list-group-item text-muted">No patients found</div>';
                     patientDropdown.style.display = 'block';
                     return;
                 }
                 
-                patientDropdown.innerHTML = data.patients.map(p => `
+                patientDropdown.innerHTML = plist.map(p => `
                     <div class="list-group-item patient-option d-flex justify-content-between align-items-start py-3" 
                          data-id="${p.id}" 
                          data-name="${p.name || ''}" 
                          data-mrn="${p.mrn || ''}"
                          data-phone="${p.phone || ''}"
-                         data-payer="${p.payer_type || 'cash'}">
+                         data-payer="${p.payer_type || 'cash'}"
+                         data-payer-id="${p.payer_id || ''}">
                         <div class="flex-grow-1">
                             <strong>${p.name || ''}</strong><br>
                             <small class="text-muted">MRN: ${p.mrn || ''}</small>
@@ -392,6 +458,7 @@ function handlePatientSelect(option) {
     const patientMRN = option.dataset.mrn;
     const patientPhone = option.dataset.phone || '';
     const patientPayer = option.dataset.payer || 'cash';
+    const patientPayerId = option.dataset.payerId || '';
     patientIdInput.value = patientId;
     patientSearchInput.value = `${patientName} (MRN: ${patientMRN})`;
     document.getElementById('customerName').value = patientName;
@@ -402,9 +469,8 @@ function handlePatientSelect(option) {
     document.getElementById('patientPayer').textContent = patientPayer.toUpperCase();
     document.getElementById('patientInfo').style.display = 'block';
     patientDropdown.style.display = 'none';
-    if (typeof runDrugSearch === 'function' && drugSearchInput && drugSearchInput.value.trim().length >= 2) {
-        runDrugSearch(drugSearchInput.value.trim());
-    }
+    applyPayerDefaultsFromPatient(patientPayer, patientPayerId);
+    syncCustomerHiddenFromVisible();
 }
 
 if (patientDropdown) {
@@ -477,7 +543,8 @@ if (walkinPatientSearch) {
                     } else {
                         walkinPatientDropdown.innerHTML = data.patients.map(p => `
                             <div class="list-group-item walkin-patient-option d-flex justify-content-between align-items-start py-3" 
-                                 data-id="${p.id}" data-name="${p.name}" data-mrn="${p.mrn}" data-phone="${p.phone || ''}">
+                                 data-id="${p.id}" data-name="${p.name}" data-mrn="${p.mrn}" data-phone="${p.phone || ''}"
+                                 data-payer="${p.payer_type || 'cash'}" data-payer-id="${p.payer_id || ''}">
                                 <div>
                                     <strong>${p.name}</strong> <span class="badge bg-secondary">${p.mrn}</span>
                                     ${p.phone ? `<br><small class="text-muted">${p.phone}</small>` : ''}
@@ -513,9 +580,8 @@ if (walkinPatientDropdown) {
             walkinPatientSearch.value = '';
             walkinPatientDropdown.innerHTML = '';
             walkinPatientDropdown.style.display = 'none';
-            if (typeof runDrugSearch === 'function' && drugSearchInput && drugSearchInput.value.trim().length >= 2) {
-                runDrugSearch(drugSearchInput.value.trim());
-            }
+            applyPayerDefaultsFromPatient(option.dataset.payer || 'cash', option.dataset.payerId || '');
+            syncCustomerHiddenFromVisible();
         }
     });
 }
@@ -527,8 +593,14 @@ if (clearWalkinPatient) {
         walkinPatientInfo.style.display = 'none';
         document.getElementById('walkinPatientName').textContent = '-';
         document.getElementById('walkinPatientMRN').textContent = '-';
-        if (typeof runDrugSearch === 'function' && drugSearchInput && drugSearchInput.value.trim().length >= 2) {
-            runDrugSearch(drugSearchInput.value.trim());
+        const pt = document.getElementById('payerType');
+        if (pt) {
+            pt.value = 'cash';
+            handlePayerTypeChange('cash');
+        }
+        const dsi = document.getElementById('drugSearch');
+        if (typeof runDrugSearch === 'function' && dsi && dsi.value.trim().length >= 2) {
+            runDrugSearch(dsi.value.trim());
         }
     });
 }
@@ -617,6 +689,7 @@ function runDrugSearch(query) {
             actions.style.display = 'none';
         });
 }
+window.pharmacyWalkInRunDrugSearch = runDrugSearch;
 
 function updateSelectedDrugCount() {
     const checked = document.querySelectorAll('#drugSearchResults .drug-checkbox:checked');
@@ -726,7 +799,7 @@ function renderSelectedItems() {
                 <div class="row align-items-center">
                     <div class="col-md-4">
                         <strong>${item.name}</strong><br>
-                        <small class="text-muted">${item.strength || ''} ${item.form || ''}</small><br>
+                        <small class="text-muted">${item.strength || ''} ${item.form || ''}</small> ${walkinTabletBadgeHtml(item.form)}<br>
                         <span class="badge bg-info me-1">Stock: ${item.stock_available != null ? item.stock_available : 0}</span>
                         <span class="badge bg-secondary">GHS ${unitPrice.toFixed(2)}/unit</span>
                     </div>
@@ -835,6 +908,7 @@ if (walkInSaleForm) {
         alert('Please add at least one medication to the sale.');
         return;
     }
+    syncCustomerHiddenFromVisible();
     syncPayerId();  // Copy payer selection to hidden before submit
     const payerType = document.getElementById('payerType')?.value;
     if ((payerType === 'corporate' || payerType === 'insurance') && !document.getElementById('payerIdHidden')?.value) {

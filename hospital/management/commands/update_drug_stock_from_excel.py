@@ -481,19 +481,21 @@ class Command(BaseCommand):
                 qty_col = col
                 break
 
-        # For price, prefer "LAST COST" or "LAST UNIT COST" as it's the most recent
-        price_col = None
-        for col in ['LAST COST', 'LAST UNIT COST', 'AVE COST', 'AVE UNIT COST', 'COST', 'PRICE', 'UNIT PRICE', 'SELLING PRICE', 'RATE', 'UNIT COST']:
+        # Selling price columns (patient price) — exclude cost-named columns
+        selling_col = None
+        for col in ['SELLING PRICE', 'UNIT PRICE', 'PRICE', 'RATE']:
             if col in df.columns:
-                price_col = col
+                selling_col = col
                 break
 
-        # Cost price - use "COST" or "AVE COST" if available
+        # Cost / purchase price columns
         cost_col = None
-        for col in ['COST', 'AVE COST', 'AVE UNIT COST', 'COST PRICE', 'PURCHASE PRICE', 'BUYING PRICE', 'COST PER UNIT']:
-            if col in df.columns and col != price_col:
+        for col in ['LAST COST', 'LAST UNIT COST', 'AVE COST', 'AVE UNIT COST', 'COST', 'UNIT COST', 'COST PRICE', 'PURCHASE PRICE', 'BUYING PRICE', 'COST PER UNIT']:
+            if col in df.columns:
                 cost_col = col
                 break
+
+        price_col = selling_col
 
         if not name_col:
             self.stdout.write(self.style.ERROR(
@@ -508,13 +510,13 @@ class Command(BaseCommand):
         else:
             self.stdout.write(self.style.WARNING('  - Quantity: NOT FOUND'))
         if price_col:
-            self.stdout.write(f'  - Price: {price_col}')
+            self.stdout.write(f'  - Selling price: {price_col}')
         else:
-            self.stdout.write(self.style.WARNING('  - Price: NOT FOUND'))
+            self.stdout.write(self.style.WARNING('  - Selling price: NOT FOUND'))
         if cost_col:
             self.stdout.write(f'  - Cost: {cost_col}')
         else:
-            self.stdout.write(self.style.WARNING('  - Cost: NOT FOUND (will use price as cost)'))
+            self.stdout.write(self.style.WARNING('  - Cost: NOT FOUND (existing cost price preserved)'))
         self.stdout.write('')
 
         # Statistics
@@ -555,7 +557,7 @@ class Command(BaseCommand):
                     # Parse values
                     quantity = self.parse_quantity(row.get(qty_col)) if qty_col else 0
                     unit_price = self.parse_price(row.get(price_col)) if price_col else Decimal('0.00')
-                    cost_price = self.parse_price(row.get(cost_col)) if cost_col else unit_price
+                    cost_price = self.parse_price(row.get(cost_col)) if cost_col else Decimal('0.00')
 
                     # Classify drug - ensure proper classification for better organization
                     category_updated = False

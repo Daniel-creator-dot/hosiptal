@@ -1,20 +1,47 @@
 """
 Deposit Payment Service
-Applies patient deposit balance when processing payments - deducts from amount due
-Ensures deposit is applied to invoice BEFORE collecting remaining amount
+Applies patient deposit to invoices only when cashier runs Apply deposit / manual apply.
+Unapplied deposit does not reduce displayed amount due (see patient_outstanding_service).
 """
 from decimal import Decimal
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import F, Q, Sum
 import logging
 
 logger = logging.getLogger(__name__)
 
 
+def _heal_deposit_available_balance(deposit):
+    """
+    Keep PatientDeposit.available_balance in sync with deposit_amount - used_amount.
+    If available_balance was incorrectly zeroed while used_amount < deposit_amount, apply would
+    skip the row (filter required available > 0) while the UI still showed remaining credit.
+    """
+    from ..models_patient_deposits import PatientDeposit
+
+    if not deposit or not isinstance(deposit, PatientDeposit):
+        return
+    dep_amt = deposit.deposit_amount or Decimal('0.00')
+    used = deposit.used_amount or Decimal('0.00')
+    expected_avail = max(Decimal('0.00'), dep_amt - used)
+    ab = deposit.available_balance or Decimal('0.00')
+    if ab == expected_avail:
+        return
+    deposit.available_balance = expected_avail
+    update_fields = ['available_balance', 'modified']
+    if expected_avail <= Decimal('0.00') and used >= dep_amt and dep_amt > Decimal('0.00'):
+        deposit.status = 'fully_used'
+        update_fields.append('status')
+    elif getattr(deposit, 'status', None) == 'fully_used' and expected_avail > Decimal('0.00'):
+        deposit.status = 'active'
+        update_fields.append('status')
+    deposit.save(update_fields=update_fields)
+
+
 def apply_deposit_to_invoice(invoice, applied_by=None, create_receipt=True):
     """
     Apply patient's deposit balance to an invoice. Reduces invoice.balance.
-    Call BEFORE processing cash/momo payment - then only collect invoice.balance.
+    Only called from explicit cashier actions (Apply deposit to bill / manual apply), not from payment views.
     
     Args:
         invoice: Invoice object (must have balance > 0, payer cash)
@@ -48,24 +75,21 @@ def apply_deposit_to_invoice(invoice, applied_by=None, create_receipt=True):
     total_applied = Decimal('0.00')
     
     try:
-        from django.db.models import Q
-        # Include deposits with available_balance > 0, or legacy records (available=0, used=0, amount>0)
+        from .patient_outstanding_service import patient_billing_scope_ids
+
+        scope_ids = patient_billing_scope_ids(patient)
+        # Any row with remaining credit (deposit_amount > used); heal available_balance in-loop.
         deposits = PatientDeposit.objects.filter(
-            patient=patient,
+            patient_id__in=scope_ids,
             status='active',
-            is_deleted=False
-        ).filter(
-            Q(available_balance__gt=0) |
-            (Q(available_balance=0) & Q(used_amount=0) & Q(deposit_amount__gt=0))
-        ).order_by('deposit_date')
-        
+            is_deleted=False,
+        ).filter(Q(deposit_amount__gt=F('used_amount'))).order_by('deposit_date', 'deposit_number')
+
         for deposit in deposits:
             if invoice.balance <= 0:
                 break
-            # Fix legacy: available_balance=0 but used_amount=0 and deposit_amount>0
-            if (deposit.available_balance or Decimal('0')) <= 0 and (deposit.used_amount or Decimal('0')) == 0 and (deposit.deposit_amount or Decimal('0')) > 0:
-                deposit.available_balance = deposit.deposit_amount
-                deposit.save(update_fields=['available_balance'])
+            deposit.refresh_from_db(fields=['deposit_amount', 'used_amount', 'available_balance', 'status'])
+            _heal_deposit_available_balance(deposit)
             amount_to_apply = min(deposit.available_balance, invoice.balance)
             if amount_to_apply <= 0:
                 continue
@@ -85,22 +109,36 @@ def apply_deposit_to_invoice(invoice, applied_by=None, create_receipt=True):
     return (total_applied, invoice.balance)
 
 
-def apply_deposit_to_all_patient_invoices(patient, create_receipt=True):
+def apply_deposit_to_all_patient_invoices(patient, create_receipt=True, invoice_pks=None):
     """
-    Apply patient's deposit balance to ALL unpaid cash invoices.
-    Call when viewing patient bill so deposit is applied before showing amounts.
-    When create_receipt=False (e.g. from cashier "Apply deposit to bill" one-click), no
-    per-application receipts are created; the caller must create one combined receipt to
-    avoid double-counting in "Amount Paid". Default True preserves existing behavior.
-    Returns total amount applied across all invoices.
+    Apply patient's deposit balance to unpaid cash invoices.
+    Called from cashier "Apply deposit to total bill" (explicit action only).
+
+    Args:
+        patient: Patient instance
+        create_receipt: When True, each application posts a deposit PaymentReceipt (default).
+        invoice_pks: Optional list of invoice UUIDs to restrict application (e.g. invoices
+            currently on Total Bill). None = all unpaid cash invoices for this patient/MRN scope.
+            An empty list applies nothing (returns 0).
+
+    Returns total amount applied across processed invoices.
     """
     from ..models import Invoice
+    from .patient_outstanding_service import patient_billing_scope_ids
 
     total_applied = Decimal('0.00')
-    invoices = Invoice.objects.filter(
-        patient=patient,
-        is_deleted=False
-    ).exclude(status='paid').select_related('payer')
+    scope_ids = patient_billing_scope_ids(patient)
+    if invoice_pks is not None and len(invoice_pks) == 0:
+        return total_applied
+
+    qs = (
+        Invoice.all_objects.filter(patient_id__in=scope_ids, is_deleted=False)
+        .exclude(status='paid')
+        .select_related('payer')
+    )
+    if invoice_pks is not None:
+        qs = qs.filter(pk__in=invoice_pks)
+    invoices = qs.order_by('issued_at', 'pk')
 
     for inv in invoices:
         payer_type = getattr(inv.payer, 'payer_type', None) if inv.payer else None
@@ -114,9 +152,9 @@ def apply_deposit_to_all_patient_invoices(patient, create_receipt=True):
 
 def get_patient_deposit_balance_display(patient):
     """
-    Total deposit balance available for this patient (for display / temporary deduction).
+    Total deposit balance available for this patient (on account, not yet applied to invoices).
     Uses available_balance when set; for legacy records where available_balance=0 and
-    used_amount=0, uses deposit_amount so the bill shows the correct "amount after deposit".
+    used_amount=0, uses deposit_amount. This does not reduce invoice balances until Apply deposit runs.
     """
     from ..models_patient_deposits import PatientDeposit
     total = Decimal('0.00')
@@ -135,21 +173,44 @@ def get_patient_deposit_balance_display(patient):
     return total
 
 
+def get_patients_deposit_balance_display(patient_ids):
+    """
+    Sum on-account deposit balance across one or more patient rows (e.g. same MRN duplicates).
+    Same rules as get_patient_deposit_balance_display per deposit row.
+    """
+    from ..models_patient_deposits import PatientDeposit
+
+    if not patient_ids:
+        return Decimal('0.00')
+    total = Decimal('0.00')
+    deposits = PatientDeposit.objects.filter(
+        patient_id__in=list(patient_ids),
+        status='active',
+        is_deleted=False,
+    )
+    for dep in deposits:
+        if (dep.available_balance or Decimal('0')) > 0:
+            total += dep.available_balance
+        elif (dep.used_amount or Decimal('0')) == 0 and (dep.deposit_amount or Decimal('0')) > 0:
+            total += dep.deposit_amount
+        else:
+            total += max(Decimal('0'), (dep.deposit_amount or Decimal('0')) - (dep.used_amount or Decimal('0')))
+    return total
+
+
 def estimate_amount_after_deposit(invoice, full_amount):
     """
-    Estimate amount due after applying deposit (read-only, does not persist).
-    Use for displaying default 'amount to collect' on payment form.
+    Amount to collect for UI (read-only). Unapplied patient deposit does NOT reduce this;
+    cashier applies deposit explicitly first; then invoice.balance reflects it.
     """
+    fa = Decimal(str(full_amount))
     if not invoice:
-        return full_amount
-    patient = invoice.patient
+        return max(Decimal('0.00'), fa)
     payer_type = getattr(invoice.payer, 'payer_type', None) if invoice.payer else None
     if payer_type not in ('cash', 'self_pay', None):
-        return full_amount
-    balance = invoice.balance
-    # Same effective pool as apply_deposit_to_invoice (includes legacy 0/0 deposits)
-    deposit_avail = get_patient_deposit_balance_display(patient)
-    return max(Decimal('0.00'), balance - deposit_avail)
+        return max(Decimal('0.00'), fa)
+    balance = invoice.balance or Decimal('0.00')
+    return max(Decimal('0.00'), min(fa, balance))
 
 
 def refresh_combined_service_prices_after_deposit(services_list):
@@ -167,10 +228,12 @@ def refresh_combined_service_prices_after_deposit(services_list):
     for s in services_list:
         t = s.get('type')
         o = s.get('obj')
-        if t == 'invoice' and o:
+        if t in ('invoice', 'consumables') and o:
             inv_ids.add(o.id)
         elif t == 'invoice_line' and o:
-            inv_ids.add(o.id)
+            iid = getattr(o, 'invoice_id', None)
+            if iid:
+                inv_ids.add(iid)
 
     balance_map = {}
     for pk in inv_ids:
@@ -192,7 +255,7 @@ def refresh_combined_service_prices_after_deposit(services_list):
         else:
             user_row = Decimal(str(user_row))
 
-        if t == 'invoice' and o:
+        if t in ('invoice', 'consumables') and o:
             pk = o.id
             if user_row <= 0:
                 s['price'] = Decimal('0.00')
@@ -207,7 +270,9 @@ def refresh_combined_service_prices_after_deposit(services_list):
             s['unit_price'] = new_price / qty
             remaining[pk] = bal - new_price
         elif t == 'invoice_line' and o:
-            pk = o.id
+            pk = getattr(o, 'invoice_id', None)
+            if not pk:
+                continue
             if user_row <= 0:
                 s['price'] = Decimal('0.00')
                 s['unit_price'] = Decimal('0.00')
@@ -279,6 +344,39 @@ def deposit_amount_applied_to_invoices_for_display(invoices):
         seen.add(inv.pk)
         total += deposit_amount_applied_to_invoice_for_display(inv)
     return total
+
+
+def deposit_amount_applied_for_pending_services_list(services_list):
+    """
+    Deposit applied only to invoices that appear as rows in a pending combined-bill
+    services_list (output shape from _get_patient_pending_services_for_payment).
+
+    Use this for Patient Bills and any view where row amounts are invoice balances, so
+    totals are not inflated by deposit receipts on other invoices for the same patient.
+    """
+    if not services_list:
+        return Decimal('0.00')
+    from ..models import Invoice, InvoiceLine
+
+    invoices = []
+    seen = set()
+    for s in services_list:
+        if not isinstance(s, dict):
+            continue
+        stype = s.get('type')
+        obj = s.get('obj')
+        inv = None
+        if stype == 'invoice' and obj is not None:
+            inv = obj
+        elif stype == 'invoice_line' and obj is not None:
+            if isinstance(obj, InvoiceLine):
+                inv = getattr(obj, 'invoice', None)
+            elif getattr(obj, 'invoice_id', None):
+                inv = Invoice.all_objects.filter(pk=obj.invoice_id).first()
+        if inv is not None and getattr(inv, 'pk', None) and inv.pk not in seen:
+            seen.add(inv.pk)
+            invoices.append(inv)
+    return deposit_amount_applied_to_invoices_for_display(invoices)
 
 
 def reverse_deposit_payments_for_invoice(invoice):
@@ -474,12 +572,33 @@ def link_deposit_receipt_to_release(release_model, release_record, invoice, rece
     """
     from hospital.models_accounting import PaymentReceipt
     from django.utils import timezone
+    from decimal import Decimal
+
+    if not invoice or not release_record:
+        return None
+
+    # Only treat deposit as "payment verified" when the invoice is actually fully settled.
+    # Otherwise a partial deposit would incorrectly mark services as paid/ready.
+    try:
+        invoice.update_totals()
+    except Exception:
+        try:
+            invoice.refresh_from_db()
+        except Exception:
+            pass
+    bal = getattr(invoice, 'balance', None)
+    tot = getattr(invoice, 'total_amount', None)
+    if (tot is None) or (Decimal(str(tot or 0)) <= 0):
+        return None
+    if bal is None or Decimal(str(bal or 0)) > 0:
+        return None
+
     receipt = PaymentReceipt.objects.filter(
         invoice=invoice,
         payment_method='deposit',
         is_deleted=False
     ).order_by('-receipt_date').first()
-    if receipt and release_record:
+    if receipt:
         release_record.payment_receipt = receipt
         release_record.payment_verified_at = timezone.now()
         release_record.payment_verified_by = received_by_user

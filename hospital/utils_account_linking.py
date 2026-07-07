@@ -194,7 +194,7 @@ def get_default_ap_account():
 def get_default_cash_account():
     """Get default cash account"""
     return Account.objects.filter(
-        Q(account_code='1000') | Q(account_type='asset', account_name__icontains='cash'),
+        Q(account_code='1010') | Q(account_type='asset', account_name__icontains='cash'),
         is_active=True
     ).first()
 

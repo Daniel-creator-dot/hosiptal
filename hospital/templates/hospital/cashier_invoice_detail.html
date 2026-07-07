@@ -17,7 +17,11 @@
     </div>
 </div>
 
-{% if invoice.balance > 0 %}
+{% if invoice.is_payable %}
+<div class="alert alert-light border mb-3">
+    <i class="bi bi-percent text-primary me-2"></i>
+    <strong>Discount:</strong> use the <strong>Disc.</strong> column — enter the GHS discount for that line and click <i class="bi bi-percent"></i>. It cannot exceed the line subtotal (the system caps it automatically).
+</div>
 {% if can_waive %}
 <div class="alert alert-info border-info mb-3">
     <i class="bi bi-info-circle me-2"></i>
@@ -32,8 +36,13 @@
             <h5 class="mb-3">Invoice Details</h5>
             <div class="row mb-3">
                 <div class="col-md-6">
+                    {% if invoice.patient %}
                     <p><strong>Patient:</strong> <a href="{% url 'hospital:patient_detail' invoice.patient.pk %}">{{ invoice.patient.full_name }}</a></p>
                     <p><strong>MRN:</strong> {{ invoice.patient.mrn }}</p>
+                    {% else %}
+                    <p><strong>Non-patient payer:</strong> {{ invoice.counterparty_name|default:"(not set)" }}</p>
+                    <p class="text-muted small mb-0">Not linked to a patient record. Use Process Payment to collect; receipt shows this name.</p>
+                    {% endif %}
                     {% if invoice.encounter %}
                     <p><strong>Encounter:</strong> {{ invoice.encounter.get_encounter_type_display }}</p>
                     {% endif %}
@@ -81,7 +90,7 @@
                                 {% if line.service_code and line.service_code.code|default:''|slice:':4' == 'LAB-' %}
                             <span class="badge bg-secondary" title="Lab: fixed 1 per test (final once sent to cashier)">{{ line.quantity }}</span>
                                 {% else %}
-                            <form method="post" action="/hms/invoices/line/update-quantity/" class="d-inline-flex align-items-center gap-1">
+                            <form method="post" action="{% url 'hospital:update_invoice_line_quantity' %}" class="d-inline-flex align-items-center gap-1">
                                 {% csrf_token %}
                                 <input type="hidden" name="line_id" value="{{ line.id }}">
                                 <input type="number" name="quantity" value="{{ line.quantity|floatformat:2 }}" min="0.01" step="0.01" class="form-control form-control-sm text-center" style="width: 65px;">
@@ -96,10 +105,17 @@
                         <td class="text-end">
                             {% if line.waived_at %}
                             <span class="text-success" title="Fully waived"><small>-GHS {{ line.discount_amount|floatformat:2 }}</small></span>
+                            {% elif not line.waived_at and invoice.is_payable %}
+                            <form method="post" action="{% url 'hospital:update_invoice_line_discount' %}" class="d-inline-flex align-items-center gap-1 justify-content-end flex-wrap">
+                                {% csrf_token %}
+                                <input type="hidden" name="line_id" value="{{ line.id }}">
+                                <input type="number" name="discount_amount" value="{{ line.discount_amount|floatformat:2 }}" min="0" step="0.01" class="form-control form-control-sm text-end" style="width: 76px;" title="GHS discount off this line">
+                                <button type="submit" class="btn btn-sm btn-outline-secondary py-0 px-1" title="Apply discount"><i class="bi bi-percent"></i></button>
+                            </form>
                             {% elif line.discount_amount > 0 %}
                             <span class="text-success"><small>-GHS {{ line.discount_amount|floatformat:2 }}</small></span>
                             {% else %}
-                            <span class="text-muted">-</span>
+                            <span class="text-muted">—</span>
                             {% endif %}
                         </td>
                         <td class="text-end">
@@ -113,7 +129,7 @@
                         <td class="text-center">
                             {% if line.waived_at %}
                             <small class="text-muted" title="{{ line.waiver_reason|default:'' }}">{% if line.waived_by %}{{ line.waived_by.get_full_name|default:line.waived_by.username }}{% else %}Admin{% endif %} waived</small>
-                            {% elif can_waive and invoice.balance > 0 and invoice.status != 'paid' %}
+                            {% elif can_waive and invoice.is_payable %}
                             <div class="btn-group btn-group-sm">
                                 <a href="{% url 'hospital:process_payment_invoice' invoice.pk %}?line_id={{ line.id }}" 
                                    class="btn btn-success" title="Pay for this item">
@@ -125,14 +141,14 @@
                                     <i class="bi bi-dash-circle"></i> Waive
                                 </button>
                             </div>
-                            {% elif invoice.balance > 0 and invoice.status != 'paid' %}
+                            {% elif invoice.is_payable %}
                             <div class="btn-group btn-group-sm">
                                 <a href="{% url 'hospital:process_payment_invoice' invoice.pk %}?line_id={{ line.id }}" 
                                    class="btn btn-success" title="Pay for this item">
                                     <i class="bi bi-credit-card"></i> Pay
                                 </a>
                             </div>
-                            {% elif invoice.balance <= 0 or invoice.status == 'paid' %}
+                            {% elif not invoice.is_payable %}
                             <span class="badge bg-success"><i class="bi bi-check-circle"></i> Paid</span>
                             {% else %}
                             <span class="text-muted">-</span>
@@ -144,6 +160,7 @@
                         <td colspan="8" class="text-center text-muted py-4">
                             <i class="bi bi-inbox" style="font-size: 2.5rem; opacity: 0.3;"></i>
                             <p class="mb-0 mt-2">No services have been added to this invoice</p>
+                            {% if invoice.patient %}
                             <form method="post" action="{% url 'hospital:cashier_add_services_to_invoice' invoice.patient.pk %}" class="mt-3">
                                 {% csrf_token %}
                                 <input type="hidden" name="invoice_id" value="{{ invoice.id }}">
@@ -163,6 +180,9 @@
                                     </a>
                                 </small>
                             </p>
+                            {% else %}
+                            <p class="mt-3 text-muted small">Non-patient invoices are built from <a href="{% url 'hospital:cashier_non_patient_charge' %}">Non-patient charge</a> or accounting; add patient lines via a patient-linked invoice instead.</p>
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}
@@ -260,7 +280,7 @@
         
         <div class="modern-card">
             <h5 class="mb-3">Actions</h5>
-            {% if invoice_lines|length == 0 %}
+            {% if invoice_lines|length == 0 and invoice.patient %}
             <form method="post" action="{% url 'hospital:cashier_add_services_to_invoice' invoice.patient.pk %}" class="mb-2">
                 {% csrf_token %}
                 <input type="hidden" name="invoice_id" value="{{ invoice.id }}">
@@ -272,17 +292,23 @@
             <a href="{% url 'hospital:invoice_print' invoice.pk %}" class="btn btn-outline-primary w-100 mb-2" target="_blank">
                 <i class="bi bi-printer-fill"></i> Print Detailed Invoice
             </a>
-            {% if invoice.balance > 0 and invoice.status != 'paid' %}
+            {% if invoice.is_payable %}
             <a href="{% url 'hospital:process_payment_invoice' invoice.pk %}" class="btn btn-success-modern w-100 mb-2">
                 <i class="bi bi-credit-card"></i> Process Payment
             </a>
             {% endif %}
+            {% if invoice.patient %}
             <a href="{% url 'hospital:cashier_patient_total_bill' invoice.patient.pk %}" class="btn btn-outline-warning w-100 mb-2">
                 <i class="bi bi-receipt"></i> View Total Bill
             </a>
             <a href="{% url 'hospital:cashier_patient_invoices' invoice.patient.pk %}" class="btn btn-outline-info w-100 mb-2">
                 <i class="bi bi-person"></i> View All Patient Invoices
             </a>
+            {% else %}
+            <a href="{% url 'hospital:cashier_non_patient_charge' %}" class="btn btn-outline-secondary w-100 mb-2">
+                <i class="bi bi-building-add"></i> New non-patient charge
+            </a>
+            {% endif %}
         </div>
     </div>
 </div>

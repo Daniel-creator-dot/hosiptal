@@ -286,29 +286,37 @@ def frontdesk_visit_create(request, patient_id):
                         )
                         logger.info(f"Front desk visit: Notification sent to doctor {assigned_doctor_staff.user.username}")
                         
-                        # Also send SMS notification if doctor has phone number
-                        try:
+                        phone = getattr(assigned_doctor_staff.user, 'phone_number', None) or getattr(
+                            assigned_doctor_staff, 'phone_number', None
+                        )
+                        if phone:
+                            from hospital.services.deferred_notifications import run_deferred
                             from hospital.services.sms_service import sms_service
+
                             doctor_name = assigned_doctor_staff.user.get_full_name() or assigned_doctor_staff.user.username
-                            message = (
+                            doctor_message = (
                                 f"New Patient Assignment\n\n"
                                 f"Patient: {patient.full_name}\n"
                                 f"MRN: {patient.mrn}\n"
                                 f"Complaint: {chief_complaint[:100]}\n\n"
                                 f"Please check your consultation dashboard."
                             )
-                            phone = getattr(assigned_doctor_staff.user, 'phone_number', None) or getattr(assigned_doctor_staff, 'phone_number', None)
-                            if phone:
-                                sms_service.send_sms(
-                                    phone_number=phone,
-                                    message=message,
-                                    message_type='doctor_assignment',
-                                    recipient_name=doctor_name,
-                                    related_object_id=encounter.id,
-                                    related_object_type='Encounter'
-                                )
-                        except Exception as sms_error:
-                            logger.warning(f"Front desk visit: Failed to send SMS to doctor: {sms_error}")
+                            encounter_id = encounter.id
+
+                            def _notify_doctor():
+                                try:
+                                    sms_service.send_sms(
+                                        phone_number=phone,
+                                        message=doctor_message,
+                                        message_type='doctor_assignment',
+                                        recipient_name=doctor_name,
+                                        related_object_id=encounter_id,
+                                        related_object_type='Encounter',
+                                    )
+                                except Exception as sms_error:
+                                    logger.warning(f"Front desk visit: Failed to send SMS to doctor: {sms_error}")
+
+                            run_deferred(_notify_doctor)
                     except Exception as notif_error:
                         logger.warning(f"Front desk visit: Failed to send notification to doctor: {notif_error}")
 

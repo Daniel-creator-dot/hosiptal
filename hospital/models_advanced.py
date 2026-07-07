@@ -111,7 +111,11 @@ class ClinicalNote(BaseModel):
         # Determine if this is a consultation note (first time)
         if is_new and self.note_type == 'consultation':
             # Add consultation charge automatically
-            from .utils_billing import add_consultation_charge
+            from .utils_billing import (
+                add_consultation_charge,
+                is_gp_general_medicine_department,
+                normalize_consultation_type_for_gp_department,
+            )
             # Determine if specialist consultation (based on department or doctor profession)
             consultation_type = 'general'
             if self.created_by:
@@ -119,13 +123,16 @@ class ClinicalNote(BaseModel):
                 if hasattr(self.created_by, 'department') and self.created_by.department:
                     dept_name = self.created_by.department.name.lower()
                     if any(keyword in dept_name for keyword in ['specialist', 'cardio', 'dental', 'ortho', 'neuro', 'ophthal']):
-                        consultation_type = 'specialist'
+                        if not is_gp_general_medicine_department(self.created_by.department):
+                            consultation_type = 'specialist'
                 # Check profession
                 elif self.created_by.profession in ['specialist']:
                     consultation_type = 'specialist'
+                consultation_type = normalize_consultation_type_for_gp_department(
+                    self.encounter, consultation_type, self.created_by
+                )
             
             try:
-                # Anyone who goes through consultation must be billed
                 invoice = add_consultation_charge(
                     self.encounter,
                     consultation_type,
@@ -135,7 +142,7 @@ class ClinicalNote(BaseModel):
                     import logging
                     logger = logging.getLogger(__name__)
                     logger.info(f"💰 Consultation charge added via ClinicalNote signal for encounter {self.encounter.id}")
-                # If None, it's a review visit - no charge (silently skip)
+                # Review encounters: add_consultation_charge returns invoice without visit fee (lines waived if needed)
             except Exception as e:
                 import logging
                 logger = logging.getLogger(__name__)

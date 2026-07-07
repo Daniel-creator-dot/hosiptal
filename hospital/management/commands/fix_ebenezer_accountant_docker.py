@@ -5,7 +5,13 @@ Run: docker-compose exec web python manage.py fix_ebenezer_accountant_docker
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User, Group
 from hospital.models import Staff, Department
-from hospital.utils_roles import get_user_role, get_user_dashboard_url
+from hospital.utils_roles import (
+    get_user_role,
+    get_user_dashboard_url,
+    user_has_cashier_access,
+    user_can_waive,
+    user_has_finance_account_access,
+)
 
 
 class Command(BaseCommand):
@@ -32,31 +38,44 @@ class Command(BaseCommand):
         )
         self.stdout.write()
         
-        # 1. Ensure in Accountant group
-        self.stdout.write('[1/5] Ensuring Accountant group membership...')
+        # 1. Ensure in Accountant group and remove mistaken clinical groups
+        self.stdout.write('[1/6] Ensuring finance groups (and removing Doctor if present)...')
         accountant_group, created = Group.objects.get_or_create(name='Accountant')
         if created:
             self.stdout.write(self.style.SUCCESS('  [OK] Created Accountant group'))
-        
-        if accountant_group not in user.groups.all():
-            user.groups.add(accountant_group)
-            self.stdout.write(self.style.SUCCESS('  [OK] Added to Accountant group'))
+
+        finance_group, _ = Group.objects.get_or_create(name='Finance')
+        account_personnel_group, _ = Group.objects.get_or_create(name='Account Personnel')
+
+        for g in (accountant_group, finance_group, account_personnel_group):
+            if g not in user.groups.all():
+                user.groups.add(g)
+                self.stdout.write(self.style.SUCCESS(f'  [OK] Added to {g.name} group'))
+
+        removed = []
+        for g in list(user.groups.all()):
+            if g.name.lower() in ('doctor', 'doctors', 'medical officer'):
+                user.groups.remove(g)
+                removed.append(g.name)
+        if removed:
+            self.stdout.write(self.style.SUCCESS(f'  [OK] Removed clinical groups: {", ".join(removed)}'))
         else:
-            self.stdout.write('  [INFO] Already in Accountant group')
+            self.stdout.write('  [INFO] No Doctor group on account (correct for finance staff)')
         self.stdout.write()
         
-        # 2. Ensure profession is accountant
-        self.stdout.write('[2/5] Checking profession...')
+        # 2. Ensure profession is accountant (not doctor)
+        self.stdout.write('[2/6] Checking profession...')
         if ebenezer.profession != 'accountant':
+            old = ebenezer.profession
             ebenezer.profession = 'accountant'
             ebenezer.save()
-            self.stdout.write(self.style.SUCCESS(f'  [OK] Updated profession to: accountant'))
+            self.stdout.write(self.style.SUCCESS(f'  [OK] Updated profession: {old} -> accountant'))
         else:
-            self.stdout.write(f'  [INFO] Profession already: accountant')
+            self.stdout.write('  [INFO] Profession already: accountant')
         self.stdout.write()
         
         # 3. Ensure department is Finance
-        self.stdout.write('[3/5] Checking department...')
+        self.stdout.write('[3/6] Checking department...')
         finance_dept = Department.objects.filter(name__icontains='finance').first()
         if finance_dept and ebenezer.department != finance_dept:
             ebenezer.department = finance_dept
@@ -67,11 +86,14 @@ class Command(BaseCommand):
         self.stdout.write()
         
         # 4. Verify role detection
-        self.stdout.write('[4/5] Verifying role detection...')
+        self.stdout.write('[4/6] Verifying role detection...')
         role = get_user_role(user)
         dashboard_url = get_user_dashboard_url(user, role)
         self.stdout.write(f'  [OK] Detected role: {role}')
         self.stdout.write(f'  [OK] Dashboard URL: {dashboard_url}')
+        self.stdout.write(f'  [OK] Finance access: {user_has_finance_account_access(user)}')
+        self.stdout.write(f'  [OK] Cashier access: {user_has_cashier_access(user)}')
+        self.stdout.write(f'  [OK] Can waive bills: {user_can_waive(user)}')
         
         if role == 'accountant' and dashboard_url == '/hms/accountant/comprehensive-dashboard/':
             self.stdout.write(self.style.SUCCESS('  [OK] Role detection working correctly!'))
@@ -82,7 +104,7 @@ class Command(BaseCommand):
         self.stdout.write()
         
         # 5. Ensure user is active and staff
-        self.stdout.write('[5/5] Checking user flags...')
+        self.stdout.write('[5/6] Checking user flags...')
         updated = False
         if not user.is_active:
             user.is_active = True

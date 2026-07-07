@@ -15,9 +15,31 @@ from .utils_roles import (
     is_pharmacy_user,
     user_can_remove_invoice_from_bill,
     user_can_waive,
+    user_has_finance_account_access,
+    ACCOUNT_FINANCE_ROLES,
 )
 
 ACCESS_DENIED_TEMPLATE = 'hospital/access_denied.html'
+
+VITALS_RECORDING_ROLES = frozenset({'doctor', 'nurse', 'midwife', 'admin'})
+
+
+def user_can_record_vitals(user, request=None):
+    """True for clinical staff who may open the record-vitals workflow."""
+    if not user or not user.is_authenticated:
+        return False
+    if getattr(user, 'is_superuser', False):
+        return True
+    return get_user_role(user, request) in VITALS_RECORDING_ROLES
+
+
+def redirect_after_visit_created(request, encounter):
+    """Send user to vitals recording or encounter summary based on role."""
+    from django.shortcuts import redirect
+
+    if user_can_record_vitals(request.user, request):
+        return redirect('hospital:record_vitals', encounter_id=encounter.pk)
+    return redirect('hospital:encounter_detail', pk=encounter.pk)
 
 
 def block_pharmacy_from_invoice_and_payment(view_func):
@@ -44,10 +66,12 @@ def block_pharmacy_from_invoice_and_payment(view_func):
 # Accounting-related URL patterns that accountants are allowed to access
 ACCOUNTING_ALLOWED_PATTERNS = [
     '/hms/accounting',
-    '/hms/accountant',  # All accountant features
+    '/hms/accountant',
+    '/hms/account-officer',
     '/hms/invoice',
     '/hms/payment',
     '/hms/cashier',
+    '/hms/cashier-sessions',
     '/hms/revenue',
     '/hms/accounts',
     '/hms/budget',
@@ -59,6 +83,11 @@ ACCOUNTING_ALLOWED_PATTERNS = [
     '/hms/payroll',
     '/hms/hr/payroll',
     '/hms/locum',
+    # Insurance claims + encounter diagnosis context for accountants
+    '/hms/insurance',
+    '/hms/claims',
+    '/insurance-claims/',
+    '/hms/encounter/',
     '/hms/logout',
     '/hms/login',
     '/hms/dashboard',  # Will redirect to accountant dashboard
@@ -78,8 +107,8 @@ def block_accountant_from_non_accounting(view_func):
         if not request.user.is_authenticated:
             return view_func(request, *args, **kwargs)
         
-        user_role = get_user_role(request.user)
-        
+        user_role = get_user_role(request.user, request)
+
         # Only block accountants, allow admins and others
         if user_role == 'accountant' and not request.user.is_superuser:
             # Check if the current path is accounting-related
@@ -121,10 +150,22 @@ def role_required(*allowed_roles, redirect_to=None, raise_exception=False, messa
             if not request.user.is_authenticated:
                 return redirect_to_login(request.get_full_path())
 
-            user_role = get_user_role(request.user)
+            if getattr(request.user, 'is_superuser', False):
+                return view_func(request, *args, **kwargs)
+
+            user_role = get_user_role(request.user, request)
 
             # Admins implicitly allowed unless explicitly blocked
-            if normalized_roles and user_role not in normalized_roles and user_role != 'admin':
+            finance_roles_allowed = bool(normalized_roles & ACCOUNT_FINANCE_ROLES)
+            if (
+                normalized_roles
+                and user_role not in normalized_roles
+                and user_role != 'admin'
+                and not (
+                    finance_roles_allowed
+                    and user_has_finance_account_access(request.user, request)
+                )
+            ):
                 required_display = ', '.join(role.replace('_', ' ').title() for role in normalized_roles) or 'authorized staff'
                 denial_message = message or f"Access denied. {required_display} role required."
 
@@ -132,7 +173,7 @@ def role_required(*allowed_roles, redirect_to=None, raise_exception=False, messa
                     'message': denial_message,
                     'required_roles': normalized_roles,
                     'user_role': user_role,
-                    'role_display': get_role_display_info(request.user),
+                    'role_display': get_role_display_info(request.user, request),
                     'dashboard_url': '/hms/',  # Direct path to avoid URL resolution errors
                     'login_url': '/hms/login/',
                 }
@@ -168,6 +209,20 @@ def role_required(*allowed_roles, redirect_to=None, raise_exception=False, messa
     return decorator
 
 
+def finance_revenue_streams_access(user, request=None):
+    """
+    Permission for revenue stream dashboards, receipt drilldowns, and stream Excel exports.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    if getattr(user, 'is_superuser', False):
+        return True
+    if user_has_finance_account_access(user, request):
+        return True
+    role = get_user_role(user, request)
+    return role in ('accountant', 'senior_account_officer', 'admin')
+
+
 def invoice_from_bill_remover_required(view_func):
     """
     Enforce the same rule as the Total Bill "Remove" buttons (Accountant / Admin / Administrator
@@ -187,8 +242,8 @@ def invoice_from_bill_remover_required(view_func):
             context = {
                 'message': denial_message,
                 'required_roles': {'accountant', 'admin', 'administrator'},
-                'user_role': get_user_role(request.user),
-                'role_display': get_role_display_info(request.user),
+                'user_role': get_user_role(request.user, request),
+                'role_display': get_role_display_info(request.user, request),
                 'dashboard_url': '/hms/',
                 'login_url': '/hms/login/',
             }
@@ -203,7 +258,7 @@ def invoice_from_bill_remover_required(view_func):
 
 def waiver_permission_required(view_func):
     """
-    Same rule as can_waive in templates: user_can_waive() (Admin/Admin group or resolved admin role).
+    Same rule as can_waive in templates: user_can_waive() (admin groups, account/finance groups/roles).
     Must match utils_roles.user_can_waive — do not use role_required('admin') alone, because
     get_user_role() can return accountant when the user is in both Accountant and Admin groups.
     """
@@ -213,14 +268,14 @@ def waiver_permission_required(view_func):
             return redirect_to_login(request.get_full_path())
         if not user_can_waive(request.user):
             denial_message = (
-                'Access denied. Only administrators (Admin or Administrator group) can waive charges.'
+                'Access denied. Only administrators or account/finance staff can waive charges.'
             )
             messages.error(request, denial_message)
             context = {
                 'message': denial_message,
-                'required_roles': {'admin', 'administrator'},
-                'user_role': get_user_role(request.user),
-                'role_display': get_role_display_info(request.user),
+                'required_roles': {'admin', 'administrator', 'accountant', 'finance'},
+                'user_role': get_user_role(request.user, request),
+                'role_display': get_role_display_info(request.user, request),
                 'dashboard_url': '/hms/',
                 'login_url': '/hms/login/',
             }

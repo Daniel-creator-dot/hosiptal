@@ -1,0 +1,421 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize hospital_extras %}
+
+{% block title %}Lab report & financials - HMS{% endblock %}
+{% block page_title %}Laboratory report & financials{% endblock %}
+{% block page_subtitle %}Detailed period activity: money (catalog prices), workload, and which tests were completed most often.{% endblock %}
+
+{% block extra_css %}
+<style>
+    .lab-report-card {
+        background: #fff;
+        border-radius: 12px;
+        padding: 1.25rem;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+        border-left: 4px solid #1565C0;
+        height: 100%;
+    }
+    .lab-report-card .val { font-size: 1.75rem; font-weight: 700; color: #1565C0; }
+    .lab-report-narrative {
+        background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        border: 1px solid #e2e8f0;
+        margin-bottom: 1.25rem;
+    }
+    .lab-report-narrative h2 { font-size: 1.1rem; font-weight: 700; color: #1e293b; margin-bottom: .75rem; }
+    .lab-report-narrative ul { margin: 0; padding-left: 1.2rem; color: #334155; }
+    .lab-report-narrative li { margin-bottom: .4rem; }
+    .freq-pct-bar { height: 8px; border-radius: 4px; background: #e2e8f0; overflow: hidden; min-width: 80px; }
+    .freq-pct-bar > span { display: block; height: 100%; background: linear-gradient(90deg, #1565C0, #42a5f5); border-radius: 4px; }
+    .chart-box { background: #fff; border-radius: 12px; padding: 1.25rem; box-shadow: 0 2px 12px rgba(0,0,0,0.06); min-height: 280px; }
+    .chart-box h6 { font-weight: 600; color: #333; margin-bottom: 1rem; }
+    .chart-canvas-wrap { position: relative; height: 240px; }
+    .daily-breakdown-wrap {
+        max-height: 420px;
+        overflow: auto;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+    }
+    .daily-breakdown-wrap table { margin-bottom: 0; }
+    .daily-breakdown-wrap thead th { position: sticky; top: 0; background: #f8fafc; z-index: 2; box-shadow: 0 1px 0 #e2e8f0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="test-panel mb-3">
+    <form method="get" action="{% url 'hospital:laboratory_financial_report' %}" class="row g-3 align-items-end">
+        <div class="col-md-2">
+            <label class="form-label small text-muted">Count / filter by</label>
+            <select name="basis" class="form-select" title="What the date range applies to">
+                <option value="verified" {% if report_basis == 'verified' %}selected{% endif %}>Completed (verified date)</option>
+                <option value="created" {% if report_basis == 'created' %}selected{% endif %}>Total activity (created date)</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small text-muted">From</label>
+            <input type="date" name="date_from" class="form-control" value="{{ date_from|date:'Y-m-d' }}">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small text-muted">To</label>
+            <input type="date" name="date_to" class="form-control" value="{{ date_to|date:'Y-m-d' }}">
+        </div>
+        <div class="col-md-6 d-flex flex-wrap gap-2 align-items-end">
+            <button type="submit" class="btn btn-primary"><i class="bi bi-funnel me-1"></i>Apply</button>
+            <a href="{% url 'hospital:laboratory_financial_report' %}?basis={{ report_basis }}" class="btn btn-outline-secondary">Last 30 days</a>
+            <a href="{% url 'hospital:laboratory_dashboard' %}" class="btn btn-outline-primary"><i class="bi bi-speedometer2 me-1"></i>Lab dashboard</a>
+            <a class="btn btn-success" href="{% url 'hospital:export_laboratory_financial_excel' %}?date_from={{ date_from|date:'Y-m-d' }}&date_to={{ date_to|date:'Y-m-d' }}&basis={{ report_basis }}">
+                <i class="bi bi-file-earmark-spreadsheet me-1"></i>Excel
+            </a>
+            <a class="btn btn-danger" href="{% url 'hospital:export_laboratory_financial_pdf' %}?date_from={{ date_from|date:'Y-m-d' }}&date_to={{ date_to|date:'Y-m-d' }}&basis={{ report_basis }}">
+                <i class="bi bi-file-earmark-pdf me-1"></i>PDF
+            </a>
+            <a href="{% url 'hospital:staff_shift_list' %}" class="btn btn-outline-dark"><i class="bi bi-calendar-week me-1"></i>Shift timetable</a>
+            {% if is_lab_hod %}
+            <a href="{% url 'hospital:staff_shift_create' %}" class="btn btn-outline-dark"><i class="bi bi-plus-lg me-1"></i>Create shift</a>
+            {% endif %}
+        </div>
+    </form>
+    <p class="small text-muted mb-0 mt-2">
+        <strong>Completed (verified date):</strong> only finished tests verified in the range — use for “what we completed.”
+        <strong>Total activity (created date):</strong> every lab line created in the range (pending, in progress, completed, cancelled) — use for volume ordered/opened.
+        Catalog GHS sums prices on <strong>completed</strong> rows only. Not bank deposits. Excel up to 5,000 rows.
+    </p>
+</div>
+
+{% if has_data and narrative_lines %}
+<div class="lab-report-narrative">
+    <h2><i class="bi bi-journal-text me-2"></i>What happened in this period</h2>
+    <ul class="mb-0">
+        {% for line in narrative_lines %}
+        <li>{{ line }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% elif not has_data %}
+<div class="alert alert-secondary mb-4">
+    {% if report_basis == 'verified' %}
+    No completed tests with a <strong>verification date</strong> in this range. Try <strong>Total activity (created date)</strong> to see orders opened in the period, or widen the dates.
+    {% else %}
+    No lab records with a <strong>created date</strong> in this range. Widen the dates or switch to <strong>Completed (verified date)</strong>.
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="row g-3 mb-4">
+    {% if report_basis == 'created' %}
+    <div class="col-md-3">
+        <div class="lab-report-card">
+            <div class="text-muted small text-uppercase">Total records (created)</div>
+            <div class="val">{{ total_activity|intcomma }}</div>
+            <div class="small text-muted mt-1">~{{ avg_activity_per_day|floatformat:1 }} / day</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="lab-report-card" style="border-left-color: #1565C0;">
+            <div class="text-muted small text-uppercase">Completed (subset)</div>
+            <div class="val">{{ n_completed|intcomma }}</div>
+            <div class="small text-muted mt-1">Pending {{ n_pending|intcomma }} · In prog. {{ n_in_progress|intcomma }} · Cancel. {{ n_cancelled|intcomma }}</div>
+        </div>
+    </div>
+    {% else %}
+    <div class="col-md-4">
+        <div class="lab-report-card">
+            <div class="text-muted small text-uppercase">Completed &amp; verified</div>
+            <div class="val">{{ total_completed|intcomma }}</div>
+            <div class="small text-muted mt-1">~{{ avg_completed_per_day|floatformat:1 }} / day</div>
+        </div>
+    </div>
+    {% endif %}
+    <div class="{% if report_basis == 'created' %}col-md-3{% else %}col-md-4{% endif %}">
+        <div class="lab-report-card" style="border-left-color: #2e7d32;">
+            <div class="text-muted small text-uppercase">Catalog list value — completed only (GHS)</div>
+            <div class="val" style="color:#2e7d32;">{{ total_revenue|floatformat:2|intcomma }}</div>
+            <div class="small text-muted mt-1">List prices, not payer split · Avg {{ avg_revenue_per_day|floatformat:2|intcomma }} / day</div>
+        </div>
+    </div>
+    <div class="{% if report_basis == 'created' %}col-md-3{% else %}col-md-4{% endif %}">
+        <div class="lab-report-card" style="border-left-color: #c62828;">
+            <div class="text-muted small text-uppercase">Abnormal (completed)</div>
+            <div class="val" style="color:#c62828;">{{ abnormal_count|intcomma }}</div>
+            <div class="small text-muted mt-1">{{ normal_count|intcomma }} not flagged · {{ pct_abnormal }}% abnormal</div>
+        </div>
+    </div>
+</div>
+
+{% if lab_billed_invoice %}
+<div class="lab-report-narrative mb-4">
+    <h2 class="h6 mb-2"><i class="bi bi-receipt me-2"></i>Billed on invoices (by payer) — same date range</h2>
+    <p class="small text-muted mb-2">Non-waived <strong>lab</strong> invoice lines on invoices with <strong>issued date</strong> in this range. Complements catalog totals above (cash + insurance + corporate billed).</p>
+    <div class="row g-2 small">
+        <div class="col-6 col-md-3"><strong>Total billed</strong><br>GHS {{ lab_billed_invoice.total_billed|floatformat:2|intcomma }} <span class="text-muted">({{ lab_billed_invoice.total_lines|intcomma }} lines)</span></div>
+        <div class="col-6 col-md-3"><strong>All insurance</strong><br><span class="text-success">GHS {{ lab_billed_invoice.insurance_all|floatformat:2|intcomma }}</span></div>
+        <div class="col-6 col-md-3"><strong>Cash</strong><br>GHS {{ lab_billed_invoice.by_bucket.cash|floatformat:2|intcomma }}</div>
+        <div class="col-6 col-md-3"><strong>Corporate</strong><br>GHS {{ lab_billed_invoice.by_bucket.corporate|floatformat:2|intcomma }}</div>
+    </div>
+    <div class="mt-2 d-flex flex-wrap gap-2">
+        <a class="btn btn-sm btn-success" href="{% url 'hospital:department_billed_revenue_report' %}?dept=lab&date_from={{ date_from|date:'Y-m-d' }}&date_to={{ date_to|date:'Y-m-d' }}"><i class="bi bi-table me-1"></i>Detail &amp; export</a>
+        <a class="btn btn-sm btn-outline-success" href="{% url 'hospital:department_billed_revenue_report' %}?dept=lab&date_from={{ date_from|date:'Y-m-d' }}&date_to={{ date_to|date:'Y-m-d' }}&export=xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
+    </div>
+</div>
+{% endif %}
+
+{% if has_data %}
+<div class="row g-3 mb-4">
+    <div class="col-lg-5">
+        <div class="chart-box">
+            <h6><i class="bi bi-graph-up me-2"></i>Daily trend (count vs catalog GHS on completed)</h6>
+            <div class="chart-canvas-wrap">
+                <canvas id="labDailyChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="chart-box">
+            <h6><i class="bi bi-bar-chart me-2"></i>Most frequent tests (top 10)</h6>
+            <div class="chart-canvas-wrap">
+                <canvas id="labTopTestsChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-3">
+        <div class="chart-box">
+            <h6><i class="bi bi-pie-chart me-2"></i>Share (top 5 + other)</h6>
+            <div class="chart-canvas-wrap">
+                <canvas id="labFreqPieChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if has_data and daily_breakdown_rows %}
+<div class="test-panel mb-4">
+    <h6 class="mb-2"><i class="bi bi-calendar3 me-2"></i>Daily breakdown (time table)</h6>
+    <p class="small text-muted mb-2">One row per calendar day in your range. <strong>Records</strong> = rows in this report view; <strong>Catalog GHS</strong> = sum of test prices on <strong>completed</strong> rows that day.</p>
+    <div class="daily-breakdown-wrap">
+        <table class="table table-sm table-striped">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th class="text-end">Records</th>
+                    <th class="text-end">Catalog GHS (completed)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for dr in daily_breakdown_rows %}
+                <tr>
+                    <td>{{ dr.date_display }}</td>
+                    <td class="text-end">{{ dr.count|intcomma }}</td>
+                    <td class="text-end">{{ dr.revenue|floatformat:2|intcomma }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if has_data %}
+<div class="test-panel mb-4">
+    <h6 class="mb-2"><i class="bi bi-sort-numeric-down me-2"></i>Frequent tests — full ranking</h6>
+    <p class="small text-muted mb-3">
+        {% if report_basis == 'verified' %}
+        Sorted by completions <strong>verified</strong> in this period. “%” = share of all completions in the range.
+        {% else %}
+        Sorted by how often each test appears on records <strong>created</strong> in this period (any status). “%” = share of all those records. <strong>Catalog GHS</strong> column is from <strong>completed</strong> rows only for that test.
+        {% endif %}
+    </p>
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th class="text-center" style="width:3rem;">#</th>
+                    <th>Test</th>
+                    <th>Code</th>
+                    <th class="text-end">Count</th>
+                    <th class="text-end">% of total (this view)</th>
+                    <th style="min-width:120px;">Share</th>
+                    <th class="text-end">Catalog GHS</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in frequent_tests_ranked %}
+                <tr>
+                    <td class="text-center text-muted">{{ row.rank }}</td>
+                    <td>{{ row.name }}</td>
+                    <td class="text-muted small">{{ row.code|default:"—" }}</td>
+                    <td class="text-end fw-semibold">{{ row.n|intcomma }}</td>
+                    <td class="text-end">{{ row.pct }}%</td>
+                    <td>
+                        <div class="freq-pct-bar" title="{{ row.pct }}% of {{ denominator_frequency|intcomma }} (this view)">
+                            <span style="width: {% if row.pct > 100 %}100{% else %}{{ row.pct }}{% endif %}%;"></span>
+                        </div>
+                    </td>
+                    <td class="text-end">{{ row.rev|floatformat:2|intcomma }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="7" class="text-muted">No completed tests in this period.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if by_test|length >= 50 %}
+    <p class="small text-muted mb-0">Showing the top 50 test types by completion count. Use Excel export for every row in the period.</p>
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="test-panel">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+        <h6 class="mb-0"><i class="bi bi-table me-2"></i>{% if report_basis == 'created' %}Recent lab records (newest first){% else %}Recent completed rows (newest first){% endif %}</h6>
+        {% if table_truncated %}
+        <span class="badge bg-warning text-dark">Showing 250 rows — use Excel for full extract</span>
+        {% endif %}
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle">
+            <thead class="table-light">
+                <tr>
+                    {% if report_basis == 'created' %}<th>Created</th><th>Status</th>{% endif %}
+                    <th>Verified</th>
+                    <th>Patient</th>
+                    <th>MRN</th>
+                    <th>Test</th>
+                    <th class="text-end">GHS</th>
+                    <th>Verified by</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in table_rows %}
+                <tr>
+                    {% if report_basis == 'created' %}
+                    <td class="text-nowrap small">{{ r.created|date:"M d, Y H:i"|default:"—" }}</td>
+                    <td class="small"><span class="badge bg-secondary">{{ r.get_status_display }}</span></td>
+                    {% endif %}
+                    <td class="text-nowrap small">{{ r.verified_at|date:"M d, Y H:i"|default:"—" }}</td>
+                    <td>
+                        {% if r.order and r.order.encounter and r.order.encounter.patient %}
+                        <a href="{% url 'hospital:patient_detail' r.order.encounter.patient.pk %}">{{ r.order.encounter.patient.full_name }}</a>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td class="small text-muted">{% if r.order and r.order.encounter and r.order.encounter.patient %}{{ r.order.encounter.patient.mrn }}{% else %}—{% endif %}</td>
+                    <td>{{ r.test.name|default:"—" }}</td>
+                    <td class="text-end">{% if r.test.price %}{{ r.test.price|floatformat:2 }}{% else %}0.00{% endif %}</td>
+                    <td class="small">{% if r.verified_by and r.verified_by.user %}{{ r.verified_by.user.get_full_name|default:r.verified_by.user.username }}{% else %}—{% endif %}</td>
+                    <td>
+                        <a href="{% lab_result_entry_url r %}" class="btn btn-sm btn-outline-primary py-0" title="Edit result">Edit</a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="{% if report_basis == 'created' %}9{% else %}7{% endif %}" class="text-muted">No rows.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% if is_lab_hod %}
+<p class="small text-muted mt-3 mb-0">
+    <i class="bi bi-people-fill me-1"></i>
+    <a href="{% url 'hospital:staff_shift_create' %}">Create a shift</a> for your department (lab HOD — only your staff appear in the list).
+</p>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const daily = {{ daily_chart_json|safe }};
+    const barLabels = {{ bar_labels_json|safe }};
+    const barCounts = {{ bar_counts_json|safe }};
+    const pieLabels = {{ pie_labels_json|safe }};
+    const pieCounts = {{ pie_counts_json|safe }};
+
+    const dc = document.getElementById('labDailyChart');
+    if (dc && typeof Chart !== 'undefined') {
+        new Chart(dc, {
+            type: 'line',
+            data: {
+                labels: daily.map(function(d) { return d.date; }),
+                datasets: [
+                    {
+                        label: 'Tests completed',
+                        data: daily.map(function(d) { return d.count; }),
+                        borderColor: '#1565C0',
+                        backgroundColor: 'rgba(21, 101, 192, 0.08)',
+                        yAxisID: 'y',
+                        tension: 0.25,
+                        fill: true,
+                    },
+                    {
+                        label: 'Revenue (GHS)',
+                        data: daily.map(function(d) { return d.revenue; }),
+                        borderColor: '#2e7d32',
+                        backgroundColor: 'rgba(46, 125, 50, 0.06)',
+                        yAxisID: 'y1',
+                        tension: 0.25,
+                        fill: false,
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    y: { type: 'linear', position: 'left', beginAtZero: true, title: { display: true, text: 'Count' } },
+                    y1: { type: 'linear', position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'GHS' } }
+                }
+            }
+        });
+    }
+
+    const bc = document.getElementById('labTopTestsChart');
+    if (bc && typeof Chart !== 'undefined' && barLabels.length) {
+        new Chart(bc, {
+            type: 'bar',
+            data: {
+                labels: barLabels,
+                datasets: [{
+                    label: 'Completed',
+                    data: barCounts,
+                    backgroundColor: 'rgba(21, 101, 192, 0.75)',
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                indexAxis: 'y',
+                plugins: { legend: { display: false } },
+                scales: { x: { beginAtZero: true } }
+            }
+        });
+    }
+
+    const pieEl = document.getElementById('labFreqPieChart');
+    if (pieEl && typeof Chart !== 'undefined' && pieLabels.length && pieCounts.length) {
+        const colors = ['#1565C0', '#2e7d32', '#ef6c00', '#7b1fa2', '#c62828', '#546e7a'];
+        new Chart(pieEl, {
+            type: 'doughnut',
+            data: {
+                labels: pieLabels,
+                datasets: [{
+                    data: pieCounts,
+                    backgroundColor: pieLabels.map(function(_, i) { return colors[i % colors.length]; }),
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } }
+                }
+            }
+        });
+    }
+});
+</script>
+{% endblock %}

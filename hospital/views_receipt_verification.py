@@ -359,15 +359,20 @@ def verify_qr_code(request):
                 'fraud_alert': True
             })
         
-        # Verify QR code data
+        # Verify QR code data (compact scan payload or legacy full JSON)
         if hasattr(receipt, 'qr_code') and receipt.qr_code:
-            if receipt.qr_code.qr_code_data and qr_data not in receipt.qr_code.qr_code_data:
-                return JsonResponse({
-                    'success': False,
-                    'error': 'QR code verification failed - Data mismatch',
-                    'fraud_alert': True,
-                    'severity': 'high'
-                })
+            stored = (receipt.qr_code.qr_code_data or '').strip()
+            scanned = qr_data.strip()
+            if stored and scanned != stored and scanned not in stored:
+                parsed = parse_qr_code(scanned) or {}
+                stored_parsed = parse_qr_code(stored) or {}
+                if parsed.get('receipt_number') != stored_parsed.get('receipt_number'):
+                    return JsonResponse({
+                        'success': False,
+                        'error': 'QR code verification failed - Data mismatch',
+                        'fraud_alert': True,
+                        'severity': 'high'
+                    })
         
         # Verify amount (only if amount is provided in QR code)
         if qr_info.get('amount'):

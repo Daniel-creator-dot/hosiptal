@@ -1,0 +1,116 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'hospital/css/pharmacy_ui.css' %}">
+{% endblock %}
+
+{% block title %}Pharmacy breakage &amp; expiry register - HMS{% endblock %}
+{% block page_title %}Breakage &amp; expiry register{% endblock %}
+{% block page_subtitle %}Audited removals from batch stock (breakage, expiry, damage, recall){% endblock %}
+
+{% block content %}
+<div class="container-fluid pharmacy-ui rx-stock-page pb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <a href="{% url 'hospital:pharmacy_stock_list' %}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to stock
+        </a>
+        <a href="{% url 'hospital:pharmacy_dashboard' %}" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-speedometer2"></i> Pharmacy dashboard
+        </a>
+    </div>
+
+    <div class="alert alert-light border shadow-sm mb-4">
+        <h6 class="alert-heading fw-semibold"><i class="bi bi-info-circle me-1"></i> Protocol</h6>
+        <p class="mb-0 small text-muted">
+            Do not reduce stock silently for breakages or expired lines. Use <strong>Record loss</strong> on the stock list
+            so each event stays on file with reason, quantity, disposal route, optional witness, and who recorded it.
+        </p>
+    </div>
+
+    <div class="rx-filter-card mb-4">
+        <form method="get" class="row g-3 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold">Search</label>
+                <input type="text" name="q" value="{{ query }}" class="form-control" placeholder="Drug, batch, notes…">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold">Reason</label>
+                <select name="loss_type" class="form-select">
+                    <option value="">All reasons</option>
+                    {% for code, label in loss_type_choices %}
+                    <option value="{{ code }}" {% if loss_type_filter == code %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary w-100 fw-semibold">Filter</button>
+            </div>
+        </form>
+    </div>
+
+    {% if entries %}
+    <div class="rx-table-card">
+        <div class="rx-table-head">
+            <h2 class="h5 mb-0">Recent entries (latest 250)</h2>
+        </div>
+        <div class="table-responsive">
+            <table class="table rx-data-table table-hover align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>When</th>
+                        <th>Drug / batch</th>
+                        <th>Qty</th>
+                        <th>Reason</th>
+                        <th>Disposal</th>
+                        <th>Witness</th>
+                        <th>Recorded by</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in entries %}
+                    <tr>
+                        <td class="small text-muted text-nowrap">{{ row.created|date:"d/m/Y H:i" }}</td>
+                        <td>
+                            <div class="fw-semibold">{{ row.pharmacy_stock.drug.name }}</div>
+                            <code class="small">{{ row.pharmacy_stock.batch_number }}</code>
+                            <div class="small text-muted">Exp {{ row.pharmacy_stock.expiry_date|date:"d/m/Y" }}</div>
+                        </td>
+                        <td><span class="badge text-bg-danger">{{ row.quantity }}</span></td>
+                        <td class="small">{{ row.get_loss_type_display }}</td>
+                        <td class="small">{{ row.get_disposal_method_display }}</td>
+                        <td class="small">{{ row.witness_name|default:"—" }}</td>
+                        <td class="small">{{ row.recorded_by.get_full_name|default:row.recorded_by.username }}</td>
+                        <td class="small" style="max-width:14rem;">{{ row.notes|truncatewords:24 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+        {% if query or loss_type_filter %}
+        <div class="alert alert-warning border shadow-sm">
+            <div class="fw-semibold mb-1">No entries match your filter.</div>
+            <div class="small text-muted">
+                This register only shows <strong>losses that were already recorded</strong>. To create a new entry,
+                go to the stock list and use <strong>Record loss</strong> on the relevant batch.
+            </div>
+            <div class="d-flex flex-wrap gap-2 mt-3">
+                <a href="{% url 'hospital:pharmacy_stock_list' %}{% if query %}?q={{ query|urlencode }}{% endif %}" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Back to stock{% if query %} (search "{{ query }}"){% endif %}
+                </a>
+                <a href="{% url 'hospital:pharmacy_stock_loss_log' %}" class="btn btn-sm btn-outline-primary">
+                    Clear filters
+                </a>
+            </div>
+        </div>
+        {% else %}
+        <p class="text-muted">
+            No entries yet. Use <strong>Record loss</strong> from the pharmacy stock list when you remove units from a batch.
+        </p>
+        {% endif %}
+    {% endif %}
+</div>
+{% endblock %}

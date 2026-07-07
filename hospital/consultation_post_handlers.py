@@ -16,10 +16,140 @@ from django.shortcuts import redirect
 from django.utils import timezone
 
 from .consultation_batch import set_skip_prescription_encounter_note
+from .lab_order_diagnosis import encounter_diagnosis_summary
 from .models import Drug, LabResult, LabTest, Order, Prescription
 from .services.auto_billing_service import AutoBillingService
 
 logger = logging.getLogger(__name__)
+
+
+def consultation_has_diagnosis(encounter):
+    """True when the visit has at least one coded diagnosis (required before lab orders)."""
+    if not encounter:
+        return False
+    try:
+        from hospital.models_advanced import Diagnosis, ProblemList
+    except ImportError:
+        return False
+    if Diagnosis.objects.filter(encounter=encounter, is_deleted=False).exists():
+        return True
+    return ProblemList.objects.filter(
+        patient=encounter.patient,
+        status='active',
+        is_deleted=False,
+    ).exists()
+
+
+def _parse_start_dose_post(request, drug_id, fallback=False):
+    """True when doctor marked this drug as start/stat dose (per-drug or global checkbox)."""
+    key = f'start_dose_{drug_id}'
+    if key in request.POST:
+        return request.POST.get(key) in ('on', 'true', '1', 'yes')
+    if 'start_dose' in request.POST:
+        return request.POST.get('start_dose') in ('on', 'true', '1', 'yes')
+    return bool(fallback)
+
+
+def _notify_pharmacy_prescription_changed(encounter, medication_order, doctor, events):
+    """
+    In-app bell notification for pharmacy when a doctor adds/changes medication.
+
+    Active consultations are marked temporary so pharmacy knows not to serve/dispense
+    until the doctor completes the visit. Completed/continued consultations are marked
+    as updated so pharmacy reviews the final/current drug list.
+    """
+    if not encounter or not medication_order or not events:
+        return
+    try:
+        from django.contrib.auth.models import Group, User
+        from django.db.models import Q
+        from .models import Notification, Staff
+
+        consultation_completed = bool(
+            getattr(encounter, 'status', None) == 'completed'
+            or getattr(encounter, 'ended_at', None)
+        )
+        patient = getattr(encounter, 'patient', None)
+        patient_name = getattr(patient, 'full_name', '') or 'patient'
+        patient_mrn = getattr(patient, 'mrn', '') or ''
+        doctor_name = ''
+        if doctor and getattr(doctor, 'user', None):
+            doctor_name = doctor.user.get_full_name() or doctor.user.username
+        doctor_bit = f' by {doctor_name}' if doctor_name else ''
+
+        added = [name for action, name in events if action == 'added']
+        changed = [name for action, name in events if action == 'changed']
+        parts = []
+        if added:
+            parts.append('added ' + ', '.join(added[:5]))
+        if changed:
+            parts.append('changed ' + ', '.join(changed[:5]))
+        if not parts:
+            return
+        if len(events) > 5:
+            parts.append(f'and {len(events) - 5} more')
+        summary = '; '.join(parts)
+        has_start_dose = any(len(ev) > 2 and ev[2] for ev in events)
+        if consultation_completed:
+            title = 'Prescription Updated'
+            message = (
+                f'Drugs have been updated: prescription {summary} for {patient_name}'
+                f'{f" ({patient_mrn})" if patient_mrn else ""}{doctor_bit}. '
+                'Open pharmacy queue to review the updated drugs and send to cashier/payer.'
+            )
+        elif has_start_dose:
+            title = 'Stat dose — prepare now'
+            message = (
+                f'Stat/start dose {summary} for {patient_name}'
+                f'{f" ({patient_mrn})" if patient_mrn else ""}{doctor_bit}. '
+                'Prepare and dispense the stat dose now. Other medications on this visit '
+                'remain held until the doctor completes the consultation.'
+            )
+        else:
+            title = 'Temporary Prescription Added'
+            message = (
+                f'Temporary prescription {summary} for {patient_name}'
+                f'{f" ({patient_mrn})" if patient_mrn else ""}{doctor_bit}. '
+                'Consultation is not completed yet, so do not serve or dispense until the doctor completes it.'
+            )
+
+        recipient_ids = set(
+            Staff.objects.filter(
+                is_deleted=False,
+                user__isnull=False,
+            ).filter(
+                Q(profession__in=('pharmacist', 'pharmacy_technician'))
+                | Q(department__name__icontains='pharmacy')
+            ).values_list('user_id', flat=True)
+        )
+        group_ids = Group.objects.filter(name__in=['Pharmacy', 'Pharmacist']).values_list('id', flat=True)
+        recipient_ids.update(
+            User.objects.filter(groups__id__in=group_ids, is_active=True).values_list('id', flat=True)
+        )
+
+        recent = timezone.now() - timedelta(minutes=2)
+        for user in User.objects.filter(id__in=recipient_ids, is_active=True):
+            if Notification.objects.filter(
+                recipient=user,
+                notification_type='other',
+                title=title,
+                related_object_id=medication_order.id,
+                related_object_type='MedicationOrder',
+                message=message,
+                created__gte=recent,
+                is_deleted=False,
+            ).exists():
+                continue
+            Notification.objects.create(
+                recipient=user,
+                notification_type='other',
+                title=title,
+                message=message,
+                related_object_id=medication_order.id,
+                related_object_type='MedicationOrder',
+            )
+    except Exception as exc:
+        logger.warning('Pharmacy prescription-change notification failed: %s', exc, exc_info=True)
 
 
 def _notify_lab_batch_pending_payment(patient, test_count: int, total_amount: Decimal) -> None:
@@ -51,6 +181,13 @@ def handle_order_lab_test_post(request, encounter, doctor, encounter_id):
 
     if not test_ids:
         messages.error(request, 'Please select at least one test.')
+        return redirect(lab_redirect)
+
+    if not consultation_has_diagnosis(encounter):
+        messages.error(
+            request,
+            'Add at least one diagnosis before ordering lab tests (use the Diagnosis section on this consultation).',
+        )
         return redirect(lab_redirect)
 
     try:
@@ -92,12 +229,14 @@ def handle_order_lab_test_post(request, encounter, doctor, encounter_id):
         final_count = 0
 
         with transaction.atomic():
+            diagnosis_text = encounter_diagnosis_summary(encounter)
             lab_order = Order.objects.create(
                 encounter=encounter,
                 order_type='lab',
                 status='pending',
                 priority=priority,
                 notes=notes,
+                clinical_indication=diagnosis_text,
                 requested_by=doctor,
             )
             to_bulk = []
@@ -158,7 +297,7 @@ def handle_order_lab_test_post(request, encounter, doctor, encounter_id):
                 except Exception:
                     pass
                 lab_note = (
-                    f"\n[Lab] Tests ordered ({len(tests)}). Total bill: GHS {total_notify_amount:.2f} — "
+                    f"\n[Lab] Tests ordered ({len(tests)}) — "
                     f"{timezone.now().strftime('%Y-%m-%d %H:%M')}"
                 )
                 encounter.notes = (encounter.notes or '') + lab_note
@@ -217,6 +356,7 @@ def handle_prescribe_drug_post(request, encounter, doctor, encounter_id):
     frequency_fallback = (request.POST.get('frequency') or '')[:50]
     duration_fallback = (request.POST.get('duration') or '')[:50]
     instructions_fallback = request.POST.get('instructions', '') or ''
+    start_dose_fallback = _parse_start_dose_post(request, '', fallback=False)
 
     if not drug_ids:
         messages.error(request, 'Please select at least one drug.')
@@ -242,6 +382,8 @@ def handle_prescribe_drug_post(request, encounter, doctor, encounter_id):
 
     created_count = 0
     created_names = []
+    pharmacy_notification_events = []
+    last_medication_order = None
     last_error = None
     set_skip_prescription_encounter_note(True)
     try:
@@ -260,6 +402,9 @@ def handle_prescribe_drug_post(request, encounter, doctor, encounter_id):
             instructions = (
                 request.POST.get('instructions_' + drug_id) or instructions_fallback
             )[:500]
+            is_start_dose = _parse_start_dose_post(
+                request, drug_id, fallback=start_dose_fallback
+            )
             quantity_raw = request.POST.get('quantity_' + drug_id) or quantity_fallback
             try:
                 quantity = int(quantity_raw)
@@ -353,6 +498,7 @@ def handle_prescribe_drug_post(request, encounter, doctor, encounter_id):
                                 'duration': duration[:50],
                                 'instructions': (instructions or '')[:500],
                                 'prescribed_by': doctor,
+                                'is_start_dose': is_start_dose,
                             }
                             prescription = Prescription.objects.create(
                                 **prescription_data
@@ -362,6 +508,7 @@ def handle_prescribe_drug_post(request, encounter, doctor, encounter_id):
                                 prescription.id,
                                 drug.name,
                             )
+                            prescription_event = 'added'
                     except Exception as create_error:
                         logger.error(
                             'Error in Prescription.objects.create(): %s\n%s',
@@ -371,6 +518,7 @@ def handle_prescribe_drug_post(request, encounter, doctor, encounter_id):
                         raise
                 else:
                     prescription = existing_prescription
+                    prescription_event = 'changed'
                     if quantity > prescription.quantity:
                         prescription.quantity = quantity
                     prescription.dose = dose
@@ -378,10 +526,33 @@ def handle_prescribe_drug_post(request, encounter, doctor, encounter_id):
                     prescription.frequency = frequency
                     prescription.duration = duration
                     prescription.instructions = instructions
+                    prescription.is_start_dose = is_start_dose
                     prescription.save()
+
+                if is_start_dose and medication_order.priority != 'stat':
+                    medication_order.priority = 'stat'
+                    medication_order.save(update_fields=['priority', 'modified'])
+
+                # If a doctor adds/edits medication after the consultation was already
+                # completed, the post_save "created" path may not run. Ensure pharmacy
+                # receives the prescription queue row without creating an invoice line.
+                try:
+                    from .services.pharmacy_queue_service import queue_prescription_for_pharmacy
+
+                    queue_prescription_for_pharmacy(prescription, encounter, doctor)
+                except Exception:
+                    logger.warning(
+                        'Could not ensure pharmacy queue row for prescription %s',
+                        getattr(prescription, 'id', '?'),
+                        exc_info=True,
+                    )
 
                 created_count += 1
                 created_names.append(drug.name)
+                pharmacy_notification_events.append(
+                    (prescription_event, drug.name, is_start_dose)
+                )
+                last_medication_order = medication_order
             except ValueError as ve:
                 logger.error(
                     'ValueError creating prescription: %s\n%s',

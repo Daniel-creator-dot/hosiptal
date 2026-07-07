@@ -418,8 +418,9 @@ def get_dashboard_extra_stats(today_date):
     imaging_completed_today = 0
     try:
         from .models_advanced import ImagingStudy
+        from .diagnostics_status import IMAGING_FRONTDESK_PENDING_STATUSES
         imaging_pending = ImagingStudy.objects.filter(
-            status__in=['pending', 'in_progress'],
+            status__in=IMAGING_FRONTDESK_PENDING_STATUSES,
             is_deleted=False
         ).count()
         imaging_completed_today = ImagingStudy.objects.filter(
@@ -470,14 +471,12 @@ def get_dashboard_extra_stats(today_date):
 
 
 def search_patients(query):
-    """Search patients by name, MRN, phone, or email"""
+    """Search patients by name, MRN, phone, national ID, or email"""
+    from .patient_search import patient_filter_q
+
     return Patient.objects.filter(
-        Q(first_name__icontains=query) |
-        Q(last_name__icontains=query) |
-        Q(mrn__icontains=query) |
-        Q(phone_number__icontains=query) |
-        Q(email__icontains=query),
-        is_deleted=False
+        patient_filter_q(query, include_email=True),
+        is_deleted=False,
     )[:50]  # Limit to 50 results
 
 

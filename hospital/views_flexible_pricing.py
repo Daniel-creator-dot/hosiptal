@@ -5,7 +5,9 @@ Manage Cash, Insurance, and Corporate prices
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.db import transaction
 from django.db.models import Q, Count, Avg, Min, Max
+from django.urls import reverse
 from django.utils import timezone
 from django.core.paginator import Paginator
 from django.http import JsonResponse, HttpResponse
@@ -14,6 +16,7 @@ from decimal import Decimal
 from datetime import date, datetime
 import csv
 import json
+from urllib.parse import urlencode
 
 from .models import ServiceCode
 from .models_flexible_pricing import PricingCategory, ServicePrice, PriceHistory, BulkPriceUpdate
@@ -186,54 +189,143 @@ def pricing_category_detail(request, pk):
     return render(request, 'hospital/pricing/category_detail.html', context)
 
 
+def _upsert_service_price_matrix_cell(service, category, amount, user):
+    """Create/update today's ServicePrice row for matrix edits (aligned with bulk CSV upload)."""
+    today = timezone.now().date()
+    existing = ServicePrice.objects.filter(
+        service_code=service,
+        pricing_category=category,
+        effective_from=today,
+        is_deleted=False,
+    ).first()
+    old_price = existing.price if existing else None
+
+    obj, created = ServicePrice.objects.update_or_create(
+        service_code=service,
+        pricing_category=category,
+        effective_from=today,
+        defaults={
+            'price': amount,
+            'is_active': True,
+            'is_deleted': False,
+        },
+    )
+
+    PriceHistory.objects.create(
+        service_price=obj,
+        service_code=service,
+        pricing_category=category,
+        action='created' if created else 'updated',
+        old_price=old_price,
+        new_price=amount,
+        changed_by=user,
+        notes='Price matrix',
+    )
+    return created
+
+
 @login_required
 def service_price_matrix(request):
-    """View price matrix comparing all categories for all services"""
+    """View and edit price matrix comparing categories for services (saved as ServicePrice rows)."""
     query = request.GET.get('q', '')
     service_filter = request.GET.get('service_type', '')
-    
+
+    redirect_url = reverse('hospital:service_price_matrix')
+    query_parts = [(k, v) for k, v in request.GET.items() if v]
+    if query_parts:
+        redirect_url = f'{redirect_url}?{urlencode(query_parts)}'
+
     # Get all active categories
-    categories = PricingCategory.objects.filter(
-        is_active=True,
-        is_deleted=False
-    ).order_by('priority', 'name')
-    
-    # Get services
-    services = ServiceCode.objects.filter(
-        is_active=True,
-        is_deleted=False
+    categories = list(
+        PricingCategory.objects.filter(is_active=True, is_deleted=False).order_by(
+            'priority', 'name'
+        )
     )
-    
+
+    # Get services (same queryset for GET and POST)
+    services = ServiceCode.objects.filter(is_active=True, is_deleted=False)
+
     if query:
         services = services.filter(
-            Q(code__icontains=query) |
-            Q(description__icontains=query)
+            Q(code__icontains=query) | Q(description__icontains=query)
         )
-    
+
     if service_filter:
         services = services.filter(category=service_filter)
-    
-    services = services.order_by('category', 'description')
-    
+
+    services = list(services.order_by('category', 'description')[:100])
+
+    if request.method == 'POST':
+        saved = 0
+        skipped = 0
+        invalid = 0
+
+        svc_by_id = {str(s.pk): s for s in services}
+        cat_by_id = {str(c.pk): c for c in categories}
+        allowed_pairs = {(str(s.pk), str(c.pk)) for s in services for c in categories}
+
+        with transaction.atomic():
+            for key, raw in request.POST.items():
+                if not key.startswith('m|'):
+                    continue
+                parts = key.split('|')
+                if len(parts) != 3:
+                    continue
+                _, sid, cid = parts
+                if (sid, cid) not in allowed_pairs:
+                    invalid += 1
+                    continue
+                raw_str = (raw or '').strip()
+                if raw_str == '':
+                    skipped += 1
+                    continue
+                try:
+                    amount = Decimal(raw_str)
+                except Exception:
+                    invalid += 1
+                    continue
+                if amount < 0:
+                    invalid += 1
+                    continue
+
+                service = svc_by_id[sid]
+                category = cat_by_id[cid]
+
+                _upsert_service_price_matrix_cell(service, category, amount, request.user)
+                saved += 1
+
+        if saved:
+            messages.success(request, f'Saved {saved} price(s).')
+        if skipped:
+            messages.info(request, f'Skipped {skipped} empty cell(s) (unchanged).')
+        if invalid:
+            messages.warning(
+                request,
+                f'Could not save {invalid} cell(s); enter valid amounts (e.g. 150 or 150.00).',
+            )
+        return redirect(redirect_url)
+
     # Build price matrix
     matrix = []
-    for service in services[:100]:  # Limit to 100 for performance
+    for service in services:
         row = {
             'service': service,
-            'prices': {}
+            'prices': {},
         }
-        
+
         for category in categories:
             price = ServicePrice.get_price(service, category)
             row['prices'][category.id] = price
-        
+
         matrix.append(row)
-    
-    # Service categories for filter
-    service_categories = ServiceCode.objects.filter(
-        is_deleted=False
-    ).values_list('category', flat=True).distinct().order_by('category')
-    
+
+    service_categories = (
+        ServiceCode.objects.filter(is_deleted=False)
+        .values_list('category', flat=True)
+        .distinct()
+        .order_by('category')
+    )
+
     context = {
         'title': 'Price Matrix',
         'categories': categories,
@@ -242,7 +334,7 @@ def service_price_matrix(request):
         'query': query,
         'service_filter': service_filter,
     }
-    
+
     return render(request, 'hospital/pricing/price_matrix.html', context)
 
 

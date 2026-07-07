@@ -663,7 +663,7 @@
             {{ patient.full_name|slice:":1"|upper }}
         </div>
         <div class="flex-grow-1">
-            <div class="patient-name">{{ patient.full_name }}</div>
+            <div class="patient-name">{{ patient.full_name }} {% patient_payer_badges patient encounter %}</div>
             <div class="patient-meta">
                 <div class="patient-meta-item">
                     <i class="bi bi-credit-card-2-front"></i>
@@ -691,6 +691,13 @@
                 <span class="vital-chip"><i class="bi bi-activity me-1"></i>Pulse: {{ latest_vitals.pulse|default:"--" }}</span>
                 <span class="vital-chip"><i class="bi bi-thermometer me-1"></i>Temp: {{ latest_vitals.temperature|default:"--" }}°C</span>
                 <span class="vital-chip"><i class="bi bi-lungs me-1"></i>SpO2: {{ latest_vitals.spo2|default:"--" }}%</span>
+                {% if latest_vitals.poc_glucose_strip_type == 'rbs' %}
+                <span class="vital-chip"><i class="bi bi-droplet me-1"></i>RBS: {% if latest_vitals.blood_glucose %}{{ latest_vitals.blood_glucose }} mmol/L{% else %}POC{% endif %}</span>
+                {% elif latest_vitals.poc_glucose_strip_type == 'fbs' %}
+                <span class="vital-chip"><i class="bi bi-droplet me-1"></i>FBS: {% if latest_vitals.blood_glucose %}{{ latest_vitals.blood_glucose }} mmol/L{% else %}POC{% endif %}</span>
+                {% elif latest_vitals.blood_glucose %}
+                <span class="vital-chip"><i class="bi bi-droplet me-1"></i>Glu: {{ latest_vitals.blood_glucose }} mmol/L</span>
+                {% endif %}
             </div>
             {% endif %}
         </div>
@@ -834,6 +841,8 @@
                                     <option value="Every 12 hours">Every 12 hours</option>
                                     <option value="As needed (PRN)">As needed (PRN)</option>
                                     <option value="At bedtime (HS)">At bedtime (HS)</option>
+                                    <option value="At night (nocta / nocte)">At night (nocta / nocte)</option>
+                                    <option value="Starter pack (as directed)">Starter pack (as directed)</option>
                                 </select>
                             </div>
                             
@@ -972,13 +981,14 @@
                 
                 {% if recent_lab_results %}
                     {% for result in recent_lab_results|slice:":10" %}
+                    {% with s=result|lab_list_summary %}
                     <div class="lab-result-card {% if result.is_abnormal %}abnormal{% endif %}">
                         <div class="d-flex justify-content-between align-items-start">
                             <div>
                                 <div style="font-weight: 700; color: #1F2937;">{{ result.test.name }}</div>
                                 <div class="result-value-large">
-                                    {{ result.value|default:result.qualitative_result|default:"Pending" }}
-                                    <span style="font-size: 14px; font-weight: normal;">{{ result.units|default:"" }}</span>
+                                    {% if s.is_pending and result.status != 'completed' %}Pending{% else %}{{ s.result_text }}{% endif %}
+                                    <span style="font-size: 14px; font-weight: normal;">{% if s.unit_text != '—' %}{{ s.unit_text }}{% endif %}</span>
                                 </div>
                                 <div class="mt-2 text-muted" style="font-size: 12px;">
                                     {{ result.verified_at|naturaltime|default:"Pending verification" }}
@@ -1002,6 +1012,7 @@
                             </a>
                         </div>
                     </div>
+                    {% endwith %}
                     {% endfor %}
                 {% else %}
                     <div class="text-center py-5">
@@ -1154,6 +1165,21 @@
                             <div class="vital-value">{{ latest_vitals.spo2|default:"--" }}</div>
                             <div class="vital-label">SpO2 (%)</div>
                         </div>
+                        {% if latest_vitals.poc_glucose_strip_type == 'rbs' or latest_vitals.poc_glucose_strip_type == 'fbs' or latest_vitals.blood_glucose %}
+                        <div class="vital-box">
+                            <div class="vital-icon"><i class="bi bi-droplet"></i></div>
+                            <div class="vital-value">
+                                {% if latest_vitals.poc_glucose_strip_type == 'rbs' %}
+                                    {% if latest_vitals.blood_glucose %}RBS {{ latest_vitals.blood_glucose }}{% else %}RBS{% endif %}
+                                {% elif latest_vitals.poc_glucose_strip_type == 'fbs' %}
+                                    {% if latest_vitals.blood_glucose %}FBS {{ latest_vitals.blood_glucose }}{% else %}FBS{% endif %}
+                                {% else %}
+                                    {{ latest_vitals.blood_glucose|default:"--" }}
+                                {% endif %}
+                            </div>
+                            <div class="vital-label">{% if latest_vitals.poc_glucose_strip_type == 'rbs' %}RBS (mmol/L){% elif latest_vitals.poc_glucose_strip_type == 'fbs' %}FBS (mmol/L){% else %}Glucose{% endif %}</div>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
             </div>

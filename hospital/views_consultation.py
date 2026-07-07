@@ -60,7 +60,11 @@ from .consultation_post_handlers import (
     handle_order_lab_test_post,
     handle_prescribe_drug_post,
 )
-from .utils_clinical_notes import dedupe_clinical_notes_timeline
+from .utils_clinical_notes import (
+    dedupe_clinical_notes_timeline,
+    strip_billing_amounts_from_clinical_display,
+)
+from .consultation_status import encounter_has_diagnosis
 
 
 def _encounter_types_outpatient_like():
@@ -156,17 +160,18 @@ def _build_consultation_pricing_maps(encounter, available_drugs, available_lab_t
     """
     Build drug/lab/imaging pricing maps for the consultation UI.
     Drug prices always use get_drug_price_for_prescription (same as prescribe sales, dispensing, and billing).
+    Payer is resolved via get_patient_payer_info(encounter) so invoice / corporate / insurance match pharmacy billing.
     Lab/imaging still use the pricing engine when the patient has insurance or corporate cover.
     """
     from .models import ServiceCode
     drug_pricing_map = {}
     lab_test_pricing_map = {}
     imaging_pricing_map = {}
-    patient_payer = getattr(encounter.patient, 'primary_insurance', None)
-    has_insurance = patient_payer and getattr(patient_payer, 'payer_type', None) in ('insurance', 'private', 'nhis')
-    has_corporate = patient_payer and getattr(patient_payer, 'payer_type', None) == 'corporate'
+    from .utils_billing import get_drug_price_for_prescription, get_patient_payer_info
+    payer_info = get_patient_payer_info(encounter.patient, encounter) if encounter else {}
+    patient_payer = payer_info.get('payer')
+    use_payer_pricing_engine = payer_info.get('is_insurance_or_corporate', False)
 
-    from .utils_billing import get_drug_price_for_prescription
     for drug in available_drugs:
         try:
             drug_pricing_map[drug.id] = float(
@@ -175,7 +180,7 @@ def _build_consultation_pricing_maps(encounter, available_drugs, available_lab_t
         except Exception as e:
             logger.warning(f"Error getting drug price for consultation map {drug.id}: {e}")
 
-    if not (has_insurance or has_corporate):
+    if not use_payer_pricing_engine:
         return drug_pricing_map, lab_test_pricing_map, imaging_pricing_map
     try:
         from .services.pricing_engine_service import pricing_engine
@@ -265,6 +270,143 @@ def _void_lab_invoice_lines_for_lab_result(lab_result):
         pass
 
 
+def _void_imaging_invoice_lines_for_study(imaging_study):
+    """
+    When a doctor removes an imaging study from a consultation, void matching
+    invoice line(s) so cashier totals update. Uses the same IMG-* service_code
+    pattern as AutoBillingService.create_imaging_bill.
+    Also soft-deletes ImagingRelease so pending-payment queues drop it.
+    """
+    if not imaging_study:
+        return
+    order = getattr(imaging_study, 'order', None)
+    encounter = order.encounter if order and getattr(order, 'encounter_id', None) else None
+    if not encounter:
+        return
+    from hospital.services.auto_billing_service import AutoBillingService
+
+    img_code = AutoBillingService.get_imaging_service_code_string(imaging_study)
+    invoices = list(Invoice.all_objects.filter(encounter=encounter, is_deleted=False))
+    primary_voided = 0
+    for invoice in invoices:
+        updated = InvoiceLine.objects.filter(
+            invoice=invoice,
+            service_code__code=img_code,
+            is_deleted=False,
+        ).update(is_deleted=True)
+        primary_voided += updated
+        if updated:
+            invoice.update_totals()
+
+    desc = (getattr(imaging_study, 'study_type', None) or '').strip()
+    if primary_voided == 0 and desc:
+        for invoice in invoices:
+            updated = InvoiceLine.objects.filter(
+                invoice=invoice,
+                is_deleted=False,
+                service_code__code__startswith='IMG-',
+                description__iexact=desc,
+            ).update(is_deleted=True)
+            if updated:
+                invoice.update_totals()
+
+    try:
+        from hospital.models_payment_verification import ImagingRelease
+        ImagingRelease.objects.filter(
+            imaging_study=imaging_study, is_deleted=False
+        ).update(is_deleted=True)
+    except Exception:
+        pass
+
+
+def _build_imaging_study_display_map(imaging_study_qs):
+    """
+    Map ImagingStudy.id -> {'name', 'code'} using ImagingCatalog when study_type
+    matches catalog code or name; otherwise fall back to modality/body_part.
+    """
+    from functools import reduce
+    from operator import or_
+
+    studies = [s for s in imaging_study_qs if not getattr(s, 'is_deleted', False)]
+    keys = {(s.study_type or '').strip() for s in studies if (s.study_type or '').strip()}
+    catalogs = []
+    if keys:
+        q = reduce(
+            or_,
+            (
+                Q(code__iexact=k) | Q(name__iexact=k) | Q(study_type__iexact=k)
+                for k in keys
+            ),
+        )
+        catalogs = list(ImagingCatalog.objects.filter(is_deleted=False).filter(q))
+
+    def catalog_for_study_type(stv):
+        stv = (stv or '').strip()
+        if not stv:
+            return None
+        low = stv.lower()
+        for c in catalogs:
+            if low == (c.code or '').lower() or low == (c.name or '').lower():
+                return c
+            stc = (getattr(c, 'study_type', None) or '').strip().lower()
+            if stc and low == stc:
+                return c
+        return None
+
+    out = {}
+    for s in studies:
+        cat = catalog_for_study_type(s.study_type)
+        if cat:
+            out[str(s.id)] = {'name': cat.name, 'code': cat.code}
+        else:
+            modality_label = s.get_modality_display() if hasattr(s, 'get_modality_display') else (s.modality or '')
+            raw = (s.study_type or '').strip()
+            name = ' · '.join(
+                p for p in (modality_label, (s.body_part or '').strip()) if p
+            ) or raw or 'Imaging study'
+            out[str(s.id)] = {'name': name, 'code': raw}
+    return out
+
+
+def _build_imaging_order_cards(imaging_orders_list, imaging_study_display_map):
+    """One card per imaging Order with a visible title (names + codes) for the consultation UI."""
+    from types import SimpleNamespace
+
+    cards = []
+    for o in imaging_orders_list:
+        studies = list(o.imaging_studies.all())
+        title_parts = []
+        for s in studies:
+            disp = imaging_study_display_map.get(str(s.id)) or {}
+            name = (disp.get('name') or '').strip()
+            code = (disp.get('code') or '').strip()
+            if name and code and code.lower() not in name.lower():
+                title_parts.append(f'{name} ({code})')
+            elif name:
+                title_parts.append(name)
+            elif code:
+                title_parts.append(code)
+            else:
+                st = (s.study_type or '').strip()
+                if st:
+                    title_parts.append(st)
+                else:
+                    title_parts.append(
+                        s.get_modality_display()
+                        if hasattr(s, 'get_modality_display')
+                        else (s.modality or 'Study')
+                    )
+        notes_preview = (o.notes or '').strip()
+        if title_parts:
+            title = ' · '.join(title_parts)
+        elif notes_preview:
+            title = (notes_preview[:120] + '…') if len(notes_preview) > 120 else notes_preview
+        else:
+            title = 'Imaging order'
+        cards.append(SimpleNamespace(order=o, studies=studies, title=title))
+    return cards
+
+
 @login_required
 @role_required('doctor', 'pharmacist', 'nurse', 'admin', message='Access denied. Only doctors, pharmacists, and nurses can access consultation.')
 def consultation_view(request, encounter_id):
@@ -301,6 +443,7 @@ def consultation_view(request, encounter_id):
     imaging_by_modality = {}
     existing_orders = []
     existing_prescriptions = None
+    past_prescriptions = []
     latest_vitals = None
     vitals_intake_encounter_mismatch = False
     recent_lab_results = []
@@ -354,7 +497,13 @@ def consultation_view(request, encounter_id):
     # by checking if consultation charge already exists
     if not consultation_read_only:
         try:
-            from .utils_billing import add_consultation_charge, CONSULTATION_LINE_SERVICE_CODES
+            from .utils_billing import (
+                add_consultation_charge,
+                CONSULTATION_LINE_SERVICE_CODES,
+                is_review_visit,
+                is_gp_general_medicine_department,
+                normalize_consultation_type_for_gp_department,
+            )
             from .models import Invoice, InvoiceLine
 
             # Use all_objects + invoice_id so lines on draft/zero-total invoices are visible (VisibleManager hides those invoices).
@@ -372,29 +521,36 @@ def consultation_view(request, encounter_id):
             )
 
             if not consultation_charge_exists:
-                # 🎯 IMMEDIATE CONSULTATION CHARGE - This is when consultation starts
-                consultation_type = 'general'  # Default to general
-                if encounter.encounter_type in ['er', 'emergency']:
-                    consultation_type = 'specialist'
-                elif doctor.department and 'specialist' in doctor.department.name.lower():
-                    consultation_type = 'specialist'
+                if is_review_visit(encounter):
+                    pass  # Review / follow-up: no consultation fee
+                else:
+                    # 🎯 IMMEDIATE CONSULTATION CHARGE - This is when consultation starts
+                    consultation_type = 'general'  # Default to general
+                    if encounter.encounter_type in ['er', 'emergency']:
+                        consultation_type = 'specialist'
+                    elif doctor.department and 'specialist' in doctor.department.name.lower():
+                        if not is_gp_general_medicine_department(doctor.department):
+                            consultation_type = 'specialist'
+                    consultation_type = normalize_consultation_type_for_gp_department(
+                        encounter, consultation_type, doctor
+                    )
 
-                try:
-                    invoice = add_consultation_charge(
-                        encounter,
-                        consultation_type=consultation_type,
-                        doctor_staff=doctor,
-                    )
-                    if invoice:
-                        _logger.info(
-                            f"💰 Consultation charge added for encounter {encounter_id} "
-                            f"(Patient: {encounter.patient.full_name}, Type: {consultation_type})"
+                    try:
+                        invoice = add_consultation_charge(
+                            encounter,
+                            consultation_type=consultation_type,
+                            doctor_staff=doctor,
                         )
-                except Exception as charge_error:
-                    _logger.error(
-                        f"Failed to add consultation charge for encounter {encounter_id}: {charge_error}",
-                        exc_info=True
-                    )
+                        if invoice:
+                            _logger.info(
+                                f"💰 Consultation charge added for encounter {encounter_id} "
+                                f"(Patient: {encounter.patient.full_name}, Type: {consultation_type})"
+                            )
+                    except Exception as charge_error:
+                        _logger.error(
+                            f"Failed to add consultation charge for encounter {encounter_id}: {charge_error}",
+                            exc_info=True
+                        )
         except Exception as e:
             # Don't block consultation if charge addition fails
             _logger.warning(f"Error checking/adding consultation charge: {e}")
@@ -463,9 +619,9 @@ def consultation_view(request, encounter_id):
         cached_lab_tests = get_cached_lab_tests()
         # Convert queryset to list to avoid N+1 queries
         if hasattr(cached_lab_tests, '__iter__') and not isinstance(cached_lab_tests, (list, tuple)):
-            available_lab_tests = list(cached_lab_tests[:500])  # Limit to prevent memory issues
+            available_lab_tests = list(cached_lab_tests[:3000])  # Large catalogs: was 500 and hid tests late in A–Z order
         else:
-            available_lab_tests = cached_lab_tests if isinstance(cached_lab_tests, (list, tuple)) else list(cached_lab_tests)[:500]
+            available_lab_tests = cached_lab_tests if isinstance(cached_lab_tests, (list, tuple)) else list(cached_lab_tests)[:3000]
     except Exception as e:
         _logger.error(f"Error loading lab tests: {e}", exc_info=True)
         available_lab_tests = []
@@ -541,7 +697,10 @@ def consultation_view(request, encounter_id):
         'requested_by', 'requested_by__user',
         'encounter', 'encounter__patient'
     ).prefetch_related(
-        'imaging_studies',
+        Prefetch(
+            'imaging_studies',
+            queryset=ImagingStudy.objects.filter(is_deleted=False),
+        ),
         Prefetch('lab_results', queryset=LabResult.objects.select_related('test').filter(is_deleted=False)),
         'prescriptions'
     ).only(
@@ -553,6 +712,20 @@ def consultation_view(request, encounter_id):
     # Keep all non-deleted orders for this encounter.
     # Order IDs are already unique; collapsing by encounter/type hides valid multiple orders.
     existing_orders = list(all_existing_orders)
+
+    imaging_study_display_map = {}
+    try:
+        imaging_flat = []
+        for _o in existing_orders:
+            if getattr(_o, 'order_type', None) != 'imaging':
+                continue
+            imaging_flat.extend(_o.imaging_studies.all())
+        imaging_study_display_map = _build_imaging_study_display_map(imaging_flat)
+    except Exception as e:
+        _logger.warning('imaging_study_display_map: %s', e)
+
+    imaging_orders_list = [o for o in existing_orders if getattr(o, 'order_type', None) == 'imaging']
+    imaging_order_cards = _build_imaging_order_cards(imaging_orders_list, imaging_study_display_map)
 
     # Full patient lab timeline (this visit + previous visits), used in consultation continuity UI.
     patient_lab_orders = list(
@@ -584,6 +757,7 @@ def consultation_view(request, encounter_id):
     ).only(
         'id', 'quantity', 'dose', 'frequency', 'duration', 'instructions', 'created',
         'drug__id', 'drug__name', 'drug__strength', 'drug__form', 'drug__unit_price',
+        'drug__exclude_from_insurance', 'drug__insurance_exclusion_reason',
         'prescribed_by__id', 'prescribed_by__user__first_name', 'prescribed_by__user__last_name',
         'order__id', 'order__status', 'order__encounter_id'  # Include encounter_id but don't traverse
     ).order_by('-created')
@@ -653,6 +827,52 @@ def consultation_view(request, encounter_id):
             _logger.info(f'  - Prescription {rx.id}: {drug_info} (Qty: {total_qty}, Stock: {inventory_qty}) ({order_info})')
     else:
         _logger.debug(f'No prescriptions found for encounter {encounter_id}')
+
+    # Past visits: individual prescription lines (not merged by drug) for medication chart
+    _PAST_RX_LIMIT = 100
+    try:
+        past_prescriptions = list(
+            hospital_models.Prescription.objects.filter(
+                order__encounter__patient_id__in=patient_scope_ids,
+                order__is_deleted=False,
+                is_deleted=False,
+            )
+            .exclude(order__encounter_id=encounter.id)
+            .select_related(
+                'drug',
+                'prescribed_by',
+                'prescribed_by__user',
+                'order',
+                'order__encounter',
+            )
+            .only(
+                'id',
+                'quantity',
+                'dose',
+                'frequency',
+                'duration',
+                'route',
+                'instructions',
+                'created',
+                'drug__id',
+                'drug__name',
+                'drug__strength',
+                'drug__form',
+                'prescribed_by__id',
+                'prescribed_by__user__first_name',
+                'prescribed_by__user__last_name',
+                'prescribed_by__user__username',
+                'order__id',
+                'order__encounter_id',
+                'order__encounter__id',
+                'order__encounter__started_at',
+                'order__encounter__encounter_type',
+            )
+            .order_by('-created')[:_PAST_RX_LIMIT]
+        )
+    except Exception as e:
+        _logger.warning('Error loading past prescriptions for consultation: %s', e, exc_info=True)
+        past_prescriptions = []
     
     # Handle form submissions (skip when viewing expired consultation read-only)
     if request.method == 'POST' and not consultation_read_only:
@@ -939,15 +1159,11 @@ def consultation_view(request, encounter_id):
                     from datetime import datetime
                     from decimal import Decimal
                     
+                    from .procedure_catalog_visibility import billable_procedure_catalog_base_q
+
                     procedure_catalog_items = ProcedureCatalog.objects.filter(
+                        billable_procedure_catalog_base_q(),
                         pk__in=procedure_catalog_ids,
-                        is_active=True,
-                        is_deleted=False,
-                        name__isnull=False
-                    ).exclude(
-                        name__iexact=''
-                    ).exclude(
-                        name__icontains='INVALID'
                     )
                     
                     if procedure_catalog_items.exists():
@@ -1068,6 +1284,15 @@ def consultation_view(request, encounter_id):
                 return redirect('hospital:consultation_view', encounter_id=encounter_id)
             
             is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+            encounter.refresh_from_db(fields=['prefilled_context_last_edited_date'])
+            if getattr(encounter, 'prefilled_context_last_edited_date', None) == _timezone.localdate():
+                msg = (
+                    'Diagnosis cannot be changed until tomorrow after prefilled context was saved today.'
+                )
+                messages.warning(request, msg)
+                if is_ajax:
+                    return JsonResponse({'success': False, 'message': msg}, status=403)
+                return redirect('hospital:consultation_view', encounter_id=encounter_id)
             
             # Save diagnosis to problem list and Diagnosis model
             # Note: ProblemList and Diagnosis already imported at module level
@@ -1143,9 +1368,11 @@ def consultation_view(request, encounter_id):
                     
                     messages.success(request, f'Diagnosis "{diagnosis_display}" added successfully.')
                     if is_ajax:
+                        encounter.refresh_from_db(fields=['diagnosis'])
                         return JsonResponse({
                             'success': True,
                             'message': f'Diagnosis "{diagnosis_display}" added.',
+                            'encounter_diagnosis': encounter.diagnosis or '',
                             'problem': {
                                 'id': pl.id,
                                 'description': pl.problem or diagnosis_display,
@@ -1168,15 +1395,13 @@ def consultation_view(request, encounter_id):
             is_auto_save = request.POST.get('auto_save') == 'true' or \
                           request.META.get('HTTP_X_AUTO_SAVE') == 'true'
             
-            # Allow saving note without diagnosis so doctor notes always persist (diagnosis can be added later)
-            if not is_auto_save and Diagnosis is not None:
-                has_diagnosis = Diagnosis.objects.filter(encounter=encounter, is_deleted=False).exists()
-                if not has_diagnosis:
-                    messages.info(
-                        request,
-                        'Note saved. Add a diagnosis below when possible for the medical record.'
-                    )
-            
+            if not is_auto_save and not encounter_has_diagnosis(encounter):
+                messages.error(
+                    request,
+                    'Add at least one diagnosis before saving notes.',
+                )
+                return redirect(reverse('hospital:consultation_view', kwargs={'encounter_id': encounter_id}))
+
             # Note: ClinicalNote already imported at module level
             if ClinicalNote is None:
                 messages.error(request, 'ClinicalNote model not available.')
@@ -1285,20 +1510,27 @@ def consultation_view(request, encounter_id):
                 messages.error(request, 'ClinicalNote model not available.')
                 return redirect('hospital:consultation_view', encounter_id=encounter_id)
             try:
-                note = ClinicalNote.objects.get(
+                note = ClinicalNote.objects.select_related('encounter').get(
                     pk=note_id,
-                    encounter=encounter,
+                    encounter__patient_id__in=patient_scope_ids,
                     is_deleted=False
                 )
+                is_prior_visit = note.encounter_id != encounter.id
+                if is_prior_visit and getattr(doctor, 'profession', None) != 'doctor' and not request.user.is_superuser:
+                    messages.error(request, 'Only doctors can edit notes from a prior visit.')
+                    return redirect('hospital:consultation_view', encounter_id=encounter_id)
                 note.subjective = request.POST.get('subjective', '')
                 note.objective = request.POST.get('objective', '')
                 note.assessment = request.POST.get('assessment', '')
                 note.plan = request.POST.get('plan', '')
                 note.notes = request.POST.get('note_content', '') or note.notes
                 note.save(update_fields=['subjective', 'objective', 'assessment', 'plan', 'notes', 'modified'])
-                messages.success(request, 'Progress note updated successfully.')
+                messages.success(
+                    request,
+                    'Clinical note updated successfully.' if is_prior_visit else 'Progress note updated successfully.'
+                )
             except ClinicalNote.DoesNotExist:
-                messages.error(request, 'Note not found or does not belong to this consultation.')
+                messages.error(request, 'Note not found or is not part of this patient record.')
             return redirect('hospital:consultation_view', encounter_id=encounter_id)
         
         elif action == 'update_consultation_note':
@@ -1330,6 +1562,83 @@ def consultation_view(request, encounter_id):
                 messages.error(request, f'Error updating note: {str(e)}')
                 return redirect('hospital:consultation_view', encounter_id=encounter_id)
         
+        elif action == 'save_prefilled_context':
+            # Doctor edits "Prefilled from triage / previous notes" + encounter diagnosis; locked until next local day after save.
+            if getattr(doctor, 'profession', None) != 'doctor' and not request.user.is_superuser:
+                messages.error(request, 'Only doctors can edit the prefilled clinical context.')
+                return redirect('hospital:consultation_view', encounter_id=encounter_id)
+            if ClinicalNote is None:
+                messages.error(request, 'ClinicalNote model not available.')
+                return redirect('hospital:consultation_view', encounter_id=encounter_id)
+            today = _timezone.localdate()
+            encounter.refresh_from_db(fields=['prefilled_context_last_edited_date', 'notes', 'diagnosis'])
+            if encounter.prefilled_context_last_edited_date == today:
+                messages.warning(
+                    request,
+                    'Prefilled context was already updated today. You can edit it again tomorrow.',
+                )
+                return redirect('hospital:consultation_view', encounter_id=encounter_id)
+            body = (request.POST.get('prefilled_clinical_text') or '').strip()
+            diagnosis_text = request.POST.get('prefilled_diagnosis_text')
+            if diagnosis_text is None:
+                diagnosis_text = ''
+            else:
+                diagnosis_text = diagnosis_text.strip()
+            if not body:
+                messages.error(request, 'Please enter clinical text before saving.')
+                return redirect('hospital:consultation_view', encounter_id=encounter_id)
+            clinical_notes_ordered = list(
+                ClinicalNote.objects.filter(encounter=encounter, is_deleted=False).order_by('-created')
+            )
+            latest_consultation_note = next(
+                (n for n in clinical_notes_ordered if getattr(n, 'note_type', None) == 'consultation'),
+                None,
+            )
+            latest_note = latest_consultation_note or (clinical_notes_ordered[0] if clinical_notes_ordered else None)
+            clinical_note_combined = ''
+            if latest_note:
+                if (getattr(latest_note, 'notes', None) or '').strip():
+                    clinical_note_combined = (latest_note.notes or '').strip()
+                else:
+                    parts = [
+                        (latest_note.subjective or '').strip(),
+                        (latest_note.notes or '').strip(),
+                        (latest_note.objective or '').strip(),
+                        (latest_note.assessment or '').strip(),
+                        (latest_note.plan or '').strip(),
+                    ]
+                    clinical_note_combined = '\n\n'.join(p for p in parts if p)
+            use_encounter_notes = bool(not clinical_note_combined and (encounter.notes or '').strip())
+            if not use_encounter_notes and not latest_note:
+                messages.error(request, 'No prefilled clinical context is available to update for this visit.')
+                return redirect('hospital:consultation_view', encounter_id=encounter_id)
+            try:
+                if use_encounter_notes:
+                    encounter.notes = body
+                    encounter.diagnosis = diagnosis_text
+                    encounter.prefilled_context_last_edited_date = today
+                    encounter.save(update_fields=['notes', 'diagnosis', 'prefilled_context_last_edited_date'])
+                else:
+                    latest_note.notes = body
+                    latest_note.subjective = ''
+                    latest_note.objective = ''
+                    latest_note.assessment = ''
+                    latest_note.plan = ''
+                    latest_note.save(
+                        update_fields=['notes', 'subjective', 'objective', 'assessment', 'plan', 'modified']
+                    )
+                    encounter.diagnosis = diagnosis_text
+                    encounter.prefilled_context_last_edited_date = today
+                    encounter.save(update_fields=['diagnosis', 'prefilled_context_last_edited_date'])
+                messages.success(
+                    request,
+                    'Prefilled context and diagnosis saved. Further edits to this block are locked until tomorrow.',
+                )
+            except Exception as e:
+                _logger.exception('save_prefilled_context: %s', e)
+                messages.error(request, f'Error saving prefilled context: {str(e)}')
+            return redirect('hospital:consultation_view', encounter_id=encounter_id)
+        
         elif action == 'update_encounter' or action == 'save_progress':
             # Check if this is an auto-save request
             is_auto_save = request.POST.get('auto_save') == 'true' or \
@@ -1357,6 +1666,21 @@ def consultation_view(request, encounter_id):
             # If still empty, use a default value to prevent database constraint error
             if not chief_complaint:
                 chief_complaint = 'Consultation in progress'  # Default value to prevent database error
+
+            saving_clinical_content = bool(
+                clinical_note or any([subjective, objective, assessment, plan])
+            )
+            if (
+                not is_auto_save
+                and saving_clinical_content
+                and not encounter_has_diagnosis(encounter)
+                and not diagnosis
+            ):
+                messages.error(
+                    request,
+                    'Add at least one diagnosis before saving notes.',
+                )
+                return redirect('hospital:consultation_view', encounter_id=encounter_id)
             
             # Wrap all database operations in a transaction for atomicity
             try:
@@ -1486,13 +1810,25 @@ def consultation_view(request, encounter_id):
                 if not chief_complaint:
                     messages.error(request, '❌ Chief Complaint is required to complete consultation. Please enter the chief complaint.')
                     return redirect('hospital:consultation_view', encounter_id=encounter_id)
+
+                if not encounter_has_diagnosis(encounter) and not diagnosis:
+                    messages.error(
+                        request,
+                        'Add at least one diagnosis before completing the consultation.',
+                    )
+                    return redirect('hospital:consultation_view', encounter_id=encounter_id)
                 
                 # Wrap all database operations in a transaction for atomicity
                 try:
                     with transaction.atomic():
-                        # Update encounter fields - always set from modal so diagnosis/notes are saved
+                        # Update encounter fields from modal
                         encounter.chief_complaint = chief_complaint
-                        encounter.diagnosis = diagnosis or ''
+                        # Do not clear diagnosis when the modal field is empty: ICD-10 rows are saved
+                        # via AJAX (save_diagnosis) and update encounter.diagnosis on the server, but
+                        # the completion modal often still has an empty/stale diagnosis input — wiping
+                        # here removed all diagnoses from the record.
+                        if diagnosis:
+                            encounter.diagnosis = diagnosis
                         encounter.notes = notes or ''
                         
                         # CRITICAL: Save diagnosis to Diagnosis model if provided
@@ -1556,6 +1892,28 @@ def consultation_view(request, encounter_id):
                         encounter.save(update_fields=[
                             'chief_complaint', 'diagnosis', 'notes', 'status', 'ended_at', 'modified'
                         ])
+
+                        # OPD prescription gate: now that the doctor has completed the consultation,
+                        # release every prescription on this encounter to the pharmacy queue.
+                        # Prescriptions written during the visit were intentionally withheld
+                        # (no PharmacyDispensing row) until this moment so pharmacy never sees
+                        # in-progress drafts. IPD prescriptions are unaffected (already released).
+                        try:
+                            from .services.auto_billing_service import AutoBillingService
+                            release_result = AutoBillingService.release_encounter_prescriptions_to_pharmacy(encounter)
+                            if release_result.get('released'):
+                                _logger.info(
+                                    'Released %s prescription(s) to pharmacy for encounter %s on consultation completion',
+                                    release_result['released'],
+                                    encounter.id,
+                                )
+                        except Exception as release_exc:
+                            _logger.warning(
+                                'Could not release prescriptions to pharmacy on consultation completion (encounter %s): %s',
+                                getattr(encounter, 'id', '?'),
+                                release_exc,
+                                exc_info=True,
+                            )
 
                         # Remove patient from queue immediately when consultation completes
                         # (mark queue entries as completed so ticket/name disappears from active queue views).
@@ -1844,6 +2202,15 @@ def consultation_view(request, encounter_id):
         elif action == 'delete_diagnosis':
             # Delete diagnosis from problem list
             is_ajax_delete = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+            encounter.refresh_from_db(fields=['prefilled_context_last_edited_date'])
+            if getattr(encounter, 'prefilled_context_last_edited_date', None) == _timezone.localdate():
+                msg = (
+                    'Diagnosis cannot be changed until tomorrow after prefilled context was saved today.'
+                )
+                messages.warning(request, msg)
+                if is_ajax_delete:
+                    return JsonResponse({'success': False, 'message': msg}, status=403)
+                return redirect('hospital:consultation_view', encounter_id=encounter_id)
             # Note: ProblemList already imported at module level
             if ProblemList is None:
                 msg = 'ProblemList model not available.'
@@ -1988,6 +2355,42 @@ def consultation_view(request, encounter_id):
             else:
                 messages.error(request, 'Lab result ID is required.')
 
+        elif action == 'delete_imaging_study':
+            study_id = request.POST.get('imaging_study_id')
+            if doctor.profession != 'doctor' and not request.user.is_superuser:
+                messages.error(request, 'Only doctors can remove imaging studies from the consultation.')
+            elif study_id:
+                try:
+                    study = ImagingStudy.objects.get(
+                        pk=study_id,
+                        order__encounter=encounter,
+                        order__order_type='imaging',
+                        is_deleted=False,
+                    )
+                    if study.is_paid:
+                        messages.error(
+                            request,
+                            'Cannot remove this study: payment has already been recorded. Ask cashier/finance to adjust the invoice if needed.',
+                        )
+                    else:
+                        from hospital.services.auto_billing_service import AutoBillingService
+                        cat = AutoBillingService._find_imaging_catalog_for_study(study)
+                        label = (cat.name if cat else None) or (study.study_type or 'Imaging study')
+                        _void_imaging_invoice_lines_for_study(study)
+                        study.is_deleted = True
+                        study.save(update_fields=['is_deleted'])
+                        order = study.order
+                        if not order.imaging_studies.filter(is_deleted=False).exists():
+                            order.is_deleted = True
+                            order.save(update_fields=['is_deleted'])
+                        messages.success(request, f'Imaging study "{label}" removed from the order.')
+                except ImagingStudy.DoesNotExist:
+                    messages.error(request, 'Imaging study not found.')
+                except Exception as e:
+                    messages.error(request, f'Error removing imaging study: {str(e)}')
+            else:
+                messages.error(request, 'Imaging study ID is required.')
+
         elif action == 'delete_order':
             # Delete order (lab, imaging, procedure, etc.)
             order_id = request.POST.get('order_id')
@@ -2003,6 +2406,17 @@ def consultation_view(request, encounter_id):
                     if getattr(order, 'order_type', None) == 'lab':
                         for lab_result in order.lab_results.filter(is_deleted=False).select_related('test'):
                             _void_lab_invoice_lines_for_lab_result(lab_result)
+                    elif getattr(order, 'order_type', None) == 'imaging':
+                        if order.imaging_studies.filter(is_deleted=False, is_paid=True).exists():
+                            messages.error(
+                                request,
+                                'Cannot delete this imaging order: one or more studies already have payment recorded.',
+                            )
+                            return redirect('hospital:consultation_view', encounter_id=encounter_id)
+                        for imaging_study in order.imaging_studies.filter(is_deleted=False):
+                            _void_imaging_invoice_lines_for_study(imaging_study)
+                            imaging_study.is_deleted = True
+                            imaging_study.save(update_fields=['is_deleted'])
                     order_type = order.get_order_type_display()
                     order.is_deleted = True
                     order.save(update_fields=['is_deleted'])
@@ -2274,6 +2688,7 @@ def consultation_view(request, encounter_id):
                 })
             patient_clinical_notes_for_json = [
                 {
+                    'id': str(n.id),
                     'type': n.get_note_type_display() if hasattr(n, 'get_note_type_display') else getattr(n, 'note_type', ''),
                     'created': n.created.isoformat() if getattr(n, 'created', None) else '',
                     'created_by': (n.created_by.user.get_full_name() or n.created_by.user.username) if getattr(n, 'created_by', None) and getattr(n.created_by, 'user', None) else '',
@@ -2303,6 +2718,8 @@ def consultation_view(request, encounter_id):
     recent_lab_results = []
     # Get all previous + current lab results for this patient (all visits) – for Labs & Imaging quick-view
     patient_lab_results = []
+    lab_results_with_attachments = []
+    lab_results_with_attachments_pending = []
     try:
         from django.db.models import Q
         recent_lab_results = LabResult.objects.filter(
@@ -2315,9 +2732,9 @@ def consultation_view(request, encounter_id):
         ).exclude(
             Q(test__name__iexact='') | Q(test__name__icontains='INVALID')
         ).select_related('test', 'verified_by', 'verified_by__user').only(
-            'id', 'test__id', 'test__name', 'test__code', 'value', 'qualitative_result', 
-            'units', 'is_abnormal', 'verified_at', 'verified_by__id',
-            'verified_by__user__first_name', 'verified_by__user__last_name'
+            'id', 'test__id', 'test__name', 'test__code', 'value', 'qualitative_result',
+            'units', 'details', 'status', 'is_abnormal', 'verified_at', 'verified_by__id',
+            'verified_by__user__first_name', 'verified_by__user__last_name', 'attachment',
         ).order_by('-verified_at')
         # All labs for this patient (this visit and all previous)
         patient_lab_results = LabResult.objects.filter(
@@ -2332,13 +2749,33 @@ def consultation_view(request, encounter_id):
         ).select_related(
             'test', 'verified_by', 'verified_by__user', 'order', 'order__encounter'
         ).only(
-            'id', 'test__id', 'test__name', 'test__code', 'value', 'qualitative_result', 
-            'units', 'is_abnormal', 'verified_at', 'created', 'verified_by__id',
+            'id', 'test__id', 'test__name', 'test__code', 'value', 'qualitative_result',
+            'units', 'details', 'status', 'is_abnormal', 'verified_at', 'created', 'verified_by__id',
             'verified_by__user__first_name', 'verified_by__user__last_name',
-            'order_id', 'order__id', 'order__encounter_id'
+            'order_id', 'order__id', 'order__encounter_id', 'attachment',
         ).order_by('-verified_at')
+        patient_lab_results = list(patient_lab_results)
+        # Any visit: lab-uploaded PDF/image on the result row (may be pending — still show to clinicians)
+        lab_results_with_attachments = list(
+            LabResult.objects.filter(
+                order__encounter__patient_id__in=patient_scope_ids,
+                is_deleted=False,
+                test__is_deleted=False,
+                test__is_active=True,
+                test__name__isnull=False,
+            )
+            .exclude(Q(test__name__iexact='') | Q(test__name__icontains='INVALID'))
+            .exclude(attachment__isnull=True)
+            .exclude(attachment='')
+            .select_related('test', 'order', 'order__encounter', 'verified_by', 'verified_by__user')
+            .order_by('-created')[:100]
+        )
+        lab_results_with_attachments_pending = [
+            lr for lr in lab_results_with_attachments if getattr(lr, 'status', None) != 'completed'
+        ]
     except Exception:
-        pass
+        lab_results_with_attachments = []
+        lab_results_with_attachments_pending = []
     
     # Get referrals for this encounter
     referrals = []
@@ -2413,6 +2850,9 @@ def consultation_view(request, encounter_id):
     # Fallback: show encounter.notes if no ClinicalNote yet (e.g. legacy or sync issue)
     if not clinical_note_combined and (encounter.notes or '').strip():
         clinical_note_combined = (encounter.notes or '').strip()
+    clinical_note_combined = strip_billing_amounts_from_clinical_display(
+        clinical_note_combined
+    )
     consultation_summary = {
         'chief_complaint': encounter.chief_complaint or '',
         'diagnosis': encounter.diagnosis or '',
@@ -2428,6 +2868,9 @@ def consultation_view(request, encounter_id):
         'lab_orders_count': lab_orders_count,
         'imaging_orders_count': imaging_orders_count,
     }
+    _today = _timezone.localdate()
+    _last_pf = getattr(encounter, 'prefilled_context_last_edited_date', None)
+    prefilled_context_editable = _last_pf is None or _today > _last_pf
     
     # Get drug_id from query parameters (for drug guide linking)
     preselected_drug_id = request.GET.get('drug_id', None)
@@ -2446,21 +2889,52 @@ def consultation_view(request, encounter_id):
                 name__icontains='INVALID'
             ).first()
             if preselected_drug:
-                from .utils_billing import get_drug_price_for_prescription
-                patient_payer = encounter.patient.primary_insurance
+                from .utils_billing import get_drug_price_for_prescription, get_patient_payer_info
+                _pinfo = get_patient_payer_info(encounter.patient, encounter)
                 preselected_drug_display_price = float(
-                    get_drug_price_for_prescription(preselected_drug, patient_payer)
+                    get_drug_price_for_prescription(preselected_drug, _pinfo.get('payer'))
                 )
         except Drug.DoesNotExist:
             preselected_drug = None
     
-    # Get patient's payer information for insurance/corporate pricing (drugs get 15% markup)
-    patient_payer = encounter.patient.primary_insurance
-    has_insurance = patient_payer and patient_payer.payer_type in ('insurance', 'private', 'nhis')
-    has_corporate = patient_payer and patient_payer.payer_type == 'corporate'
-    
+    # Payer for drug/lab/imaging display: same rules as pharmacy (invoice, insurance, corporate enrollment)
+    from .utils_billing import get_patient_payer_info
+    encounter_payer_info = get_patient_payer_info(encounter.patient, encounter)
+    patient_payer = encounter_payer_info.get('payer')
+    # Template/JS use this flag for payer-adjusted prices (insurance + corporate)
+    has_insurance = encounter_payer_info.get('is_insurance_or_corporate', False)
+    patient_billing_payer_name = encounter_payer_info.get('name', 'Cash') or 'Cash'
+    from .services.insurance_exclusion_service import catalog_exclusion_info, is_insurance_billing_payer
+    payer_is_insurance = is_insurance_billing_payer(patient_payer)
+
+    encounter_payer_for_exclusions = patient_payer if payer_is_insurance else None
+    if encounter_payer_for_exclusions:
+        try:
+            for rx in existing_prescriptions:
+                if rx.drug:
+                    info = catalog_exclusion_info(item=rx.drug, payer=encounter_payer_for_exclusions)
+                    rx.is_catalog_insurance_excluded = info.get('is_insurance_excluded', False)
+                    rx.catalog_exclusion_reason = info.get('insurance_exclusion_reason', '')
+                else:
+                    rx.is_catalog_insurance_excluded = False
+                    rx.catalog_exclusion_reason = ''
+        except Exception:
+            from .services.drug_formulary_insurance_exclusion import drug_excluded_for_payer
+            for rx in existing_prescriptions:
+                if rx.drug and payer_is_insurance:
+                    excluded, reason = drug_excluded_for_payer(drug=rx.drug, payer=patient_payer)
+                    rx.is_catalog_insurance_excluded = excluded
+                    rx.catalog_exclusion_reason = reason if excluded else ''
+                else:
+                    rx.is_catalog_insurance_excluded = False
+                    rx.catalog_exclusion_reason = ''
+    else:
+        for rx in existing_prescriptions:
+            rx.is_catalog_insurance_excluded = False
+            rx.catalog_exclusion_reason = ''
+
     # Defer pricing to AJAX when patient has insurance/corporate so first load is fast (Option A)
-    pricing_deferred = bool(has_insurance or has_corporate)
+    pricing_deferred = bool(has_insurance)
     if pricing_deferred:
         drug_pricing_map = {}
         lab_test_pricing_map = {}
@@ -2592,11 +3066,22 @@ def consultation_view(request, encounter_id):
         under_prescribed_drugs = list(silent_drugs)
     except Exception:
         under_prescribed_drugs = []
-    
+
+    consultation_page_config = {
+        'isDoctor': getattr(doctor, 'profession', None) == 'doctor',
+        'isNurse': getattr(doctor, 'profession', None) == 'nurse',
+        'consultationReadOnly': bool(consultation_read_only),
+        'canEditPatientHistoryNotes': (
+            getattr(doctor, 'profession', None) == 'doctor' or request.user.is_superuser
+        ),
+        'consultationEncounterId': str(encounter.id),
+    }
+
     context = {
         'encounter': encounter,
         'patient': encounter.patient,
         'doctor': doctor,
+        'has_encounter_diagnosis': encounter_has_diagnosis(encounter),
         'available_drugs': available_drugs,
         'available_lab_tests': available_lab_tests,
         'available_imaging_studies': available_imaging_studies,
@@ -2606,8 +3091,11 @@ def consultation_view(request, encounter_id):
         'existing_orders': existing_orders,
         'lab_orders': [o for o in existing_orders if getattr(o, 'order_type', None) == 'lab'],
         'patient_lab_orders': patient_lab_orders,
-        'imaging_orders': [o for o in existing_orders if getattr(o, 'order_type', None) == 'imaging'],
+        'imaging_orders': imaging_orders_list,
+        'imaging_order_cards': imaging_order_cards,
         'existing_prescriptions': existing_prescriptions,
+        'past_prescriptions': past_prescriptions,
+        'consultation_page_config': consultation_page_config,
         'problems': problems,
         'clinical_notes': clinical_notes,
         'patient_clinical_notes': patient_clinical_notes,
@@ -2628,6 +3116,8 @@ def consultation_view(request, encounter_id):
                 'prescribed_by': (p.prescribed_by.user.get_full_name() or p.prescribed_by.user.username) if getattr(p, 'prescribed_by', None) and getattr(p.prescribed_by, 'user', None) else '',
                 'created': p.created.isoformat() if getattr(p, 'created', None) else '',
                 'inventory_quantity': getattr(p, 'inventory_quantity', None),
+                'is_insurance_excluded': getattr(p, 'is_catalog_insurance_excluded', False),
+                'insurance_exclusion_reason': getattr(p, 'catalog_exclusion_reason', '') or '',
             }
             for p in existing_prescriptions
         ],
@@ -2650,6 +3140,14 @@ def consultation_view(request, encounter_id):
                         'value': (lr.value or ''),
                         'units': (lr.units or ''),
                         'qualitative_result': (lr.qualitative_result or ''),
+                        'is_insurance_excluded': (
+                            catalog_exclusion_info(item=lr.test, payer=patient_payer).get('is_insurance_excluded', False)
+                            if lr.test else False
+                        ),
+                        'insurance_exclusion_reason': (
+                            catalog_exclusion_info(item=lr.test, payer=patient_payer).get('insurance_exclusion_reason', '')
+                            if lr.test else ''
+                        ),
                     }
                     for lr in (o.lab_results.filter(is_deleted=False) if hasattr(o, 'lab_results') else [])
                 ],
@@ -2659,14 +3157,26 @@ def consultation_view(request, encounter_id):
         'imaging_orders_for_json': [
             {
                 'type': 'Imaging Order',
+                'order_id': str(o.id),
                 'status': o.get_status_display() if hasattr(o, 'get_status_display') else (o.status or ''),
                 'priority': o.get_priority_display() if hasattr(o, 'get_priority_display') else (o.priority or ''),
                 'notes': (o.notes or ''),
                 'requested_at': (o.requested_at or o.created).isoformat() if getattr(o, 'requested_at', None) or getattr(o, 'created', None) else '',
                 'requested_by': (o.requested_by.user.get_full_name() or o.requested_by.user.username) if getattr(o, 'requested_by', None) and getattr(o.requested_by, 'user', None) else '',
+                'studies': [
+                    {
+                        'id': str(s.id),
+                        'name': (imaging_study_display_map.get(str(s.id)) or {}).get('name') or (s.study_type or ''),
+                        'code': (imaging_study_display_map.get(str(s.id)) or {}).get('code') or '',
+                        'status': s.get_status_display() if hasattr(s, 'get_status_display') else (s.status or ''),
+                    }
+                    for s in o.imaging_studies.all()
+                    if not getattr(s, 'is_deleted', False)
+                ],
             }
             for o in existing_orders if getattr(o, 'order_type', None) == 'imaging'
         ],
+        'imaging_study_display_map': imaging_study_display_map,
         'problems_for_json': [
             {
                 'name': (getattr(p, 'icd10_description', None) or p.problem or ''),
@@ -2684,7 +3194,11 @@ def consultation_view(request, encounter_id):
                 'title': (getattr(d, 'title', None) or ''),
                 'uploaded_by': (d.uploaded_by.user.get_full_name() or d.uploaded_by.user.username) if getattr(d, 'uploaded_by', None) and getattr(d.uploaded_by, 'user', None) else '',
                 'created': d.created.strftime('%b %d, %Y') if getattr(d, 'created', None) else '',
-                'file_url': d.file.url if getattr(d, 'file', None) and d.file else '',
+                'file_url': (
+                    reverse('hospital:patient_document_file', kwargs={'document_id': d.pk})
+                    if getattr(d, 'file', None) and d.file
+                    else ''
+                ),
             }
             for d in (lab_pdf_docs if lab_pdf_docs else [])
         ],
@@ -2700,8 +3214,10 @@ def consultation_view(request, encounter_id):
         'all_drug_categories': Drug.CATEGORIES,  # For template dropdown
         'preselected_drug': preselected_drug,  # Drug selected from drug guide
         'preselected_drug_display_price': preselected_drug_display_price,  # Live pharmacy store price
-        'patient_payer': patient_payer,  # Patient's payer/insurance
-        'has_insurance': has_insurance,  # Whether patient has insurance
+        'patient_payer': patient_payer,  # Resolved Payer instance when applicable
+        'patient_billing_payer_name': patient_billing_payer_name,  # Safe label for scripts (never None)
+        'has_insurance': has_insurance,  # True for insurance or corporate (payer-adjusted pricing)
+        'payer_is_insurance': payer_is_insurance,  # True only for NHIS/private — exclusions apply here, not corporate
         'pricing_deferred': pricing_deferred,  # True when pricing loaded via AJAX
         'drug_pricing_map': drug_pricing_map,  # Insurance prices for drugs {drug_id: price}
         'lab_test_pricing_map': lab_test_pricing_map,  # Insurance prices for lab tests {test_id: price}
@@ -2712,6 +3228,8 @@ def consultation_view(request, encounter_id):
         'imaging_pricing_map_json': json.dumps({str(k): v for k, v in imaging_pricing_map.items()}).replace('</', '<\\u002f'),
         'imaging_pdf_docs': imaging_pdf_docs,  # PDF documents for imaging studies
         'lab_pdf_docs': lab_pdf_docs,  # PDF documents for lab results
+        'lab_results_with_attachments': lab_results_with_attachments,  # LabResult.attachment files (lab upload)
+        'lab_results_with_attachments_pending': lab_results_with_attachments_pending,  # Not completed — extra strip in UI
         'patient_encounter_documents': patient_encounter_documents,  # Documents/images from patient or this visit
         'imaging_studies_with_files': imaging_studies_with_files,  # Imaging studies with uploaded files
         'patient_imaging_studies': patient_imaging_studies,  # All imaging for this patient (all visits)
@@ -2721,6 +3239,7 @@ def consultation_view(request, encounter_id):
         'under_prescribed_drugs': under_prescribed_drugs,  # Common tablets/injections quiet for last 3 weeks
         'consultation_read_only': consultation_read_only,  # True when consultation expired (view-only)
         'can_edit_consultation_note': can_edit_consultation_note,  # True only if current doctor is the note author (or no note yet)
+        'prefilled_context_editable': prefilled_context_editable,
         'consultation_note_author_name': consultation_note_author_name,  # Name of doctor who wrote the note (for nurses/other doctors)
         'assigned_doctor': assigned_doctor,  # Encounter's assigned provider (stays same when another doctor consults)
         'progress_notes_today_date': timezone.localdate(),  # For Progress Notes (Consultation) "today" highlight
@@ -2748,7 +3267,7 @@ def consultation_pricing_api(request, encounter_id):
         available_drugs = []
     try:
         cached_lab = get_cached_lab_tests()
-        available_lab_tests = list(cached_lab[:500]) if hasattr(cached_lab, '__iter__') and not isinstance(cached_lab, (list, tuple)) else (cached_lab[:500] if isinstance(cached_lab, (list, tuple)) else list(cached_lab)[:500])
+        available_lab_tests = list(cached_lab[:3000]) if hasattr(cached_lab, '__iter__') and not isinstance(cached_lab, (list, tuple)) else (cached_lab[:3000] if isinstance(cached_lab, (list, tuple)) else list(cached_lab)[:3000])
     except Exception:
         available_lab_tests = []
     try:
@@ -2800,6 +3319,7 @@ def _vital_to_json(v):
         'weight': str(v.weight) if v.weight is not None else None,
         'height': str(v.height) if v.height is not None else None,
         'blood_glucose': str(v.blood_glucose) if v.blood_glucose is not None else None,
+        'poc_glucose_strip_type': getattr(v, 'poc_glucose_strip_type', '') or '',
         'pain_score': v.pain_score,
         'notes': v.notes or '',
         'recorded_by': (v.recorded_by.user.get_full_name() or v.recorded_by.user.username) if getattr(v, 'recorded_by', None) and getattr(v.recorded_by, 'user', None) else '',

@@ -259,21 +259,16 @@ def delete_old_backups(request):
     
     if request.method == 'POST':
         try:
-            days = int(request.POST.get('days', 30))
-            
-            deleted_count = 0
-            cutoff_date = datetime.now() - timedelta(days=days)
-            
-            for backup_file in BACKUP_DIR.glob('*.sqlite3*'):
-                file_date = datetime.fromtimestamp(backup_file.stat().st_mtime)
-                
-                if file_date < cutoff_date:
-                    backup_file.unlink()
-                    deleted_count += 1
+            from hospital.backup_retention import get_retention_days, prune_all_retention_targets
+
+            days = int(request.POST.get('days', get_retention_days(default=14)))
+            summary = prune_all_retention_targets(keep_days=days, dry_run=False)
+            deleted_count = summary['files_deleted'] + summary['folders_deleted']
             
             messages.success(
                 request,
-                f'Deleted {deleted_count} backup(s) older than {days} days'
+                f'Deleted {deleted_count} backup item(s) older than {days} days '
+                f'(~{summary["bytes_freed"] / (1024 * 1024):.1f} MB freed)'
             )
             
         except Exception as e:

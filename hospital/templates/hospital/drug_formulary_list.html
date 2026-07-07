@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load static %}
+{% load static hospital_extras %}
 
 {% block title %}Drug Formulary - HMS{% endblock %}
 {% block page_title %}Drug Formulary{% endblock %}
@@ -86,6 +86,15 @@
     .badge-inactive {
         background: #868e96;
         color: white;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+
+    .badge-insurance-excluded {
+        background: #ffc107;
+        color: #212529;
         padding: 4px 12px;
         border-radius: 12px;
         font-size: 11px;
@@ -187,9 +196,11 @@
         <a href="{% url 'hospital:drug_formulary_excel' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-success" title="Download Excel (.xlsx): includes Total stock qty and No. of batches from pharmacy batch stock (PharmacyStock)">
             <i class="bi bi-file-earmark-excel"></i> Download Excel
         </a>
+        {% if can_edit_stock %}
         <a href="{% url 'hospital:drug_create' %}" class="btn btn-primary-modern">
             <i class="bi bi-plus-circle"></i> Add New Drug
         </a>
+        {% endif %}
     </div>
 </div>
 
@@ -211,6 +222,7 @@
                     <div class="drug-meta">
                         {% if drug.generic_name %}Generic: {{ drug.generic_name }} | {% endif %}
                         Strength: {{ drug.strength }} | Form: {{ drug.form }}
+                        {% include 'hospital/_drug_tablet_badge.html' with drug=drug %}
                         {% if drug.category %} | <strong>Category:</strong> {{ drug.get_category_display }}{% endif %}
                         {% if drug.atc_code %} | ATC: {{ drug.atc_code }}{% endif %}
                     </div>
@@ -226,11 +238,19 @@
                     {% if drug.is_controlled %}
                     <span class="badge-controlled">Controlled</span>
                     {% endif %}
+                    {% if drug.exclude_from_insurance %}
+                    <span class="badge-insurance-excluded" title="All insurance patients pay cash">Insurance excluded</span>
+                    {% elif drug.has_partial_insurance_exclusion %}
+                    <span class="badge-insurance-excluded" title="Excluded for some insurers only">Partial exclusion</span>
+                    {% endif %}
                 </div>
                 <div class="price-tag">GHS {{ drug.unit_price }}</div>
             </div>
             <div class="col-auto">
                 <div class="btn-group" role="group">
+                    <a href="{% url 'hospital:drug_detail' drug.pk %}#insurance" class="btn btn-sm btn-outline-warning" title="Insurance billing settings">
+                        <i class="bi bi-shield-x"></i> Insurance
+                    </a>
                     <a href="{% url 'hospital:drug_detail' drug.pk %}" class="btn btn-sm btn-outline-primary">
                         <i class="bi bi-eye"></i> View
                     </a>
@@ -275,9 +295,11 @@
         <i class="bi bi-capsule" style="font-size: 64px; color: var(--gray);"></i>
         <h5 class="mt-3">No drugs found</h5>
         <p class="text-muted">{% if search_query %}Try different search terms{% else %}Start by adding your first drug{% endif %}</p>
+        {% if can_edit_stock %}
         <a href="{% url 'hospital:drug_create' %}" class="btn btn-primary-modern mt-3">
             <i class="bi bi-plus-circle"></i> Add First Drug
         </a>
+        {% endif %}
     </div>
 {% endif %}
 {% endblock %}

@@ -2,10 +2,13 @@
 Middleware to grant finance/account users access to Django admin without being asked to log in again.
 Sets is_staff=True and grants accounting model permissions so they can use Insurance Receivable etc.
 """
-from django.contrib.auth import get_user_model
-from django.contrib.contenttypes.models import ContentType
-from django.contrib.auth.models import Permission
+import logging
 
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
+from django.contrib.contenttypes.models import ContentType
+
+logger = logging.getLogger(__name__)
 
 # Groups and roles that are allowed admin access (must match admin.py logic)
 FINANCE_ACCOUNT_GROUPS = {
@@ -36,53 +39,50 @@ ACCOUNTING_MODELS = [
 ]
 
 
-def _user_is_finance_or_account(user):
+def _user_is_finance_or_account(user, request=None):
     if not user or not user.is_authenticated or not user.is_active:
         return False
-    # By group name
     for g in user.groups.values_list('name', flat=True):
         if not g:
             continue
         normalized = g.lower().replace(' ', '_').replace('&', '_')
         if normalized in FINANCE_ACCOUNT_GROUPS:
             return True
-        # Also match group names containing "account" or "finance"
         if 'account' in normalized or 'finance' in normalized:
             return True
-    # By role from get_user_role (groups + Staff profession)
     try:
         from hospital.utils_roles import get_user_role
-        if get_user_role(user) in FINANCE_ACCOUNT_ROLES:
+        if get_user_role(user, request) in FINANCE_ACCOUNT_ROLES:
             return True
     except Exception:
-        pass
-    # By Staff profession: any profession containing "account" or "finance"
+        logger.debug('Could not resolve finance/account role for user=%s', user.pk, exc_info=True)
     try:
-        from hospital.models import Staff
-        staff = Staff.objects.filter(user=user, is_deleted=False).first()
+        staff = getattr(request, 'hms_staff', None) if request is not None else None
+        if staff is None:
+            from hospital.models import Staff
+            staff = Staff.objects.filter(user=user, is_deleted=False).order_by('-created').first()
         if staff and staff.profession:
             p = (staff.profession or '').lower()
             if 'account' in p or 'finance' in p:
                 return True
     except Exception:
-        pass
-    # Explicit usernames that should have finance/account admin access
-    if user.username and user.username.lower() in ('finance', 'accountant', 'ebenezer.donkor'):
-        return True
+        logger.debug('Could not resolve staff profession for user=%s', user.pk, exc_info=True)
     return False
 
 
 def _grant_accounting_permissions(user):
-    """Grant add/change/delete/view for accounting models so they can use admin."""
+    """Grant view/change for accounting models so they can use admin."""
     try:
         for model_name in ACCOUNTING_MODELS:
             ct = ContentType.objects.filter(app_label='hospital', model=model_name).first()
             if not ct:
                 continue
-            for perm in Permission.objects.filter(content_type=ct):
-                user.user_permissions.add(perm)
+            for codename in ('view', 'change'):
+                perm = Permission.objects.filter(content_type=ct, codename=f'{codename}_{model_name}').first()
+                if perm:
+                    user.user_permissions.add(perm)
     except Exception:
-        pass
+        logger.exception('Failed to grant accounting permissions for user=%s', user.pk)
 
 
 class FinanceAccountAdminAccessMiddleware:
@@ -91,12 +91,13 @@ class FinanceAccountAdminAccessMiddleware:
     so they can access /admin/ (Insurance Receivable, etc.) without being
     redirected to the login page or getting 403.
     """
+
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
         user = getattr(request, 'user', None)
-        if user and user.is_authenticated and _user_is_finance_or_account(user):
+        if user and user.is_authenticated and _user_is_finance_or_account(user, request):
             just_granted_staff = False
             if not getattr(user, 'is_staff', False):
                 try:
@@ -105,13 +106,8 @@ class FinanceAccountAdminAccessMiddleware:
                     user.is_staff = True
                     just_granted_staff = True
                 except Exception:
-                    pass
-            # Grant accounting permissions: when we just set is_staff, or first time hitting admin this session
-            if just_granted_staff or (
-                request.path.startswith('/admin/') and
-                not request.session.get('finance_admin_perms_granted')
-            ):
+                    logger.exception('Failed to set is_staff for finance user=%s', user.pk)
+            if just_granted_staff or not request.session.get('finance_admin_perms_granted'):
                 _grant_accounting_permissions(user)
-                if request.path.startswith('/admin/'):
-                    request.session['finance_admin_perms_granted'] = True
+                request.session['finance_admin_perms_granted'] = True
         return self.get_response(request)

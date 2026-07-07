@@ -660,7 +660,7 @@ class ProcurementRequest(BaseModel):
             logger = logging.getLogger(__name__)
             
             # Get all accountant staff
-            accountant_professions = ['accountant', 'account_officer', 'account_personnel', 'senior_account_officer']
+            accountant_professions = ['accountant', 'account_personnel', 'senior_account_officer']
             accountant_staff = Staff.objects.filter(
                 profession__in=accountant_professions,
                 is_active=True,

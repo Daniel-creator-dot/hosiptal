@@ -165,7 +165,7 @@ class HospitalSettings(models.Model):
     sms_enabled = models.BooleanField(default=False, help_text="Enable SMS notifications.")
     email_notifications_enabled = models.BooleanField(default=True, help_text="Enable email notifications.")
     backup_retention_days = models.PositiveSmallIntegerField(
-        default=30,
+        default=14,
         help_text="Keep backups for this many days (0 = no auto cleanup)."
     )
     patient_portal_enabled = models.BooleanField(default=True, help_text="Allow patients to use the portal.")

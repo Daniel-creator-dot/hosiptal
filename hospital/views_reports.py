@@ -7,6 +7,15 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 
 
+def _can_access_medical_analytics(request):
+    try:
+        from .admin import _primecare_admin_has_permission
+
+        return _primecare_admin_has_permission(request)
+    except Exception:
+        return False
+
+
 @login_required
 def reports_dashboard(request):
     """
@@ -93,6 +102,16 @@ def reports_dashboard(request):
             },
         ],
     }
+
+    if _can_access_medical_analytics(request):
+        report_categories['Clinical & population analytics'] = [
+            {
+                'title': 'Medical analytics',
+                'url': 'hospital:admin_medical_analytics_report',
+                'icon': 'clipboard2-pulse',
+                'description': 'Diagnosis frequency, repeat visits, by corporate company, prevention themes',
+            },
+        ]
     
     context = {
         'title': 'Reports Dashboard',

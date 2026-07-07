@@ -250,17 +250,25 @@ class ProcurementAccountingIntegration:
                         po_number = grn.purchase_order.purchase_number
                 
                 # Get or create purchase account based on supply type
+                from django.conf import settings
+                use_inventory_asset = getattr(settings, 'INVENTORY_GL_ENABLED', True)
                 purchase_account_map = {
-                    'goods': ('5200', 'Purchases - Drugs'),
-                    'works': ('5300', 'Purchases - Works'),
-                    'local_services': ('5400', 'Purchases - Local Services'),
-                    'foreign_services': ('5500', 'Purchases - Foreign Services'),
+                    'goods': ('1400', 'Inventories (Closing Stock)', 'asset')
+                    if use_inventory_asset
+                    else ('5110', 'Purchases - Drugs', 'expense'),
+                    'works': ('5300', 'Purchases - Works', 'expense'),
+                    'local_services': ('5400', 'Purchases - Local Services', 'expense'),
+                    'foreign_services': ('5500', 'Purchases - Foreign Services', 'expense'),
                 }
-                account_code, account_name = purchase_account_map.get(supply_type, ('5200', 'Purchases'))
+                account_code, account_name, acct_type = purchase_account_map.get(
+                    supply_type, ('5116', 'Purchases - Others', 'expense')
+                )
+                if use_inventory_asset and supply_type == 'goods':
+                    acct_type = 'asset'
                 
                 purchase_account, _ = Account.objects.get_or_create(
                     account_code=account_code,
-                    defaults={'account_name': account_name, 'account_type': 'expense'}
+                    defaults={'account_name': account_name, 'account_type': acct_type}
                 )
                 
                 # Get or create AP account

@@ -40,7 +40,9 @@ def is_hr_or_admin(user):
     if role in {'admin', 'hr_manager', 'hr', 'it'}:
         return True
     # Legacy group support
-    return user.groups.filter(name__in=['Admin', 'Administrator', 'HR', 'Human Resources']).exists()
+    return user.groups.filter(
+        name__in=['Admin', 'Administrator', 'HR', 'Human Resources', 'HR Manager']
+    ).exists()
 
 
 @login_required

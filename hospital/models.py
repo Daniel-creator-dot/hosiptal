@@ -121,6 +121,8 @@ class Patient(BaseModel):
             models.Index(fields=['email'], name='patient_email_idx'),
             models.Index(fields=['national_id'], name='patient_national_id_idx'),
             models.Index(fields=['phone_number'], name='patient_phone_idx'),
+            # Patient list: filter is_deleted=False, order by -created (btree supports backward scan)
+            models.Index(fields=['is_deleted', 'created'], name='patient_list_created_idx'),
         ]
         # Database-level guard against rapid duplicate patient creation
         # NOTE: This constraint is commented out as it's too strict and blocks legitimate registrations
@@ -172,7 +174,7 @@ class Patient(BaseModel):
         
         logger = logging.getLogger(__name__)
         
-        is_new = self.pk is None
+        is_new = self._state.adding
         
         # Normalize national_id: convert empty strings to None (for unique constraint)
         if self.national_id == '':
@@ -344,39 +346,26 @@ class Patient(BaseModel):
                                 f"Duplicate patient detected! A patient with National ID {self.national_id} already exists. MRN: {existing.mrn}"
                             )
         
-        # Generate MRN if not provided
-        if not self.mrn or self.mrn == '':
-            self.mrn = self.generate_mrn()
-        
-        # CRITICAL: Only save once - remove duplicate save logic that was causing duplicates
-        # Retry logic for handling duplicate MRN errors (race conditions)
+        # Generate MRN if not provided, then save with savepoint-isolated retries (safe inside outer atomic()).
         max_retries = 5
-        retry_count = 0
-        
-        while retry_count < max_retries:
+        last_error = None
+        for attempt in range(max_retries):
             try:
-                super().save(*args, **kwargs)
-                # If save successful, break out of retry loop - DO NOT SAVE AGAIN
+                with transaction.atomic():
+                    if not self.mrn or not str(self.mrn).strip():
+                        self.mrn = self.generate_mrn()
+                    super().save(*args, **kwargs)
                 break
             except IntegrityError as e:
-                # Check if it's a duplicate MRN error
+                last_error = e
                 error_str = str(e).lower()
-                if 'mrn' in error_str or 'unique' in error_str:
-                    retry_count += 1
-                    if retry_count >= max_retries:
-                        # Last retry failed, raise the error
-                        raise
-                    # Generate a new MRN and retry
-                    self.mrn = self.generate_mrn()
-                    # Small delay to reduce collision probability
-                    time.sleep(0.1 * retry_count)
-                else:
-                    # Not a duplicate MRN error, re-raise
+                if ('mrn' not in error_str and 'unique' not in error_str) or attempt >= max_retries - 1:
                     raise
-        
-        # REMOVED: The duplicate save logic below was causing patients to be saved twice
-        # The MRN is already generated above and saved in the main save() call
-        # No need for additional save() calls that could trigger duplicate creation
+                self.mrn = ''
+                time.sleep(0.1 * (attempt + 1))
+        else:
+            if last_error:
+                raise last_error
     
     @staticmethod
     def generate_mrn():
@@ -393,10 +382,9 @@ class Patient(BaseModel):
         # Use database-level locking to prevent race conditions
         # This is critical for Docker environments with multiple workers
         with transaction.atomic():
-            # Use SELECT FOR UPDATE to lock the row and prevent concurrent access
+            # Include soft-deleted rows: mrn is globally unique in the database.
             last_patient = Patient.objects.filter(
                 mrn__startswith=f"{prefix}{year}",
-                is_deleted=False
             ).select_for_update().order_by('-mrn').first()
             
             if last_patient and last_patient.mrn:
@@ -408,12 +396,11 @@ class Patient(BaseModel):
             else:
                 new_num = 1
             
-            # Check if the generated MRN already exists (safety check)
             max_retries = 10
             retry_count = 0
             while retry_count < max_retries:
                 candidate_mrn = f"{prefix}{year}{new_num:06d}"
-                if not Patient.objects.filter(mrn=candidate_mrn, is_deleted=False).exists():
+                if not Patient.objects.filter(mrn=candidate_mrn).exists():
                     return candidate_mrn
                 # If exists, increment and try again
                 new_num += 1
@@ -429,11 +416,15 @@ class Patient(BaseModel):
         return self.encounters.filter(status='active', is_deleted=False)
     
     def get_total_invoice_amount(self):
-        """Get total amount from all invoices"""
-        result = self.invoices.filter(is_deleted=False).aggregate(
-            total=Sum('total_amount')
-        )
-        return result['total'] or 0
+        """Total billed across all non-cancelled invoices (includes duplicate-MRN sibling rows)."""
+        try:
+            from hospital.services.patient_outstanding_service import get_patient_outstanding
+            return get_patient_outstanding(self)['total_billed']
+        except Exception:
+            result = self.invoices.filter(is_deleted=False).exclude(status='cancelled').aggregate(
+                total=Sum('total_amount')
+            )
+            return result['total'] or 0
     
     def get_outstanding_balance(self):
         """Get total outstanding balance. Uses app-wide patient_outstanding_service so same as everywhere."""
@@ -808,6 +799,11 @@ class Encounter(BaseModel):
     chief_complaint = models.TextField()
     diagnosis = models.TextField(blank=True)
     notes = models.TextField(blank=True)
+    prefilled_context_last_edited_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text='Local calendar date when the doctor last saved edits to the prefilled (triage/history) block; further edits until the next day are disabled.',
+    )
     # Note: This field requires migration 0015 to be applied
     # Run: python manage.py migrate
     current_activity = models.CharField(max_length=50, blank=True, null=True, help_text='Current department activity: Consulting, Lab, Pharmacy', db_column='current_activity')
@@ -1082,7 +1078,21 @@ class VitalSign(BaseModel):
                                  help_text="cm")
     blood_glucose = models.DecimalField(max_digits=5, decimal_places=1, null=True, blank=True,
                                        verbose_name="Blood Glucose", help_text="mmol/L or mg/dL")
-    
+    POC_GLUCOSE_STRIP_TYPE_CHOICES = [
+        ('', 'Not specified'),
+        ('rbs', 'RBS (random blood sugar)'),
+        ('fbs', 'FBS (fasting blood sugar)'),
+    ]
+    poc_glucose_strip_type = models.CharField(
+        max_length=8,
+        blank=True,
+        default='',
+        choices=POC_GLUCOSE_STRIP_TYPE_CHOICES,
+        db_index=True,
+        verbose_name="POC glucose strip type",
+        help_text="When set at vitals, labels bedside glucose as RBS or FBS for consultation display and billing context.",
+    )
+
     # Clinical Assessment
     consciousness_level = models.CharField(max_length=20, choices=CONSCIOUSNESS_CHOICES, 
                                           default='alert', verbose_name="Level of Consciousness")
@@ -1787,17 +1797,34 @@ class Admission(BaseModel):
     
     def discharge(self):
         """Discharge patient and free up bed"""
+        now = timezone.now()
+        AdmissionWardStay.objects.filter(
+            admission=self, is_deleted=False, ended_at__isnull=True
+        ).update(ended_at=now)
         self.status = 'discharged'
-        self.discharge_date = timezone.now()
-        
+        self.discharge_date = now
+
         if self.bed:
             self.bed.vacate()
-        
+
         if self.encounter:
             self.encounter.complete()
-        
+
         self.save()
-    
+
+    def ensure_open_ward_stay(self):
+        """Create an open ward-time segment if missing (used after admit / transfer)."""
+        if not self.ward_id:
+            return
+        if self.ward_stays.filter(is_deleted=False, ended_at__isnull=True).exists():
+            return
+        AdmissionWardStay.objects.create(
+            admission=self,
+            ward_id=self.ward_id,
+            bed_id=self.bed_id,
+            started_at=self.admit_date,
+        )
+
     def get_duration_days(self):
         """Get admission duration in days"""
         if self.discharge_date:
@@ -1806,6 +1833,33 @@ class Admission(BaseModel):
         else:
             delta = timezone.now() - self.admit_date
             return delta.days
+
+
+class AdmissionWardStay(BaseModel):
+    """
+    Time spent in a ward/bed during one admission.
+    Used to split accommodation billing (e.g. ER then VIP) by time in each ward.
+    """
+
+    admission = models.ForeignKey(
+        Admission, on_delete=models.CASCADE, related_name='ward_stays'
+    )
+    ward = models.ForeignKey(Ward, on_delete=models.CASCADE, related_name='admission_stays')
+    bed = models.ForeignKey(
+        Bed, on_delete=models.CASCADE, null=True, blank=True, related_name='admission_stays'
+    )
+    started_at = models.DateTimeField()
+    ended_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='Null while this is the current ward; set when patient transfers or is discharged.',
+    )
+
+    class Meta:
+        ordering = ['started_at', 'id']
+
+    def __str__(self):
+        return f'{self.admission_id}: {self.ward.name} from {self.started_at}'
 
 
 # ==================== ORDERS & LAB MODULE ====================
@@ -1838,6 +1892,10 @@ class Order(BaseModel):
     priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default='routine')
     requested_by = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='orders_requested')
     notes = models.TextField(blank=True)
+    clinical_indication = models.TextField(
+        blank=True,
+        help_text='Diagnosis / clinical reason sent with the order (visible to laboratory).',
+    )
     requested_at = models.DateTimeField(default=timezone.now)
     
     class Meta:
@@ -1904,6 +1962,15 @@ class LabTest(BaseModel):
     tat_minutes = models.PositiveIntegerField(default=60, verbose_name="Turnaround Time (minutes)")
     price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     is_active = models.BooleanField(default=True)
+    exclude_from_insurance = models.BooleanField(
+        default=False,
+        help_text='When set, insurance patients must pay cash for this lab test at the cashier (corporate billing unchanged)',
+    )
+    insurance_exclusion_reason = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text='Reason shown to prescribers, lab and cashier when this test is insurance-excluded',
+    )
     
     # Reagent requirements (many-to-many relationship)
     # This will be added via a migration to link LabTest to LabReagent
@@ -2008,15 +2075,6 @@ class LabResult(BaseModel):
                 created__gte=thirty_minutes_ago
             ).exclude(pk=self.pk).order_by('-created').first()
             
-            # Also check within same encounter if available
-            if not duplicate and self.order.encounter_id:
-                duplicate = LabResult.objects.filter(
-                    order__encounter=self.order.encounter,
-                    test=self.test,
-                    is_deleted=False,
-                    created__gte=thirty_minutes_ago
-                ).exclude(pk=self.pk).order_by('-created').first()
-            
             if duplicate:
                 # Very recent duplicate found - update existing instead of creating new
                 import logging
@@ -2112,6 +2170,30 @@ class Drug(BaseModel):
         ('other', 'Other - Miscellaneous drugs not fitting above categories'),
     ]
     
+    # Dosage / presentation form — used by drug create/edit UI and Django admin dropdown
+    FORM_CHOICES = [
+        ('Tablet', 'Tablet'),
+        ('Capsule', 'Capsule'),
+        ('Softgel', 'Softgel'),
+        ('Injection', 'Injection'),
+        ('Syrup', 'Syrup'),
+        ('Suspension', 'Suspension'),
+        ('Solution', 'Solution'),
+        ('Cream', 'Cream'),
+        ('Ointment', 'Ointment'),
+        ('Lotion', 'Lotion'),
+        ('Shampoo', 'Shampoo'),
+        ('Drops', 'Drops'),
+        ('Inhaler', 'Inhaler'),
+        ('Infusion', 'Infusion'),
+        ('Gel', 'Gel'),
+        ('Fluid', 'Fluid'),
+        ('Spray', 'Spray'),
+        ('Suppository', 'Suppository'),
+        ('Kit', 'Kit'),
+        ('Others', 'Others'),
+    ]
+    
     atc_code = models.CharField(max_length=20, blank=True, verbose_name="ATC Code")
     name = models.CharField(max_length=200)
     generic_name = models.CharField(max_length=200, blank=True)
@@ -2125,7 +2207,24 @@ class Drug(BaseModel):
     # Pricing fields
     unit_price = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Selling price per unit")
     cost_price = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Cost from supplier")
-    
+    preferred_supplier = models.ForeignKey(
+        'hospital.Supplier',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='formulary_drugs',
+        help_text='Default supplier for this formulary item (accounts / procurement cross-reference)',
+    )
+    exclude_from_insurance = models.BooleanField(
+        default=False,
+        help_text='When set, insurance patients must pay cash for this drug at the cashier (corporate billing unchanged)',
+    )
+    insurance_exclusion_reason = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text='Reason shown to pharmacy and cashier when this drug is insurance-excluded',
+    )
+
     class Meta:
         ordering = ['name']
         verbose_name = 'Drug'
@@ -2165,6 +2264,14 @@ class PharmacyStock(BaseModel):
         related_name='pharmacy_stock_added', editable=False,
         help_text='User (e.g. store manager) who added this stock – visible to account for monitoring'
     )
+    supplier = models.ForeignKey(
+        'hospital.Supplier',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pharmacy_stock_batches',
+        help_text='Vendor this batch was received from (optional; for accounts / procurement)',
+    )
 
     class Meta:
         ordering = ['drug__name', 'expiry_date']
@@ -2179,6 +2286,64 @@ class PharmacyStock(BaseModel):
         super().save(*args, **kwargs)
 
 
+class PharmacyStockLoss(BaseModel):
+    """
+    Immutable audit of units removed from sellable pharmacy stock: breakages,
+    expiry write-offs, damage, recalls, etc. Creating a row decrements the
+    linked PharmacyStock batch (see hospital views — not in save()).
+    """
+
+    class LossType(models.TextChoices):
+        BREAKAGE = 'breakage', 'Breakage / spillage'
+        EXPIRY = 'expiry', 'Expired — removed from saleable stock'
+        DAMAGE = 'damage', 'Damaged packaging / suspected contamination'
+        THEFT = 'theft_suspected', 'Theft / unaccounted loss'
+        RECALL = 'recall', 'Manufacturer / regulatory recall'
+        OTHER = 'other', 'Other (explain in notes)'
+
+    class DisposalMethod(models.TextChoices):
+        MEDICAL_WASTE = 'medical_waste', 'Segregated pharmaceutical / medical waste'
+        INCINERATION = 'incineration', 'Authorized incineration or destruction service'
+        SUPPLIER_RETURN = 'supplier_return', 'Returned to supplier'
+        DOCUMENTED_DESTRUCTION = 'documented', 'Documented on-site destruction (witnessed)'
+        OTHER = 'other', 'Other (see notes)'
+
+    pharmacy_stock = models.ForeignKey(
+        'PharmacyStock',
+        on_delete=models.PROTECT,
+        related_name='loss_records',
+    )
+    loss_type = models.CharField(max_length=32, choices=LossType.choices)
+    quantity = models.PositiveIntegerField()
+    disposal_method = models.CharField(max_length=32, choices=DisposalMethod.choices)
+    witness_name = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text='Second staff member present for segregation or destruction, if applicable',
+    )
+    notes = models.TextField(
+        blank=True,
+        help_text='Brief factual narrative (what, when observed, batch handling)',
+    )
+    recorded_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name='pharmacy_stock_losses_recorded',
+    )
+
+    class Meta:
+        ordering = ['-created']
+        verbose_name = 'Pharmacy stock loss / write-off'
+        verbose_name_plural = 'Pharmacy stock losses / write-offs'
+        indexes = [
+            models.Index(fields=['pharmacy_stock', '-created']),
+            models.Index(fields=['loss_type', '-created']),
+        ]
+
+    def __str__(self):
+        return f'{self.get_loss_type_display()} ×{self.quantity} — {self.pharmacy_stock}'
+
+
 class Prescription(BaseModel):
     """E-prescriptions"""
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='prescriptions')
@@ -2189,6 +2354,10 @@ class Prescription(BaseModel):
     frequency = models.CharField(max_length=50)  # daily, twice daily, etc.
     duration = models.CharField(max_length=50)  # 7 days, 2 weeks, etc.
     instructions = models.TextField(blank=True)
+    is_start_dose = models.BooleanField(
+        default=False,
+        help_text='Release to pharmacy before consultation is completed (initial/stat dose).',
+    )
     
     prescribed_by = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='prescriptions')
     
@@ -2303,6 +2472,91 @@ class ServiceCode(BaseModel):
         return f"{self.code} - {self.description}"
 
 
+class CashierQuickService(models.Model):
+    """
+    Admin-managed service charges shown on cashier \"Add Services\" (search + browse),
+    in addition to the built-in catalog in code. Uses a dedicated billing code per row
+    so invoice lines show the correct name (not generic CASH-MISC).
+    """
+    billing_code = models.CharField(
+        max_length=80,
+        unique=True,
+        db_index=True,
+        help_text='Unique code on the invoice (e.g. EAR-WASH). Letters, numbers, hyphen.',
+    )
+    label = models.CharField(max_length=200, help_text='Name cashiers and patients see')
+    amount_cash = models.DecimalField(max_digits=10, decimal_places=2)
+    amount_insurance = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Leave blank to use the same amount as cash',
+    )
+    amount_corporate = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Corporate patient price. Leave blank to use the insurance amount for corporate payers (same as built-in catalogue).',
+    )
+    sort_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created = models.DateTimeField(auto_now_add=True)
+    modified = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['sort_order', 'label']
+        db_table = 'hospital_cashier_quick_service'
+        verbose_name = 'Cashier quick service'
+        verbose_name_plural = 'Cashier quick services'
+
+    def __str__(self):
+        return f'{self.label} ({self.billing_code})'
+
+
+class CashierChargeBundle(models.Model):
+    """
+    One searchable package on cashier \"Add Services\" that expands to multiple invoice lines.
+    lines JSON: [{"billing_code": "...", "description": "...", "amount_cash": "100.00",
+                  "amount_insurance": null, "amount_corporate": null}, ...]
+    """
+    bundle_code = models.CharField(
+        max_length=80,
+        unique=True,
+        db_index=True,
+        help_text='Unique identifier (e.g. PRIME-PACK-ANC). Used for upsert on import.',
+    )
+    label = models.CharField(max_length=200, help_text='Display name in search and browse')
+    lines = models.JSONField(
+        default=list,
+        help_text='Ordered line items; each row needs billing_code, description, amount_cash.',
+    )
+    sort_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created = models.DateTimeField(auto_now_add=True)
+    modified = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['sort_order', 'label']
+        db_table = 'hospital_cashier_charge_bundle'
+        verbose_name = 'Cashier charge bundle'
+        verbose_name_plural = 'Cashier charge bundles'
+
+    def __str__(self):
+        return f'{self.label} ({self.bundle_code})'
+
+    def cash_total(self):
+        from decimal import Decimal
+        total = Decimal('0.00')
+        for row in self.lines or []:
+            try:
+                total += Decimal(str(row.get('amount_cash') or 0))
+            except Exception:
+                pass
+        return total
+
+
 class PriceBook(BaseModel):
     """Pricing for different payers"""
     payer = models.ForeignKey(Payer, on_delete=models.CASCADE, related_name='price_books')
@@ -2347,7 +2601,15 @@ class Invoice(BaseModel):
         ('cancelled', 'Cancelled'),
     ]
     
-    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='invoices')
+    patient = models.ForeignKey(
+        Patient, on_delete=models.CASCADE, related_name='invoices', null=True, blank=True
+    )
+    counterparty_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text='Who is being billed when there is no patient (e.g. supplier name).',
+    )
     encounter = models.ForeignKey(Encounter, on_delete=models.CASCADE, related_name='invoices', null=True, blank=True)
     payer = models.ForeignKey(Payer, on_delete=models.CASCADE, related_name='invoices')
     invoice_number = models.CharField(max_length=50, unique=True)
@@ -2369,13 +2631,26 @@ class Invoice(BaseModel):
         ]
 
     def __str__(self):
-        return f"Invoice {self.invoice_number} - {self.patient.full_name}"
+        if self.patient_id:
+            return f"Invoice {self.invoice_number} - {self.patient.full_name}"
+        name = (self.counterparty_name or '').strip() or 'Non-patient'
+        return f"Invoice {self.invoice_number} - {name}"
     
     @property
     def amount_paid(self):
         """Calculate amount paid from total amount and balance"""
         from decimal import Decimal
         return (self.total_amount or Decimal('0.00')) - (self.balance or Decimal('0.00'))
+
+    @property
+    def is_payable(self):
+        """True when cashier can collect payment (balance due, not cancelled)."""
+        from decimal import Decimal
+        return (
+            (self.balance or Decimal('0.00')) > Decimal('0.00')
+            and self.status != 'cancelled'
+            and not getattr(self, 'is_deleted', False)
+        )
 
     @property
     def billable_lines(self):
@@ -2434,15 +2709,10 @@ class Invoice(BaseModel):
         
         total = Decimal('0.00')
         try:
+            from hospital.utils_invoice_line import invoice_line_effective_total
             # Fresh query so waived lines are always reflected (avoids stale prefetch cache)
             for line in InvoiceLine.objects.filter(invoice=self, is_deleted=False):
-                if getattr(line, 'waived_at', None):
-                    # Waived lines contribute nothing to invoice total
-                    line_total = Decimal('0.00')
-                else:
-                    subtotal = Decimal(str(line.quantity)) * Decimal(str(line.unit_price))
-                    line_total = subtotal - Decimal(str(line.discount_amount or 0)) + Decimal(str(line.tax_amount or 0))
-                total += line_total
+                total += invoice_line_effective_total(line)
         except Exception:
             pass
         
@@ -2522,12 +2792,17 @@ class Invoice(BaseModel):
             return
 
         # Auto-update status based on balance
-        if self.balance <= 0 and total > 0:
+        if self.balance <= 0:
             self.status = 'paid'
-        elif self.balance < total and self.balance > 0:
-            self.status = 'partially_paid'
-        elif self.status == 'draft' and total > 0:
-            pass
+        elif self.balance > 0:
+            if total_paid > 0:
+                self.status = 'partially_paid'
+            elif self.status == 'draft':
+                pass
+            elif self.due_at and self.due_at < timezone.now():
+                self.status = 'overdue'
+            else:
+                self.status = 'issued'
 
     def _sync_pharmacy_after_totals_saved(self, receipt=None, verified_by_user=None):
         """
@@ -2564,9 +2839,34 @@ class Invoice(BaseModel):
     
     def update_totals(self):
         """Calculate and save totals"""
+        self.sync_stale_line_totals()
         self.calculate_totals()
         self.save(update_fields=['total_amount', 'balance', 'status'])
         self._sync_pharmacy_after_totals_saved()
+
+    def sync_stale_line_totals(self):
+        """
+        Persist line_total/discount_amount when DB values drift from the canonical formula.
+        Uses queryset.update to avoid recursive post_save signals on InvoiceLine.
+        """
+        from decimal import Decimal
+        from hospital.utils_invoice_line import invoice_line_effective_total
+
+        now = timezone.now()
+        for line in InvoiceLine.objects.filter(invoice=self, is_deleted=False):
+            eff = invoice_line_effective_total(line)
+            updates = {}
+            if (line.line_total or Decimal('0')) != eff:
+                updates['line_total'] = eff
+            if getattr(line, 'waived_at', None):
+                subtotal = Decimal(str(line.quantity or 0)) * Decimal(str(line.unit_price or 0))
+                tax = Decimal(str(line.tax_amount or 0))
+                full_waive = subtotal + tax
+                if Decimal(str(line.discount_amount or 0)) != full_waive:
+                    updates['discount_amount'] = full_waive
+            if updates:
+                updates['modified'] = now
+                InvoiceLine.objects.filter(pk=line.pk).update(**updates)
     
     def mark_as_paid(self, amount=None, payment_method='cash', processed_by=None, reference_number='', validate=True):
         """
@@ -2605,9 +2905,12 @@ class Invoice(BaseModel):
         
         # Process payment in transaction to ensure consistency
         with db_transaction.atomic():
+            # Block concurrent double-submit on the same invoice until this payment commits.
+            self.__class__.objects.select_for_update().filter(pk=self.pk, is_deleted=False).first()
+
             # Check for duplicate transaction (prevent duplicate payments)
             from datetime import timedelta
-            recent_cutoff = timezone.now() - timedelta(minutes=1)
+            recent_cutoff = timezone.now() - timedelta(minutes=2)
             
             existing_transaction = Transaction.objects.filter(
                 transaction_type='payment_received',
@@ -2817,6 +3120,11 @@ class InvoiceLine(BaseModel):
         from decimal import Decimal
         return Decimal(str(self.quantity)) * Decimal(str(self.unit_price))
 
+    def effective_line_total(self):
+        """Canonical charge for this line (same formula as Invoice.calculate_totals)."""
+        from hospital.utils_invoice_line import invoice_line_effective_total
+        return invoice_line_effective_total(self)
+
     def get_display_pricing(self):
         """
         (unit_price, line_total) for screens and APIs when stored fields are 0 (stale repricing/sync).
@@ -2932,16 +3240,18 @@ class InvoiceLine(BaseModel):
         Run insurance exclusion logic before saving the line so we can block or mark items.
         Handles both service codes and drugs (via prescription link).
         """
+        invoice = getattr(self, 'invoice', None)
+        # Cash invoices: skip insurance engine entirely so caller-set flags (e.g. POC consumables)
+        # are not cleared before save().
+        if not invoice or not invoice.payer or invoice.payer.payer_type == 'cash':
+            return
+
         self.is_insurance_excluded = False
         self.patient_pay_cash = False
         self.insurance_exclusion_rule = None
         self.insurance_enforcement_action = ''
         self.insurance_exclusion_reason = ''
-        
-        invoice = getattr(self, 'invoice', None)
-        if not invoice or not invoice.payer or invoice.payer.payer_type == 'cash':
-            return
-        
+
         patient = invoice.patient
         payer = invoice.payer
         if not patient or not payer:
@@ -2960,9 +3270,9 @@ class InvoiceLine(BaseModel):
             drug=drug,
         )
         result = exclusion_service.evaluate()
-        if not result.rule:
+        if not result.is_excluded:
             return
-        
+
         self.insurance_exclusion_rule = result.rule
         self.insurance_enforcement_action = result.enforcement
         self.insurance_exclusion_reason = result.reason
@@ -3030,6 +3340,7 @@ class MedicalRecord(BaseModel):
         ('lab_result', 'Lab Result'),
         ('imaging', 'Imaging Report'),
         ('prescription', 'Prescription'),
+        ('otc', 'OTC Pharmacy'),
         ('discharge_summary', 'Discharge Summary'),
         ('consultation_note', 'Consultation Note'),
         ('surgical_report', 'Surgical Report'),
@@ -3207,5 +3518,11 @@ except ImportError:
 # Import HOD models
 try:
     from . import models_hod_simple  # noqa
+except ImportError:
+    pass
+
+# Supplier payable sub-ledger (after PharmacyStock, Supplier, etc.)
+try:
+    from . import models_supplier_payables  # noqa
 except ImportError:
     pass

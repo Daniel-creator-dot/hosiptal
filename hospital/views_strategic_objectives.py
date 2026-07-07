@@ -11,6 +11,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _to_float(value):
+    """Coerce Decimal/None aggregates to float for arithmetic."""
+    if value is None:
+        return 0.0
+    return float(value)
+
+
 def _safe_db_call(default_value, context_name, query_func):
     """Safe database call with error handling"""
     try:
@@ -236,9 +243,9 @@ def calculate_strategic_objectives_metrics():
         )
         
         # Use the maximum of all sources (most comprehensive)
-        revenue_today = max(revenue_today_pr, revenue_today_tx)
-        revenue_this_month = max(revenue_this_month_pr, revenue_this_month_tx, revenue_this_month_inv)
-        revenue_last_month = max(revenue_last_month_pr, revenue_last_month_tx, revenue_last_month_inv)
+        revenue_today = _to_float(max(revenue_today_pr, revenue_today_tx))
+        revenue_this_month = _to_float(max(revenue_this_month_pr, revenue_this_month_tx, revenue_this_month_inv))
+        revenue_last_month = _to_float(max(revenue_last_month_pr, revenue_last_month_tx, revenue_last_month_inv))
         
         # Calculate revenue growth
         if revenue_last_month > 0:
@@ -250,21 +257,21 @@ def calculate_strategic_objectives_metrics():
             revenue_growth = 0.0
         
         # Outstanding invoices
-        outstanding_invoices = _safe_db_call(
+        outstanding_invoices = _to_float(_safe_db_call(
             0, 'financial.outstanding',
             lambda: Invoice.objects.filter(
                 is_deleted=False,
                 status__in=['issued', 'partially_paid', 'overdue']
             ).aggregate(total=Sum('balance'))['total'] or 0
-        )
+        ))
         
         # Total revenue (all invoices, not just paid)
-        total_revenue_all = _safe_db_call(
+        total_revenue_all = _to_float(_safe_db_call(
             0, 'financial.total_revenue',
             lambda: Invoice.objects.filter(
                 is_deleted=False
             ).exclude(status='cancelled').aggregate(total=Sum('total_amount'))['total'] or 0
-        )
+        ))
         
         # Invoice collection rate
         total_invoices = Invoice.objects.filter(is_deleted=False).exclude(status='cancelled').count()

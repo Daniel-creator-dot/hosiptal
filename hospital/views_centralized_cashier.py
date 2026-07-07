@@ -1020,7 +1020,7 @@ def cashier_patient_total_bill(request, patient_id):
         service_type = service['type']
         service_counts[service_type] = service_counts.get(service_type, 0) + 1
 
-    from .utils_roles import user_can_remove_invoice_from_bill, user_can_waive
+    from .utils_roles import user_can_remove_invoice_from_bill, user_can_waive, user_can_apply_total_bill_discount
     from django.urls import reverse
     from .models_settings import HospitalSettings
     try:
@@ -1107,6 +1107,7 @@ def cashier_patient_total_bill(request, patient_id):
         'service_filter': service_filter,
         'bills_list_query': bills_list_query,
         'reception_visit_info': reception_visit_info,
+        'can_apply_total_bill_discount': user_can_apply_total_bill_discount(request.user),
     }
     if request.GET.get('print') == '1':
         from collections import OrderedDict
@@ -1161,6 +1162,76 @@ def cashier_patient_total_bill(request, patient_id):
         context['total_invoice_items'] = total_invoice_items
         return render(request, 'hospital/cashier_patient_total_bill_invoice_print.html', context)
     return render(request, 'hospital/cashier_patient_total_bill.html', context)
+
+
+@login_required
+@never_cache
+def cashier_apply_total_bill_discount(request, patient_id):
+    """POST: apply admin/accountant discount across open invoices on the patient's total bill."""
+    from decimal import Decimal, InvalidOperation
+
+    from django.contrib import messages
+    from django.urls import reverse
+
+    from .services.combined_bill_discount_service import distribute_combined_bill_discount_across_invoices
+    from .utils_roles import user_can_apply_total_bill_discount
+
+    patient = get_object_or_404(Patient, pk=patient_id, is_deleted=False)
+    redirect_url = reverse('hospital:cashier_patient_total_bill', kwargs={'patient_id': patient_id})
+    preserve = []
+    for key in ('today_pending', 'filter_date', 'service_filter'):
+        val = request.POST.get(key) or request.GET.get(key)
+        if val:
+            preserve.append(f'{key}={val}')
+    if preserve:
+        redirect_url = f'{redirect_url}?{"&".join(preserve)}'
+
+    if request.method != 'POST':
+        return redirect(redirect_url)
+    if not user_can_apply_total_bill_discount(request.user):
+        messages.error(request, 'You do not have permission to apply total bill discounts.')
+        return redirect(redirect_url)
+
+    try:
+        discount_amount = Decimal(str(request.POST.get('discount_amount') or '0').strip())
+    except (InvalidOperation, TypeError, ValueError):
+        messages.error(request, 'Enter a valid discount amount.')
+        return redirect(redirect_url)
+    if discount_amount <= 0:
+        messages.error(request, 'Discount must be greater than zero.')
+        return redirect(redirect_url)
+
+    services_list, _total = _get_patient_pending_services_for_payment(patient)
+    invoice_ids = []
+    for svc in services_list:
+        iid = svc.get('invoice_id')
+        if iid and str(iid) not in invoice_ids:
+            invoice_ids.append(str(iid))
+    invoices = list(
+        Invoice.all_objects.filter(pk__in=invoice_ids, patient=patient, is_deleted=False)
+        if invoice_ids
+        else []
+    )
+    if not invoices:
+        messages.warning(request, 'No open invoices on this bill to discount.')
+        return redirect(redirect_url)
+
+    result = distribute_combined_bill_discount_across_invoices(
+        invoices,
+        discount_amount,
+        patient=patient,
+        user=request.user,
+    )
+    if result.applied > 0:
+        msg = f'Applied GHS {result.applied:.2f} bill discount.'
+        if result.gl_posted:
+            msg += ' General ledger updated.'
+        elif result.gl_error:
+            msg += f' GL posting skipped: {result.gl_error}'
+        messages.success(request, msg)
+    else:
+        messages.warning(request, 'No discount was applied (check outstanding balance).')
+    return redirect(redirect_url)
 
 
 @login_required
@@ -5017,6 +5088,152 @@ def cashier_add_manual_payment(request):
         'delivery_fee_price': Decimal('2800.00'),
         'midwife_care_price': Decimal('300.00'),
     })
+
+
+@login_required
+@user_passes_test(can_add_manual_charges)
+def cashier_non_patient_charge(request):
+    """Invoice and collect fees not tied to a patient chart (e.g. supplier registration)."""
+    from datetime import timedelta
+    import uuid
+    from django.db import transaction
+
+    NON_PATIENT_SERVICES = {
+        'supplier_registration': ('Supplier registration', 'SUP-REG'),
+        'supplier_annual_fee': ('Supplier annual / listing fee', 'SUP-ANNUAL'),
+        'misc_admin': ('Administrative / filing fee', 'ADMIN-FEE'),
+    }
+
+    if request.method == 'POST':
+        counterparty_name = (request.POST.get('counterparty_name') or '').strip()
+        service_type = (request.POST.get('service_type') or 'custom').strip()
+        custom_description = (request.POST.get('custom_description') or '').strip()
+        amount_str = (request.POST.get('amount') or '0').strip()
+        payment_method = request.POST.get('payment_method', 'cash')
+        notes = (request.POST.get('notes') or '').strip()
+        charge_only = request.POST.get('charge_only') == '1'
+        idempotency_token = (request.POST.get('payment_idempotency_token') or '').strip()
+
+        if not counterparty_name:
+            messages.error(request, 'Payer name is required.')
+            return redirect('hospital:cashier_non_patient_charge')
+
+        try:
+            amount = Decimal(amount_str)
+        except (ValueError, TypeError):
+            messages.error(request, 'Invalid amount.')
+            return redirect('hospital:cashier_non_patient_charge')
+
+        if amount <= 0:
+            messages.error(request, 'Amount must be greater than zero.')
+            return redirect('hospital:cashier_non_patient_charge')
+
+        if service_type in NON_PATIENT_SERVICES:
+            description, code = NON_PATIENT_SERVICES[service_type]
+        elif service_type == 'custom':
+            if not custom_description:
+                messages.error(request, 'Please enter a description for custom charges.')
+                return redirect('hospital:cashier_non_patient_charge')
+            description = custom_description[:200]
+            code = 'CASH-MISC'
+        else:
+            messages.error(request, 'Invalid charge type.')
+            return redirect('hospital:cashier_non_patient_charge')
+
+        payer, _ = Payer.objects.get_or_create(
+            name='Cash',
+            defaults={'payer_type': 'cash', 'is_active': True},
+        )
+
+        try:
+            with transaction.atomic():
+                invoice = Invoice.objects.create(
+                    patient=None,
+                    counterparty_name=counterparty_name,
+                    encounter=None,
+                    payer=payer,
+                    status='issued',
+                    issued_at=timezone.now(),
+                    due_at=timezone.now() + timedelta(days=7),
+                )
+                service_code, _ = ServiceCode.objects.get_or_create(
+                    code=code,
+                    defaults={
+                        'description': description,
+                        'category': 'Administrative',
+                        'is_active': True,
+                    },
+                )
+                create_or_merge_invoice_line(
+                    invoice=invoice,
+                    service_code=service_code,
+                    quantity=Decimal('1'),
+                    unit_price=amount,
+                    description=description,
+                )
+                invoice.update_totals()
+
+                if charge_only:
+                    messages.success(
+                        request,
+                        f'Charge of GHS {amount:,.2f} added for {counterparty_name} ({description}). '
+                        f'Invoice #{invoice.invoice_number}',
+                    )
+                    return redirect('hospital:cashier_invoices')
+
+                result = UnifiedReceiptService.create_receipt_with_qr(
+                    patient=None,
+                    amount=amount,
+                    payment_method=payment_method,
+                    received_by_user=request.user,
+                    invoice=invoice,
+                    service_type='other',
+                    service_details={
+                        'description': description,
+                        'non_patient': True,
+                        'counterparty_name': counterparty_name,
+                    },
+                    notes=notes or f'Non-patient charge - {description} - {counterparty_name}',
+                    idempotency_token=idempotency_token or None,
+                )
+
+                if result.get('success') is False and result.get('error') == 'busy':
+                    messages.warning(
+                        request,
+                        result.get(
+                            'message',
+                            'Payment is still processing. Check receipts before paying again.',
+                        ),
+                    )
+                    return redirect('hospital:cashier_non_patient_charge')
+
+                receipt = result.get('receipt')
+                if receipt:
+                    messages.success(
+                        request,
+                        f'Payment of GHS {amount:,.2f} recorded for {counterparty_name} ({description}). '
+                        f'Receipt #{receipt.receipt_number}',
+                    )
+                    from django.urls import reverse
+                    pos_url = reverse('hospital:receipt_pos_print', args=[receipt.id]) + '?auto_print=1'
+                    return redirect(pos_url)
+
+                messages.success(
+                    request,
+                    f'Payment of GHS {amount:,.2f} recorded for {counterparty_name}.',
+                )
+        except Exception as e:
+            logger.exception('Error in cashier_non_patient_charge: %s', e)
+            messages.error(request, f'Error recording charge: {e!s}')
+            return redirect('hospital:cashier_non_patient_charge')
+
+        return redirect('hospital:cashier_invoices')
+
+    return render(
+        request,
+        'hospital/cashier_non_patient_charge.html',
+        {'payment_idempotency_token': str(uuid.uuid4())},
+    )
 
 
 @login_required

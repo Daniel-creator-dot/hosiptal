@@ -16,6 +16,9 @@
             <div class="rx-form-section">
                 <form method="post">
                     {% csrf_token %}
+                    {% if next_url %}
+                    <input type="hidden" name="next" value="{{ next_url }}">
+                    {% endif %}
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Drug</label>
                         <div class="form-control form-control-modern bg-light" readonly>
@@ -50,6 +53,18 @@
                         </div>
                     </div>
                     <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Supplier (vendor)</label>
+                            <select class="form-select form-control-modern" name="supplier" id="supplierSelect" title="Who this batch was received from">
+                                <option value="">— Not specified —</option>
+                                {% for s in suppliers %}
+                                <option value="{{ s.pk }}" {% if stock.supplier_id == s.pk %}selected{% endif %}>{{ s.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <small class="form-text text-muted">Optional. Link this batch to the vendor it came from.</small>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
                         <div class="col-12">
                             <label class="form-label">Supplier cost</label>
                             <div class="form-check">
@@ -81,13 +96,14 @@
                             <input type="number" name="unit_cost" id="costPriceInput" class="form-control form-control-modern"
                                    value="{{ stock.unit_cost }}" min="0" step="0.01" placeholder="Type unit cost here">
                             <small class="form-text text-muted">Editable in manual mode; filled from total ÷ quantity in batch-total mode.</small>
+                            <small class="form-text text-success fw-semibold" id="unitCostPreview" style="display:none;"></small>
                         </div>
                     </div>
                     <div class="d-flex gap-2 mt-4">
                         <button type="submit" class="btn btn-primary">
                             <i class="bi bi-check-lg"></i> Save changes
                         </button>
-                        <a href="{% url 'hospital:pharmacy_stock_list' %}" class="btn btn-outline-secondary">Cancel</a>
+                        <a href="{{ cancel_url }}" class="btn btn-outline-secondary">Cancel</a>
                     </div>
                 </form>
             </div>
@@ -99,8 +115,8 @@
     var quantityInput = document.getElementById('quantityInput');
     var totalCostInput = document.getElementById('totalCostInput');
     var costPriceInput = document.getElementById('costPriceInput');
-    var costModeManual = document.getElementById('costModeManual');
     var costModeFromTotal = document.getElementById('costModeFromTotal');
+    var unitCostPreview = document.getElementById('unitCostPreview');
     var form = document.querySelector('form[method="post"]');
 
     function isFromTotalMode() {
@@ -110,48 +126,77 @@
     function syncCostModeUi() {
         if (!totalCostInput) return;
         var fromTotal = isFromTotalMode();
-        totalCostInput.disabled = !fromTotal;
+        totalCostInput.readOnly = !fromTotal;
+        totalCostInput.classList.toggle('bg-light', !fromTotal);
+        totalCostInput.tabIndex = fromTotal ? 0 : -1;
         if (!fromTotal) {
             totalCostInput.value = '';
         } else {
             totalCostInput.placeholder = 'Invoice total for current quantity';
         }
-        if (costPriceInput) {
-            costPriceInput.readOnly = fromTotal;
-            costPriceInput.classList.toggle('bg-light', fromTotal);
+        if (unitCostPreview) {
+            unitCostPreview.style.display = 'none';
         }
     }
 
     function recalcUnitCostFromTotal() {
-        if (!isFromTotalMode() || !quantityInput || !totalCostInput || !costPriceInput) return;
-        var q = parseFloat(quantityInput.value, 10);
-        var t = parseFloat(totalCostInput.value, 10);
+        if (!isFromTotalMode() || !quantityInput || !totalCostInput || !costPriceInput) {
+            if (unitCostPreview) unitCostPreview.style.display = 'none';
+            return;
+        }
+        var q = parseFloat(String(quantityInput.value).replace(/,/g, ''));
+        var t = parseFloat(String(totalCostInput.value).replace(/,/g, ''));
         if (!isNaN(t) && t > 0 && !isNaN(q) && q > 0) {
-            costPriceInput.value = (Math.round((t / q) * 100) / 100).toFixed(2);
+            var unit = (Math.round((t / q) * 100) / 100).toFixed(2);
+            costPriceInput.value = unit;
+            if (unitCostPreview) {
+                unitCostPreview.textContent = 'Calculated: GHS ' + unit + ' per unit (' + t.toFixed(2) + ' ÷ ' + q + ')';
+                unitCostPreview.style.display = 'block';
+            }
+        } else if (unitCostPreview) {
+            unitCostPreview.style.display = 'none';
         }
     }
 
     function onCostModeChange() {
         syncCostModeUi();
-        if (isFromTotalMode()) {
-            recalcUnitCostFromTotal();
-        }
+        recalcUnitCostFromTotal();
     }
 
-    if (costModeManual) costModeManual.addEventListener('change', onCostModeChange);
-    if (costModeFromTotal) costModeFromTotal.addEventListener('change', onCostModeChange);
+    document.querySelectorAll('input[name="stock_cost_mode"]').forEach(function(radio) {
+        radio.addEventListener('change', onCostModeChange);
+        radio.addEventListener('click', onCostModeChange);
+    });
     syncCostModeUi();
 
-    if (totalCostInput) {
-        totalCostInput.addEventListener('input', recalcUnitCostFromTotal);
-        totalCostInput.addEventListener('blur', recalcUnitCostFromTotal);
+    function bindCostRecalc(el) {
+        if (!el) return;
+        ['input', 'change', 'keyup', 'blur'].forEach(function(evt) {
+            el.addEventListener(evt, recalcUnitCostFromTotal);
+        });
     }
-    if (quantityInput) {
-        quantityInput.addEventListener('input', recalcUnitCostFromTotal);
-        quantityInput.addEventListener('blur', recalcUnitCostFromTotal);
-    }
+    bindCostRecalc(totalCostInput);
+    bindCostRecalc(quantityInput);
+
     if (form) {
-        form.addEventListener('submit', recalcUnitCostFromTotal);
+        form.addEventListener('submit', function(e) {
+            if (totalCostInput) {
+                totalCostInput.readOnly = false;
+                if (!isFromTotalMode()) {
+                    totalCostInput.value = '';
+                }
+            }
+            recalcUnitCostFromTotal();
+            if (isFromTotalMode()) {
+                var q = parseFloat(String(quantityInput && quantityInput.value).replace(/,/g, ''));
+                var t = parseFloat(String(totalCostInput && totalCostInput.value).replace(/,/g, ''));
+                if (isNaN(t) || t <= 0 || isNaN(q) || q <= 0) {
+                    e.preventDefault();
+                    alert('Enter both quantity and total batch cost so unit cost can be calculated.');
+                    return false;
+                }
+            }
+        });
     }
 })();
 </script>

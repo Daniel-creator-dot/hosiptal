@@ -88,50 +88,80 @@ class FinancialValidator:
     
     @staticmethod
     def validate_cashier_session(session):
-        """Validate cashier session totals"""
+        """Validate cashier session totals (matches CashierSession.calculate_totals)."""
         from .models_accounting import Transaction
-        
-        # Get all cash transactions for this session
-        session_transactions = Transaction.objects.filter(
+        from .models_patient_deposits import PatientDeposit
+
+        session_end = session.closed_at if session.closed_at else timezone.now()
+
+        transactions = Transaction.objects.filter(
             processed_by=session.cashier,
-            payment_method='cash',
             transaction_date__gte=session.opened_at,
-            is_deleted=False
+            transaction_date__lte=session_end,
+            is_deleted=False,
         )
-        
-        if session.status == 'closed' and session.closed_at:
-            session_transactions = session_transactions.filter(
-                transaction_date__lte=session.closed_at
-            )
-        
-        # Calculate totals
-        payments = session_transactions.filter(
-            transaction_type='payment_received'
-        ).aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
-        
-        refunds = session_transactions.filter(
-            transaction_type='refund_issued'
-        ).aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
-        
-        expected_cash = session.opening_cash + payments - refunds
-        
-        if session.total_payments != payments:
+        payments = transactions.filter(transaction_type='payment_received')
+        bill_payments = payments.exclude(payment_method='deposit')
+        bill_payments_total = bill_payments.aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
+
+        deposit_qs = PatientDeposit.objects.filter(
+            received_by_id=session.cashier_id,
+            deposit_date__gte=session.opened_at,
+            deposit_date__lte=session_end,
+            is_deleted=False,
+        ).exclude(status='cancelled')
+        deposit_received = deposit_qs.aggregate(Sum('deposit_amount'))['amount__sum'] or Decimal('0.00')
+
+        calc_total_payments = bill_payments_total + deposit_received
+
+        cash_bill = (
+            bill_payments.filter(payment_method='cash').aggregate(Sum('amount'))['amount__sum']
+            or Decimal('0.00')
+        )
+        cash_deposit_intake = (
+            deposit_qs.filter(payment_method='cash').aggregate(Sum('deposit_amount'))['amount__sum']
+            or Decimal('0.00')
+        )
+        refunds = transactions.filter(transaction_type='refund_issued')
+        cash_refunds = (
+            refunds.filter(payment_method='cash').aggregate(Sum('amount'))['amount__sum']
+            or Decimal('0.00')
+        )
+        calc_expected_cash = session.opening_cash + cash_bill + cash_deposit_intake - cash_refunds
+
+        if session.total_payments != calc_total_payments:
             return {
                 'valid': False,
-                'error': f'Session total payments (GHS {session.total_payments}) does not match actual (${payments})'
+                'error': (
+                    f'Session total payments (GHS {session.total_payments}) does not match '
+                    f'recalculated bill/service + deposit intake (GHS {calc_total_payments})'
+                ),
             }
-        
-        if session.expected_cash != expected_cash:
+
+        if getattr(session, 'deposit_received_total', None) != deposit_received:
             return {
                 'valid': False,
-                'error': f'Session expected cash (GHS {session.expected_cash}) does not match calculated (${expected_cash})'
+                'error': (
+                    f'Session deposit_received_total (GHS {session.deposit_received_total}) does not match '
+                    f'PatientDeposit sum (GHS {deposit_received})'
+                ),
             }
-        
+
+        if session.expected_cash != calc_expected_cash:
+            return {
+                'valid': False,
+                'error': (
+                    f'Session expected cash (GHS {session.expected_cash}) does not match '
+                    f'opening + cash bill payments + cash deposit intake - cash refunds (GHS {calc_expected_cash})'
+                ),
+            }
+
         return {
             'valid': True,
-            'payments': payments,
-            'refunds': refunds,
-            'expected_cash': expected_cash
+            'total_payments': calc_total_payments,
+            'deposit_received_total': deposit_received,
+            'cash_refunds': cash_refunds,
+            'expected_cash': calc_expected_cash,
         }
     
     @staticmethod

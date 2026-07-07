@@ -10,7 +10,28 @@
         <div class="col-lg-10 mx-auto">
             <div class="card border-0 shadow-sm">
                 <div class="card-header bg-white border-0 py-3">
-                    <h4 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Create Journal Entry</h4>
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <h4 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Create Journal Entry</h4>
+                        {% if prefill_account %}
+                        <span class="badge bg-primary fs-6">
+                            {{ prefill_account.account_code }} — {{ prefill_account.account_name }}
+                        </span>
+                        {% elif account_type_filter == 'asset' %}
+                        <span class="badge bg-primary fs-6">New asset entry</span>
+                        {% endif %}
+                    </div>
+                    {% if prefill_account %}
+                    <p class="text-muted small mb-0 mt-2">
+                        Line 1 is pre-filled for this account.
+                        {% if prefill_account.account_type == 'asset' %}
+                        Debit the asset to increase it; credit the offsetting account (cash, payable, etc.) on line 2.
+                        {% endif %}
+                    </p>
+                    {% elif account_type_filter == 'asset' %}
+                    <p class="text-muted small mb-0 mt-2">
+                        Record a double entry: debit the asset account, credit the source account (cash, bank, payable, etc.).
+                    </p>
+                    {% endif %}
                 </div>
                 <div class="card-body">
                     <form method="post" id="journalEntryForm">
@@ -22,7 +43,10 @@
                                 <select name="journal" class="form-select" required>
                                     <option value="">Select Journal</option>
                                     {% for journal in journals %}
-                                    <option value="{{ journal.id }}">{{ journal.code }} - {{ journal.name }}</option>
+                                    <option value="{{ journal.id }}"
+                                        {% if default_journal and default_journal.id == journal.id %}selected{% endif %}>
+                                        {{ journal.code }} - {{ journal.name }}
+                                    </option>
                                     {% endfor %}
                                 </select>
                             </div>
@@ -79,12 +103,29 @@
                             <i class="bi bi-exclamation-triangle me-2"></i>Debits and credits must balance!
                         </div>
 
+                        {% if prefill_account %}
+                        <input type="hidden" name="return_account_id" value="{{ prefill_account.id }}">
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" name="post_immediately" value="1" id="postImmediately" checked>
+                            <label class="form-check-label" for="postImmediately">
+                                Post to general ledger immediately (shows in Trial Balance)
+                            </label>
+                        </div>
+                        {% endif %}
+
                         <div class="d-flex justify-content-between">
+                            {% if prefill_account %}
+                            <a href="{% url 'hospital:accountant_account_detail' prefill_account.id %}" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-left me-2"></i>Back to Account
+                            </a>
+                            {% else %}
                             <a href="{% url 'hospital:journal_entry_list' %}" class="btn btn-outline-secondary">
                                 <i class="bi bi-arrow-left me-2"></i>Cancel
                             </a>
+                            {% endif %}
                             <button type="submit" class="btn btn-primary" id="submitBtn" disabled>
-                                <i class="bi bi-check-circle me-2"></i>Create Journal Entry
+                                <i class="bi bi-check-circle me-2"></i>
+                                {% if prefill_account %}Save Journal Entry{% else %}Create Journal Entry{% endif %}
                             </button>
                         </div>
                     </form>
@@ -96,14 +137,14 @@
 
 <script>
 let lineCounter = 0;
-const accounts = [
-    {% for account in accounts %}
-    {id: '{{ account.id }}', code: '{{ account.account_code }}', name: '{{ account.account_name }}'},
-    {% endfor %}
-];
+const prefillAccountId = '{{ prefill_account.id|default:"" }}';
+const prefillSide = '{{ prefill_side|default:"debit" }}';
 
-function addJournalLine() {
+function addJournalLine(selectedAccountId, debitValue, creditValue) {
     lineCounter++;
+    const selectedId = selectedAccountId || '';
+    const debit = debitValue !== undefined ? debitValue : '';
+    const credit = creditValue !== undefined ? creditValue : '';
     const lineHtml = `
         <div class="card mb-3 journal-line" data-line="${lineCounter}">
             <div class="card-body">
@@ -113,17 +154,17 @@ function addJournalLine() {
                         <select name="line_${lineCounter}_account" class="form-select account-select" required>
                             <option value="">Select Account</option>
                             {% for account in accounts %}
-                            <option value="{{ account.id }}">{{ account.account_code }} - {{ account.account_name }}</option>
+                            <option value="{{ account.id }}" ${selectedId === '{{ account.id }}' ? 'selected' : ''}>{{ account.account_code }} - {{ account.account_name }}</option>
                             {% endfor %}
                         </select>
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">Debit</label>
-                        <input type="number" name="line_${lineCounter}_debit" class="form-control debit-input" step="0.01" min="0" value="0" onchange="updateTotals()">
+                        <input type="number" name="line_${lineCounter}_debit" class="form-control debit-input" step="0.01" min="0" value="${debit}" onchange="updateTotals()">
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">Credit</label>
-                        <input type="number" name="line_${lineCounter}_credit" class="form-control credit-input" step="0.01" min="0" value="0" onchange="updateTotals()">
+                        <input type="number" name="line_${lineCounter}_credit" class="form-control credit-input" step="0.01" min="0" value="${credit}" onchange="updateTotals()">
                     </div>
                     <div class="col-md-2">
                         <label class="form-label">&nbsp;</label>
@@ -181,9 +222,15 @@ function updateTotals() {
     }
 }
 
-// Add initial line
+// Add initial lines
 document.addEventListener('DOMContentLoaded', function() {
-    addJournalLine();
+    if (prefillAccountId) {
+        addJournalLine(prefillAccountId, prefillSide === 'debit' ? '' : '0', prefillSide === 'credit' ? '' : '0');
+        addJournalLine('', '0', '0');
+    } else {
+        addJournalLine('', '0', '0');
+        addJournalLine('', '0', '0');
+    }
 });
 </script>
 {% endblock %}

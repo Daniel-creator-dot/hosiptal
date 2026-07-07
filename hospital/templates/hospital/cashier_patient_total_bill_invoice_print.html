@@ -112,6 +112,13 @@
         .summary-content { font-size: 7px; color: var(--gray-700); line-height: 1.4; }
         .summary-alert { margin-top: 6px; padding: 4px 6px; border-radius: 2px; font-weight: 600; font-size: 7px; }
         .summary-alert.payment-required { background: #fee2e2; border-left: 2px solid var(--danger-color); color: var(--gray-900); }
+        .bill-final-totals { margin-top: 10px; padding: 10px 12px; border: 2px solid var(--gray-800); border-radius: 3px; background: #fafafa; }
+        .bill-final-totals table { width: 100%; border-collapse: collapse; font-size: 9px; }
+        .bill-final-totals td { padding: 4px 0; vertical-align: top; color: var(--gray-800); }
+        .bill-final-totals td:first-child { font-weight: 600; padding-right: 8px; }
+        .bill-final-totals td:last-child { text-align: right; font-weight: 700; white-space: nowrap; }
+        .bill-final-totals tr.muted td { color: var(--gray-600); font-weight: 500; font-size: 8px; }
+        .bill-final-totals tr.due-row td { font-size: 11px; font-weight: 800; padding-top: 10px; border-top: 2px solid var(--gray-800); color: var(--gray-900); }
         .invoice-footer { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--gray-300); text-align: center; }
         .footer-content { color: var(--gray-600); font-size: 7px; line-height: 1.4; }
         .footer-name { font-weight: 700; font-size: 8px; color: var(--gray-900); margin-bottom: 2px; }
@@ -132,6 +139,7 @@
             .balance-row td { color: #111 !important; }
             .totals-card { page-break-inside: avoid; border: 1px solid #333 !important; }
             .summary-box { page-break-inside: avoid; border: 1px solid #333 !important; }
+            .bill-final-totals { page-break-inside: avoid; border: 2px solid #111 !important; background: #fff !important; }
         }
     </style>
 </head>
@@ -196,72 +204,49 @@
                         <span class="info-value"><span style="display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 7px; font-weight: 700; background: #fef3c7; color: #92400e;">OUTSTANDING</span></span>
                     </div>
                     <div class="info-row">
-                        <span class="info-label">Amount billed</span>
-                        <span class="info-value">GHS {{ initial_total|default:total|floatformat:2 }}</span>
-                    </div>
-                    <div class="info-row">
-                        <span class="info-label">Deposit taken</span>
-                        <span class="info-value">{% if deposit_applied_to_bill > 0 %}GHS {{ deposit_applied_to_bill|floatformat:2 }}{% else %}GHS 0.00{% endif %}</span>
-                    </div>
-                    <div class="info-row">
-                        <span class="info-label">Outstanding due (this bill)</span>
+                        <span class="info-label">Balance due (this bill)</span>
                         <span class="info-value">GHS {{ bill_outstanding|floatformat:2 }}</span>
                     </div>
-                </div>
-            </div>
-
-            <div class="totals-wrapper">
-                <div class="totals-card">
-                    <div style="font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--gray-600); margin-bottom: 6px;">Bill summary</div>
-                    <table class="totals-table">
-                        <tr>
-                            <td><strong>Amount billed</strong> <span style="font-weight: 400; color: var(--gray-500);">(charges on this bill)</span></td>
-                            <td class="text-right"><strong>GHS {{ initial_total|default:total|floatformat:2 }}</strong></td>
-                        </tr>
-                        <tr>
-                            <td><strong>Deposit taken</strong> <span style="font-weight: 400; color: var(--gray-500);">(applied from patient deposit)</span></td>
-                            <td class="text-right">{% if deposit_applied_to_bill > 0 %}- GHS {{ deposit_applied_to_bill|floatformat:2 }}{% else %}GHS 0.00{% endif %}</td>
-                        </tr>
-                        {% if patient_deposit_balance > 0 %}
-                        <tr>
-                            <td style="font-size: 8px; color: var(--gray-600);">Deposit still on account <span style="font-weight: 400;">(not yet applied)</span></td>
-                            <td class="text-right" style="font-size: 8px;">GHS {{ patient_deposit_balance|floatformat:2 }}</td>
-                        </tr>
-                        {% endif %}
-                        {% if payment_filter_active %}
-                        <tr>
-                            <td>Payments in date range</td>
-                            <td class="text-right">GHS {{ total_paid|floatformat:2 }}</td>
-                        </tr>
-                        <tr>
-                            <td>Payments all-time</td>
-                            <td class="text-right">GHS {{ total_paid_all_time|floatformat:2 }}</td>
-                        </tr>
-                        {% else %}
-                        <tr>
-                            <td>Total payments received <span style="font-weight: 400; color: var(--gray-500);">(all receipts)</span></td>
-                            <td class="text-right">GHS {{ total_paid_all_time|default:total_paid|floatformat:2 }}</td>
-                        </tr>
-                        {% endif %}
-                        <tr class="balance-row">
-                            <td><strong>Outstanding due (this bill)</strong></td>
-                            <td class="text-right"><strong>GHS {{ bill_outstanding|floatformat:2 }}</strong></td>
-                        </tr>
-                    </table>
+                    {% if deposit_applied_to_bill and deposit_applied_to_bill > 0 %}
+                    <div class="info-row">
+                        <span class="info-label">Deposit posted to these invoices</span>
+                        <span class="info-value">GHS {{ deposit_applied_to_bill|floatformat:2 }}</span>
+                    </div>
+                    {% endif %}
+                    {% if patient_deposits_recorded_sum and patient_deposits_recorded_sum > 0 %}
+                    <div class="info-row">
+                        <span class="info-label">Total deposit made</span>
+                        <span class="info-value">GHS {{ patient_deposits_recorded_sum|floatformat:2 }}</span>
+                    </div>
+                    {% endif %}
+                    {% if patient_deposit_balance and patient_deposit_balance > 0 %}
+                    <div class="info-row">
+                        <span class="info-label">Deposit available (not applied yet)</span>
+                        <span class="info-value">GHS {{ patient_deposit_balance|floatformat:2 }}</span>
+                    </div>
+                    {% endif %}
+                    <div class="info-row">
+                        <span class="info-label">Outstanding</span>
+                        <span class="info-value">GHS {{ bill_outstanding|floatformat:2 }}</span>
+                    </div>
                 </div>
             </div>
 
             <div class="summary-box">
                 <div class="summary-title">Invoice Summary</div>
                 <div class="summary-content">
-                    Billed <strong>GHS {{ initial_total|default:total|floatformat:2 }}</strong>,
-                    deposit taken <strong>{% if deposit_applied_to_bill > 0 %}GHS {{ deposit_applied_to_bill|floatformat:2 }}{% else %}GHS 0.00{% endif %}</strong>,
-                    outstanding <strong>GHS {{ bill_outstanding|floatformat:2 }}</strong>.
-                    {% if total_invoice_items or services_count %}Includes <strong>{{ total_invoice_items|default:services_count }}</strong> line item{{ total_invoice_items|default:services_count|pluralize }}.{% endif %}
+                    Balance due (sum of amounts on this bill) <strong>GHS {{ bill_outstanding|floatformat:2 }}</strong>.
+                    This figure reflects all posted payments (cash, MoMo, and any deposit the cashier has already applied to these invoices).
+                    {% if total_invoice_items or services_count %}<strong>{{ total_invoice_items|default:services_count }}</strong> charge line{{ total_invoice_items|default:services_count|pluralize }}.{% endif %}
+                    {% if patient_deposit_balance and patient_deposit_balance > 0 %}
+                    <span style="display: block; margin-top: 4px;">Deposit still on account <strong>GHS {{ patient_deposit_balance|floatformat:2 }}</strong> is not deducted here until you use <strong>Apply deposit to total bill</strong> on the cashier screen.</span>
+                    {% elif patient_deposits_recorded_sum and patient_deposits_recorded_sum > 0 %}
+                    <span style="display: block; margin-top: 4px;">Total deposit slip(s) on file: <strong>GHS {{ patient_deposits_recorded_sum|floatformat:2 }}</strong>.</span>
+                    {% endif %}
                 </div>
                 {% if bill_outstanding > 0 %}
                 <div class="summary-alert payment-required">
-                    <strong>PAYMENT REQUIRED:</strong> Outstanding balance of <strong>GHS {{ bill_outstanding|floatformat:2 }}</strong> is due. Please pay at the cashier.
+                    <strong>PAYMENT REQUIRED:</strong> Outstanding <strong>GHS {{ bill_outstanding|floatformat:2 }}</strong> is due at the cashier.
                 </div>
                 {% endif %}
             </div>
@@ -308,6 +293,36 @@
                 No line items on this bill. Add services from the Total Bill page first, then generate the invoice again.
             </div>
             {% endfor %}
+
+            <div class="bill-final-totals">
+                <table>
+                    <tr>
+                        <td>Balance due (this bill)</td>
+                        <td>GHS {{ bill_outstanding|floatformat:2 }}</td>
+                    </tr>
+                    {% if deposit_applied_to_bill and deposit_applied_to_bill > 0 %}
+                    <tr class="muted">
+                        <td>Deposit already posted to these invoices</td>
+                        <td>GHS {{ deposit_applied_to_bill|floatformat:2 }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if patient_deposits_recorded_sum and patient_deposits_recorded_sum > 0 %}
+                    <tr>
+                        <td>Total deposit made (all slips on file)</td>
+                        <td>GHS {{ patient_deposits_recorded_sum|floatformat:2 }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if patient_deposit_balance and patient_deposit_balance > 0 %}
+                    <tr class="muted">
+                        <td colspan="2" style="text-align: left;">Deposit available (apply on Total Bill to post to invoices): <strong>GHS {{ patient_deposit_balance|floatformat:2 }}</strong></td>
+                    </tr>
+                    {% endif %}
+                    <tr class="due-row">
+                        <td>Outstanding</td>
+                        <td>GHS {{ bill_outstanding|floatformat:2 }}</td>
+                    </tr>
+                </table>
+            </div>
 
             <div class="invoice-footer">
                 <div class="footer-content">

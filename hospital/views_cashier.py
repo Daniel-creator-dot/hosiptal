@@ -2,6 +2,7 @@
 Cashier Views - Payment Processing and Session Management
 """
 import logging
+import uuid
 
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required, user_passes_test
@@ -18,15 +19,194 @@ from .models_accounting import PaymentReceipt, Transaction
 from .models_workflow import CashierSession, PaymentRequest, Bill
 from .models import Invoice
 from .models_pharmacy_walkin import WalkInPharmacySale, WalkInPharmacySaleItem
-from .utils_roles import user_has_cashier_access, user_can_waive
+from .utils_roles import (
+    user_has_cashier_access,
+    user_can_waive,
+    user_can_add_manual_charges,
+    user_can_view_all_cashier_sessions,
+)
 from .decorators import (
     block_pharmacy_from_invoice_and_payment,
     invoice_from_bill_remover_required,
     role_required,
     waiver_permission_required,
 )
+from .patient_search import patient_matches_search as _patient_matches
 
 logger = logging.getLogger(__name__)
+
+
+def _cashier_session_time_bounds(session):
+    """Same window as CashierSession.calculate_totals() (inclusive)."""
+    end = session.closed_at if session.closed_at else timezone.now()
+    return session.opened_at, end
+
+
+def build_cashier_session_payment_method_summary(session):
+    """
+    Payment method totals for a session: bill/service receipts (excludes deposit-to-invoice
+    postings) merged with PatientDeposit intake, with per-row details for print.
+    """
+    from collections import defaultdict
+
+    from .models_patient_deposits import PatientDeposit
+
+    session_start, session_end = _cashier_session_time_bounds(session)
+
+    method_labels = {
+        'cash': 'Cash',
+        'mobile_money': 'Mobile Money (MOMO)',
+        'card': 'Card',
+        'bank_transfer': 'Bank Transfer',
+        'cheque': 'Cheque',
+        'insurance': 'Insurance',
+        'other': 'Other',
+    }
+
+    merged = defaultdict(lambda: {'total': Decimal('0'), 'txn_rows': [], 'deposit_rows': []})
+
+    txn_qs = (
+        Transaction.objects.filter(
+            processed_by=session.cashier,
+            transaction_date__gte=session_start,
+            transaction_date__lte=session_end,
+            transaction_type='payment_received',
+            is_deleted=False,
+        )
+        .exclude(payment_method='deposit')
+        .select_related('patient', 'invoice', 'invoice__patient')
+        .prefetch_related('invoice__lines__service_code')
+        .order_by('transaction_date')
+    )
+
+    for txn in txn_qs:
+        m = txn.payment_method or 'cash'
+        merged[m]['total'] += txn.amount or Decimal('0')
+        merged[m]['txn_rows'].append(txn)
+
+    dep_qs = (
+        PatientDeposit.objects.filter(
+            received_by_id=session.cashier_id,
+            deposit_date__gte=session_start,
+            deposit_date__lte=session_end,
+            is_deleted=False,
+        )
+        .exclude(status='cancelled')
+        .select_related('patient')
+        .order_by('deposit_date')
+    )
+
+    for dep in dep_qs:
+        m = dep.payment_method or 'cash'
+        merged[m]['total'] += dep.deposit_amount or Decimal('0')
+        merged[m]['deposit_rows'].append(dep)
+
+    def _txn_detail_dict(txn):
+        patient_name = 'N/A'
+        if txn.patient:
+            patient_name = txn.patient.full_name or f'{txn.patient.first_name} {txn.patient.last_name}'.strip()
+        elif txn.invoice and txn.invoice.patient:
+            p = txn.invoice.patient
+            patient_name = p.full_name or f'{p.first_name} {p.last_name}'.strip()
+
+        services = []
+        if txn.invoice:
+            invoice_lines = list(txn.invoice.billable_lines)
+            for line in invoice_lines:
+                service_desc = line.description or 'Service'
+                if line.service_code:
+                    if line.description:
+                        service_desc = f'{line.service_code.code} - {line.description}'
+                    else:
+                        service_desc = line.service_code.description or line.service_code.code
+                services.append(
+                    {
+                        'description': service_desc,
+                        'quantity': float(line.quantity),
+                        'unit_price': float(line.unit_price),
+                        'line_total': float(line.line_total),
+                    }
+                )
+        if not services:
+            if txn.notes:
+                services.append(
+                    {
+                        'description': txn.notes,
+                        'quantity': 1,
+                        'unit_price': float(txn.amount),
+                        'line_total': float(txn.amount),
+                    }
+                )
+            else:
+                services.append(
+                    {
+                        'description': 'Payment',
+                        'quantity': 1,
+                        'unit_price': float(txn.amount),
+                        'line_total': float(txn.amount),
+                    }
+                )
+
+        return {
+            'sort_date': txn.transaction_date,
+            'transaction_date': txn.transaction_date,
+            'transaction_number': txn.transaction_number,
+            'patient_name': patient_name,
+            'patient_mrn': (
+                txn.patient.mrn
+                if txn.patient
+                else (txn.invoice.patient.mrn if txn.invoice and txn.invoice.patient else '')
+            ),
+            'services': services,
+            'amount': txn.amount,
+            'reference_number': txn.reference_number or '',
+            'invoice_number': txn.invoice.invoice_number if txn.invoice else '',
+            'row_kind': 'bill_payment',
+        }
+
+    def _deposit_detail_dict(dep):
+        p = dep.patient
+        patient_name = p.full_name or f'{p.first_name} {p.last_name}'.strip() if p else 'N/A'
+        return {
+            'sort_date': dep.deposit_date,
+            'transaction_date': dep.deposit_date,
+            'transaction_number': dep.deposit_number,
+            'patient_name': patient_name,
+            'patient_mrn': p.mrn if p else '',
+            'services': [
+                {
+                    'description': 'Patient deposit (credit on account — not yet applied to bills)',
+                    'quantity': 1,
+                    'unit_price': float(dep.deposit_amount),
+                    'line_total': float(dep.deposit_amount),
+                }
+            ],
+            'amount': dep.deposit_amount,
+            'reference_number': (dep.reference_number or '')[:100],
+            'invoice_number': '',
+            'row_kind': 'deposit_intake',
+        }
+
+    summary = []
+    for method in sorted(merged.keys(), key=lambda k: -merged[k]['total']):
+        bucket = merged[method]
+        details = [_txn_detail_dict(t) for t in bucket['txn_rows']]
+        details.extend(_deposit_detail_dict(d) for d in bucket['deposit_rows'])
+        details.sort(key=lambda x: x['sort_date'])
+        for d in details:
+            d.pop('sort_date', None)
+
+        summary.append(
+            {
+                'method': method,
+                'label': method_labels.get(method, method.replace('_', ' ').title()),
+                'count': len(details),
+                'total': bucket['total'],
+                'transactions': details,
+            }
+        )
+
+    return summary
 
 
 def _apply_cashier_imaging_display_prices(imaging_studies):
@@ -113,18 +293,6 @@ def _apply_cashier_imaging_display_prices(imaging_studies):
 def is_cashier(user):
     """Only allow Administrators and Accounting to access cashier views."""
     return user_has_cashier_access(user)
-
-
-def _patient_matches(patient, search):
-    """Return True if patient name or MRN matches search (case-insensitive)."""
-    if not search or not patient:
-        return True
-    s = search.lower()
-    fn = (getattr(patient, 'first_name', None) or '').lower()
-    ln = (getattr(patient, 'last_name', None) or '').lower()
-    full = (getattr(patient, 'full_name', None) or f'{fn} {ln}'.strip()).lower()
-    mrn = (getattr(patient, 'mrn', None) or '').lower()
-    return s in full or s in fn or s in ln or s in mrn
 
 
 @login_required
@@ -874,59 +1042,39 @@ def close_session(request, session_id):
         notes_parts.append("")
         
         # Session Summary
+        bill_svc = session.total_payments - session.deposit_received_total
+        if bill_svc < 0:
+            bill_svc = Decimal('0.00')
         notes_parts.append("SESSION SUMMARY:")
         notes_parts.append("-" * 80)
         notes_parts.append(f"  Opening Cash:                GH¢{session.opening_cash:,.2f}")
-        notes_parts.append(f"  Total Payments Received:     GH¢{session.total_payments:,.2f}")
+        notes_parts.append(f"  Bill & service payments:     GH¢{bill_svc:,.2f}")
+        notes_parts.append(f"  Deposit received:            GH¢{session.deposit_received_total:,.2f}")
+        notes_parts.append(f"  Total payments received:     GH¢{session.total_payments:,.2f}")
         notes_parts.append(f"  Total Refunds Issued:        GH¢{session.total_refunds:,.2f}")
         notes_parts.append(f"  Expected Cash:               GH¢{session.expected_cash:,.2f}")
         notes_parts.append(f"  Total Transactions:          {session.total_transactions:,}")
         notes_parts.append("")
-        
-        # Payment Method Breakdown
-        from .models_accounting import Transaction
-        from datetime import timedelta
-        session_end = session.closed_at if session.closed_at else timezone.now()
-        session_start = session.opened_at
-        
-        payment_methods_breakdown = Transaction.objects.filter(
-            processed_by=session.cashier,
-            transaction_date__gte=session_start,
-            transaction_date__lte=session_end + timedelta(days=1),
-            transaction_type='payment_received',
-            is_deleted=False
-        ).values('payment_method').annotate(
-            total_amount=Sum('amount'),
-            count=Count('id')
-        ).order_by('-total_amount')
-        
-        if payment_methods_breakdown:
+
+        # Payment Method Breakdown (bill/service receipts + patient deposit intake by channel)
+        payment_method_summary_notes = build_cashier_session_payment_method_summary(session)
+        if payment_method_summary_notes:
             notes_parts.append("=" * 80)
             notes_parts.append("PAYMENT METHOD BREAKDOWN:")
             notes_parts.append("=" * 80)
             notes_parts.append("")
-            notes_parts.append(f"{'Payment Method':<25} {'Count':>10} {'Total Amount':>20}")
+            notes_parts.append(f"{'Payment Method':<40} {'Count':>10} {'Total Amount':>20}")
             notes_parts.append("-" * 80)
-            
-            method_labels = {
-                'cash': 'Cash',
-                'mobile_money': 'Mobile Money (MOMO)',
-                'card': 'Card',
-                'bank_transfer': 'Bank Transfer',
-                'cheque': 'Cheque',
-                'insurance': 'Insurance'
-            }
-            
-            for method_data in payment_methods_breakdown:
-                method = method_data['payment_method']
-                method_label = method_labels.get(method, method.replace('_', ' ').title())
-                count = method_data['count']
-                total = method_data['total_amount']
-                notes_parts.append(f"  {method_label:<23} {count:10,d} {total:>20,.2f}")
-            
+
+            for row in payment_method_summary_notes:
+                notes_parts.append(
+                    f"  {row['label']:<38} {row['count']:10,d} {row['total']:>20,.2f}"
+                )
+
             notes_parts.append("-" * 80)
-            total_all_methods = sum(m['total_amount'] for m in payment_methods_breakdown)
-            notes_parts.append(f"  {'TOTAL':<23} {sum(m['count'] for m in payment_methods_breakdown):10,d} {total_all_methods:>20,.2f}")
+            total_all_methods = sum(r['total'] for r in payment_method_summary_notes)
+            total_count = sum(r['count'] for r in payment_method_summary_notes)
+            notes_parts.append(f"  {'TOTAL':<38} {total_count:10,d} {total_all_methods:>20,.2f}")
             notes_parts.append("")
         
         # Cash Count by Denomination
@@ -1141,9 +1289,10 @@ def cashier_sessions_list(request):
     from .utils_roles import get_user_role
     
     user_role = get_user_role(request.user)
-    
-    # Accountants and admins can see all sessions
-    if user_role in ['admin', 'accountant']:
+    can_view_all_sessions = user_can_view_all_cashier_sessions(request.user, request)
+
+    # Finance staff and admins can see all sessions
+    if can_view_all_sessions:
         sessions = CashierSession.objects.filter(is_deleted=False).select_related('cashier').order_by('-opened_at')
     else:
         # Cashiers see only their own sessions
@@ -1204,6 +1353,7 @@ def cashier_sessions_list(request):
         'total_payments': total_payments,
         'total_refunds': total_refunds,
         'user_role': user_role,
+        'can_view_all_sessions': can_view_all_sessions,
     }
     
     return render(request, 'hospital/cashier_sessions_list.html', context)
@@ -1218,142 +1368,62 @@ def cashier_session_print(request, session_id):
     """
     from .utils_roles import get_user_role
     from django.conf import settings
-    
+    from .models_patient_deposits import PatientDeposit
+
     session = get_object_or_404(CashierSession, pk=session_id, is_deleted=False)
-    
-    # Check permissions - cashiers can only print their own sessions unless admin/accountant
-    user_role = get_user_role(request.user)
-    if user_role not in ['admin', 'accountant'] and session.cashier != request.user:
+
+    # Check permissions - cashiers can only print their own sessions unless finance/admin
+    if not user_can_view_all_cashier_sessions(request.user, request) and session.cashier != request.user:
         messages.error(request, 'You can only print your own sessions.')
         return redirect('hospital:cashier_sessions_list')
-    
+
+    session.calculate_totals()
+    session.refresh_from_db()
+
     # Calculate variance if session is closed
     variance = None
     if session.actual_cash is not None and session.expected_cash is not None:
         variance = session.actual_cash - session.expected_cash
-    
-    # Get transactions for this session
-    from datetime import timedelta
-    session_end = session.closed_at if session.closed_at else timezone.now()
-    session_start = session.opened_at
-    
-    transactions = Transaction.objects.filter(
-        processed_by=session.cashier,
-        transaction_date__gte=session_start,
-        transaction_date__lte=session_end + timedelta(days=1),
-        is_deleted=False
-    ).select_related('invoice', 'invoice__patient').order_by('transaction_date')
-    
-    # Get receipts for this session
-    receipts = PaymentReceipt.objects.filter(
-        received_by=session.cashier,
-        receipt_date__gte=session_start,
-        receipt_date__lte=session_end + timedelta(days=1),
-        is_deleted=False
-    ).select_related('patient').order_by('receipt_date')
-    
-    # Get payment method breakdown for this session
-    payment_methods_breakdown = Transaction.objects.filter(
-        processed_by=session.cashier,
-        transaction_date__gte=session_start,
-        transaction_date__lte=session_end + timedelta(days=1),
-        transaction_type='payment_received',
-        is_deleted=False
-    ).values('payment_method').annotate(
-        total_amount=Sum('amount'),
-        count=Count('id')
-    ).order_by('-total_amount')
-    
-    # Get detailed transactions grouped by payment method
-    from .models import InvoiceLine
-    detailed_transactions = Transaction.objects.filter(
-        processed_by=session.cashier,
-        transaction_date__gte=session_start,
-        transaction_date__lte=session_end + timedelta(days=1),
-        transaction_type='payment_received',
-        is_deleted=False
-    ).select_related(
-        'patient', 
-        'invoice', 
-        'invoice__patient'
-    ).prefetch_related(
-        'invoice__lines__service_code'
-    ).order_by('payment_method', 'transaction_date')
-    
-    # Format payment method breakdown for template
-    method_labels = {
-        'cash': 'Cash',
-        'mobile_money': 'Mobile Money (MOMO)',
-        'card': 'Card',
-        'bank_transfer': 'Bank Transfer',
-        'cheque': 'Cheque',
-        'insurance': 'Insurance'
-    }
-    
-    payment_method_summary = []
-    for method_data in payment_methods_breakdown:
-        method = method_data['payment_method']
-        
-        # Get transactions for this payment method
-        method_transactions = [
-            txn for txn in detailed_transactions 
-            if txn.payment_method == method
-        ]
-        
-        # Build detailed list with patient names and services
-        transaction_details = []
-        for txn in method_transactions:
-            # Get patient name
-            patient_name = 'N/A'
-            if txn.patient:
-                patient_name = txn.patient.full_name or f"{txn.patient.first_name} {txn.patient.last_name}".strip()
-            elif txn.invoice and txn.invoice.patient:
-                patient_name = txn.invoice.patient.full_name or f"{txn.invoice.patient.first_name} {txn.invoice.patient.last_name}".strip()
-            
-            # Get services from invoice lines (exclude waived)
-            services = []
-            if txn.invoice:
-                invoice_lines = list(txn.invoice.billable_lines)
-                for line in invoice_lines:
-                    service_desc = line.description or 'Service'
-                    if line.service_code:
-                        if line.description:
-                            service_desc = f"{line.service_code.code} - {line.description}"
-                        else:
-                            service_desc = line.service_code.description or line.service_code.code
-                    services.append({
-                        'description': service_desc,
-                        'quantity': float(line.quantity),
-                        'unit_price': float(line.unit_price),
-                        'line_total': float(line.line_total)
-                    })
-            
-            # If no invoice lines, try to get from notes or use generic description
-            if not services:
-                if txn.notes:
-                    services.append({'description': txn.notes, 'quantity': 1, 'unit_price': txn.amount, 'line_total': txn.amount})
-                else:
-                    services.append({'description': 'Payment', 'quantity': 1, 'unit_price': txn.amount, 'line_total': txn.amount})
-            
-            transaction_details.append({
-                'transaction_number': txn.transaction_number,
-                'patient_name': patient_name,
-                'patient_mrn': txn.patient.mrn if txn.patient else (txn.invoice.patient.mrn if txn.invoice and txn.invoice.patient else ''),
-                'amount': txn.amount,
-                'reference_number': txn.reference_number or '',
-                'transaction_date': txn.transaction_date,
-                'services': services,
-                'invoice_number': txn.invoice.invoice_number if txn.invoice else ''
-            })
-        
-        payment_method_summary.append({
-            'method': method,
-            'label': method_labels.get(method, method.replace('_', ' ').title()),
-            'count': method_data['count'],
-            'total': method_data['total_amount'],
-            'transactions': transaction_details
-        })
-    
+
+    session_start, session_end = _cashier_session_time_bounds(session)
+
+    transactions = (
+        Transaction.objects.filter(
+            processed_by=session.cashier,
+            transaction_date__gte=session_start,
+            transaction_date__lte=session_end,
+            is_deleted=False,
+        )
+        .select_related('invoice', 'invoice__patient')
+        .order_by('transaction_date')
+    )
+
+    receipts = (
+        PaymentReceipt.objects.filter(
+            received_by=session.cashier,
+            receipt_date__gte=session_start,
+            receipt_date__lte=session_end,
+            is_deleted=False,
+        )
+        .select_related('patient')
+        .order_by('receipt_date')
+    )
+
+    payment_method_summary = build_cashier_session_payment_method_summary(session)
+    payment_method_row_count = sum(m['count'] for m in payment_method_summary)
+
+    session_deposits_detail = list(
+        PatientDeposit.objects.filter(
+            received_by_id=session.cashier_id,
+            deposit_date__gte=session_start,
+            deposit_date__lte=session_end,
+            is_deleted=False,
+        )
+        .exclude(status='cancelled')
+        .select_related('patient')
+        .order_by('deposit_date')
+    )
+
     # Get hospital name from settings
     hospital_name = getattr(settings, 'HOSPITAL_NAME', 'Hospital Management System')
     
@@ -1380,9 +1450,11 @@ def cashier_session_print(request, session_id):
         'hospital_name': hospital_name,
         'denomination_breakdown': denomination_breakdown,
         'payment_method_summary': payment_method_summary,
+        'payment_method_row_count': payment_method_row_count,
+        'session_deposits_detail': session_deposits_detail,
         'title': f'Session Closure Report - {session.session_number}',
     }
-    
+
     return render(request, 'hospital/cashier_session_print.html', context)
 
 
@@ -1495,7 +1567,7 @@ def create_session(request):
         is_deleted=False
     ).first()
     
-    if existing_open_session and user_role not in ['admin', 'accountant']:
+    if existing_open_session and not user_can_view_all_cashier_sessions(request.user, request):
         messages.warning(request, f'You already have an open session ({existing_open_session.session_number}). Please close it before creating a new one.')
         return redirect('hospital:cashier_sessions_list')
     
@@ -1547,7 +1619,7 @@ def update_session_notes(request, session_id):
     from .utils_roles import get_user_role
     user_role = get_user_role(request.user)
     
-    if user_role not in ['admin', 'accountant'] and session.cashier != request.user:
+    if not user_can_view_all_cashier_sessions(request.user, request) and session.cashier != request.user:
         messages.error(request, 'You can only update your own sessions.')
         return redirect('hospital:cashier_sessions_list')
     
@@ -1558,13 +1630,18 @@ def update_session_notes(request, session_id):
         
         messages.success(request, 'Session notes updated successfully!')
         
-        # Redirect based on where they came from
-        if request.GET.get('redirect') == 'detail':
+        # POST drops query string unless echoed in the form — check POST then GET
+        redirect_to = (request.POST.get('redirect') or request.GET.get('redirect') or '').strip()
+        if redirect_to == 'detail':
             return redirect('hospital:cashier_session_detail')
         return redirect('hospital:cashier_sessions_list')
-    
+
+    session.calculate_totals()
+    session.refresh_from_db()
+
     context = {
         'session': session,
+        'notes_redirect': request.GET.get('redirect', '') or '',
     }
     return render(request, 'hospital/update_session_notes.html', context)
 
@@ -1701,8 +1778,9 @@ def cashier_invoices(request):
     
     # Outstanding Balance = sum of balances from unpaid invoices
     outstanding_balance = all_invoices.filter(
-        status__in=['issued', 'partially_paid', 'overdue'],
-        balance__gt=0
+        balance__gt=0,
+    ).exclude(
+        status='cancelled',
     ).aggregate(Sum('balance'))['balance__sum'] or Decimal('0.00')
     
     # Filter invoices for display
@@ -1712,6 +1790,7 @@ def cashier_invoices(request):
     if query:
         invoices = invoices.filter(
             Q(invoice_number__icontains=query) |
+            Q(counterparty_name__icontains=query) |
             Q(patient__first_name__icontains=query) |
             Q(patient__last_name__icontains=query) |
             Q(patient__mrn__icontains=query) |
@@ -1729,6 +1808,13 @@ def cashier_invoices(request):
         invoices_page = paginator.get_page(page)
     except:
         invoices_page = paginator.get_page(1)
+
+    # Reconcile stale status/balance (e.g. paid badge with positive balance)
+    for inv in invoices_page.object_list:
+        try:
+            inv.update_totals()
+        except Exception:
+            logger.exception('update_totals failed for invoice %s', inv.pk)
     
     context = {
         'invoices': invoices_page,
@@ -1738,6 +1824,7 @@ def cashier_invoices(request):
         'query': query,
         'status_filter': status_filter,  # Original string for form
         'status_filters': status_filters,  # List for template checks
+        'show_non_patient_charge_link': user_can_add_manual_charges(request.user),
     }
     return render(request, 'hospital/cashier_invoices.html', context)
 
@@ -1790,7 +1877,7 @@ def cashier_invoice_detail(request, pk):
 def waive_invoice_line(request):
     """
     Waive (remove) an invoice line - for patients migrating from old system who already paid
-    (e.g. registration fee, etc.). Only administrators can waive; accountants and cashiers cannot.
+    (e.g. registration fee, etc.). Administrators and account/finance staff may waive; cashiers cannot.
     """
     from .models import InvoiceLine
     from django.db import transaction
@@ -1836,6 +1923,10 @@ def waive_invoice_line(request):
         line.save()  # save() recalculates line_total from discount_amount
 
         line.invoice.update_totals()
+        line.invoice.refresh_from_db()
+        if (line.invoice.balance or Decimal('0')) <= 0:
+            line.invoice.status = 'paid'
+            line.invoice.save(update_fields=['status'])
 
         # If this is a drug/prescription line: cancel PharmacyDispensing so quantity returns to stock.
         # Waived drugs were never paid for - stock should only be affected by paid dispensations.
@@ -1944,7 +2035,7 @@ def waive_prescribe_sale(request):
     """
     Waive (write off) a Prescribe Sale when the patient does not pay.
     Stock was already changed when prescribed; waiving only stops charging the patient.
-    Only administrators may waive; accountants use remove-invoice-from-bill for invoices only.
+    Account/finance staff and administrators may waive; cashiers use payment flow only.
     """
     if request.method != 'POST':
         messages.error(request, 'Invalid request.')
@@ -1968,6 +2059,8 @@ def waive_prescribe_sale(request):
         sale.waived_at = timezone.now()
         sale.waived_by = request.user
         sale.waiver_reason = waiver_reason[:255]
+        sale.payment_status = 'cancelled'
+        sale.amount_due = Decimal('0.00')
         sale.save()
         try:
             from .services.pharmacy_invoice_payment_link import waive_invoice_lines_for_prescribe_sale
@@ -1998,7 +2091,7 @@ def waive_prescribe_sale(request):
 def waive_prescribe_sale_line(request):
     """
     Waive a single line (item) of a Prescribe Sale. Amount for that line becomes 0; sale total is recalculated.
-    Only administrators may waive.
+    Account/finance staff and administrators may waive.
     """
     if request.method != 'POST':
         messages.error(request, 'Invalid request.')
@@ -2039,10 +2132,21 @@ def waive_prescribe_sale_line(request):
             item.waived_by = request.user
             item.waiver_reason = waiver_reason[:255]
             item.save()
+            try:
+                from .services.pharmacy_invoice_payment_link import (
+                    waive_invoice_lines_for_prescribe_sale_item,
+                )
+                n_inv = waive_invoice_lines_for_prescribe_sale_item(
+                    item, waived_by_user=request.user, reason=waiver_reason
+                )
+            except Exception as e:
+                logger.warning('waive_invoice_lines_for_prescribe_sale_item: %s', e)
+                n_inv = 0
+            extra_inv = f' {n_inv} invoice line(s) updated.' if n_inv else ''
             messages.success(
                 request,
                 f'Waived: {item.drug.name} (GHS {amount_waived:.2f}). '
-                f'Reason: {waiver_reason[:80]}{"…" if len(waiver_reason) > 80 else ""}'
+                f'Reason: {waiver_reason[:80]}{"…" if len(waiver_reason) > 80 else ""}{extra_inv}'
             )
         except Exception:
             messages.warning(
@@ -2336,15 +2440,18 @@ def customer_debt(request):
         return redirect('hospital:cashier_dashboard')
 
 
-def _build_cashier_patient_invoices_context(patient):
+def _build_cashier_patient_invoices_context(patient, *, payable_only=False):
     """
     Shared context for cashier patient invoice list and print view.
+    When payable_only=True (default patient_invoices_print), only invoices with balance due are included,
+    combined line items omit pre–go-live registration scrape lines, and balance due matches open invoices.
+    For a printable full history including paid/zero-balance invoices, open patient_invoices_print with ?full=1.
     """
     from .models import Invoice
     from django.db.models import Sum, Q
     from decimal import Decimal
 
-    invoices = (
+    base_qs = (
         Invoice.all_objects.filter(patient=patient, is_deleted=False)
         .exclude(status='cancelled')
         .exclude(
@@ -2353,6 +2460,13 @@ def _build_cashier_patient_invoices_context(patient):
         )
         .order_by('-issued_at', '-created')
     )
+
+    invoice_list = list(base_qs)
+    for inv in invoice_list:
+        inv.calculate_totals()
+
+    if payable_only:
+        invoice_list = [inv for inv in invoice_list if (inv.balance or Decimal('0.00')) > Decimal('0.00')]
 
     total_paid = (
         PaymentReceipt.objects.filter(patient=patient, is_deleted=False)
@@ -2369,22 +2483,22 @@ def _build_cashier_patient_invoices_context(patient):
 
     total_amount = Decimal('0.00')
     outstanding = Decimal('0.00')
-    for inv in invoices:
-        inv.calculate_totals()
+    for inv in invoice_list:
         total_amount += (inv.total_amount or Decimal('0.00'))
         outstanding += (inv.balance or Decimal('0.00'))
 
-    total_invoices = invoices.count()
+    total_invoices = len(invoice_list)
 
     deposit_balance = getattr(patient, 'deposit_balance', Decimal('0.00'))
     if isinstance(deposit_balance, (int, float)):
         deposit_balance = Decimal(str(deposit_balance))
 
-    effective_outstanding = max(Decimal('0.00'), outstanding - deposit_balance)
+    # Full invoice balances until deposit is applied to invoices (not hypothetical subtraction)
+    effective_outstanding = max(Decimal('0.00'), outstanding)
 
     deposit_applied_to_bill = Decimal('0.00')
     try:
-        _inv_ids = list(invoices.values_list('pk', flat=True))
+        _inv_ids = [inv.pk for inv in invoice_list]
         if _inv_ids:
             deposit_applied_to_bill = (
                 PaymentReceipt.objects.filter(
@@ -2400,22 +2514,38 @@ def _build_cashier_patient_invoices_context(patient):
         pass
 
     from .utils_invoice_line import heal_invoice_zero_line_prices
+    from .utils_bills_go_live import should_hide_pre_go_live_registration_line
+
     combined_lines = []
-    for inv in invoices.order_by('issued_at', 'created'):
+    sorted_invs = sorted(
+        invoice_list,
+        key=lambda i: (
+            (i.issued_at or i.created) is None,
+            i.issued_at or i.created,
+            str(i.pk),
+        ),
+    )
+    include_legacy = False
+    for inv in sorted_invs:
         try:
             heal_invoice_zero_line_prices(inv)
         except Exception:
             pass
         for line in inv.billable_lines:
+            if payable_only and should_hide_pre_go_live_registration_line(line, include_legacy=include_legacy):
+                continue
             combined_lines.append({'line': line, 'invoice_number': inv.invoice_number})
     combined_total = sum(
         (cl['line'].display_line_total or Decimal('0.00')) for cl in combined_lines
     )
-    combined_balance = combined_total - total_paid
+    if payable_only:
+        combined_balance = outstanding
+    else:
+        combined_balance = combined_total - total_paid
 
     return {
         'patient': patient,
-        'invoices': invoices,
+        'invoices': invoice_list,
         'total_invoices': total_invoices,
         'outstanding': outstanding,
         'deposit_balance': deposit_balance,
@@ -2427,6 +2557,7 @@ def _build_cashier_patient_invoices_context(patient):
         'combined_balance': combined_balance,
         'deposit_applied_to_bill': deposit_applied_to_bill,
         'hospital_name': _get_hospital_name(),
+        'print_payable_only': payable_only,
     }
 
 
@@ -2444,11 +2575,18 @@ def patient_invoices(request, patient_id):
 @login_required
 @user_passes_test(is_cashier, login_url='/admin/login/')
 def patient_invoices_print(request, patient_id):
-    """Print-friendly invoice summary (no app chrome). Open in new tab or use Print to PDF."""
+    """
+    Print-friendly invoice summary (no app chrome). Open in new tab or use Print to PDF.
+
+    Default: open balances only (invoices with balance due). Pass ?full=1 (or true/yes) to include
+    fully paid invoices and all line items for a complete bill history.
+    """
     from .models import Patient
 
     patient = get_object_or_404(Patient, pk=patient_id, is_deleted=False)
-    context = _build_cashier_patient_invoices_context(patient)
+    full_raw = (request.GET.get('full') or '').strip().lower()
+    full_bill = full_raw in ('1', 'true', 'yes')
+    context = _build_cashier_patient_invoices_context(patient, payable_only=not full_bill)
     try:
         from .models_settings import HospitalSettings
         context['hospital_settings'] = HospitalSettings.get_settings()
@@ -2512,6 +2650,8 @@ def process_payment(request, payment_request_id=None, bill_id=None, invoice_id=N
             payment_method = request.POST.get('payment_method', 'cash')
             reference_number = request.POST.get('reference_number', '').strip()
             notes = request.POST.get('notes', '').strip()
+            pay_idem = request.POST.get('payment_idempotency_token', '').strip()
+            idem_locked = False
             
             # Validate amount
             if amount <= 0:
@@ -2521,6 +2661,8 @@ def process_payment(request, payment_request_id=None, bill_id=None, invoice_id=N
                     'bill': bill,
                     'patient': patient,
                     'payment_request': payment_request,
+                    'payment_methods': Transaction.PAYMENT_METHODS,
+                    'payment_idempotency_token': str(uuid.uuid4()),
                 })
             
             # Check balance
@@ -2532,6 +2674,8 @@ def process_payment(request, payment_request_id=None, bill_id=None, invoice_id=N
                         'bill': bill,
                         'patient': patient,
                         'payment_request': payment_request,
+                        'payment_methods': Transaction.PAYMENT_METHODS,
+                        'payment_idempotency_token': str(uuid.uuid4()),
                     })
             elif bill:
                 if amount > bill.patient_portion:
@@ -2541,12 +2685,49 @@ def process_payment(request, payment_request_id=None, bill_id=None, invoice_id=N
                         'bill': bill,
                         'patient': patient,
                         'payment_request': payment_request,
+                        'payment_methods': Transaction.PAYMENT_METHODS,
+                        'payment_idempotency_token': str(uuid.uuid4()),
                     })
             
             # Process payment: use invoice.mark_as_paid so PaymentReceipt is created and
             # balance reflects correctly on combined bill and everywhere (calculate_totals uses receipts)
             if invoice:
                 try:
+                    if pay_idem:
+                        from .services.payment_idempotency import PaymentIdempotency
+
+                        st, rid = PaymentIdempotency.begin(request.user.id, pay_idem)
+                        if st == 'CACHED':
+                            receipt = get_object_or_404(PaymentReceipt, pk=rid, is_deleted=False)
+                            messages.success(
+                                request,
+                                f'✅ Payment already recorded. Receipt {receipt.receipt_number}.',
+                            )
+                            referrer = (request.META.get('HTTP_REFERER') or '')
+                            if patient and ('cashier' in referrer or 'total-bill' in referrer or 'hms/cashier' in referrer):
+                                return redirect('hospital:cashier_patient_total_bill', patient.id)
+                            if invoice and patient is None:
+                                return redirect('hospital:cashier_invoice_detail', pk=invoice.pk)
+                            return redirect('hospital:invoice_detail', invoice.pk)
+                        if st == 'BUSY':
+                            messages.error(
+                                request,
+                                'Payment is still being saved. Wait a few seconds, then refresh this page or check receipts.',
+                            )
+                            return render(
+                                request,
+                                'hospital/process_payment.html',
+                                {
+                                    'invoice': invoice,
+                                    'bill': bill,
+                                    'patient': patient,
+                                    'payment_request': payment_request,
+                                    'payment_methods': Transaction.PAYMENT_METHODS,
+                                    'payment_idempotency_token': str(uuid.uuid4()),
+                                },
+                            )
+                        idem_locked = st == 'LOCKED'
+
                     transaction = invoice.mark_as_paid(
                         amount=amount,
                         payment_method=payment_method,
@@ -2560,6 +2741,16 @@ def process_payment(request, payment_request_id=None, bill_id=None, invoice_id=N
                         if notes:
                             transaction.notes = notes
                         transaction.save()
+                    if pay_idem and idem_locked:
+                        from .services.payment_idempotency import PaymentIdempotency
+
+                        rec = PaymentReceipt.objects.filter(
+                            transaction=transaction, is_deleted=False
+                        ).first()
+                        if rec:
+                            PaymentIdempotency.complete(request.user.id, pay_idem, rec.pk)
+                        else:
+                            PaymentIdempotency.abort(request.user.id, pay_idem)
                     messages.success(
                         request,
                         f'✅ Payment of GHS {amount} recorded successfully. '
@@ -2567,41 +2758,91 @@ def process_payment(request, payment_request_id=None, bill_id=None, invoice_id=N
                     )
                     # Redirect to cashier total bill if user came from cashier so combined invoice updates
                     referrer = (request.META.get('HTTP_REFERER') or '')
-                    if 'cashier' in referrer or 'total-bill' in referrer or 'hms/cashier' in referrer:
+                    if patient and ('cashier' in referrer or 'total-bill' in referrer or 'hms/cashier' in referrer):
                         return redirect('hospital:cashier_patient_total_bill', patient.id)
+                    if patient is None and invoice:
+                        return redirect('hospital:cashier_invoice_detail', pk=invoice.pk)
                     return redirect('hospital:invoice_detail', invoice.pk)
                 except Exception as e:
+                    if pay_idem and idem_locked:
+                        from .services.payment_idempotency import PaymentIdempotency
+
+                        PaymentIdempotency.abort(request.user.id, pay_idem)
                     messages.error(request, getattr(e, 'message', str(e)) or 'Failed to process payment.')
             elif bill:
-                # For bills, we need to handle differently
-                # Create transaction manually
                 from .models import Transaction
-                from django.utils import timezone
-                
-                transaction = Transaction.objects.create(
-                    transaction_type='payment_received',
-                    bill=bill,
-                    patient=patient,
-                    amount=amount,
-                    payment_method=payment_method,
-                    reference_number=reference_number or None,
-                    notes=notes or None,
-                    processed_by=request.user,
-                )
-                
-                # Update bill
-                bill.paid_amount = (bill.paid_amount or Decimal('0')) + amount
-                if bill.paid_amount >= bill.patient_portion:
-                    bill.status = 'paid'
-                bill.save()
-                
-                messages.success(
-                    request,
-                    f'✅ Payment of GHS {amount} recorded successfully for bill {bill.bill_number}.'
-                )
-                
-                # Redirect to bill detail if available, otherwise dashboard
-                return redirect('hospital:cashier_dashboard')
+                from django.db import transaction as db_transaction
+
+                try:
+                    idem_locked = False
+                    if pay_idem:
+                        from .services.payment_idempotency import PaymentIdempotency
+
+                        st, rid = PaymentIdempotency.begin(request.user.id, pay_idem)
+                        if st == 'CACHED':
+                            txn = get_object_or_404(Transaction, pk=rid, is_deleted=False)
+                            messages.success(
+                                request,
+                                f'✅ Payment already recorded for bill {bill.bill_number}.',
+                            )
+                            return redirect('hospital:cashier_dashboard')
+                        if st == 'BUSY':
+                            messages.error(
+                                request,
+                                'Payment is still being saved. Wait a few seconds, then refresh or check receipts.',
+                            )
+                            return render(
+                                request,
+                                'hospital/process_payment.html',
+                                {
+                                    'invoice': invoice,
+                                    'bill': bill,
+                                    'patient': patient,
+                                    'payment_request': payment_request,
+                                    'payment_methods': Transaction.PAYMENT_METHODS,
+                                    'payment_idempotency_token': str(uuid.uuid4()),
+                                },
+                            )
+                        idem_locked = st == 'LOCKED'
+
+                    with db_transaction.atomic():
+                        bill.refresh_from_db()
+                        outstanding = (bill.patient_portion or Decimal('0')) - (bill.paid_amount or Decimal('0'))
+                        if amount > outstanding:
+                            raise ValueError(
+                                f'Payment amount (GHS {amount}) exceeds outstanding (GHS {outstanding}).'
+                            )
+                        transaction_obj = Transaction.objects.create(
+                            transaction_type='payment_received',
+                            bill=bill,
+                            patient=patient,
+                            amount=amount,
+                            payment_method=payment_method,
+                            reference_number=reference_number or None,
+                            notes=notes or None,
+                            processed_by=request.user,
+                        )
+                        bill.paid_amount = (bill.paid_amount or Decimal('0')) + amount
+                        if bill.paid_amount >= bill.patient_portion:
+                            bill.status = 'paid'
+                        bill.save()
+
+                    if pay_idem and idem_locked:
+                        from .services.payment_idempotency import PaymentIdempotency
+
+                        PaymentIdempotency.complete(request.user.id, pay_idem, transaction_obj.pk)
+
+                    messages.success(
+                        request,
+                        f'✅ Payment of GHS {amount} recorded successfully for bill {bill.bill_number}.'
+                    )
+                    return redirect('hospital:cashier_dashboard')
+                except Exception as e:
+                    if pay_idem and idem_locked:
+                        from .services.payment_idempotency import PaymentIdempotency
+
+                        PaymentIdempotency.abort(request.user.id, pay_idem)
+                    messages.error(request, getattr(e, 'message', str(e)) or 'Failed to process payment.')
             
         except ValueError as e:
             messages.error(request, f'Invalid payment amount: {str(e)}')
@@ -2643,4 +2884,5 @@ def process_payment(request, payment_request_id=None, bill_id=None, invoice_id=N
         'default_amount': default_amount,
         'payment_request': payment_request,
         'payment_methods': Transaction.PAYMENT_METHODS,
+        'payment_idempotency_token': str(uuid.uuid4()),
     })

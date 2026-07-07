@@ -74,8 +74,8 @@ from .services.auto_billing_service import AutoBillingService
 from .models_payment_verification import PharmacyDispensing
 from .models import (
     Patient, Encounter, VitalSign, Department, Staff, Ward, Bed, Admission,
-    Order, LabTest, LabResult, Drug, PharmacyStock, Prescription,
-    Payer, ServiceCode, PriceBook, Invoice, InvoiceLine,
+    Order, LabTest, LabResult, Drug, PharmacyStock, PharmacyStockLoss, Prescription,
+    Payer, ServiceCode, PriceBook, CashierQuickService, CashierChargeBundle, Invoice, InvoiceLine,
     Appointment, MedicalRecord, Notification, PatientQRCode
 )
 from .models_advanced import (
@@ -623,6 +623,10 @@ class LabTestAdmin(admin.ModelAdmin):
         ('Pricing & Timing', {
             'fields': ('price', 'tat_minutes')
         }),
+        ('Insurance coverage', {
+            'fields': ('exclude_from_insurance', 'insurance_exclusion_reason'),
+            'description': 'When excluded, insurance patients pay cash at the cashier for this test. Corporate billing is unchanged.',
+        }),
         ('Status', {
             'fields': ('is_active',)
         }),
@@ -983,11 +987,29 @@ class LabResultAdmin(admin.ModelAdmin):
         return super().response_change(request, obj)
 
 
+class DrugAdminForm(forms.ModelForm):
+    """Dropdown for dosage form (same options as HMS drug create/edit page)."""
+
+    class Meta:
+        model = Drug
+        fields = '__all__'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        choice_pairs = list(Drug.FORM_CHOICES)
+        allowed = {c[0] for c in choice_pairs}
+        current = (getattr(self.instance, 'form', None) or '').strip()
+        if current and current not in allowed:
+            choice_pairs.insert(0, (current, current))
+        self.fields['form'].widget = forms.Select(choices=[('', '---------')] + choice_pairs)
+
+
 @admin.register(Drug)
 class DrugAdmin(admin.ModelAdmin):
-    list_display = ['name', 'category_display', 'generic_name', 'strength', 'form', 'unit_price_display', 'cost_price_display', 'margin_display', 'controlled_badge', 'is_active']
+    form = DrugAdminForm
+    list_display = ['name', 'category_display', 'generic_name', 'strength', 'form', 'preferred_supplier', 'unit_price_display', 'cost_price_display', 'margin_display', 'controlled_badge', 'is_active']
     list_filter = ['category', 'form', 'is_controlled', 'is_active', 'created']
-    search_fields = ['name', 'generic_name', 'atc_code', 'category']
+    search_fields = ['name', 'generic_name', 'atc_code', 'category', 'preferred_supplier__name']
     ordering = ['name']
     readonly_fields = ['created', 'modified']
     actions = ['activate_drugs', 'deactivate_drugs']
@@ -1000,9 +1022,13 @@ class DrugAdmin(admin.ModelAdmin):
         ('Formulation', {
             'fields': ('strength', 'form', 'pack_size', 'is_controlled')
         }),
-        ('Pricing', {
-            'fields': ('unit_price', 'cost_price'),
-            'description': 'Unit Price: Selling price per unit | Cost Price: Purchase cost from supplier'
+        ('Pricing & supplier', {
+            'fields': ('unit_price', 'cost_price', 'preferred_supplier'),
+            'description': 'Unit Price: Selling price per unit | Cost Price: Purchase cost from supplier | Preferred supplier links the drug to procurement vendors.'
+        }),
+        ('Insurance coverage', {
+            'fields': ('exclude_from_insurance', 'insurance_exclusion_reason'),
+            'description': 'When excluded, insurance patients pay cash at the cashier for this drug. Corporate billing is unchanged.',
         }),
         ('Status', {
             'fields': ('is_active',)
@@ -1089,9 +1115,9 @@ class PharmacyStockAdminForm(forms.ModelForm):
 @admin.register(PharmacyStock)
 class PharmacyStockAdmin(admin.ModelAdmin):
     form = PharmacyStockAdminForm
-    list_display = ['drug_link', 'batch_number', 'expiry_date', 'quantity_display', 'reorder_level', 'location', 'stock_status']
+    list_display = ['drug_link', 'batch_number', 'expiry_date', 'quantity_display', 'reorder_level', 'location', 'supplier', 'stock_status']
     list_filter = ['location', 'expiry_date', 'drug__form']
-    search_fields = ['drug__name', 'batch_number']
+    search_fields = ['drug__name', 'batch_number', 'supplier__name']
     ordering = ['drug__name', 'expiry_date']
     autocomplete_fields = ['drug']
 
@@ -1109,14 +1135,14 @@ class PharmacyStockAdmin(admin.ModelAdmin):
         super().save_model(request, obj, form, change)
 
     def has_change_permission(self, request, obj=None):
-        """Only admins can edit stock - restrict procurement/pharmacy from changing quantities"""
-        from .views_procurement import is_admin_user
-        if not is_admin_user(request.user):
+        """Admin and procurement/stores staff may edit pharmacy stock batches."""
+        from .views_procurement import can_edit_inventory
+        if not can_edit_inventory(request.user):
             return False
         return super().has_change_permission(request, obj)
 
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related('drug')
+        return super().get_queryset(request).select_related('drug', 'supplier')
     
     def drug_link(self, obj):
         url = reverse('admin:hospital_drug_change', args=[obj.drug.pk])
@@ -1137,6 +1163,46 @@ class PharmacyStockAdmin(admin.ModelAdmin):
             return format_html('<span class="badge badge-warning">Low Stock</span>')
         return format_html('<span class="badge badge-success">In Stock</span>')
     stock_status.short_description = 'Status'
+
+
+@admin.register(PharmacyStockLoss)
+class PharmacyStockLossAdmin(admin.ModelAdmin):
+    list_display = [
+        'created', 'drug_batch', 'quantity', 'loss_type', 'disposal_method', 'recorded_by_link',
+    ]
+    list_filter = ['loss_type', 'disposal_method', 'created']
+    search_fields = [
+        'pharmacy_stock__drug__name', 'pharmacy_stock__batch_number', 'notes', 'witness_name',
+    ]
+    ordering = ['-created']
+    date_hierarchy = 'created'
+    readonly_fields = [
+        'pharmacy_stock', 'loss_type', 'quantity', 'disposal_method', 'witness_name', 'notes',
+        'recorded_by', 'created', 'modified', 'is_deleted',
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def drug_batch(self, obj):
+        s = obj.pharmacy_stock
+        return f'{s.drug.name} / {s.batch_number}'
+
+    drug_batch.short_description = 'Drug / batch'
+
+    def recorded_by_link(self, obj):
+        u = obj.recorded_by
+        if not u:
+            return '—'
+        return u.get_full_name() or u.username
+
+    recorded_by_link.short_description = 'Recorded by'
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('pharmacy_stock__drug', 'recorded_by')
 
 
 @admin.register(Prescription)
@@ -1293,6 +1359,22 @@ class PriceBookAdmin(admin.ModelAdmin):
     list_filter = ['payer', 'is_active']
     search_fields = ['payer__name', 'service_code__description']
     ordering = ['payer', 'service_code']
+
+
+@admin.register(CashierQuickService)
+class CashierQuickServiceAdmin(admin.ModelAdmin):
+    list_display = ['label', 'billing_code', 'amount_cash', 'amount_corporate', 'amount_insurance', 'sort_order', 'is_active']
+    list_filter = ['is_active']
+    search_fields = ['label', 'billing_code']
+    ordering = ['sort_order', 'label']
+
+
+@admin.register(CashierChargeBundle)
+class CashierChargeBundleAdmin(admin.ModelAdmin):
+    list_display = ['label', 'bundle_code', 'sort_order', 'is_active']
+    list_filter = ['is_active']
+    search_fields = ['label', 'bundle_code']
+    ordering = ['sort_order', 'label']
 
 
 @admin.register(Invoice)
@@ -1713,6 +1795,7 @@ class CustomAdminSite(admin.AdminSite):
             'total_encounters': Encounter.objects.filter(is_deleted=False).count(),
             'active_encounters': Encounter.objects.filter(status='active', is_deleted=False).count(),
             'current_admissions': Admission.objects.filter(status='admitted', is_deleted=False).count(),
+            'discharged_admissions': Admission.objects.filter(status='discharged', is_deleted=False).count(),
             'total_invoices': Invoice.objects.filter(is_deleted=False).count(),
             'total_revenue': Invoice.objects.filter(status='paid', is_deleted=False).aggregate(
                 total=Sum('total_amount')
@@ -1725,6 +1808,13 @@ class CustomAdminSite(admin.AdminSite):
             'encounters_today': Encounter.objects.filter(started_at__date=today, is_deleted=False).count(),
             'recent_patients': Patient.objects.filter(is_deleted=False).order_by('-created')[:5],
             'recent_encounters': Encounter.objects.filter(is_deleted=False).select_related('patient').order_by('-started_at')[:5],
+            'recent_discharged_admissions': Admission.objects.filter(
+                status='discharged',
+                is_deleted=False,
+            ).select_related(
+                'encounter__patient',
+                'ward',
+            ).order_by('-discharge_date')[:5],
             'overdue_invoices': Invoice.objects.filter(status='overdue', is_deleted=False)[:5],
             'available_beds': Bed.objects.filter(status='available', is_active=True, is_deleted=False).count(),
             'total_beds': Bed.objects.filter(is_active=True, is_deleted=False).count(),
@@ -1848,6 +1938,7 @@ def custom_admin_index(request, extra_context=None):
         'total_encounters': Encounter.objects.filter(is_deleted=False).count(),
         'active_encounters': Encounter.objects.filter(status='active', is_deleted=False).count(),
         'current_admissions': Admission.objects.filter(status='admitted', is_deleted=False).count(),
+        'discharged_admissions': Admission.objects.filter(status='discharged', is_deleted=False).count(),
         'total_invoices': Invoice.objects.filter(is_deleted=False).count(),
         'total_revenue': Invoice.objects.filter(status='paid', is_deleted=False).aggregate(
             total=Sum('total_amount')
@@ -1860,6 +1951,13 @@ def custom_admin_index(request, extra_context=None):
         'encounters_today': Encounter.objects.filter(started_at__date=timezone.now().date(), is_deleted=False).count(),
         'recent_patients': Patient.objects.filter(is_deleted=False).order_by('-created')[:5],
         'recent_encounters': Encounter.objects.filter(is_deleted=False).select_related('patient').order_by('-started_at')[:5],
+        'recent_discharged_admissions': Admission.objects.filter(
+            status='discharged',
+            is_deleted=False,
+        ).select_related(
+            'encounter__patient',
+            'ward',
+        ).order_by('-discharge_date')[:5],
         'overdue_invoices': Invoice.objects.filter(status='overdue', is_deleted=False)[:5],
         'available_beds': Bed.objects.filter(status='available', is_active=True, is_deleted=False).count(),
         'total_beds': Bed.objects.filter(is_active=True, is_deleted=False).count(),

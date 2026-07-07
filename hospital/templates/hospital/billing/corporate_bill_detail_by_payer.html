@@ -1,6 +1,8 @@
 {% extends 'hospital/base.html' %}
 {% load static %}
 {% load humanize %}
+{% load tz %}
+{% load hospital_extras %}
 
 {% block title %}Corporate bill – {{ payer.name }} – HMS{% endblock %}
 {% block page_title %}Corporate bill – {{ payer.name }}{% endblock %}
@@ -27,10 +29,66 @@
         color: #e2e8f0 !important;
     }
     @media print {
-        .no-print, .sidebar, nav.navbar, .announcement-bar, footer, .btn, a.btn { display: none !important; }
-        body { background: #fff !important; }
-        .container-fluid { max-width: 100% !important; padding: 0 !important; }
-        .card { box-shadow: none !important; border: 1px solid #dee2e6 !important; break-inside: avoid; }
+        /* Landscape + minimal margins = more rows per sheet when saving as PDF from Print */
+        @page { size: A4 landscape; margin: 5mm 6mm; }
+        .no-print, .sidebar, .topbar, .sidebar-overlay, nav.navbar, .announcement-bar, footer, .btn, a.btn { display: none !important; }
+        body { background: #fff !important; color: #111 !important; font-size: 8pt !important; line-height: 1.2 !important; }
+        .main-content { margin-left: 0 !important; width: 100% !important; max-width: 100% !important; }
+        .container-fluid { max-width: 100% !important; padding: 0 !important; margin: 0 !important; }
+        .corporate-pack-print-banner {
+            background: #0d9488 !important;
+            color: #fff !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            padding: 6px 10px !important;
+            border-radius: 0 !important;
+            margin-bottom: 6px !important;
+        }
+        .corporate-pack-print-banner h5 { font-size: 11pt !important; margin: 0 !important; }
+        .corporate-pack-print-banner .small { font-size: 8pt !important; opacity: 0.95; }
+        .corporate-pack-print-summary {
+            display: block !important;
+            border: 1px solid #94a3b8 !important;
+            padding: 4px 8px !important;
+            margin-bottom: 6px !important;
+            font-size: 8.5pt !important;
+            background: #f8fafc !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+        .d-print-none { display: none !important; }
+        .d-print-block { display: block !important; }
+        /* Allow long packs to split across pages (avoid one giant card = dozens of sheets) */
+        .card {
+            box-shadow: none !important;
+            border: 1px solid #cbd5e1 !important;
+            break-inside: auto;
+            page-break-inside: auto;
+            margin-bottom: 4px !important;
+        }
+        .card.border-primary { break-inside: avoid; page-break-inside: avoid; }
+        .card-header {
+            padding: 3px 6px !important;
+            background: #f1f5f9 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            break-after: avoid;
+        }
+        .card-body { padding: 4px 6px !important; }
+        .card .card {
+            margin-bottom: 3px !important;
+            break-inside: auto;
+            page-break-inside: auto;
+        }
+        .card .card .card-header { padding: 2px 5px !important; font-size: 7.5pt !important; }
+        .card .card .card-body { padding: 3px 5px !important; }
+        h6 { font-size: 7.5pt !important; margin-bottom: 2px !important; }
+        .table { font-size: 7.5pt !important; margin-bottom: 2px !important; width: 100% !important; }
+        .table th, .table td { padding: 1px 4px !important; vertical-align: top !important; }
+        thead { display: table-header-group; }
+        tr { break-inside: avoid; page-break-inside: avoid; }
+        .table-responsive { overflow: visible !important; }
+        .badge { border: 1px solid #64748b !important; color: #111 !important; background: #fff !important; font-size: 6.5pt !important; }
         a[href]:after { content: none !important; }
     }
 </style>
@@ -39,18 +97,67 @@
 {% block content %}
 <div class="container-fluid">
     <div class="card border-0 shadow-sm mb-4">
-        <div class="text-white px-3 pt-3 pb-2 rounded-top" style="background: linear-gradient(135deg, #0d9488 0%, #0ea5e9 100%);">
+        <div class="text-white px-3 pt-3 pb-2 rounded-top corporate-pack-print-banner" style="background: linear-gradient(135deg, #0d9488 0%, #0ea5e9 100%);">
             <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
                 <div>
                     <h5 class="mb-1 fw-semibold"><i class="bi bi-file-earmark-medical me-2"></i>Corporate bill pack</h5>
-                    <div class="opacity-90 small"><strong>{{ payer.name }}</strong> — grouped by client, then by visit (invoice) with date &amp; time</div>
+                    <div class="opacity-90 small">
+                        {% if pack_is_multi_payer %}
+                        <strong>Combined pack</strong> ({{ payers_in_pack|length }} corporate payer{{ payers_in_pack|length|pluralize }}):
+                        {% for p in payers_in_pack %}<span class="d-inline-block me-2">{{ p.name }}</span>{% endfor %}
+                        — grouped by client, then by visit (invoice) with date &amp; time.
+                        {% else %}
+                        <strong>{{ payer.name }}</strong> — grouped by client, then by visit (invoice) with date &amp; time
+                        {% endif %}
+                        {% if pack_date_filter_active and invoices_with_lines %}<span class="d-inline-block">Counts and GHS totals are for the <strong>filtered issue-date range</strong> only.</span>{% endif %}
+                    </div>
                 </div>
                 <a href="{% url 'hospital:corporate_bill_list' %}" class="btn btn-sm btn-outline-light text-nowrap no-print flex-shrink-0">
                     <i class="bi bi-arrow-left"></i> Corporate Bills
                 </a>
             </div>
         </div>
+        {% if company_bills_pack_reconcile %}
+        <div class="alert alert-info border-0 rounded-0 mb-0 py-3 small no-print">
+            <strong class="d-block mb-1"><i class="bi bi-calculator me-1"></i>Company Bills row vs this invoice pack</strong>
+            The <strong>Company Bills</strong> list includes <strong>monthly statements and receivables</strong> as well as open invoices.
+            This page is <strong>invoice lines only</strong>, so amounts can differ:
+            <ul class="mb-0 mt-2">
+                <li>Company Bills <strong>charges</strong>: GHS {{ company_bills_pack_reconcile.header_charges|floatformat:2|intcomma }}
+                    · Invoice pack billed: GHS {{ company_bills_pack_reconcile.pack_charges|floatformat:2|intcomma }}
+                    · Difference: GHS {{ company_bills_pack_reconcile.delta_charges|floatformat:2|intcomma }}</li>
+                <li>Company Bills <strong>closing</strong>: GHS {{ company_bills_pack_reconcile.header_closing|floatformat:2|intcomma }}
+                    · Invoice pack closing: GHS {{ company_bills_pack_reconcile.pack_closing|floatformat:2|intcomma }}
+                    · Difference: GHS {{ company_bills_pack_reconcile.delta_closing|floatformat:2|intcomma }}</li>
+            </ul>
+            <span class="d-block mt-2 text-muted">Excel adds a reconciliation block at the bottom so <strong>Billed / Balance</strong> at the top can match the Company Bills dashboard after adjustments.</span>
+        </div>
+        {% endif %}
         <div class="corporate-bill-pack-toolbar no-print px-3 py-3 rounded-bottom shadow-sm">
+            <form method="get" action="{% url 'hospital:corporate_bill_detail_by_payer' payer_id=payer.pk %}" class="mb-3 pb-3 border-bottom">
+                {% if pack_group_for_form %}
+                <input type="hidden" name="pack_group" value="{{ pack_group_for_form }}" id="corp-pack-group">
+                {% elif include_payers_for_form %}
+                <input type="hidden" name="include_payers" value="{{ include_payers_for_form }}" id="corp-pack-include-payers">
+                {% endif %}
+                <div class="d-flex flex-wrap align-items-end gap-3">
+                    <div>
+                        <label class="form-label small text-muted mb-1" for="corp-pack-date-from">Issued from</label>
+                        <input type="date" id="corp-pack-date-from" name="date_from" class="form-control form-control-sm" value="{{ filter_date_from }}" title="Filter by invoice issue date">
+                    </div>
+                    <div>
+                        <label class="form-label small text-muted mb-1" for="corp-pack-date-to">Issued to</label>
+                        <input type="date" id="corp-pack-date-to" name="date_to" class="form-control form-control-sm" value="{{ filter_date_to }}" title="Filter by invoice issue date">
+                    </div>
+                    <button type="submit" class="btn btn-sm btn-primary">
+                        <i class="bi bi-funnel me-1"></i>Apply filter
+                    </button>
+                    {% if pack_date_filter_active %}
+                    <a href="{% url 'hospital:corporate_bill_detail_by_payer' payer_id=payer.pk %}{{ preserve_pack_query }}" class="btn btn-sm btn-outline-secondary">Clear dates</a>
+                    {% endif %}
+                </div>
+                <p class="text-muted small mb-0 mt-2"><i class="bi bi-info-circle me-1"></i>Filters invoices by <strong>issue date</strong>. Excel and CSV use the dates in the fields above (updated when you change them — click <strong>Apply filter</strong> to refresh the on-screen list and <strong>summary totals</strong>, which always match the invoices listed below).</p>
+            </form>
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
                 <div class="corporate-bill-pack-toolbar-title fw-semibold text-body">
                     <i class="bi bi-download me-1 text-primary"></i> Print or download (Excel / CSV)
@@ -61,33 +168,91 @@
     </div>
 
     {% if invoices_with_lines %}
-    <div class="alert alert-light border no-print mb-4 py-3 shadow-sm corporate-bill-pack-reminder">
+    <div class="alert alert-light border no-print d-print-none mb-4 py-3 shadow-sm corporate-bill-pack-reminder">
         <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
             <span class="fw-semibold mb-0 text-body"><i class="bi bi-info-circle-fill text-primary me-2"></i>Same actions here if you missed them above</span>
             {% include 'hospital/billing/_corporate_bill_pack_export_buttons.html' %}
         </div>
     </div>
-    <div class="row g-3 mb-4">
-        <div class="col-md-4">
+    {% if corporate_pack_duplicate_rows_merged %}
+    <div class="alert alert-warning border-0 shadow-sm py-2 small no-print d-print-none mb-3">
+        <i class="bi bi-layers-half me-1"></i><strong>Duplicate line items merged for display:</strong>
+        {{ corporate_pack_duplicate_rows_merged }} redundant row{{ corporate_pack_duplicate_rows_merged|pluralize }} hidden
+        on the same invoice (lab/drug/imaging catalog, same service code, same wording+amount, and <strong>all consultation-type lines combined into one row per invoice</strong> — e.g. CON001+CON002 same visit). Drugs stay split by prescription link.
+    </div>
+    {% endif %}
+    {% if pack_date_filter_active %}
+    <div class="alert alert-info border-0 shadow-sm py-2 small no-print d-print-none mb-3">
+        <i class="bi bi-calendar-range me-1"></i>Showing invoices issued
+        {% if filter_date_from %}from <strong>{{ filter_date_from }}</strong>{% endif %}
+        {% if filter_date_from and filter_date_to %}·{% endif %}
+        {% if filter_date_to %}through <strong>{{ filter_date_to }}</strong>{% endif %}
+        (<a href="{% url 'hospital:corporate_bill_detail_by_payer' payer_id=payer.pk %}{{ preserve_pack_query }}">show all</a>)
+    </div>
+    {% endif %}
+    <div class="corporate-pack-print-summary d-none d-print-block">
+        {% if pack_is_multi_payer %}Combined: {% for p in payers_in_pack %}{{ p.name }}{% if not forloop.last %}; {% endif %}{% endfor %}{% else %}<strong>{{ payer.name }}</strong>{% endif %}
+        {% if pack_date_filter_active %}· <strong>Filtered period</strong>{% endif %}
+        · {{ invoice_count|intcomma }} invoice{{ invoice_count|pluralize }}
+        · Billed GHS {{ total_charges|floatformat:2|intcomma }}
+        · Paid GHS {{ total_paid|floatformat:2|intcomma }}
+        · Balance GHS {{ total_balance|floatformat:2|intcomma }}
+        {% if pack_date_filter_active %}
+        · Issued {% if filter_date_from %}{{ filter_date_from }}{% endif %}{% if filter_date_from and filter_date_to %}–{% endif %}{% if filter_date_to %}{{ filter_date_to }}{% endif %}
+        {% endif %}
+    </div>
+    <div class="row g-3 mb-3 d-print-none">
+        <div class="col-6 col-xl-3">
             <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
-                <div class="small text-muted">Invoices in pack</div>
+                <div class="small text-muted">{% if pack_date_filter_active %}Invoices (filtered){% else %}Invoices in pack{% endif %}</div>
                 <div class="fs-4 fw-bold text-primary">{{ invoice_count|intcomma }}</div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-6 col-xl-3">
             <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
-                <div class="small text-muted">Total charges</div>
+                <div class="small text-muted">{% if pack_date_filter_active %}Total billed{% else %}Total billed (pack){% endif %}</div>
                 <div class="fs-5 fw-bold text-success">GHS {{ total_charges|floatformat:2|intcomma }}</div>
+                <div class="small text-muted mt-1">Sum of all invoice totals below</div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-6 col-xl-3">
             <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
-                <div class="small text-muted">Balance due</div>
+                <div class="small text-muted">{% if pack_date_filter_active %}Paid to date{% else %}Paid to date (pack){% endif %}</div>
+                <div class="fs-5 fw-bold text-info">GHS {{ total_paid|floatformat:2|intcomma }}</div>
+                <div class="small text-muted mt-1">Receipts on these invoices</div>
+            </div>
+        </div>
+        <div class="col-6 col-xl-3">
+            <div class="border rounded-3 p-3 h-100 bg-white shadow-sm">
+                <div class="small text-muted">{% if pack_date_filter_active %}Still owed{% else %}Still owed (pack){% endif %}</div>
                 <div class="fs-5 fw-bold text-warning">GHS {{ total_balance|floatformat:2|intcomma }}</div>
+                <div class="small text-muted mt-1">Sum of invoice balances</div>
             </div>
         </div>
     </div>
-    <p class="text-muted small mb-3"><i class="bi bi-info-circle me-1"></i>Clients are grouped together; under each client, every <strong>visit</strong> is one invoice with date &amp; time. Line items inside each invoice are grouped by category (consultation, lab, pharmacy, imaging, etc.).</p>
+    {% if total_charges == total_balance and total_charges > 0 %}
+    <div class="alert alert-light border small mb-3 d-print-none py-2">
+        <strong>Why do “total billed” and “still owed” match?</strong>
+        No payments are recorded on these invoices yet, so the full billed amount is still outstanding.
+        After partial payments, <strong>paid</strong> will rise and <strong>still owed</strong> will drop.
+    </div>
+    {% endif %}
+    <p class="text-muted small mb-3 d-print-none">
+        <i class="bi bi-layers me-1"></i><strong>Not double counting:</strong> the pack totals are the sum of every invoice in this list.
+        Each <strong>Client</strong> row is only that person’s share (their visits); those amounts <strong>add up</strong> to the pack — they are not extra on top of the pack total.
+    </p>
+    <p class="text-muted small mb-3 d-print-none"><i class="bi bi-info-circle me-1"></i>Under each client, every <strong>visit</strong> is one invoice (date &amp; time). Line items are grouped by category (consultation, lab, pharmacy, imaging, etc.).</p>
+
+    {% if pack_reconciliation_ok %}
+    <div class="alert alert-success border-0 py-2 small mb-3 d-print-none shadow-sm">
+        <i class="bi bi-check-circle-fill me-1"></i><strong>Verification:</strong> sums of all <strong>Client</strong> rows (billed / paid / owed) match the pack totals above.
+    </div>
+    {% else %}
+    <div class="alert alert-warning border py-2 small mb-3 d-print-none shadow-sm">
+        <i class="bi bi-exclamation-triangle-fill me-1"></i><strong>Verification mismatch</strong> — pack vs sum of client rows differs (report to IT). Pack: billed GHS {{ total_charges|floatformat:2 }}, paid {{ total_paid|floatformat:2 }}, balance {{ total_balance|floatformat:2 }}.
+        Sum of clients: billed GHS {{ sum_client_billed|floatformat:2 }}, paid {{ sum_client_paid|floatformat:2 }}, balance {{ sum_client_balance|floatformat:2 }}.
+    </div>
+    {% endif %}
 
     {% for pg in patient_invoice_groups %}
     <div class="card mb-4 border-0 shadow-sm border-start border-4 border-primary">
@@ -97,8 +262,9 @@
                 <strong>{% if pg.patient %}{{ pg.patient.full_name }}{% else %}—{% endif %}</strong>
                 {% if pg.patient.mrn %}<span class="badge bg-secondary ms-2">MRN {{ pg.patient.mrn }}</span>{% endif %}
                 <span class="text-muted small ms-2">{{ pg.invoice_count }} visit{{ pg.invoice_count|pluralize }}</span>
-                <span class="text-muted small ms-2">· Charges GHS {{ pg.total_charges|floatformat:2|intcomma }}</span>
-                <span class="text-muted small ms-2">· Balance GHS {{ pg.total_balance|floatformat:2|intcomma }}</span>
+                <span class="text-muted small ms-2">· Billed GHS {{ pg.total_charges|floatformat:2|intcomma }}</span>
+                <span class="text-muted small ms-2">· Paid GHS {{ pg.total_paid|floatformat:2|intcomma }}</span>
+                <span class="text-muted small ms-2">· Owed GHS {{ pg.total_balance|floatformat:2|intcomma }}</span>
                 {% if pg.latest_issued %}<span class="text-muted small ms-2">· Latest {{ pg.latest_issued|date:"Y-m-d" }} <span class="text-muted">{{ pg.latest_issued|time:"H:i" }}</span></span>{% endif %}
             </div>
         </div>
@@ -110,6 +276,9 @@
                     <div>
                         <span class="badge bg-primary me-2">Invoice</span>
                         <strong>{{ invoice.invoice_number }}</strong>
+                        {% if pack_is_multi_payer and invoice.payer %}
+                        <span class="badge bg-secondary ms-2">Payer: {{ invoice.payer.name }}</span>
+                        {% endif %}
                         <span class="text-muted mx-1">·</span>
                         <span class="text-muted small">{{ invoice.issued_at|date:"Y-m-d" }} <span class="text-muted">{{ invoice.issued_at|time:"H:i" }}</span></span>
                     </div>
@@ -124,6 +293,7 @@
                             <thead class="table-light">
                                 <tr>
                                     <th>Service</th>
+                                    <th class="text-nowrap small" title="When the line was added (local time); helps trace same-day duplicates">Line time</th>
                                     <th class="text-center">Qty</th>
                                     <th class="text-end">Unit</th>
                                     <th class="text-end">Total</th>
@@ -132,7 +302,21 @@
                             <tbody>
                             {% for line in cat_lines %}
                             <tr>
-                                <td>{{ line.description }}</td>
+                                <td>
+                                    {% corporate_pack_service_display line category invoice.patient %}
+                                    {% if line.merged_from_count > 1 %}
+                                    <span class="badge bg-warning text-dark ms-1" title="Multiple identical lines in the invoice were merged into this row">×{{ line.merged_from_count }} merged</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-nowrap small text-muted font-monospace">
+                                    {% if line.created %}
+                                    {{ line.created|localtime|date:"Y-m-d H:i:s" }}
+                                    {% elif invoice.issued_at %}
+                                    {{ invoice.issued_at|localtime|date:"Y-m-d H:i:s" }}
+                                    {% else %}
+                                    —
+                                    {% endif %}
+                                </td>
                                 <td class="text-center">{{ line.quantity }}</td>
                                 <td class="text-end">GHS {{ line.display_unit_price|floatformat:2 }}</td>
                                 <td class="text-end"><strong>GHS {{ line.display_line_total|floatformat:2 }}</strong></td>
@@ -145,8 +329,12 @@
                     <p class="text-muted small mb-0">No line items</p>
                     {% endfor %}
                     <div class="row mt-3 pt-2 border-top">
-                        <div class="col text-end"><strong>Invoice total:</strong></div>
+                        <div class="col text-end"><strong>Invoice total (billed):</strong></div>
                         <div class="col-auto fw-bold">GHS {{ invoice.total_amount|floatformat:2|intcomma }}</div>
+                    </div>
+                    <div class="row">
+                        <div class="col text-end"><strong>Paid to date:</strong></div>
+                        <div class="col-auto fw-bold text-info">GHS {{ invoice.amount_paid|floatformat:2|intcomma }}</div>
                     </div>
                     <div class="row">
                         <div class="col text-end"><strong>Balance due:</strong></div>
@@ -162,22 +350,102 @@
 
     <div class="card border-primary">
         <div class="card-body">
+            <h6 class="text-primary mb-3"><i class="bi bi-calculator me-1"></i>Pack summary (same figures as the KPI strip at the top)</h6>
             <div class="row">
-                <div class="col text-end"><strong>Total charges (all invoices):</strong></div>
-                <div class="col-auto fw-bold">GHS {{ total_charges|floatformat:2|intcomma }}</div>
+                <div class="col text-end"><strong>{% if pack_date_filter_active %}Total billed (filtered){% else %}Total billed (full pack){% endif %}</strong></div>
+                <div class="col-auto fw-bold text-success">GHS {{ total_charges|floatformat:2|intcomma }}</div>
             </div>
             <div class="row">
-                <div class="col text-end"><strong>Total balance due:</strong></div>
-                <div class="col-auto fw-bold">GHS {{ total_balance|floatformat:2|intcomma }}</div>
+                <div class="col text-end"><strong>Paid to date</strong></div>
+                <div class="col-auto fw-bold text-info">GHS {{ total_paid|floatformat:2|intcomma }}</div>
+            </div>
+            <div class="row">
+                <div class="col text-end"><strong>Still owed</strong></div>
+                <div class="col-auto fw-bold text-warning">GHS {{ total_balance|floatformat:2|intcomma }}</div>
+            </div>
+            <hr class="my-3">
+            <div class="row small">
+                <div class="col text-end text-muted"><strong>Check — billed = paid + owed:</strong></div>
+                <div class="col-auto">
+                    {% if pack_check_billed_eq_paid_plus_owed %}
+                    <span class="badge bg-success">OK</span>
+                    <span class="text-muted">GHS {{ total_charges|floatformat:2 }} = {{ total_paid|floatformat:2 }} + {{ total_balance|floatformat:2 }}</span>
+                    {% else %}
+                    <span class="badge bg-warning text-dark">Review</span>
+                    <span class="text-muted">Rounding or data issue — totals should normally match.</span>
+                    {% endif %}
+                </div>
             </div>
         </div>
     </div>
     {% else %}
+    {% if pack_date_filter_active %}
+    <div class="alert alert-info border-0 shadow-sm py-2 small no-print mb-3">
+        <i class="bi bi-calendar-range me-1"></i>Showing invoices issued
+        {% if filter_date_from %}from <strong>{{ filter_date_from }}</strong>{% endif %}
+        {% if filter_date_from and filter_date_to %}·{% endif %}
+        {% if filter_date_to %}through <strong>{{ filter_date_to }}</strong>{% endif %}
+        — <strong>no matches.</strong> (<a href="{% url 'hospital:corporate_bill_detail_by_payer' payer_id=payer.pk %}{{ preserve_pack_query }}">show all</a>)
+    </div>
+    {% endif %}
     <div class="text-center py-5">
         <i class="bi bi-inbox" style="font-size: 48px; color: #ccc;"></i>
+        {% if pack_date_filter_active %}
+        <p class="text-muted mt-3 mb-2">No invoices in this date range for this corporate payer.</p>
+        <a href="{% url 'hospital:corporate_bill_detail_by_payer' payer_id=payer.pk %}{{ preserve_pack_query }}" class="btn btn-outline-primary me-2">Clear date filter</a>
+        {% else %}
         <p class="text-muted mt-3">No invoices for this corporate payer</p>
-        <a href="{% url 'hospital:corporate_bill_list' %}" class="btn btn-outline-secondary">Back to Corporate Bills</a>
+        {% endif %}
+        <a href="{% url 'hospital:corporate_bill_list' %}" class="btn btn-outline-secondary{% if pack_date_filter_active %} mt-2{% endif %}">Back to Corporate Bills</a>
     </div>
     {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  function corporatePackExportQuery() {
+    var parts = [];
+    var grpEl = document.getElementById('corp-pack-group');
+    if (grpEl && (grpEl.value || '').trim()) {
+      parts.push('pack_group=' + encodeURIComponent(grpEl.value.trim()));
+    } else {
+      var incEl = document.getElementById('corp-pack-include-payers');
+      if (incEl && (incEl.value || '').trim()) {
+        parts.push('include_payers=' + encodeURIComponent(incEl.value.trim()));
+      }
+    }
+    var fromEl = document.getElementById('corp-pack-date-from');
+    var toEl = document.getElementById('corp-pack-date-to');
+    if (fromEl) {
+      var from = (fromEl.value || '').trim();
+      if (from) parts.push('date_from=' + encodeURIComponent(from));
+    }
+    if (toEl) {
+      var to = (toEl.value || '').trim();
+      if (to) parts.push('date_to=' + encodeURIComponent(to));
+    }
+    return parts.length ? ('?' + parts.join('&')) : '';
+  }
+  function syncCorporatePackExportLinks() {
+    var q = corporatePackExportQuery();
+    document.querySelectorAll('a.corporate-pack-export-excel').forEach(function (a) {
+      var base = a.getAttribute('data-base-href') || '';
+      if (base) a.href = base + q;
+    });
+    document.querySelectorAll('a.corporate-pack-export-csv').forEach(function (a) {
+      var base = a.getAttribute('data-base-href') || '';
+      if (base) a.href = base + q;
+    });
+  }
+  document.addEventListener('DOMContentLoaded', function () {
+    syncCorporatePackExportLinks();
+    var fromEl = document.getElementById('corp-pack-date-from');
+    var toEl = document.getElementById('corp-pack-date-to');
+    if (fromEl) fromEl.addEventListener('change', syncCorporatePackExportLinks);
+    if (toEl) toEl.addEventListener('change', syncCorporatePackExportLinks);
+  });
+})();
+</script>
 {% endblock %}

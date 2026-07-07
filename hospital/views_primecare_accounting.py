@@ -230,11 +230,11 @@ def received_payment(request):
     # Get bank accounts
     bank_accounts = BankAccount.objects.filter(is_active=True, is_deleted=False)
     
-    # Get receivable entries
+    # Get receivable entries (include pending — invoice-driven AR starts as pending)
     receivable_entries = InsuranceReceivableEntry.objects.filter(
-        status__in=['matched', 'partially_paid'],
+        status__in=['pending', 'matched', 'partially_paid'],
         outstanding_amount__gt=0,
-        is_deleted=False
+        is_deleted=False,
     ).select_related('payer').order_by('-entry_date')
     
     context = {

@@ -5,6 +5,7 @@ so cashier workflows stay consistent with prescriptions/lab/imaging.
 """
 from decimal import Decimal
 from datetime import timedelta
+from typing import Optional
 
 from django.db import transaction
 from django.utils import timezone
@@ -93,7 +94,15 @@ class WalkInPharmacyService:
 
         sale.patient = patient
         sale.customer_type = 'registered'
-        sale.save(update_fields=['patient', 'customer_type', 'modified'])
+        update_fields = ['patient', 'customer_type', 'modified']
+        # Keep list/dashboard views populated if earlier steps left these blank.
+        if not (sale.customer_name or '').strip():
+            sale.customer_name = (patient.full_name or '').strip() or 'Walk-in Customer'
+            update_fields.append('customer_name')
+        if not (sale.customer_phone or '').strip() and (patient.phone_number or '').strip():
+            sale.customer_phone = patient.phone_number.strip()
+            update_fields.append('customer_phone')
+        sale.save(update_fields=update_fields)
         return patient
 
     @staticmethod
@@ -232,8 +241,14 @@ class WalkInPharmacyService:
         return invoice
 
     @staticmethod
-    def create_payment_receipt(sale: WalkInPharmacySale, amount: Decimal, payment_method: str,
-                               received_by_user, notes: str = ""):
+    def create_payment_receipt(
+        sale: WalkInPharmacySale,
+        amount: Decimal,
+        payment_method: str,
+        received_by_user,
+        notes: str = "",
+        idempotency_token: Optional[str] = None,
+    ):
         """
         Generate a unified receipt for a walk-in sale and sync accounting.
         """
@@ -262,6 +277,7 @@ class WalkInPharmacyService:
             service_type='pharmacy_walkin',
             service_details=service_details,
             notes=receipt_notes,
+            idempotency_token=idempotency_token,
         )
 
         if result.get('success'):

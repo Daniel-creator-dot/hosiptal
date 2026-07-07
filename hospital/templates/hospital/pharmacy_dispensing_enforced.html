@@ -43,6 +43,12 @@
     <div class="alert alert-light border mb-3">
         <strong>Workflow:</strong> 1) Doctor prescribes → 2) <strong>Pharmacy checks & edits</strong> (substitute, qty) → 3) Pharmacy sends to <strong>Cashier</strong> or <strong>Insurance</strong> → 4) Patient pays (cash) or insurer billed → 5) Pharmacy dispenses. Pharmacy edits are final for billing and records.
     </div>
+    {% if inpatient_queue_active %}
+    <div class="alert alert-secondary border border-2 mb-3">
+        <strong><i class="bi bi-hospital me-1"></i>Inpatient dispensing queue</strong>
+        <p class="mb-0 small">Showing only <strong>active encounters</strong> with an <strong>open admission</strong> (admitted, not discharged). Prescribe / walk-in sales are hidden. Date range defaults to <strong>today</strong>; change the dates below for another day or range. For outpatients use <strong>All patients + prescribe sales</strong>.</p>
+    </div>
+    {% endif %}
     {% if stats.pending_insurance_count %}
     <div class="alert alert-primary border mb-3">
         <strong>📋 Insurance/Corporate pending:</strong> {{ stats.pending_insurance_count }} prescription(s) need <strong>Send to Insurance</strong>. Check, edit, then send from the pharmacy dashboard.
@@ -54,12 +60,45 @@
     </div>
     {% endif %}
 
+    <div id="pharmacyNewRxAlert" class="alert alert-warning border mb-3{% if not pharmacy_pending_alerts %} d-none{% endif %}">
+        <strong><i class="bi bi-capsule-pill me-2"></i>New medications awaiting dispense</strong>
+        <div class="small text-muted">Queue sorted by latest drug added. Clears after full dispense.</div>
+        <ul id="pharmacyNewRxAlertList" class="mb-0 mt-2 ps-3">
+            {% for item in pharmacy_pending_alerts %}
+            <li class="mb-1" data-rx-id="{{ item.prescription_id }}">
+                <strong>{{ item.drug_name }}</strong> — {{ item.patient_name }}{% if item.patient_mrn %} ({{ item.patient_mrn }}){% endif %}
+                {% if item.is_start_dose %}<span class="badge bg-danger ms-1">Stat dose</span>{% endif %}
+                {% if item.consultation_pending %}<span class="badge bg-warning text-dark ms-1">Consultation pending</span>{% endif %}
+                {% if item.inpatient and item.ward %} · {{ item.ward }}{% endif %}
+                · added {{ item.added_at|slice:":16"|default:"now" }}
+                {% if item.order_id and not item.consultation_pending or item.is_start_dose %}
+                <a href="{% url 'hospital:pharmacy_dispense_enforced' item.prescription_id %}" class="btn btn-link btn-sm p-0 align-baseline">Open</a>
+                {% elif item.consultation_pending %}
+                <span class="small text-muted ms-1">— wait for doctor to complete consultation</span>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+
     <form method="get" class="card border mb-3 shadow">
         <div class="card-header py-2 d-flex flex-wrap align-items-center justify-content-between gap-2">
             <strong class="fs-6">Search &amp; filters</strong>
             <span class="text-muted small">Scroll down for the two columns after you click Apply.</span>
         </div>
         <div class="card-body">
+            <div class="row g-3 mb-3 pb-3 border-bottom">
+                <div class="col-12 col-md-6">
+                    <label class="form-label fw-semibold mb-1" for="id_pharmacy_queue">Queue scope</label>
+                    <select name="queue" id="id_pharmacy_queue" class="form-select">
+                        <option value="inpatient" {% if pharmacy_queue|default:"all" == "inpatient" %}selected{% endif %}>Inpatients — active encounter &amp; admitted (dates default to today)</option>
+                        <option value="all" {% if pharmacy_queue|default:"all" == "all" %}selected{% endif %}>All patients + prescribe sales</option>
+                    </select>
+                </div>
+                <div class="col-12 col-md-6 d-flex align-items-end">
+                    <p class="small text-muted mb-0">Inpatient mode filters the red/green RX columns and recent history. Use <strong>All patients</strong> for cashier OP workflow and walk-in prescribe.</p>
+                </div>
+            </div>
             <div class="row g-3">
                 <div class="col-12 col-xl-6">
                     <div class="p-3 rounded border border-2 border-danger bg-danger bg-opacity-10 h-100">
@@ -108,7 +147,8 @@
             </div>
             <div class="d-flex flex-wrap gap-2 align-items-center mt-3 pt-3 border-top">
                 <button type="submit" class="btn btn-primary px-4">Apply filters</button>
-                <a href="{% url 'hospital:pharmacy_pending_dispensing' %}" class="btn btn-outline-secondary">Clear all</a>
+                <a href="{% url 'hospital:pharmacy_pending_dispensing' %}?queue={{ pharmacy_queue|default:'all' }}" class="btn btn-outline-secondary">Clear dates (keep queue scope)</a>
+                <a href="{% url 'hospital:pharmacy_pending_dispensing' %}?queue=all" class="btn btn-outline-primary btn-sm">Full queue (all patients)</a>
             </div>
             {% if date_filter_active|default:False %}
             <p class="small text-body-secondary mb-0 mt-3">Left column uses <strong>prescribed date</strong> (and prescribe sale date for walk-in).</p>
@@ -129,7 +169,7 @@
                 <div class="card-body">
                     <h6 class="text-muted">Pending Payment</h6>
                     <h2 class="text-danger">{{ stats.pending_payment_total }}</h2>
-                    <small>Prescriptions + prescribe awaiting cashier payment</small>
+                    <small>{% if inpatient_queue_active %}Admitted inpatients · RX only{% else %}Prescriptions + prescribe awaiting cashier payment{% endif %}</small>
                 </div>
             </div>
         </div>
@@ -139,7 +179,7 @@
                 <div class="card-body">
                     <h6 class="text-muted">Paid - Ready to Dispense</h6>
                     <h2 class="text-success">{{ stats.paid_ready_total }}</h2>
-                    <small>All paid items ready to dispense ✅</small>
+                    <small>{% if inpatient_queue_active %}Inpatient RX ready to dispense{% else %}All paid items ready to dispense ✅{% endif %}</small>
                 </div>
             </div>
         </div>
@@ -197,7 +237,7 @@
                             <div class="card-body">
                                 <div class="d-flex justify-content-between align-items-start">
                                     <div style="flex: 1;">
-                                        <h6>{% if record.effective_drug %}{{ record.effective_drug.name }} {{ record.effective_drug.strength|default:"" }}{% else %}{{ record.prescription.drug.name }} {{ record.prescription.drug.strength }}{% endif %}</h6>
+                                        <h6>{% if record.effective_drug %}{{ record.effective_drug.name }} {{ record.effective_drug.strength|default:"" }}{% else %}{{ record.prescription.drug.name }} {{ record.prescription.drug.strength }}{% endif %}{% if record.prescription.is_start_dose %} <span class="badge bg-danger">Stat dose</span>{% endif %}</h6>
                                         <p class="mb-1 d-flex flex-wrap align-items-center gap-2">
                                             <strong>Patient:</strong> {{ record.patient.full_name }}
                                             {% if record.payer_channel|default:"cash" == "insurance" %}
@@ -210,6 +250,9 @@
                                         </p>
                                         {% if record.payer_name %}
                                         <p class="mb-1"><small><strong>Company / Payer:</strong> <span class="text-primary">{{ record.payer_name }}</span></small></p>
+                                        {% endif %}
+                                        {% if inpatient_queue_active %}
+                                        <p class="mb-1 small"><strong>Encounter:</strong> #{{ record.prescription.order.encounter.id }} · {{ record.prescription.order.encounter.get_encounter_type_display }} · <span class="badge bg-success">On admission</span></p>
                                         {% endif %}
                                         <p class="mb-1"><small><strong>Quantity:</strong> {{ record.quantity_ordered }} units</small></p>
                                         <p class="mb-1"><small><strong>Total Cost:</strong> <strong class="text-primary">GHS {{ record.display_line_total|default:0|floatformat:2 }}</strong> ({{ record.display_qty_for_breakdown|default:0 }} × GHS {{ record.display_unit_price|default:0|floatformat:2 }})</small></p>
@@ -327,7 +370,7 @@
                             <div class="card-body">
                                 <div class="d-flex justify-content-between align-items-start">
                                     <div>
-                                        <h6>{{ record.prescription.drug.name }} {{ record.prescription.drug.strength }}</h6>
+                                        <h6>{{ record.prescription.drug.name }} {{ record.prescription.drug.strength }}{% if record.prescription.is_start_dose %} <span class="badge bg-danger">Stat dose</span>{% endif %}</h6>
                                         <p class="mb-1 d-flex flex-wrap align-items-center gap-2">
                                             <strong>Patient:</strong> {{ record.patient.full_name }}
                                             {% if record.payer_channel|default:"cash" == "insurance" %}
@@ -341,7 +384,14 @@
                                         {% if record.payer_name %}
                                         <p class="mb-1"><small><strong>Company / Payer:</strong> <span class="text-primary">{{ record.payer_name }}</span></small></p>
                                         {% endif %}
-                                        <p class="mb-1"><small>Quantity: {{ record.quantity_ordered }}</small></p>
+                                        {% if inpatient_queue_active %}
+                                        <p class="mb-1 small"><strong>Encounter:</strong> #{{ record.prescription.order.encounter.id }} · {{ record.prescription.order.encounter.get_encounter_type_display }} · <span class="badge bg-success">On admission</span></p>
+                                        {% endif %}
+                                        <p class="mb-1"><small>Prescribed: {{ record.prescription.created|date:"M d, Y H:i" }}</small></p>
+                                        <p class="mb-1"><small>Quantity: {{ record.quantity_dispensed }} / {{ record.quantity_ordered }} dispensed</small></p>
+                                        {% if record.quantity_ordered > 0 and record.quantity_dispensed < record.quantity_ordered %}
+                                        <p class="mb-1"><span class="badge bg-warning text-dark">Partial — {{ record.quantity_ordered|sub:record.quantity_dispensed|floatformat:0 }} left</span></p>
+                                        {% endif %}
                                         <p class="mb-1"><small>Dose: {{ record.prescription.dose }}, {{ record.prescription.frequency }}</small></p>
                                         {% if record.prescription.instructions %}
                                         <p class="mb-1" style="background: rgba(13, 110, 253, 0.1); padding: 5px; border-radius: 4px;">
@@ -560,6 +610,59 @@
     </div>
 </div>
 </div>
+<script>
+(function pharmacyQueuePulseInit() {
+    var pulseUrl = '{% url "hospital:pharmacy_queue_pulse" %}';
+    var pageLoadedAt = '{{ pharmacy_page_loaded_at|default:"" }}';
+    var alertBox = document.getElementById('pharmacyNewRxAlert');
+    var alertList = document.getElementById('pharmacyNewRxAlertList');
+    var knownRxIds = new Set();
+    if (alertList) {
+        alertList.querySelectorAll('[data-rx-id]').forEach(function(li) {
+            knownRxIds.add(li.getAttribute('data-rx-id'));
+        });
+    }
+    function renderPharmacyAlerts(items) {
+        if (!alertBox || !alertList) return;
+        if (!items || !items.length) {
+            alertBox.classList.add('d-none');
+            alertList.innerHTML = '';
+            return;
+        }
+        alertBox.classList.remove('d-none');
+        alertList.innerHTML = items.map(function(item) {
+            var ward = item.inpatient && item.ward ? ' · ' + item.ward : '';
+            var mrn = item.patient_mrn ? ' (' + item.patient_mrn + ')' : '';
+            var added = (item.added_at || '').replace('T', ' ').slice(0, 16);
+            var consultationBadge = item.consultation_pending
+                ? ' <span class="badge bg-warning text-dark ms-1">Consultation pending</span>'
+                : '';
+            var statBadge = item.is_start_dose
+                ? ' <span class="badge bg-danger ms-1">Stat dose</span>'
+                : '';
+            var openLink = '';
+            if (item.prescription_id && (!item.consultation_pending || item.is_start_dose)) {
+                openLink = ' <a href="/hms/pharmacy/dispense/' + item.prescription_id + '/" class="btn btn-link btn-sm p-0 align-baseline">Open</a>';
+            } else if (item.consultation_pending) {
+                openLink = ' <span class="small text-muted ms-1">— wait for doctor to complete consultation</span>';
+            }
+            return '<li class="mb-1" data-rx-id="' + item.prescription_id + '"><strong>'
+                + (item.drug_name || 'Medication') + '</strong> — '
+                + (item.patient_name || 'Patient') + mrn + statBadge + consultationBadge + ward + ' · added ' + (added || 'now') + openLink + '</li>';
+        }).join('');
+    }
+    function pollPharmacyQueue() {
+        fetch(pulseUrl, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data || !data.success) return;
+                renderPharmacyAlerts(data.items || []);
+            })
+            .catch(function() {});
+    }
+    setInterval(pollPharmacyQueue, 30000);
+})();
+</script>
 {% endblock %}
 
 

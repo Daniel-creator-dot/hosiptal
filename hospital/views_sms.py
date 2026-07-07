@@ -370,6 +370,8 @@ def bulk_sms_dashboard(request):
             patient_page = 1
         patient_page_obj = patient_paginator.get_page(patient_page)
     
+    sms_wallet = sms_service.fetch_wallet_balance()
+
     context = {
         'staff_page_obj': staff_page_obj,
         'patient_page_obj': patient_page_obj,
@@ -378,6 +380,7 @@ def bulk_sms_dashboard(request):
         'has_phone': has_phone,
         'total_staff': total_staff,
         'total_patients': total_patients,
+        'sms_wallet': sms_wallet,
     }
     return render(request, 'hospital/bulk_sms_dashboard.html', context)
 

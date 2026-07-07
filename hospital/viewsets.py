@@ -36,7 +36,15 @@ class PatientViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, rest_filters.SearchFilter, rest_filters.OrderingFilter]
     filterset_fields = ['gender', 'blood_type', 'is_deleted']
-    search_fields = ['first_name', 'last_name', 'mrn', 'national_id', 'phone_number', 'email']
+    search_fields = [
+        'first_name',
+        'middle_name',
+        'last_name',
+        'mrn',
+        'national_id',
+        'phone_number',
+        'email',
+    ]
     ordering_fields = ['created', 'last_name', 'first_name']
     ordering = ['-created']
 

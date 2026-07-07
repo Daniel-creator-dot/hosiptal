@@ -1,11 +1,11 @@
-{# Keep in sync with hms/templates/hospital/accountant/payroll_list.html #}
+{# Sync with hms/templates/hospital/accountant/payroll_list.html (canonical via TEMPLATES DIRS) #}
 {% extends 'hospital/base.html' %}
 {% load static %}
 {% load humanize %}
 
 {% block title %}Accounting Payroll — HMS{% endblock %}
 {% block page_title %}Staff payroll{% endblock %}
-{% block page_subtitle %}Each staff line is its own table row (one name, one emp. code, per-person gross/deductions/net). Same payroll # repeats for everyone on that run.{% endblock %}
+{% block page_subtitle %}Monthly calendar shows how many distinct staff were paid each month (by payroll period). Below: each staff line is its own row; same payroll # repeats for everyone on that run.{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -119,6 +119,83 @@
     a[href]:after { content: none !important; }
     @page { margin: 12mm; }
   }
+  .payroll-cal-wrap {
+    background: #fff;
+    border-radius: 14px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06);
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+  }
+  .payroll-cal-head {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid #eef2f7;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
+  }
+  .payroll-cal-year-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .payroll-cal-year-nav .year-label {
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: #0f172a;
+    min-width: 4rem;
+    text-align: center;
+  }
+  .payroll-cal-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 0.65rem;
+    padding: 1rem 1.25rem 1.25rem;
+  }
+  @media (max-width: 992px) {
+    .payroll-cal-grid { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 576px) {
+    .payroll-cal-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  .payroll-cal-cell {
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    padding: 0.75rem 0.65rem;
+    background: #fafbfc;
+    min-height: 5.5rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .payroll-cal-cell.has-data {
+    background: linear-gradient(160deg, #ecfdf5 0%, #f0fdfa 100%);
+    border-color: #99f6e4;
+  }
+  .payroll-cal-cell .mo {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #64748b;
+    font-weight: 600;
+  }
+  .payroll-cal-cell .staff-count {
+    font-size: 1.35rem;
+    font-weight: 800;
+    color: #0f766e;
+    line-height: 1.2;
+    margin-top: 0.2rem;
+  }
+  .payroll-cal-cell .staff-count.zero { color: #94a3b8; font-weight: 600; }
+  .payroll-cal-cell .meta {
+    font-size: 0.68rem;
+    color: #64748b;
+    margin-top: 0.35rem;
+    line-height: 1.35;
+  }
+  a.payroll-cal-cell { color: inherit; }
+  a.payroll-cal-cell:hover { color: inherit; box-shadow: 0 2px 12px rgba(15, 118, 110, 0.15); }
 </style>
 {% endblock %}
 
@@ -131,6 +208,9 @@
         <p class="lead mb-0">Use the same columns as your <strong>Sample Salary-RMC</strong> workbook: basic pay, medical &amp; risk allowances, SSF/PF, PAYE, and net pay.</p>
       </div>
       <div class="d-flex flex-wrap gap-2 no-print-payroll">
+        <a href="{% url 'accountant_payroll_analytics' %}?year={{ payroll_calendar_year }}" class="btn btn-light btn-sm shadow-sm fw-semibold">
+          <i class="bi bi-graph-up-arrow me-1"></i> Analytics
+        </a>
         <a href="{% url 'accountant_payroll_export_runs' %}" class="btn btn-light btn-sm shadow-sm">
           <i class="bi bi-file-earmark-spreadsheet me-1"></i> Download runs (.xlsx)
         </a>
@@ -164,6 +244,43 @@
           <div class="value">GHS {{ sum_net_all|floatformat:2|intcomma }}</div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div class="payroll-cal-wrap">
+    <div class="payroll-cal-head">
+      <div>
+        <h5 class="mb-0 fw-semibold text-dark"><i class="bi bi-calendar3 me-2 text-secondary"></i>Payroll by month</h5>
+        <p class="small text-muted mb-0 mt-1">Grouped by <strong>payroll period start</strong>. <strong>Staff paid</strong> = distinct people with a line that month (multiple runs in one month still count once per person).</p>
+      </div>
+      <div class="payroll-cal-year-nav">
+        <a class="btn btn-outline-secondary btn-sm" href="?year={{ payroll_calendar_year_prev }}" title="Previous year">&laquo;</a>
+        <span class="year-label">{{ payroll_calendar_year }}</span>
+        <a class="btn btn-outline-secondary btn-sm" href="?year={{ payroll_calendar_year_next }}" title="Next year">&raquo;</a>
+      </div>
+    </div>
+    <div class="payroll-cal-grid">
+      {% for cell in payroll_calendar_months %}
+      {% if cell.has_data %}
+      <a href="{% url 'accountant_payroll_analytics_month' payroll_calendar_year cell.month %}" class="payroll-cal-cell has-data text-decoration-none">
+        <div class="mo">{{ cell.abbr }}</div>
+        <div class="staff-count">{{ cell.staff_paid|intcomma }}</div>
+        <div class="meta">
+          staff paid<br>
+          {% if cell.run_count %}<span class="text-dark">{{ cell.run_count }} run{{ cell.run_count|pluralize }}</span> · {% endif %}net GHS {{ cell.sum_net|floatformat:2|intcomma }}
+        </div>
+      </a>
+      {% else %}
+      <div class="payroll-cal-cell">
+        <div class="mo">{{ cell.abbr }}</div>
+        <div class="staff-count zero">{{ cell.staff_paid|intcomma }}</div>
+        <div class="meta">
+          staff paid<br>
+          {% if cell.run_count %}<span class="text-dark">{{ cell.run_count }} run{{ cell.run_count|pluralize }}</span> · {% endif %}net GHS {{ cell.sum_net|floatformat:2|intcomma }}
+        </div>
+      </div>
+      {% endif %}
+      {% endfor %}
     </div>
   </div>
 
@@ -246,11 +363,11 @@
       <nav>
         <ul class="pagination pagination-sm mb-0 justify-content-center">
           {% if payrolls.has_previous %}
-          <li class="page-item"><a class="page-link" href="?page={{ payrolls.previous_page_number }}">Previous</a></li>
+          <li class="page-item"><a class="page-link" href="?page={{ payrolls.previous_page_number }}&year={{ payroll_calendar_year }}">Previous</a></li>
           {% endif %}
           <li class="page-item disabled"><span class="page-link">Page {{ payrolls.number }} of {{ payrolls.paginator.num_pages }}</span></li>
           {% if payrolls.has_next %}
-          <li class="page-item"><a class="page-link" href="?page={{ payrolls.next_page_number }}">Next</a></li>
+          <li class="page-item"><a class="page-link" href="?page={{ payrolls.next_page_number }}&year={{ payroll_calendar_year }}">Next</a></li>
           {% endif %}
         </ul>
       </nav>

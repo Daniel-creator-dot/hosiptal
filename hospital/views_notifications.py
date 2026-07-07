@@ -114,6 +114,24 @@ def _notification_links(n):
             links['link'] = reverse('hospital:activity_detail', kwargs={'pk': n.related_object_id})
         except Exception:
             pass
+    if n.related_object_type == 'MedicationOrder' and n.related_object_id:
+        try:
+            from urllib.parse import urlencode
+            from .models import Order
+
+            order = (
+                Order.objects.filter(pk=n.related_object_id, order_type='medication', is_deleted=False)
+                .select_related('encounter', 'encounter__patient')
+                .first()
+            )
+            url = reverse('hospital:pharmacy_dashboard')
+            if order and order.encounter and order.encounter.patient:
+                patient = order.encounter.patient
+                query = urlencode({'name': patient.mrn or patient.full_name})
+                url = f'{url}?{query}'
+            links['link'] = url
+        except Exception:
+            pass
     return links
 
 

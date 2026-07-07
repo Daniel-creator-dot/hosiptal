@@ -490,40 +490,43 @@ def profit_loss_statement(request):
             })
             total_expenses += balance
     
-    # Cost of Services (COGS) breakdown
+    # Cost of Sales (COGS) — Primecare 511x inventory cost accounts (perpetual inventory)
+    from hospital.services.inventory_account_mapping import COGS_ACCOUNT_CODES
+    from hospital.models_accounting_advanced import AdvancedGeneralLedger
+    from hospital.models_accounting import GeneralLedger
+
     cost_of_services = {
-        'supplies': Decimal('0.00'),
-        'salaries': Decimal('0.00'),
-        'lab': Decimal('0.00'),
+        'inventory_drugs': Decimal('0.00'),
+        'inventory_lab': Decimal('0.00'),
+        'inventory_other': Decimal('0.00'),
     }
-    
-    cost_filters = {
-        'supplies': ['supply', 'consumable', 'direct medical'],
-        'salaries': ['salary', 'staff', 'payroll'],
-        'lab': ['lab', 'laboratory'],
+    cogs_code_map = {
+        '5110': 'inventory_drugs',
+        '5111': 'inventory_lab',
     }
-    
-    try:
-        expense_queryset = Expense.objects.filter(
-            expense_date__gte=start_date,
-            expense_date__lte=end_date,
-            status__in=['approved', 'paid'],
-            is_deleted=False
-        )
-        
-        for key, keywords in cost_filters.items():
-            keyword_filter = Q()
-            for term in keywords:
-                keyword_filter |= Q(category__name__icontains=term) | Q(description__icontains=term)
-            if keyword_filter:
-                cost_of_services[key] = (
-                    expense_queryset.filter(keyword_filter).aggregate(total=Sum('amount'))['total']
-                    or Decimal('0.00')
-                )
-    except Exception:
-        # If expense tables aren't available yet, keep defaults
-        pass
-    
+    for code in COGS_ACCOUNT_CODES:
+        key = cogs_code_map.get(code, 'inventory_other')
+        try:
+            adv = AdvancedGeneralLedger.objects.filter(
+                account__account_code=code,
+                transaction_date__gte=start_date,
+                transaction_date__lte=end_date,
+                is_voided=False,
+                is_deleted=False,
+            ).aggregate(total=Sum('debit_amount'))['total'] or Decimal('0.00')
+        except Exception:
+            adv = Decimal('0.00')
+        try:
+            leg = GeneralLedger.objects.filter(
+                account__account_code=code,
+                transaction_date__gte=start_date,
+                transaction_date__lte=end_date,
+                is_deleted=False,
+            ).aggregate(total=Sum('debit_amount'))['total'] or Decimal('0.00')
+        except Exception:
+            leg = Decimal('0.00')
+        cost_of_services[key] = cost_of_services.get(key, Decimal('0.00')) + adv + leg
+
     total_cost_of_services = sum(cost_of_services.values())
     
     # Gross Profit & Net Income
@@ -580,33 +583,11 @@ def balance_sheet(request):
     else:
         as_of_date = datetime.strptime(as_of_date, '%Y-%m-%d').date()
     
+    from hospital.services.trial_balance_service import get_account_balance as _tb_account_balance
+
     def get_account_balance(account_code, account_type='asset', as_of_date=None):
-        """Get balance for a specific account"""
-        try:
-            account = Account.objects.get(account_code=account_code, is_deleted=False)
-        except Account.DoesNotExist:
-            return Decimal('0.00')
-        
-        ledger_sum = AdvancedGeneralLedger.objects.filter(
-            account=account,
-            transaction_date__lte=as_of_date,
-            is_voided=False
-        ).aggregate(
-            debits=Sum('debit_amount'),
-            credits=Sum('credit_amount')
-        )
-        
-        # Handle None values from aggregate
-        debits = Decimal(str(ledger_sum['debits'])) if ledger_sum['debits'] is not None else Decimal('0.00')
-        credits = Decimal(str(ledger_sum['credits'])) if ledger_sum['credits'] is not None else Decimal('0.00')
-        
-        if account_type in ['asset', 'expense']:
-            balance = debits - credits
-        else:
-            balance = credits - debits
-        
-        # Ensure we return a Decimal
-        return Decimal(str(balance)) if balance is not None else Decimal('0.00')
+        """Get balance for a specific account from both ledgers."""
+        return _tb_account_balance(account_code, as_of_date, account_type)
     
     # ASSETS - Build dictionary structure
     assets = {
@@ -656,22 +637,34 @@ def balance_sheet(request):
         balance = get_account_balance(account.account_code, 'asset', as_of_date)
         balance = Decimal(str(balance)) if balance is not None else Decimal('0.00')
         assets['accounts_receivable'] += balance
-    
-    # Inventory (1300-1399)
-    inventory_accounts = Account.objects.filter(
+
+    # Tax and other receivables (1300-1399, e.g. WHT receivable)
+    other_recv_accounts = Account.objects.filter(
         account_type='asset',
         account_code__startswith='13',
-        is_deleted=False
+        is_deleted=False,
+    )
+    for account in other_recv_accounts:
+        balance = get_account_balance(account.account_code, 'asset', as_of_date)
+        balance = Decimal(str(balance)) if balance is not None else Decimal('0.00')
+        assets['accounts_receivable'] += balance
+    
+    # Inventory (1400 per Primecare chart)
+    inventory_accounts = Account.objects.filter(
+        account_type='asset',
+        is_deleted=False,
+    ).filter(
+        Q(account_code='1400') | Q(account_name__icontains='inventor')
     )
     for account in inventory_accounts:
         balance = get_account_balance(account.account_code, 'asset', as_of_date)
         balance = Decimal(str(balance)) if balance is not None else Decimal('0.00')
         assets['inventory'] += balance
     
-    # Prepaid (1400-1499)
+    # Prepaid / other current assets (1500-1599)
     prepaid_accounts = Account.objects.filter(
         account_type='asset',
-        account_code__startswith='14',
+        account_code__startswith='15',
         is_deleted=False
     )
     for account in prepaid_accounts:
@@ -959,77 +952,100 @@ def balance_sheet(request):
 @login_required
 @user_passes_test(is_accountant)
 def trial_balance(request):
-    """Trial Balance Report"""
-    
-    # Get date
+    """Trial Balance Report — merged legacy + advanced ledgers with stock summary."""
+    from hospital.services.trial_balance_service import build_trial_balance
+    from hospital.services.inventory_gl_service import (
+        compute_closing_stock_adjustment,
+        get_inventory_gl_activity_summary,
+    )
+
     as_of_date = request.GET.get('as_of_date')
     if not as_of_date:
         as_of_date = timezone.now().date()
     else:
         as_of_date = datetime.strptime(as_of_date, '%Y-%m-%d').date()
-    
-    # Get all accounts with balances
-    accounts = Account.objects.filter(is_active=True).order_by('account_code')
-    
-    trial_balance_data = []
-    accounts_with_balances = []
-    total_debits = Decimal('0.00')
-    total_credits = Decimal('0.00')
-    
-    for account in accounts:
-        # Calculate balance
-        ledger_sum = AdvancedGeneralLedger.objects.filter(
-            account=account,
-            transaction_date__lte=as_of_date,
-            is_voided=False
-        ).aggregate(
-            debits=Sum('debit_amount'),
-            credits=Sum('credit_amount')
-        )
-        
-        debits = ledger_sum['debits'] or Decimal('0.00')
-        credits = ledger_sum['credits'] or Decimal('0.00')
-        balance = debits - credits
-        
-        if balance != 0:
-            setattr(account, 'balance', balance)
-            accounts_with_balances.append(account)
-        
-        if balance != 0:
-            if balance > 0:
-                # Debit balance
-                trial_balance_data.append({
-                    'account': account,
-                    'debit': balance,
-                    'credit': Decimal('0.00')
-                })
-                total_debits += balance
-            else:
-                # Credit balance
-                trial_balance_data.append({
-                    'account': account,
-                    'debit': Decimal('0.00'),
-                    'credit': abs(balance)
-                })
-                total_credits += abs(balance)
-    
-    # Check if balanced
-    is_balanced = abs(total_debits - total_credits) < 0.01
-    balance_difference = total_debits - total_credits
-    
+
+    tb = build_trial_balance(as_of_date)
+    stock = compute_closing_stock_adjustment(as_of_date)
+    inventory_gl_activity = get_inventory_gl_activity_summary(as_of_date)
+
+    section_defs = [
+        ('asset', 'ASSETS', 'primary'),
+        ('liability', 'LIABILITIES', 'danger'),
+        ('equity', 'EQUITY', 'success'),
+        ('revenue', 'REVENUE', 'info'),
+        ('expense', 'EXPENSES', 'warning'),
+    ]
+    sections = [
+        {
+            'type': account_type,
+            'label': label,
+            'badge': badge,
+            'accounts': tb['accounts_by_type'].get(account_type, []),
+            'totals': tb['section_totals'].get(account_type, {'debit': Decimal('0'), 'credit': Decimal('0')}),
+        }
+        for account_type, label, badge in section_defs
+    ]
+
     context = {
         'as_of_date': as_of_date,
-        'accounts': accounts_with_balances,
-        'trial_balance_data': trial_balance_data,
-        'total_debits': total_debits,
-        'total_credits': total_credits,
-        'is_balanced': is_balanced,
-        'balance_difference': balance_difference,
+        'accounts': tb['accounts'],
+        'accounts_by_type': tb['accounts_by_type'],
+        'sections': sections,
+        'section_totals': tb['section_totals'],
+        'total_debits': tb['total_debits'],
+        'total_credits': tb['total_credits'],
+        'is_balanced': tb['is_balanced'],
+        'balance_difference': tb['balance_difference'],
+        'stock_summary': stock['summary'],
+        'stock_gl_balance': stock['gl_balance'],
+        'stock_operational_value': stock['operational_value'],
+        'stock_variance': stock['variance'],
+        'stock_adjustment': stock,
+        'stock_can_post': stock.get('can_post', False),
+        'stock_live_only': stock.get('live_only', False),
+        'inventory_gl_activity': inventory_gl_activity,
         'today': timezone.now(),
         'report_title': f'Trial Balance as of {as_of_date}',
     }
-    
+
     return render(request, 'hospital/trial_balance.html', context)
+
+
+@login_required
+@role_required('accountant', 'senior_account_officer')
+def sync_closing_stock_to_gl(request):
+    """POST: sync operational stock value to GL account 1400 via closing stock journal."""
+    from hospital.services.inventory_gl_service import post_closing_stock_adjustment
+
+    if request.method != 'POST':
+        return redirect('hospital:trial_balance')
+
+    as_of_date = request.POST.get('as_of_date')
+    force = request.POST.get('force') == '1'
+    if as_of_date:
+        try:
+            as_of_date = datetime.strptime(as_of_date, '%Y-%m-%d').date()
+        except ValueError:
+            as_of_date = timezone.now().date()
+    else:
+        as_of_date = timezone.now().date()
+
+    try:
+        result = post_closing_stock_adjustment(as_of_date, request.user, force=force)
+        if result.get('posted'):
+            messages.success(request, result['message'])
+        elif result.get('already_posted'):
+            messages.warning(request, result['message'])
+        elif not result.get('success'):
+            messages.error(request, result['message'])
+        else:
+            messages.info(request, result['message'])
+    except Exception as e:
+        messages.error(request, f'Failed to sync closing stock: {e}')
+
+    from django.urls import reverse
+    return redirect(f"{reverse('hospital:trial_balance')}?as_of_date={as_of_date.isoformat()}")
 
 
 @login_required

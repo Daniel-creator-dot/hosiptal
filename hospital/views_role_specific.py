@@ -153,7 +153,7 @@ def accountant_dashboard(request):
     
     context = {
         'title': 'Accounting Dashboard',
-        'role_info': get_role_display_info(request.user),
+        'role_info': get_role_display_info(request.user, request),
         'total_revenue_today': total_revenue_today,
         'total_revenue_month': total_revenue_month,
         'outstanding_invoices': outstanding_invoices,
@@ -454,7 +454,7 @@ def admin_dashboard(request):
 
     context = {
         'title': 'Administrator Dashboard',
-        'role_info': get_role_display_info(request.user),
+        'role_info': get_role_display_info(request.user, request),
         'payroll_pending_admin_approval': payroll_pending_admin_approval,
         'total_patients': total_patients,
         'active_encounters': active_encounters,
@@ -674,7 +674,7 @@ def medical_dashboard(request):
     
     context = {
         'title': 'Medical Dashboard',
-        'role_info': get_role_display_info(request.user),
+        'role_info': get_role_display_info(request.user, request),
         'staff': staff,
         'my_encounters': my_encounters,
         'today_appointments': today_appointments,
@@ -744,9 +744,28 @@ def reception_dashboard(request):
     if staff and staff.profession == 'receptionist':
         performance_snapshot = performance_analytics_service.generate_snapshot(staff)
 
+    lab_pending_today = 0
+    imaging_pending_today = 0
+    try:
+        from .models import LabResult
+        from .models_advanced import ImagingStudy
+        from .diagnostics_status import IMAGING_FRONTDESK_PENDING_STATUSES
+        lab_pending_today = LabResult.objects.filter(
+            status__in=['pending', 'in_progress'],
+            is_deleted=False,
+            created__date=today,
+        ).count()
+        imaging_pending_today = ImagingStudy.objects.filter(
+            status__in=IMAGING_FRONTDESK_PENDING_STATUSES,
+            is_deleted=False,
+            created__date=today,
+        ).count()
+    except Exception:
+        pass
+
     context = {
         'title': 'Reception Dashboard',
-        'role_info': get_role_display_info(request.user),
+        'role_info': get_role_display_info(request.user, request),
         'today_appointments': today_appointments,
         'recent_patients': recent_patients,
         'upcoming_appointments': upcoming_appointments,
@@ -755,6 +774,8 @@ def reception_dashboard(request):
         'today': today,
         'queue_waiting': queue_waiting,
         'performance_snapshot': performance_snapshot,
+        'lab_pending_today': lab_pending_today,
+        'imaging_pending_today': imaging_pending_today,
     }
     
     return render(request, 'hospital/roles/reception_dashboard.html', context)

@@ -423,6 +423,19 @@
         max-width: 280px;
     }
 
+    .diagnosis-badge {
+        display: inline-block;
+        background: #fdf2f8;
+        color: #9d174d;
+        border: 1px solid #f9a8d4;
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.35;
+        max-width: 220px;
+    }
+
     .group-actions-compact {
         display: flex;
         flex-wrap: wrap;
@@ -460,11 +473,127 @@
         </div>
         <button type="submit" class="btn btn-primary"><i class="bi bi-funnel me-1"></i>Apply</button>
         <a href="{% url 'hospital:laboratory_dashboard' %}" class="btn btn-outline-secondary">Today</a>
+        <a href="{% url 'hospital:laboratory_financial_report' %}?date_from={{ filter_date|date:'Y-m-d' }}&date_to={{ filter_date|date:'Y-m-d' }}" class="btn btn-outline-success">
+            <i class="bi bi-graph-up-arrow me-1"></i>Report &amp; financials
+        </a>
         <div class="small text-muted align-self-center">
             Pending / in-progress lists use this date (ordered or touched). Overdue backlog is separate below.
         </div>
     </div>
 </form>
+
+{% if staff %}
+<!-- My shifts & weekly timetable (same layout as nurse dashboard — prototype for lab staff) -->
+<div class="test-panel mb-4" style="background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); color: white; border-left: 4px solid #fff;">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-0">
+        <div>
+            <h3 class="mb-2 text-white">
+                <i class="bi bi-calendar-week me-2"></i>My shifts &amp; schedule
+                <span class="badge bg-white text-primary ms-2" style="font-size: 14px; padding: 6px 12px;">
+                    {% if weekly_shifts %}{{ weekly_shifts.count }} shift{{ weekly_shifts.count|pluralize }}{% else %}0 shifts{% endif %}
+                </span>
+            </h3>
+            <p class="mb-0 small" style="opacity: 0.95;">
+                Week of {{ week_start|date:"M d" }} – {{ week_end|date:"M d, Y" }}
+                {% if todays_shifts %}
+                | <strong>{{ todays_shifts.count }}</strong> shift{{ todays_shifts.count|pluralize }} today
+                {% endif %}
+            </p>
+        </div>
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+            {% if is_lab_hod %}
+            <a href="{% url 'hospital:hod_shift_monitoring_dashboard' %}" class="btn btn-light btn-sm">
+                <i class="bi bi-calendar-check me-1"></i>Manage shifts
+            </a>
+            {% endif %}
+            <a href="{% url 'hospital:staff_schedule_dashboard' %}" class="btn btn-light">
+                <i class="bi bi-calendar3 me-1"></i>View full schedule
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="test-panel mb-4" style="border-left: 4px solid var(--lab-primary);">
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+        <h4 class="mb-0">
+            <i class="bi bi-calendar-range me-2" style="color: var(--lab-primary);"></i>This week&rsquo;s schedule
+            <small class="text-muted">({{ week_start|date:"M d" }} – {{ week_end|date:"M d" }})</small>
+            {% if weekly_shifts %}
+            <span class="badge bg-primary ms-2">{{ weekly_shifts.count }} shift{{ weekly_shifts.count|pluralize }}</span>
+            {% else %}
+            <span class="badge bg-warning text-dark ms-2">No shifts assigned</span>
+            {% endif %}
+        </h4>
+        <a href="{% url 'hospital:staff_shift_list' %}" class="btn btn-outline-primary btn-sm">
+            <i class="bi bi-list-ul me-1"></i>Shift timetable list
+        </a>
+    </div>
+    {% if weekly_shifts %}
+    <div class="table-responsive">
+        <table class="table table-hover table-striped mb-0">
+            <thead style="background: linear-gradient(135deg, #2196F3, #1976D2); color: white;">
+                <tr>
+                    <th class="text-white">Date</th>
+                    <th class="text-white">Day</th>
+                    <th class="text-white">Shift type</th>
+                    <th class="text-white">Time</th>
+                    <th class="text-white">Location</th>
+                    <th class="text-white">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for shift in weekly_shifts %}
+                <tr {% if shift.shift_date == today %}class="table-info" style="border-left: 4px solid var(--lab-primary); font-weight: 600;"{% endif %}>
+                    <td>
+                        {% if shift.shift_date == today %}
+                        <span class="badge bg-primary me-2">Today</span>
+                        {% endif %}
+                        {{ shift.shift_date|date:"M d" }}
+                    </td>
+                    <td><strong>{{ shift.shift_date|date:"l" }}</strong></td>
+                    <td>
+                        <span class="badge bg-primary">{{ shift.get_shift_type_display }}</span>
+                    </td>
+                    <td>
+                        <strong>{{ shift.start_time|time:"g:i A" }}</strong> – {{ shift.end_time|time:"g:i A" }}
+                    </td>
+                    <td>
+                        {% if shift.assigned_location %}
+                        <i class="bi bi-geo-alt me-1"></i>{{ shift.assigned_location }}
+                        {% elif shift.location %}
+                        <i class="bi bi-building me-1"></i>{{ shift.location.name }}
+                        {% else %}
+                        <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if shift.is_confirmed %}
+                        <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Confirmed</span>
+                        {% else %}
+                        <span class="badge bg-warning text-dark"><i class="bi bi-clock me-1"></i>Pending</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="text-center py-5 px-3 rounded-3" style="background: linear-gradient(135deg, #fff8e1 0%, #ffecb3 100%); border: 2px solid #ffb300;">
+        <i class="bi bi-calendar-x text-warning" style="font-size: 3rem;"></i>
+        <h4 class="mt-3 text-dark">No shifts scheduled this week</h4>
+        <p class="text-muted mb-2">Week: {{ week_start|date:"M d" }} – {{ week_end|date:"M d, Y" }}</p>
+        <p class="mb-3">Contact your HOD or HR to assign shifts.</p>
+        <div class="d-flex flex-wrap gap-2 justify-content-center">
+            <a href="{% url 'hospital:staff_schedule_dashboard' %}" class="btn btn-primary"><i class="bi bi-calendar-week me-1"></i>View full schedule</a>
+            {% if staff.department %}
+            <a href="{% url 'hospital:hod_scheduling_dashboard' %}" class="btn btn-outline-secondary"><i class="bi bi-person-badge me-1"></i>HOD scheduling</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
 
 <!-- Overdue tests (>24h): collapsed by default so stats & work queues stay visible without scrolling -->
 {% if overdue_tests > 0 %}
@@ -540,14 +669,16 @@
     </div>
     {% if is_lab_hod %}
     <div class="col-lg-2 col-md-4 col-sm-6">
-        <a href="{% url 'hospital:staff_shift_list' %}" class="text-decoration-none">
-            <div class="lab-stat-card" style="border-top: 4px solid var(--lab-secondary); cursor: pointer;">
-                <div class="stat-icon"><i class="bi bi-people-fill"></i></div>
-                <div class="stat-value">Timetables</div>
-                <div class="stat-label">Lab Staff Shifts</div>
-                <div class="stat-trend"><i class="bi bi-pencil-square"></i> HOD access</div>
+        <div class="lab-stat-card" style="border-top: 4px solid var(--lab-secondary);">
+            <div class="stat-icon"><i class="bi bi-people-fill"></i></div>
+            <div class="stat-value" style="font-size:1.1rem;">Lab HOD</div>
+            <div class="stat-label">Staff shifts</div>
+            <div class="stat-trend d-grid gap-1 w-100 mt-2">
+                <a href="{% url 'hospital:staff_shift_create' %}" class="btn btn-sm btn-light text-primary fw-semibold">Create shift</a>
+                <a href="{% url 'hospital:staff_shift_list' %}" class="btn btn-sm btn-outline-light text-white border-white">View timetable</a>
             </div>
-        </a>
+            <div class="small mt-1 opacity-75">Only your department’s staff</div>
+        </div>
     </div>
     {% endif %}
     <div class="col-lg-2 col-md-4 col-sm-6">
@@ -641,6 +772,11 @@
                 <div class="fw-bold">Test Catalog</div>
                 <small class="text-muted">Browse tests</small>
             </a>
+            <a href="{% url 'hospital:laboratory_financial_report' %}" class="quick-action-card flex-fill" style="text-decoration: none; color: inherit;">
+                <div class="quick-action-icon"><i class="bi bi-file-earmark-bar-graph"></i></div>
+                <div class="fw-bold">Lab report</div>
+                <small class="text-muted">Dates, charts, PDF &amp; Excel</small>
+            </a>
         </div>
     </div>
 </div>
@@ -688,7 +824,7 @@
             </div>
             <div class="search-filter-bar">
                 <div class="search-box">
-                    <input type="text" id="pendingSearch" placeholder="Search by patient, test, or MRN..." onkeyup="filterTable('pendingSearch', 'pendingTable')">
+                    <input type="text" id="pendingSearch" placeholder="Search by patient, test, diagnosis, or MRN..." onkeyup="filterTable('pendingSearch', 'pendingTable')">
                     <i class="bi bi-search"></i>
                 </div>
                 <div class="filter-badge active" onclick="filterByPriority('all', this)">All</div>
@@ -708,6 +844,7 @@
                     <tr>
                         <th><input type="checkbox" id="selectAllPending" onchange="toggleAllSelection('pending')"></th>
                         <th>Patient</th>
+                        <th>Diagnosis</th>
                         <th>Tests</th>
                         <th>Total Price</th>
                         <th>Priority</th>
@@ -729,6 +866,18 @@
                             <div class="text-muted small">MRN: {{ group.patient.mrn|default:"--" }}</div>
                             {% else %}
                             <span class="text-muted">Patient not available</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if group.diagnosis %}
+                            <span class="diagnosis-badge" title="{{ group.diagnosis }}">
+                                <i class="bi bi-clipboard-pulse text-danger me-1"></i>{{ group.diagnosis|truncatewords:12 }}
+                            </span>
+                            {% if group.order.notes %}
+                            <div class="text-muted small mt-1" title="{{ group.order.notes }}">Note: {{ group.order.notes|truncatewords:8 }}</div>
+                            {% endif %}
+                            {% else %}
+                            <span class="text-muted small">—</span>
                             {% endif %}
                         </td>
                         <td>
@@ -813,6 +962,7 @@
                 <thead>
                     <tr>
                         <th>Patient</th>
+                        <th>Diagnosis</th>
                         <th>Tests</th>
                         <th>Total Price</th>
                         <th>Started</th>
@@ -833,6 +983,18 @@
                             <div class="text-muted small">MRN: {{ group.patient.mrn|default:"--" }}</div>
                             {% else %}
                             <span class="text-muted">Patient not available</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if group.diagnosis %}
+                            <span class="diagnosis-badge" title="{{ group.diagnosis }}">
+                                <i class="bi bi-clipboard-pulse text-danger me-1"></i>{{ group.diagnosis|truncatewords:12 }}
+                            </span>
+                            {% if group.order.notes %}
+                            <div class="text-muted small mt-1" title="{{ group.order.notes }}">Note: {{ group.order.notes|truncatewords:8 }}</div>
+                            {% endif %}
+                            {% else %}
+                            <span class="text-muted small">—</span>
                             {% endif %}
                         </td>
                         <td>
@@ -893,6 +1055,9 @@
                     <input type="text" id="completedSearch" placeholder="Search by patient, test, or MRN..." onkeyup="filterTable('completedSearch', 'completedTable')">
                     <i class="bi bi-search"></i>
                 </div>
+                <a href="{% url 'hospital:laboratory_financial_report' %}?date_from={{ filter_date|date:'Y-m-d' }}&date_to={{ filter_date|date:'Y-m-d' }}" class="btn btn-sm btn-outline-success">
+                    <i class="bi bi-download me-1"></i>Export day (report)
+                </a>
             </div>
         </div>
 
@@ -902,6 +1067,7 @@
                 <thead>
                     <tr>
                         <th>Patient</th>
+                        <th>Diagnosis</th>
                         <th>Tests</th>
                         <th>Total Price</th>
                         <th>Verified By</th>
@@ -925,6 +1091,18 @@
                             {% endif %}
                         </td>
                         <td>
+                            {% if group.diagnosis %}
+                            <span class="diagnosis-badge" title="{{ group.diagnosis }}">
+                                <i class="bi bi-clipboard-pulse text-danger me-1"></i>{{ group.diagnosis|truncatewords:12 }}
+                            </span>
+                            {% if group.order.notes %}
+                            <div class="text-muted small mt-1" title="{{ group.order.notes }}">Note: {{ group.order.notes|truncatewords:8 }}</div>
+                            {% endif %}
+                            {% else %}
+                            <span class="text-muted small">—</span>
+                            {% endif %}
+                        </td>
+                        <td>
                             <div class="test-badges">
                                 {% for result in group.results %}
                                 <span class="test-badge" title="{% if result.value %}{{ result.value }} {{ result.units|default:'' }}{% else %}{{ result.qualitative_result|default:'' }}{% endif %}">{{ result.test.name|default:"Unknown" }}{% if result.is_abnormal %} <i class="bi bi-exclamation-triangle text-danger" style="font-size:10px;"></i>{% endif %}</span>{% if not forloop.last %} {% endif %}
@@ -944,12 +1122,13 @@
                         <td>
                             <div class="group-actions-compact">
                                 {% for result in group.results %}
+                                <a href="{% lab_result_entry_url result %}" class="action-btn primary" title="Edit completed result — {{ result.test.name|default:'test' }}"><i class="bi bi-pencil-square"></i></a>
                                 {% if result.release_record and result.release_record.payment_receipt %}
                                     <span class="badge bg-success" title="{{ result.test.name }}">Paid</span>
                                 {% elif result.release_record and result.release_record.sent_to_cashier_at %}
                                     <a href="{% url 'hospital:lab_cashier_ticket' result.id %}?redirect=cashier" class="action-btn info" title="Ticket"><i class="bi bi-ticket"></i></a>
                                 {% else %}
-                                    <a href="{% url 'hospital:lab_cashier_ticket' result.id %}?redirect=cashier" class="action-btn primary" title="Send to cashier"><i class="bi bi-cash-coin"></i></a>
+                                    <a href="{% url 'hospital:lab_cashier_ticket' result.id %}?redirect=cashier" class="action-btn warning" title="Send to cashier"><i class="bi bi-cash-coin"></i></a>
                                 {% endif %}
                                 {% endfor %}
                             </div>
@@ -992,6 +1171,7 @@
                 <thead>
                     <tr>
                         <th>Patient</th>
+                        <th>Diagnosis</th>
                         <th>Requested By</th>
                         <th>Priority</th>
                         <th>Time</th>
@@ -1009,6 +1189,15 @@
                             {% patient_payer_badges order.encounter.patient order.encounter %}
                             {% else %}
                             <span class="text-muted">Patient not available</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if order.lab_diagnosis_display %}
+                            <span class="diagnosis-badge" title="{{ order.lab_diagnosis_display }}">
+                                <i class="bi bi-clipboard-pulse text-danger me-1"></i>{{ order.lab_diagnosis_display|truncatewords:10 }}
+                            </span>
+                            {% else %}
+                            <span class="text-muted small">—</span>
                             {% endif %}
                         </td>
                         <td>

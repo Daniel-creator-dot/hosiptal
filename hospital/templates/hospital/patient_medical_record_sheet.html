@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load humanize static %}
+{% load humanize static hospital_extras %}
 
 {% block title %}Medical Record - {{ patient.full_name }} - HMS{% endblock %}
 
@@ -520,6 +520,7 @@
     .status-active { background: #D1FAE5; color: #065F46; }
     .status-completed { background: #DBEAFE; color: #1E40AF; }
     .status-pending { background: #FEF3C7; color: #92400E; }
+    .status-in_progress { background: #E0E7FF; color: #3730A3; }
     .status-cancelled { background: #FEE2E2; color: #991B1B; }
     .status-abnormal { background: #FEE2E2; color: #991B1B; }
     .status-normal { background: #D1FAE5; color: #065F46; }
@@ -765,12 +766,18 @@
         <div class="info-box">
             <div class="info-box-label">Bill to / Company</div>
             <div class="info-box-value">
-                {% if payer_info.is_insurance_or_corporate and payer_info.name %}
-                    {{ payer_info.name }}
-                {% elif patient.primary_insurance %}
+                {% if payer_info.is_insurance_or_corporate %}
+                    {% with n=payer_info.name b=payer_info.corporate_badge_name %}
+                        {% if n and b and n != b %}
+                            {{ n }}<span class="text-muted"> · </span>{{ b }}
+                        {% else %}
+                            {% firstof n b "Insurance / Corporate" %}
+                        {% endif %}
+                    {% endwith %}
+                {% elif patient.primary_insurance and patient.primary_insurance.payer_type != 'cash' %}
                     {{ patient.primary_insurance.name }}
                 {% else %}
-                    Self Pay
+                    Self pay
                 {% endif %}
             </div>
         </div>
@@ -803,7 +810,7 @@
                 <div style="font-size: 11px; color: #6B7280;">Billed − Paid</div>
             </div>
             <div style="background: linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%); padding: 16px; border-radius: 12px; border-left: 4px solid #DC2626;">
-                <div style="font-size: 12px; color: #6B7280; font-weight: 600; text-transform: uppercase;">Amount Due (after deposit)</div>
+                <div style="font-size: 12px; color: #6B7280; font-weight: 600; text-transform: uppercase;">Amount due</div>
                 <div style="font-size: 24px; font-weight: 700; color: #991B1B;">GHS {{ amount_due_after_deposit|default:0|floatformat:2 }}</div>
                 <div style="font-size: 11px; color: #6B7280;">Outstanding − Deposit on account</div>
             </div>
@@ -816,6 +823,10 @@
             <div class="stat-card">
                 <div class="stat-value">{{ total_encounters }}</div>
                 <div class="stat-label">Total Encounters</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ total_admissions|default:0 }}</div>
+                <div class="stat-label">Admissions</div>
             </div>
             {% if can_view_vitals|default:True %}
             <div class="stat-card">
@@ -834,10 +845,28 @@
         </div>
     </div>
 
+    {% if total_admissions %}
+    <div class="px-4 pt-3 pb-0">
+        <div class="alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2 mb-0" style="border-radius: 12px; border-left: 4px solid #0ea5e9;">
+            <div>
+                <i class="bi bi-door-open me-2"></i>
+                <strong>Ward admissions:</strong> {{ total_admissions }} record(s) on file.
+                <span class="text-muted d-none d-md-inline">Open the <strong>Admissions</strong> tab for dates, ward, bed, and diagnosis.</span>
+            </div>
+            <button type="button" class="btn btn-sm btn-primary" onclick="showSection('admissions', document.querySelector('.record-tab[data-section=\'admissions\']'))">
+                View admissions
+            </button>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Record Tabs -->
     <ul class="record-tabs">
         <li class="record-tab active" data-section="encounters" onclick="showSection('encounters', this)">
             <i class="bi bi-hospital me-2"></i>Encounters ({{ encounters|length }})
+        </li>
+        <li class="record-tab" data-section="admissions" onclick="showSection('admissions', this)">
+            <i class="bi bi-door-open me-2"></i>Admissions ({{ total_admissions|default:0 }})
         </li>
         {% if can_view_vitals|default:True %}
         <li class="record-tab" data-section="vitals" onclick="showSection('vitals', this)">
@@ -847,8 +876,14 @@
         <li class="record-tab" data-section="lab" onclick="showSection('lab', this)">
             <i class="bi bi-capsule me-2"></i>Lab Results ({{ all_lab_results|length }})
         </li>
+        <li class="record-tab" data-section="imaging" onclick="showSection('imaging', this)">
+            <i class="bi bi-radioactive me-2"></i>Imaging & Scans ({{ all_imaging_studies|length }})
+        </li>
         <li class="record-tab" data-section="medications" onclick="showSection('medications', this)">
             <i class="bi bi-prescription2 me-2"></i>Medications ({{ all_prescriptions|length }})
+        </li>
+        <li class="record-tab" data-section="otc" onclick="showSection('otc', this)">
+            <i class="bi bi-bag-plus me-2"></i>OTC ({{ otc_dispenses|length }})
         </li>
         <li class="record-tab" data-section="nurse-notes" onclick="showSection('nurse-notes', this)">
             <i class="bi bi-journal-text me-2"></i>Nurse Notes
@@ -857,7 +892,7 @@
             <i class="bi bi-file-medical me-2"></i>Orders ({{ all_orders|length }})
         </li>
         <li class="record-tab" data-section="billing" onclick="showSection('billing', this)">
-            <i class="bi bi-currency-dollar me-2"></i>Billing ({{ invoices|length }})
+            <i class="bi bi-currency-dollar me-2"></i>Payable ({{ invoices|length }})
         </li>
         <li class="record-tab" data-section="allergies" onclick="showSection('allergies', this)">
             <i class="bi bi-exclamation-triangle me-2"></i>Allergies & Conditions
@@ -977,6 +1012,94 @@
         {% endif %}
     </div>
 
+    <!-- Admissions (inpatient / ward stays linked to encounters) -->
+    <div class="record-section" id="section-admissions">
+        <h3 style="margin-bottom: 20px; color: #1F2937;">
+            <i class="bi bi-door-open me-2"></i>Admission History
+        </h3>
+        {% if patient_admissions %}
+        <table class="record-table">
+            <thead>
+                <tr>
+                    <th>Admitted</th>
+                    <th>Discharged</th>
+                    <th>Status</th>
+                    <th>Ward / Bed</th>
+                    <th>Admitting doctor</th>
+                    <th>Diagnosis (ICD-10)</th>
+                    <th>Notes</th>
+                    <th>Encounter</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for adm in patient_admissions %}
+                <tr>
+                    <td>
+                        {% if adm.admit_date %}
+                            <strong>{{ adm.admit_date|date:"M d, Y" }}</strong><br>
+                            <small style="color: #6B7280;">{{ adm.admit_date|date:"H:i" }}</small>
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if adm.discharge_date %}
+                            <strong>{{ adm.discharge_date|date:"M d, Y" }}</strong><br>
+                            <small style="color: #6B7280;">{{ adm.discharge_date|date:"H:i" }}</small>
+                        {% elif adm.status == 'admitted' %}
+                            <span class="text-muted">Still admitted</span>
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge {% if adm.status == 'admitted' %}bg-warning text-dark{% elif adm.status == 'discharged' %}bg-success{% else %}bg-secondary{% endif %}">
+                            {{ adm.get_status_display }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if adm.ward %}{{ adm.ward.name }}{% else %}-{% endif %}
+                        {% if adm.bed %}<br><small class="text-muted">Bed {{ adm.bed.bed_number }}</small>{% endif %}
+                    </td>
+                    <td>
+                        {% if adm.admitting_doctor and adm.admitting_doctor.user %}
+                            {{ adm.admitting_doctor.user.get_full_name|default:adm.admitting_doctor.user.username }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td>{{ adm.diagnosis_icd10|default:"-"|truncatewords:12 }}</td>
+                    <td>{{ adm.notes|default:""|truncatewords:15 }}</td>
+                    <td>
+                        {% if adm.encounter %}
+                            <a href="{% url 'hospital:encounter_detail' adm.encounter.pk %}" class="text-decoration-none">
+                                {{ adm.encounter.started_at|date:"M d, Y"|default:"View" }}
+                            </a>
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{% url 'hospital:admission_detail' adm.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% if total_admissions > patient_admissions|length %}
+        <p class="text-muted small mt-2 mb-0">Showing the {{ patient_admissions|length }} most recent admissions ({{ total_admissions }} total).</p>
+        {% endif %}
+        {% else %}
+        <div class="empty-state">
+            <i class="bi bi-door-closed"></i>
+            <p>No admission records for this patient</p>
+        </div>
+        {% endif %}
+    </div>
+
     <!-- Nurse Notes Section (patient-wide, across encounters) -->
     <div class="record-section" id="section-nurse-notes">
         <h3 style="margin-bottom: 20px; color: #1F2937;">
@@ -1068,6 +1191,7 @@
                     <th>Pulse (bpm)</th>
                     <th>Temp (°C)</th>
                     <th>SpO2 (%)</th>
+                    <th>RBS / FBS <span style="font-weight:400;color:#6B7280;">(mmol/L)</span></th>
                     <th>Resp Rate</th>
                     <th>Weight (kg)</th>
                     <th>Height (cm)</th>
@@ -1109,6 +1233,17 @@
                         {{ vital.spo2|default:"-" }}
                         {% if vital.spo2 and vital.spo2 < 95 %}
                         <i class="bi bi-exclamation-triangle text-danger"></i>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if vital.poc_glucose_strip_type == 'rbs' %}
+                            {% if vital.blood_glucose %}<strong>RBS</strong> {{ vital.blood_glucose }}{% else %}<strong>RBS</strong> <span class="text-muted">POC</span>{% endif %}
+                        {% elif vital.poc_glucose_strip_type == 'fbs' %}
+                            {% if vital.blood_glucose %}<strong>FBS</strong> {{ vital.blood_glucose }}{% else %}<strong>FBS</strong> <span class="text-muted">POC</span>{% endif %}
+                        {% elif vital.blood_glucose %}
+                            {{ vital.blood_glucose }}
+                        {% else %}
+                            -
                         {% endif %}
                     </td>
                     <td>{{ vital.respiratory_rate|default:"-" }}</td>
@@ -1156,6 +1291,7 @@
             </thead>
             <tbody>
                 {% for result in all_lab_results %}
+                {% with s=result|lab_list_summary %}
                 <tr>
                     <td>
                         {% if result.verified_at %}
@@ -1176,32 +1312,18 @@
                         {% endif %}
                     </td>
                     <td class="result-value-cell {% if result.is_abnormal %}abnormal-result{% endif %}" style="font-weight: 700; font-size: 1.1rem;">
-                        {% if result.value %}
-                            {{ result.value }}
-                        {% elif result.qualitative_result %}
-                            {{ result.qualitative_result }}
-                        {% else %}
+                        {% if s.is_pending and result.status != 'completed' %}
                             <span class="text-muted">Pending</span>
+                        {% else %}
+                            {{ s.result_text }}
                         {% endif %}
                         {% if result.is_abnormal %}<i class="bi bi-exclamation-triangle text-danger ms-1"></i>{% endif %}
                     </td>
                     <td>
-                        {% if result.range_low and result.range_high %}
-                            {{ result.range_low }} – {{ result.range_high }}
-                        {% elif result.range_low %}
-                            &ge; {{ result.range_low }}
-                        {% elif result.range_high %}
-                            &le; {{ result.range_high }}
-                        {% else %}
-                            <span class="text-muted">-</span>
-                        {% endif %}
+                        {{ s.ref_text }}
                     </td>
                     <td>
-                        {% if result.units %}
-                            {{ result.units }}
-                        {% else %}
-                            <span class="text-muted">-</span>
-                        {% endif %}
+                        {{ s.unit_text }}
                     </td>
                     <td>
                         {% if result.status %}
@@ -1225,6 +1347,7 @@
                         </a>
                     </td>
                 </tr>
+                {% endwith %}
                 {% endfor %}
             </tbody>
         </table>
@@ -1232,6 +1355,93 @@
         <div class="empty-state">
             <i class="bi bi-capsule"></i>
             <p>No lab results available</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Imaging & Scans Section -->
+    <div class="record-section" id="section-imaging">
+        <h3 style="margin-bottom: 20px; color: #1F2937;">
+            <i class="bi bi-radioactive me-2"></i>Imaging &amp; Scans
+        </h3>
+        {% if all_imaging_studies %}
+        <table class="record-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Study</th>
+                    <th>Modality</th>
+                    <th>Findings / Impression</th>
+                    <th>Status</th>
+                    <th>Encounter</th>
+                    <th>Full Report</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for study in all_imaging_studies %}
+                <tr>
+                    <td>
+                        {% if study.performed_at %}
+                            <strong>{{ study.performed_at|date:"M d, Y" }}</strong><br>
+                            <small style="color: #6B7280;">{{ study.performed_at|date:"H:i" }}</small>
+                        {% elif study.scheduled_at %}
+                            <strong>{{ study.scheduled_at|date:"M d, Y" }}</strong><br>
+                            <small style="color: #6B7280;">Scheduled {{ study.scheduled_at|date:"H:i" }}</small>
+                        {% elif study.created %}
+                            <strong>{{ study.created|date:"M d, Y" }}</strong><br>
+                            <small style="color: #6B7280;">Ordered {{ study.created|date:"H:i" }}</small>
+                        {% else %}
+                            <strong>-</strong>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <strong>{{ study.body_part|default:"—" }}</strong>
+                        {% if study.study_type %}
+                            <br><small class="text-muted">{{ study.study_type }}</small>
+                        {% endif %}
+                    </td>
+                    <td>{{ study.get_modality_display|default:"—" }}</td>
+                    <td style="max-width: 280px;">
+                        {% if study.impression %}
+                            {{ study.impression|truncatewords:20 }}
+                        {% elif study.findings %}
+                            {{ study.findings|truncatewords:20 }}
+                        {% elif study.report_text %}
+                            <span class="text-muted">{{ study.report_text|truncatewords:20 }}</span>
+                        {% else %}
+                            <span class="text-muted">{% if study.status == 'scheduled' or study.status == 'arrived' %}Awaiting scan{% elif study.status == 'in_progress' %}Scan in progress{% else %}Report pending{% endif %}</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="status-badge status-{{ study.status|imaging_status_sheet }}">
+                            {{ study.get_status_display|default:study.status }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if study.encounter and study.encounter.started_at %}
+                            <small>{{ study.encounter.started_at|date:"M d, Y" }}</small>
+                        {% elif study.order and study.order.encounter and study.order.encounter.started_at %}
+                            <small>{{ study.order.encounter.started_at|date:"M d, Y" }}</small>
+                        {% else %}
+                            <small>-</small>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{% url 'hospital:print_imaging_report' study.id %}" target="_blank" class="btn btn-sm btn-outline-primary" title="View full scan report">
+                            <i class="bi bi-file-earmark-medical"></i> View
+                        </a>
+                        <a href="{% url 'hospital:imaging_study_detail' study.id %}" target="_blank" class="btn btn-sm btn-outline-secondary ms-1" title="Study detail">
+                            <i class="bi bi-images"></i>
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <i class="bi bi-radioactive"></i>
+            <p>No imaging or scan records available</p>
         </div>
         {% endif %}
     </div>
@@ -1306,6 +1516,65 @@
         <div class="empty-state">
             <i class="bi bi-prescription2"></i>
             <p>No prescriptions on record</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- OTC Pharmacy Section (walk-in / prescribe sales dispensed — not consumables billing) -->
+    <div class="record-section" id="section-otc">
+        <h3 style="margin-bottom: 20px; color: #1F2937;">
+            <i class="bi bi-bag-plus me-2"></i>OTC Pharmacy Dispensing
+        </h3>
+        <p class="text-muted small mb-3">Over-the-counter and pharmacy prescribe sales dispensed to this patient (clinical view; consumables billed separately are not listed here).</p>
+        {% if otc_dispenses %}
+        <table class="record-table">
+            <thead>
+                <tr>
+                    <th>Date Dispensed</th>
+                    <th>Sale Ref</th>
+                    <th>Medications</th>
+                    <th>Instructions / Counselling</th>
+                    <th>Dispensed By</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in otc_dispenses %}
+                <tr>
+                    <td>
+                        {% if row.dispensed_at %}
+                            <strong>{{ row.dispensed_at|date:"M d, Y" }}</strong><br>
+                            <small style="color: #6B7280;">{{ row.dispensed_at|date:"H:i" }}</small>
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td><code>{{ row.sale_number }}</code></td>
+                    <td>
+                        {% for item in row.items %}
+                            <div><strong>{{ item.drug_name }}</strong> &times; {{ item.quantity }}</div>
+                        {% empty %}
+                            -
+                        {% endfor %}
+                    </td>
+                    <td>
+                        {% for item in row.items %}
+                            {% if item.dosage_instructions %}
+                                <div class="small">{{ item.drug_name }}: {{ item.dosage_instructions }}</div>
+                            {% endif %}
+                        {% endfor %}
+                        {% if row.counselling_notes %}
+                            <div class="small text-muted mt-1">{{ row.counselling_notes }}</div>
+                        {% endif %}
+                    </td>
+                    <td>{{ row.dispensed_by_name|default:"-" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <i class="bi bi-bag-plus"></i>
+            <p>No OTC pharmacy dispensing on record</p>
         </div>
         {% endif %}
     </div>
@@ -1396,16 +1665,20 @@
         {% endif %}
     </div>
 
-    <!-- Billing Section -->
+    <!-- Billing Section: open balances + pending per encounter (draft / charges not yet settled) -->
     <div class="record-section" id="section-billing">
-        <h3 style="margin-bottom: 20px; color: #1F2937;">
-            <i class="bi bi-currency-dollar me-2"></i>Billing History
+        <h3 style="margin-bottom: 8px; color: #1F2937;">
+            <i class="bi bi-currency-dollar me-2"></i>Amount due &amp; open invoices
         </h3>
+        <p class="text-muted small mb-4" style="max-width: 52rem;">
+            Includes every <strong>pending</strong> invoice for this patient: open balances, <strong>draft</strong> bills tied to a visit (encounter), and any invoice that still has billable lines—even if the total is still updating.
+            Fully paid invoices with nothing left due are not listed. Use <strong>Outstanding balance</strong> and <strong>Amount due</strong> above for account-level totals (unapplied deposit does not reduce these until posted from cashier).
+        </p>
 
         <div class="row mb-4">
             <div class="col-md-4">
                 <div class="info-box">
-                    <div class="info-box-label">Total Billed</div>
+                    <div class="info-box-label">Total charged (account)</div>
                     <div class="info-box-value" style="color: #3B82F6;">GHS {{ total_billed|floatformat:2 }}</div>
                 </div>
             </div>
@@ -1449,7 +1722,7 @@
             </div>
             <div class="col-md-4">
                 <div class="info-box" style="border-left-color: #DC2626;">
-                    <div class="info-box-label">Amount Due (after deposit)</div>
+                    <div class="info-box-label">Amount due</div>
                     <div class="info-box-value" style="color: #DC2626;">GHS {{ amount_due_after_deposit|default:0|floatformat:2 }}</div>
                 </div>
             </div>
@@ -1460,11 +1733,13 @@
             <thead>
                 <tr>
                     <th>Invoice Number</th>
+                    <th>Encounter / visit</th>
+                    <th>Bill to</th>
                     <th>Date Issued</th>
                     <th>Due Date</th>
                     <th>Amount</th>
                     <th>Paid</th>
-                    <th>Balance</th>
+                    <th>Balance due</th>
                     <th>Status</th>
                 </tr>
             </thead>
@@ -1476,6 +1751,25 @@
                             <strong>{{ invoice.invoice_number }}</strong>
                         {% else %}
                             <strong>-</strong>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if invoice.encounter %}
+                            <a href="{% url 'hospital:encounter_detail' invoice.encounter.pk %}" class="text-decoration-none">
+                                {{ invoice.encounter.started_at|date:"M d, Y"|default:"Visit" }}
+                            </a>
+                            {% if invoice.encounter.get_encounter_type_display %}
+                                <br><small class="text-muted">{{ invoice.encounter.get_encounter_type_display }}</small>
+                            {% endif %}
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if invoice.payer %}
+                            {{ invoice.payer.name }}{% if invoice.payer.payer_type %} <span class="text-muted small">({{ invoice.payer.get_payer_type_display }})</span>{% endif %}
+                        {% else %}
+                            —
                         {% endif %}
                     </td>
                     <td>
@@ -1511,7 +1805,7 @@
         {% else %}
         <div class="empty-state">
             <i class="bi bi-currency-dollar"></i>
-            <p>No invoices on record</p>
+            <p><strong>No open invoice balances.</strong> Either nothing is due right now, or charges are not yet on an issued invoice. Fully paid invoices are not listed here.</p>
         </div>
         {% endif %}
     </div>
@@ -1577,6 +1871,11 @@
             <a href="{% url 'hospital:patient_edit' patient.pk %}" class="btn btn-modern" style="background: #6B7280; color: white;">
                 <i class="bi bi-pencil me-2"></i>Edit Patient
             </a>
+            {% if can_upload_patient_documents %}
+            <a href="{% url 'hospital:comprehensive_medical_record' patient.pk %}#upload-documents" class="btn btn-modern ms-2" style="background: #14b8a6; color: white;">
+                <i class="bi bi-cloud-upload me-2"></i>Upload Document
+            </a>
+            {% endif %}
         </div>
         <div>
             <a href="{% url 'hospital:patient_list' %}" class="btn btn-modern" style="background: white; border: 1px solid #E5E7EB;">

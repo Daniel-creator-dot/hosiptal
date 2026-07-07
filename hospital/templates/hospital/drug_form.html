@@ -1,11 +1,12 @@
 {% extends 'hospital/base.html' %}
-{% load static %}
+{% load static hospital_extras %}
 
 {% block title %}{{ action }} Drug - HMS{% endblock %}
 {% block page_title %}{{ action }} Drug{% endblock %}
 {% block page_subtitle %}{% if action == 'Create' %}Add a new drug to the formulary{% else %}Update drug information{% endif %}{% endblock %}
 
 {% block content %}
+{% get_drug_form_choices as drug_form_type_options %}
 <div class="row justify-content-center">
     <div class="col-md-8">
         <div class="modern-card">
@@ -37,28 +38,29 @@
                         <label for="form" class="form-label">Form *</label>
                         <select class="form-select form-control-modern" id="form" name="form" required title="Select option" aria-label="Select option">
                             <option value="">Select form</option>
-                            <option value="Tablet" {% if drug.form == 'Tablet' %}selected{% endif %}>Tablet</option>
-                            <option value="Capsule" {% if drug.form == 'Capsule' %}selected{% endif %}>Capsule</option>
-                            <option value="Injection" {% if drug.form == 'Injection' %}selected{% endif %}>Injection</option>
-                            <option value="Syrup" {% if drug.form == 'Syrup' %}selected{% endif %}>Syrup</option>
-                            <option value="Suspension" {% if drug.form == 'Suspension' %}selected{% endif %}>Suspension</option>
-                            <option value="Cream" {% if drug.form == 'Cream' %}selected{% endif %}>Cream</option>
-                            <option value="Ointment" {% if drug.form == 'Ointment' %}selected{% endif %}>Ointment</option>
-                            <option value="Drops" {% if drug.form == 'Drops' %}selected{% endif %}>Drops</option>
-                            <option value="Inhaler" {% if drug.form == 'Inhaler' %}selected{% endif %}>Inhaler</option>
-                            <option value="Infusion" {% if drug.form == 'Infusion' %}selected{% endif %}>Infusion</option>
-                            <option value="Gel" {% if drug.form == 'Gel' %}selected{% endif %}>Gel</option>
-                            <option value="Fluid" {% if drug.form == 'Fluid' %}selected{% endif %}>Fluid</option>
-                            <option value="Spray" {% if drug.form == 'Spray' %}selected{% endif %}>Spray</option>
-                            <option value="Suppository" {% if drug.form == 'Suppository' %}selected{% endif %}>Suppository</option>
-                            <option value="Kit" {% if drug.form == 'Kit' %}selected{% endif %}>Kit</option>
-                            <option value="Others" {% if drug.form == 'Others' %}selected{% endif %}>Others</option>
+                            {% for value, label in drug_form_type_options %}
+                            <option value="{{ value }}" {% if drug.form == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
                         </select>
+                        <div id="tabletFormNotice" class="alert alert-info border-0 py-2 px-3 small mt-2 mb-0" style="display: none;">
+                            <i class="bi bi-info-circle"></i> This drug is sold per <strong>tablet</strong> — stock and dispensing quantities are individual tablets, not packs.
+                        </div>
                     </div>
-                    
+
                     <div class="col-md-6">
                         <label for="pack_size" class="form-label">Pack Size</label>
-                        <input type="text" class="form-control form-control-modern" id="pack_size" name="pack_size" value="{{ drug.pack_size|default:'' }}" placeholder="e.g., 30 tablets" title="Enter text" placeholder="Enter text">
+                        <input type="text" class="form-control form-control-modern" id="pack_size" name="pack_size" value="{{ drug.pack_size|default:'' }}" placeholder="e.g., 30 tablets" title="Enter text">
+                    </div>
+
+                    <div class="col-md-6">
+                        <label for="preferred_supplier" class="form-label">Supplier</label>
+                        <select class="form-select form-control-modern" id="preferred_supplier" name="preferred_supplier" title="Optional — link to a procurement supplier">
+                            <option value="">— No supplier —</option>
+                            {% for s in suppliers %}
+                            <option value="{{ s.pk }}" {% if drug.preferred_supplier_id == s.pk %}selected{% endif %}>{{ s.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <small class="form-text text-muted">Optional. Lets accounts and procurement see which vendor is associated with this drug.</small>
                     </div>
                     
                     <div class="col-md-12">
@@ -125,6 +127,7 @@
                                     <th>Batch</th>
                                     <th>Quantity</th>
                                     <th>Location</th>
+                                    <th>Unit cost</th>
                                     <th>Expiry Date</th>
                                 </tr>
                             </thead>
@@ -134,6 +137,7 @@
                                     <td><code>{{ stock.batch_number }}</code></td>
                                     <td>{{ stock.quantity_on_hand }}</td>
                                     <td>{{ stock.location }}</td>
+                                    <td class="font-monospace small">GHS {{ stock.unit_cost|floatformat:2 }}</td>
                                     <td>
                                         {% if can_edit_stock %}
                                         <input type="date" class="form-control form-control-sm" name="stock_expiry_{{ stock.pk }}" 
@@ -146,6 +150,31 @@
                                 {% endfor %}
                             </tbody>
                         </table>
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if action != 'Create' %}
+                <div class="mt-4 pt-4 border-top">
+                    <h6 class="mb-2"><i class="bi bi-shield-x me-2 text-warning"></i>Insurance billing</h6>
+                    <p class="text-muted small mb-3">
+                        When excluded, insurance patients pay cash at the cashier for this drug. Corporate patients are not affected.
+                        For per-insurer settings, use the
+                        <a href="{% url 'hospital:drug_detail' drug.pk %}#insurance">drug detail → Insurance &amp; Coverage</a> tab.
+                    </p>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch"
+                               id="exclude_from_insurance" name="exclude_from_insurance"
+                               {% if drug.exclude_from_insurance %}checked{% endif %}>
+                        <label class="form-check-label" for="exclude_from_insurance">
+                            <strong>Exclude from insurance billing</strong>
+                        </label>
+                    </div>
+                    <div class="mb-0">
+                        <label for="insurance_exclusion_reason" class="form-label">Reason (shown to pharmacy &amp; cashier)</label>
+                        <textarea class="form-control form-control-modern" id="insurance_exclusion_reason"
+                                  name="insurance_exclusion_reason" rows="2" maxlength="255"
+                                  placeholder="e.g. Not on NHIS formulary">{{ drug.insurance_exclusion_reason|default:'' }}</textarea>
                     </div>
                 </div>
                 {% endif %}
@@ -162,6 +191,21 @@
         </div>
     </div>
 </div>
+<script>
+(function() {
+    const formSelect = document.getElementById('form');
+    const tabletNotice = document.getElementById('tabletFormNotice');
+    function syncTabletNotice() {
+        if (!formSelect || !tabletNotice) return;
+        const f = String(formSelect.value || '').trim().toLowerCase();
+        tabletNotice.style.display = (f.startsWith('tab') || f.indexOf('tablet') !== -1) ? 'block' : 'none';
+    }
+    if (formSelect) {
+        formSelect.addEventListener('change', syncTabletNotice);
+        syncTabletNotice();
+    }
+})();
+</script>
 {% endblock %}
 
 

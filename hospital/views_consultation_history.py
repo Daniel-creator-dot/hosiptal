@@ -7,17 +7,117 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Q, Count, Prefetch, Case, When, IntegerField
+from django.core.paginator import Paginator
 from django.utils import timezone
-from datetime import timedelta
+from datetime import datetime, time as dt_time, timedelta
 import logging
 import uuid
 
-from .models import Encounter, Patient, Staff, Prescription, Order, VitalSign
+from .models import Encounter, Invoice, Patient, Staff, Prescription, Order, VitalSign
 from .models import LabResult
 from .models_queue import QueueEntry
 from .utils_clinical_notes import dedupe_clinical_notes_timeline
 
 logger = logging.getLogger(__name__)
+
+MY_CONSULTATIONS_PAGE_SIZE = 50
+MY_CONSULTATIONS_SQL_LIMIT = 10000
+
+
+def _my_consultations_datetime_bounds(date_filter, date_from, date_to, now):
+    """
+    Return (start_aware, end_exclusive_aware) for started_at filtering in raw SQL and ORM.
+    end is exclusive (started_at < end_exclusive). None means no bound.
+    """
+    if date_from or date_to:
+        start = None
+        end_excl = None
+        try:
+            if date_from:
+                df = datetime.strptime(date_from, '%Y-%m-%d').date()
+                start = timezone.make_aware(datetime.combine(df, dt_time.min))
+            if date_to:
+                dte = datetime.strptime(date_to, '%Y-%m-%d').date()
+                end_excl = timezone.make_aware(datetime.combine(dte + timedelta(days=1), dt_time.min))
+        except ValueError:
+            return None, None
+        return start, end_excl
+    if date_filter == 'today':
+        today = now.date()
+        s = timezone.make_aware(datetime.combine(today, dt_time.min))
+        return s, s + timedelta(days=1)
+    if date_filter == 'week':
+        return now - timedelta(days=7), None
+    if date_filter == 'month':
+        return now - timedelta(days=30), None
+    return None, None
+
+
+def _my_consultations_apply_orm_date_filters(encounters, date_filter, date_from, date_to, now):
+    """Apply date filters mirroring _my_consultations_datetime_bounds (ORM fallback path)."""
+    if date_from or date_to:
+        try:
+            if date_from:
+                date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+                encounters = encounters.filter(started_at__date__gte=date_from_obj)
+            if date_to:
+                date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+                encounters = encounters.filter(started_at__date__lte=date_to_obj)
+        except ValueError:
+            pass
+    elif date_filter == 'today':
+        encounters = encounters.filter(started_at__date=now.date())
+    elif date_filter == 'week':
+        encounters = encounters.filter(started_at__gte=now - timedelta(days=7))
+    elif date_filter == 'month':
+        encounters = encounters.filter(started_at__gte=now - timedelta(days=30))
+    return encounters
+
+
+def _prefetch_my_consultations_page(encounter_list):
+    """Batch-load invoices and patient payer relations for {% patient_payer_badges %}."""
+    from django.db.models.query import prefetch_related_objects
+
+    from .models_insurance_companies import PatientInsurance
+    from .models_enterprise_billing import CorporateEmployee
+
+    if not encounter_list:
+        return
+    try:
+        prefetch_related_objects(
+            encounter_list,
+            Prefetch(
+                'invoices',
+                queryset=Invoice.all_objects.filter(is_deleted=False)
+                .select_related('payer')
+                .order_by('-created'),
+            ),
+        )
+    except Exception:
+        pass
+    patients = [e.patient for e in encounter_list if getattr(e, 'patient_id', None)]
+    if not patients:
+        return
+    try:
+        prefetch_related_objects(
+            patients,
+            Prefetch(
+                'insurances',
+                queryset=PatientInsurance.objects.filter(
+                    status='active',
+                    is_deleted=False,
+                ).select_related('insurance_company').order_by('-is_primary', '-created'),
+            ),
+            Prefetch(
+                'corporate_enrollments',
+                queryset=CorporateEmployee.objects.filter(
+                    is_deleted=False,
+                    corporate_account__isnull=False,
+                ).select_related('corporate_account').order_by('-is_active', '-enrollment_date'),
+            ),
+        )
+    except Exception:
+        pass
 
 
 @login_required
@@ -210,8 +310,9 @@ def encounter_full_record(request, encounter_id):
     ).select_related('test', 'verified_by__user')
     
     # Get clinical notes (doctor + nurse)
+    coded_diagnoses = []
     try:
-        from .models_advanced import ClinicalNote, ProblemList
+        from .models_advanced import ClinicalNote, ProblemList, Diagnosis as EncounterDiagnosisRecord
         
         _cn_list = list(
             ClinicalNote.objects.filter(
@@ -237,11 +338,18 @@ def encounter_full_record(request, encounter_id):
             encounter=encounter,
             is_deleted=False
         ).select_related('created_by__user')
+        coded_diagnoses = list(
+            EncounterDiagnosisRecord.objects.filter(
+                encounter=encounter,
+                is_deleted=False,
+            ).select_related('diagnosis_code').order_by('-diagnosis_date')
+        )
     except ImportError:
         clinical_notes = []
         nurse_notes = []
         doctor_notes = []
         problems = []
+        coded_diagnoses = []
     
     # Get imaging studies — no select_related to avoid invalid 'ordered_by' (ImagingStudy has no such field)
     try:
@@ -312,6 +420,7 @@ def encounter_full_record(request, encounter_id):
         'nurse_notes': nurse_notes,
         'doctor_notes': doctor_notes,
         'problems': problems,
+        'coded_diagnoses': coded_diagnoses,
         'imaging_studies': imaging_studies,
         'referrals': referrals,
         'duration_minutes': duration_minutes,
@@ -329,6 +438,9 @@ def my_consultations(request):
     Health Service Provider filter is used. Allows doctors to view and consult
     patients under another doctor's consultations (e.g. when a doctor has closed shift).
     """
+    from django.db import connection
+    from .utils_pagination import get_pagination_html
+
     try:
         doctor = Staff.objects.get(user=request.user, is_active=True, is_deleted=False)
     except Staff.DoesNotExist:
@@ -349,12 +461,30 @@ def my_consultations(request):
         except (ValueError, TypeError):
             selected_provider_uuid = None
 
-    # Filter options
+    # Default date scope: past month unless user submitted a preset via GET
+    if 'date' in request.GET:
+        date_filter = request.GET.get('date', 'month')
+    else:
+        date_filter = 'month'
+
     status_filter = request.GET.get('status', 'all')
-    date_filter = request.GET.get('date', 'all')
     date_from = request.GET.get('date_from', '').strip()
     date_to = request.GET.get('date_to', '').strip()
-    search = request.GET.get('search', '')
+    search = request.GET.get('search', '').strip()
+
+    if date_from or date_to:
+        try:
+            if date_from:
+                datetime.strptime(date_from, '%Y-%m-%d')
+            if date_to:
+                datetime.strptime(date_to, '%Y-%m-%d')
+        except ValueError:
+            date_from = ''
+            date_to = ''
+
+    now = timezone.now()
+    today = now.date()
+    dt_start, dt_end_excl = _my_consultations_datetime_bounds(date_filter, date_from, date_to, now)
 
     # Providers for dropdown: only doctors (health service providers for consultations)
     try:
@@ -371,51 +501,85 @@ def my_consultations(request):
     except Exception:
         providers = []
 
-    # Base queryset: all doctors, selected provider's consultations, or current doctor's
-    # Deduplicate by (patient_id, minute) so the same consultation doesn't show twice (e.g. one Active + one Completed).
-    from django.db import connection
+    # Base queryset: DISTINCT ON (patient, minute) in SQL when PostgreSQL; narrow by date/status in SQL.
+    extra_conds_plain = []
+    extra_params_plain = []
+    if dt_start:
+        extra_conds_plain.append('started_at >= %s')
+        extra_params_plain.append(dt_start)
+    if dt_end_excl:
+        extra_conds_plain.append('started_at < %s')
+        extra_params_plain.append(dt_end_excl)
+    if status_filter != 'all':
+        extra_conds_plain.append('status = %s')
+        extra_params_plain.append(status_filter)
+    extra_where_plain = (' AND ' + ' AND '.join(extra_conds_plain)) if extra_conds_plain else ''
+
+    extra_conds_e = []
+    extra_params_e = []
+    if dt_start:
+        extra_conds_e.append('e.started_at >= %s')
+        extra_params_e.append(dt_start)
+    if dt_end_excl:
+        extra_conds_e.append('e.started_at < %s')
+        extra_params_e.append(dt_end_excl)
+    if status_filter != 'all':
+        extra_conds_e.append('e.status = %s')
+        extra_params_e.append(status_filter)
+    extra_where_e = (' AND ' + ' AND '.join(extra_conds_e)) if extra_conds_e else ''
+
     keep_ids = None
     try:
         if connection.vendor != 'postgresql':
             raise Exception('PostgreSQL required for DISTINCT ON')
         if show_all_doctors:
             with connection.cursor() as cursor:
-                cursor.execute(
+                sql = (
                     """
                     SELECT id FROM (
                         SELECT DISTINCT ON (patient_id, date_trunc('minute', started_at))
                             id, started_at
                         FROM hospital_encounter
                         WHERE is_deleted = false
+                    """
+                    + extra_where_plain
+                    + """
                         ORDER BY patient_id, date_trunc('minute', started_at) DESC,
                                  (CASE WHEN status = 'completed' THEN 0 ELSE 1 END), id DESC
                     ) sub
                     ORDER BY started_at DESC
-                    LIMIT 50000
+                    LIMIT %s
                     """
                 )
+                cursor.execute(sql, extra_params_plain + [MY_CONSULTATIONS_SQL_LIMIT])
                 keep_ids = [row[0] for row in cursor.fetchall()]
         elif selected_provider_uuid:
             with connection.cursor() as cursor:
-                cursor.execute(
+                sql = (
                     """
                     SELECT id FROM (
                         SELECT DISTINCT ON (patient_id, date_trunc('minute', started_at))
                             id, started_at
                         FROM hospital_encounter
                         WHERE is_deleted = false AND provider_id = %s
+                    """
+                    + extra_where_plain
+                    + """
                         ORDER BY patient_id, date_trunc('minute', started_at) DESC,
                                  (CASE WHEN status = 'completed' THEN 0 ELSE 1 END), id DESC
                     ) sub
                     ORDER BY started_at DESC
-                    LIMIT 50000
-                    """,
-                    [str(selected_provider_uuid)],
+                    LIMIT %s
+                    """
+                )
+                cursor.execute(
+                    sql,
+                    [str(selected_provider_uuid)] + extra_params_plain + [MY_CONSULTATIONS_SQL_LIMIT],
                 )
                 keep_ids = [row[0] for row in cursor.fetchall()]
         else:
             with connection.cursor() as cursor:
-                cursor.execute(
+                sql = (
                     """
                     SELECT id FROM (
                         SELECT DISTINCT ON (e.patient_id, date_trunc('minute', e.started_at))
@@ -426,91 +590,81 @@ def my_consultations(request):
                             SELECT 1 FROM hospital_order o
                             WHERE o.encounter_id = e.id AND o.requested_by_id = %s AND o.is_deleted = false
                           ))
+                    """
+                    + extra_where_e
+                    + """
                         ORDER BY e.patient_id, date_trunc('minute', e.started_at) DESC,
                                  (CASE WHEN e.status = 'completed' THEN 0 ELSE 1 END), e.id DESC
                     ) sub
                     ORDER BY started_at DESC
-                    LIMIT 50000
-                    """,
-                    [str(doctor.id), str(doctor.id)],
+                    LIMIT %s
+                    """
+                )
+                cursor.execute(
+                    sql,
+                    [str(doctor.id), str(doctor.id)] + extra_params_e + [MY_CONSULTATIONS_SQL_LIMIT],
                 )
                 keep_ids = [row[0] for row in cursor.fetchall()]
     except Exception:
         keep_ids = None
 
-    if keep_ids:
+    if keep_ids is not None:
         base_qs = (
             Encounter.objects.filter(id__in=keep_ids)
-            .select_related('patient')
+            .select_related('patient', 'patient__primary_insurance')
             .order_by('-started_at')
         )
     else:
-        # Fallback when raw SQL fails or non-PostgreSQL: ORM only, dedupe in Python later
         if show_all_doctors:
             base_qs = (
                 Encounter.objects.filter(is_deleted=False)
-                .select_related('patient')
+                .select_related('patient', 'patient__primary_insurance')
                 .order_by('-started_at')
             )
         elif selected_provider_uuid:
             base_qs = (
                 Encounter.objects.filter(
                     is_deleted=False,
-                    provider_id=selected_provider_uuid
+                    provider_id=selected_provider_uuid,
                 )
-                .select_related('patient')
+                .select_related('patient', 'patient__primary_insurance')
                 .order_by('-started_at')
             )
         else:
             base_qs = (
                 Encounter.objects.filter(is_deleted=False)
-                .filter(
-                    Q(provider=doctor) | Q(orders__requested_by=doctor)
-                )
-                .select_related('patient')
+                .filter(Q(provider=doctor) | Q(orders__requested_by=doctor))
+                .select_related('patient', 'patient__primary_insurance')
                 .distinct()
                 .order_by('-started_at')
             )
 
     encounters = base_qs
 
-    # Apply filters
     if status_filter != 'all':
         encounters = encounters.filter(status=status_filter)
 
-    # Date range: custom date_from/date_to overrides preset date_filter
-    if date_from or date_to:
-        from datetime import datetime
-        try:
-            if date_from:
-                date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
-                encounters = encounters.filter(started_at__date__gte=date_from_obj)
-            if date_to:
-                date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
-                encounters = encounters.filter(started_at__date__lte=date_to_obj)
-        except ValueError:
-            date_from = ''
-            date_to = ''
-    elif date_filter == 'today':
-        today = timezone.now().date()
-        encounters = encounters.filter(started_at__date=today)
-    elif date_filter == 'week':
-        week_ago = timezone.now() - timedelta(days=7)
-        encounters = encounters.filter(started_at__gte=week_ago)
-    elif date_filter == 'month':
-        month_ago = timezone.now() - timedelta(days=30)
-        encounters = encounters.filter(started_at__gte=month_ago)
+    encounters = _my_consultations_apply_orm_date_filters(encounters, date_filter, date_from, date_to, now)
 
     if search:
         encounters = encounters.filter(
-            Q(patient__first_name__icontains=search) |
-            Q(patient__last_name__icontains=search) |
-            Q(patient__mrn__icontains=search) |
-            Q(chief_complaint__icontains=search) |
-            Q(diagnosis__icontains=search)
+            Q(patient__first_name__icontains=search)
+            | Q(patient__last_name__icontains=search)
+            | Q(patient__mrn__icontains=search)
+            | Q(chief_complaint__icontains=search)
+            | Q(diagnosis__icontains=search)
         )
 
-    # Guarantee no duplicate (patient, same minute): dedupe in Python so list never shows same patient+time twice
+    stats = encounters.aggregate(
+        total=Count('pk'),
+        today=Count('pk', filter=Q(started_at__date=today)),
+        active=Count('pk', filter=Q(status='active')),
+        completed_today=Count(
+            'pk',
+            filter=Q(status='completed', ended_at__date=today),
+        ),
+    )
+
     encounter_list = list(encounters)
     seen_key = {}
     deduped = []
@@ -518,7 +672,6 @@ def my_consultations(request):
         started = enc.started_at
         minute_key = (enc.patient_id, started.replace(second=0, microsecond=0) if started else None)
         if minute_key in seen_key:
-            # Keep the one we prefer: completed over active, then higher id
             existing = seen_key[minute_key]
             enc_completed = 1 if (enc.status == 'completed') else 0
             ex_completed = 1 if (existing.status == 'completed') else 0
@@ -531,10 +684,16 @@ def my_consultations(request):
         deduped.append(enc)
     encounter_list = deduped
 
-    today = timezone.now().date()
-    encounter_ids = [e.id for e in encounter_list]
+    stats['total'] = len(encounter_list)
+
+    paginator = Paginator(encounter_list, MY_CONSULTATIONS_PAGE_SIZE)
+    page_obj = paginator.get_page(request.GET.get('page'))
+    page_encounters = list(page_obj.object_list)
+    _prefetch_my_consultations_page(page_encounters)
+
+    encounter_ids = [e.id for e in page_encounters]
     call_patient_by_encounter = {}
-    for enc in encounter_list:
+    for enc in page_encounters:
         mrn = ''
         if enc.patient:
             mrn = getattr(enc.patient, 'mrn', '') or ''
@@ -545,13 +704,11 @@ def my_consultations(request):
         }
     if encounter_ids:
         seen_queue_encounter = set()
-        for qe in (
-            QueueEntry.objects.filter(
-                encounter_id__in=encounter_ids,
-                queue_date=today,
-                is_deleted=False,
-            ).order_by('-check_in_time')
-        ):
+        for qe in QueueEntry.objects.filter(
+            encounter_id__in=encounter_ids,
+            queue_date=today,
+            is_deleted=False,
+        ).order_by('-check_in_time'):
             eid = qe.encounter_id
             if not eid or eid in seen_queue_encounter:
                 continue
@@ -631,14 +788,6 @@ def my_consultations(request):
     except Exception:
         pass
 
-    # Statistics for the current view (selected provider or current doctor)
-    stats = {
-        'total': base_qs.count(),
-        'today': base_qs.filter(started_at__date=today).count(),
-        'active': base_qs.filter(status='active').count(),
-        'completed_today': base_qs.filter(status='completed', ended_at__date=today).count(),
-    }
-
     doctor_name = doctor.get_full_name() if hasattr(doctor, 'get_full_name') else doctor.user.get_full_name()
     selected_provider = None
     if selected_provider_uuid:
@@ -646,10 +795,15 @@ def my_consultations(request):
         if not selected_provider:
             selected_provider = Staff.objects.filter(pk=selected_provider_uuid).select_related('user').first()
 
+    pagination_html = get_pagination_html(request, page_obj)
+
     context = {
         'title': f'My Consultations - Dr. {doctor_name}',
         'doctor': doctor,
-        'encounters': encounter_list,
+        'encounters': page_encounters,
+        'page_obj': page_obj,
+        'pagination_html': pagination_html,
+        'consultations_total_count': paginator.count,
         'stats': stats,
         'status_filter': status_filter,
         'date_filter': date_filter,
@@ -657,7 +811,7 @@ def my_consultations(request):
         'date_to': date_to,
         'search': search,
         'providers': providers,
-        'selected_provider_id': selected_provider_uuid,  # UUID for template comparison with p.id
+        'selected_provider_id': selected_provider_uuid,
         'selected_provider': selected_provider,
         'show_all_doctors': show_all_doctors,
         'call_patient_by_encounter': call_patient_by_encounter,

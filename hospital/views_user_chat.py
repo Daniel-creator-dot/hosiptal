@@ -18,47 +18,66 @@ from .models import UserSession, Staff, Department
 User = get_user_model()
 
 
-def get_online_users():
-    """Get list of currently online users (active sessions in last 30 minutes or active Django sessions)"""
-    from django.contrib.sessions.models import Session
-    from django.contrib.auth.models import AnonymousUser
-    
-    thirty_minutes_ago = timezone.now() - timedelta(minutes=30)
-    
-    # Method 1: Get users with active UserSession records (recent logins)
-    user_session_user_ids = UserSession.objects.filter(
-        is_active=True,
-        login_time__gte=thirty_minutes_ago,  # Extended to 30 minutes
-        logout_time__isnull=True
-    ).values_list('user_id', flat=True).distinct()
-    
-    # Method 2: Get users with active Django sessions (currently logged in)
-    django_session_user_ids = set()
+def _parse_session_last_activity(raw_value):
+    """Parse last_activity timestamp stored in the Django session."""
+    if not raw_value:
+        return None
     try:
-        # Get all active Django sessions
-        active_sessions = Session.objects.filter(expire_date__gte=timezone.now())
-        
+        if isinstance(raw_value, str):
+            parsed = timezone.datetime.fromisoformat(raw_value.replace('Z', '+00:00'))
+        else:
+            parsed = raw_value
+        if timezone.is_naive(parsed):
+            parsed = timezone.make_aware(parsed)
+        return parsed
+    except Exception:
+        return None
+
+
+def get_online_users():
+    """
+    Users who were active recently (not every stale session cookie).
+
+    Uses session last_activity (updated by SessionTimeoutMiddleware) and
+    very recent UserSession logins as a fallback for brand-new sessions.
+    """
+    from django.contrib.sessions.models import Session
+
+    active_window = timedelta(minutes=15)
+    cutoff = timezone.now() - active_window
+    online_user_ids = set()
+
+    try:
+        active_sessions = Session.objects.filter(expire_date__gte=timezone.now()).iterator()
         for session in active_sessions:
             try:
                 session_data = session.get_decoded()
                 user_id = session_data.get('_auth_user_id')
-                if user_id:
-                    django_session_user_ids.add(int(user_id))
+                if not user_id:
+                    continue
+                user_id = int(user_id)
+                last_activity = _parse_session_last_activity(
+                    session_data.get(f'last_activity_{user_id}')
+                )
+                if last_activity and last_activity >= cutoff:
+                    online_user_ids.add(user_id)
             except Exception:
                 continue
     except Exception:
         pass
-    
-    # Combine both methods - user is online if they have either
-    all_online_user_ids = set(user_session_user_ids) | django_session_user_ids
-    
-    # Get user objects with staff info
-    online_users = User.objects.filter(
-        id__in=all_online_user_ids,
-        is_active=True
+
+    # Fallback: just logged in (last_activity may not be written yet)
+    for user_id in UserSession.objects.filter(
+        is_active=True,
+        logout_time__isnull=True,
+        login_time__gte=cutoff,
+    ).values_list('user_id', flat=True).distinct():
+        online_user_ids.add(user_id)
+
+    return User.objects.filter(
+        id__in=online_user_ids,
+        is_active=True,
     ).select_related('staff').prefetch_related('staff__department')
-    
-    return online_users
 
 
 @login_required
@@ -91,7 +110,9 @@ def user_chat_dashboard(request):
         
         # Get other participant
         other_participant = channel.get_other_participant(current_user)
-        
+        if not other_participant:
+            continue
+
         # Get last message
         last_message = channel.messages.filter(is_deleted=False).order_by('-created').first()
         
@@ -102,6 +123,12 @@ def user_chat_dashboard(request):
             'last_message': last_message,
             'last_message_time': channel.last_message_time,
         })
+
+    # Most recent activity first (conversations with no messages sort by channel created)
+    channels_with_unread.sort(
+        key=lambda row: row['last_message_time'] or row['channel'].created,
+        reverse=True,
+    )
     
     # Get online users with their staff info
     online_users_list = []

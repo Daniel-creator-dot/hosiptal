@@ -1,6 +1,8 @@
 """
 Forms for Procurement and Inventory Management
 """
+from decimal import Decimal
+
 from django import forms
 from crispy_forms.helper import FormHelper
 from crispy_forms.layout import Layout, Row, Column, Submit, Fieldset, HTML
@@ -14,6 +16,27 @@ from .models import Department, Staff, Drug
 
 class SupplierForm(forms.ModelForm):
     """Supplier creation/edit form"""
+    opening_invoice_amount = forms.DecimalField(
+        required=False,
+        min_value=Decimal('0.01'),
+        max_digits=14,
+        decimal_places=2,
+        label='Opening supplier invoice amount (GHS)',
+        help_text='Optional. Records what you owe this vendor (same as Accountant → Supplier accounts → Manual payable).',
+    )
+    opening_invoice_reference = forms.CharField(
+        required=False,
+        max_length=120,
+        label='Supplier invoice #',
+        help_text='Optional reference on the vendor’s invoice.',
+    )
+    opening_invoice_description = forms.CharField(
+        required=False,
+        widget=forms.Textarea(attrs={'rows': 2}),
+        label='Notes for opening invoice',
+        help_text='Optional (e.g. opening balance from migration).',
+    )
+
     class Meta:
         model = Supplier
         fields = [
@@ -44,6 +67,15 @@ class SupplierForm(forms.ModelForm):
                 'address',
                 Row(Column('tax_id', css_class='form-group col-md-6'),
                     Column('payment_terms', css_class='form-group col-md-6')),
+            ),
+            Fieldset(
+                'Opening supplier invoice (optional)',
+                Row(Column('opening_invoice_amount', css_class='form-group col-md-6'),
+                    Column('opening_invoice_reference', css_class='form-group col-md-6')),
+                'opening_invoice_description',
+                HTML(
+                    '<p class="small text-muted mb-0">Creates a payable line on the supplier ledger so finance can track the vendor bill.</p>'
+                ),
             ),
             Submit('submit', 'Save Supplier', css_class='btn btn-primary btn-modern')
         )

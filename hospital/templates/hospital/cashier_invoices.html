@@ -44,6 +44,9 @@
         <p class="text-muted mb-0">View and manage all invoices</p>
     </div>
     <div>
+        {% if show_non_patient_charge_link %}
+        <a href="{% url 'hospital:cashier_non_patient_charge' %}" class="btn btn-primary me-2"><i class="bi bi-building-add"></i> Non-patient charge</a>
+        {% endif %}
         <a href="{% url 'hospital:cashier_receipts_list' %}" class="btn btn-success me-2"><i class="bi bi-receipt"></i> All Receipts</a>
         <a href="{% url 'hospital:cashier_dashboard' %}" class="btn btn-outline-secondary">
             <i class="bi bi-arrow-left"></i> Back to Dashboard
@@ -96,7 +99,7 @@
     <form method="get" class="row g-3 align-items-end">
         <div class="col-md-4">
             <label class="form-label">Search</label>
-            <input type="text" name="q" class="form-control-modern" value="{{ query|default:'' }}" placeholder="Invoice number, patient name, MRN...">
+            <input type="text" name="q" class="form-control-modern" value="{{ query|default:'' }}" placeholder="Invoice #, payer name (supplier), patient, MRN...">
         </div>
         <div class="col-md-3">
             <label class="form-label">Status</label>
@@ -135,6 +138,7 @@
                     </a>
                 </h5>
                 <div style="font-size: 0.9rem; color: var(--gray); margin-bottom: 8px;">
+                    {% if invoice.patient %}
                     <a href="{% url 'hospital:patient_detail' invoice.patient.pk %}" style="text-decoration: none; color: inherit;">
                         <i class="bi bi-person"></i> {{ invoice.patient.full_name }}
                     </a>
@@ -142,6 +146,10 @@
                     <br><a href="{% url 'hospital:cashier_patient_invoices' invoice.patient.pk %}" style="font-size: 0.75rem; text-decoration: none;" class="text-primary">
                         <i class="bi bi-receipt"></i> View All Patient Invoices
                     </a>
+                    {% else %}
+                    <span class="badge bg-secondary"><i class="bi bi-building"></i> Non-patient</span>
+                    <div class="mt-1"><strong>{{ invoice.counterparty_name|default:"—" }}</strong></div>
+                    {% endif %}
                 </div>
                 <div style="font-size: 0.85rem; color: var(--gray);">
                     <i class="bi bi-calendar"></i> {{ invoice.issued_at|date:"M d, Y" }}
@@ -179,7 +187,7 @@
                 {% endif %}
             </div>
             <div class="col-md-3 text-end">
-                {% if invoice.balance > 0 and invoice.status != 'paid' %}
+                {% if invoice.is_payable %}
                 <a href="{% url 'hospital:process_payment_invoice' invoice.pk %}" class="btn btn-success-modern btn-modern mb-2 w-100">
                     <i class="bi bi-credit-card"></i> Process Payment
                 </a>
@@ -188,9 +196,11 @@
                     <a href="{% url 'hospital:cashier_invoice_detail' invoice.pk %}" class="btn btn-outline-primary btn-modern">
                         <i class="bi bi-eye"></i> View Details
                     </a>
+                    {% if invoice.patient %}
                     <a href="{% url 'hospital:cashier_patient_invoices' invoice.patient.pk %}" class="btn btn-outline-info btn-modern btn-sm">
                         <i class="bi bi-receipt"></i> Patient Invoices
                     </a>
+                    {% endif %}
                 </div>
             </div>
         </div>

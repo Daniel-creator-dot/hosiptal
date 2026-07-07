@@ -184,19 +184,32 @@ class Command(BaseCommand):
                         except (ValueError, TypeError):
                             pass
 
-                    # Extract cost if available
+                    # Extract cost and selling price from separate columns when available
                     cost = 0
+                    selling = 0
                     cost_col = None
-                    for col in ['LAST COST', 'COST', 'UNIT COST', 'PRICE']:
+                    for col in ['LAST COST', 'LAST UNIT COST', 'COST', 'UNIT COST', 'AVE COST', 'AVE UNIT COST', 'COST PRICE', 'PURCHASE PRICE']:
                         if col in df.columns:
                             cost_col = col
                             break
-                    
+                    selling_col = None
+                    for col in ['SELLING PRICE', 'UNIT PRICE', 'PRICE', 'RATE']:
+                        if col in df.columns and col != cost_col:
+                            selling_col = col
+                            break
+
                     if cost_col:
                         try:
                             cost_val = row[cost_col]
                             if pd.notna(cost_val):
                                 cost = float(cost_val)
+                        except (ValueError, TypeError):
+                            pass
+                    if selling_col:
+                        try:
+                            selling_val = row[selling_col]
+                            if pd.notna(selling_val):
+                                selling = float(selling_val)
                         except (ValueError, TypeError):
                             pass
 
@@ -235,7 +248,7 @@ class Command(BaseCommand):
                             'pack_size': parsed.get('pack_size', '')[:50],
                             'category': category,
                             'is_active': True,
-                            'unit_price': cost if cost > 0 else 0,
+                            'unit_price': selling if selling > 0 else 0,
                             'cost_price': cost if cost > 0 else 0,
                         }
                     )
@@ -261,8 +274,10 @@ class Command(BaseCommand):
                             updated_fields.append('form')
                         if cost > 0 and drug.cost_price == 0:
                             drug.cost_price = cost
-                            drug.unit_price = cost
-                            updated_fields.extend(['cost_price', 'unit_price'])
+                            updated_fields.append('cost_price')
+                        if selling > 0 and drug.unit_price == 0:
+                            drug.unit_price = selling
+                            updated_fields.append('unit_price')
                         
                         if updated_fields:
                             drug.save(update_fields=updated_fields)

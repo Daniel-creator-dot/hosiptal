@@ -147,6 +147,11 @@
             <a href="{% url 'hospital:patient_edit' patient.pk %}" class="btn btn-light action-btn me-2">
                 <i class="bi bi-pencil"></i> Edit Patient
             </a>
+            {% if can_upload_patient_documents %}
+            <a href="{% url 'hospital:comprehensive_medical_record' patient.pk %}#upload-documents" class="btn btn-info action-btn me-2">
+                <i class="bi bi-cloud-upload"></i> Upload Document
+            </a>
+            {% endif %}
             {% if active_encounters %}
             <a href="{% url 'hospital:consultation_view' active_encounters.first.pk %}" class="btn btn-light action-btn me-2">
                 <i class="bi bi-stethoscope"></i> Start Consultation
@@ -195,11 +200,11 @@
             {% endif %}
         </div>
         
-        <!-- Insurance Information -->
-        {% if patient.insurance_company or patient.insurance_id or patient.primary_insurance %}
+        <!-- Billing / insurance (includes corporate scheme numbers) -->
+        {% if patient.insurance_company or patient.insurance_id or patient.insurance_member_id or patient.insurance_policy_number or patient.insurance_group_number or patient.primary_insurance %}
         <div class="info-card">
             <h5 class="info-section-header">
-                🏥 Insurance Information
+                🏥 Billing &amp; coverage
             </h5>
             {% if patient.insurance_company %}
             <div class="info-item">
@@ -209,26 +214,32 @@
             {% endif %}
             {% if patient.insurance_id %}
             <div class="info-item">
-                <span class="info-label">Insurance ID</span>
+                <span class="info-label">{% if patient.primary_insurance and patient.primary_insurance.payer_type == 'corporate' %}Corporate policy / billing ID{% else %}Insurance ID{% endif %}</span>
                 <span class="info-value"><strong>{{ patient.insurance_id }}</strong></span>
             </div>
             {% endif %}
             {% if patient.insurance_member_id %}
             <div class="info-item">
-                <span class="info-label">Member ID</span>
+                <span class="info-label">{% if patient.primary_insurance and patient.primary_insurance.payer_type == 'corporate' %}Member / dependent ID{% else %}Member ID{% endif %}</span>
                 <span class="info-value">{{ patient.insurance_member_id }}</span>
             </div>
             {% endif %}
             {% if patient.primary_insurance %}
             <div class="info-item">
-                <span class="info-label">Primary Insurance</span>
-                <span class="info-value">{{ patient.primary_insurance.name }}</span>
+                <span class="info-label">{% if patient.primary_insurance.payer_type == 'corporate' %}Corporate payer{% else %}Primary payer{% endif %}</span>
+                <span class="info-value">{{ patient.primary_insurance.name }} <span class="text-muted small">({{ patient.primary_insurance.get_payer_type_display }})</span></span>
             </div>
             {% endif %}
             {% if patient.insurance_policy_number %}
             <div class="info-item">
-                <span class="info-label">Policy Number</span>
+                <span class="info-label">Policy number (alt.)</span>
                 <span class="info-value">{{ patient.insurance_policy_number }}</span>
+            </div>
+            {% endif %}
+            {% if patient.insurance_group_number %}
+            <div class="info-item">
+                <span class="info-label">Group / scheme code</span>
+                <span class="info-value">{{ patient.insurance_group_number }}</span>
             </div>
             {% endif %}
         </div>

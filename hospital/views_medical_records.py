@@ -2,17 +2,23 @@
 Comprehensive Medical Records & Clinical Documentation System
 For detailed forensic analysis and proper clinical reporting
 """
+import mimetypes
+import os
+
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.core.exceptions import PermissionDenied
+from django.http import FileResponse, Http404
 from django.utils import timezone
 from django.db.models import Q, Prefetch
 from datetime import timedelta
 
-from .models import Patient, Encounter, Staff, VitalSign, LabResult, Order
+from .models import Patient, Encounter, Staff, VitalSign, LabResult, Order, Admission
 from .models_advanced import Triage, ClinicalNote, Diagnosis, Procedure, CarePlan, ProblemList, ImagingStudy
 from .models_medical_records import PatientDocument
 from .utils_clinical_notes import dedupe_clinical_notes_timeline
+from .utils_roles import get_user_role, user_can_upload_patient_documents
 
 
 def _get_current_staff(request):
@@ -31,7 +37,11 @@ def comprehensive_medical_record(request, patient_id):
     Complete medical record view with forensic-level detail
     Shows entire patient history for clinical review
     """
-    patient = get_object_or_404(Patient, pk=patient_id, is_deleted=False)
+    patient = get_object_or_404(
+        Patient.objects.select_related('primary_insurance'),
+        pk=patient_id,
+        is_deleted=False,
+    )
     # Continuity scope: include sibling patient rows with same MRN.
     # Prevents "empty" records when visits were saved under duplicate patient IDs.
     patient_scope_ids = [patient.id]
@@ -46,6 +56,8 @@ def comprehensive_medical_record(request, patient_id):
 
     # Handle upload of external reports/scans (from other hospitals)
     if request.method == 'POST' and request.POST.get('action') == 'upload_external_report':
+        if not user_can_upload_patient_documents(request.user, request):
+            raise PermissionDenied('You do not have permission to upload documents to patient records.')
         title = (request.POST.get('title') or '').strip()
         description = (request.POST.get('description') or '').strip()
         uploaded_file = request.FILES.get('external_report_file')
@@ -130,11 +142,29 @@ def comprehensive_medical_record(request, patient_id):
     
     # Calculate statistics
     total_encounters = encounters.count()
-    total_admissions = encounters.filter(encounter_type='inpatient').count()
+    # Formal ward/bed admissions (Admission model), not only encounter_type=inpatient
+    admission_qs = Admission.objects.filter(
+        encounter__patient_id__in=patient_scope_ids,
+        is_deleted=False,
+    ).select_related('encounter', 'ward', 'bed', 'admitting_doctor__user').order_by('-admit_date', '-id')
+    patient_admissions = list(admission_qs[:100])
+    total_admissions = admission_qs.count()
     last_visit = encounters.first().started_at if encounters.exists() else None
-    
+
+    try:
+        from .utils_billing import get_patient_payer_info
+
+        payer_info = get_patient_payer_info(patient, None)
+    except Exception:
+        payer_info = {'name': 'Cash', 'is_insurance_or_corporate': False, 'corporate_badge_name': None}
+
+    user_role = get_user_role(request.user, request)
+    can_upload_patient_documents = user_can_upload_patient_documents(request.user, request)
+    records_upload_only = user_role in {'receptionist', 'frontdesk'} and not request.user.is_superuser
+
     context = {
         'patient': patient,
+        'payer_info': payer_info,
         'encounters': encounters,
         'vital_signs': vital_signs,
         'triage_records': triage_records,
@@ -142,6 +172,7 @@ def comprehensive_medical_record(request, patient_id):
         'current_medications': current_medications,
         'total_encounters': total_encounters,
         'total_admissions': total_admissions,
+        'patient_admissions': patient_admissions,
         'last_visit': last_visit,
         'medical_history': getattr(patient, 'medical_history', ''),
         'surgical_history': getattr(patient, 'surgical_history', ''),
@@ -149,6 +180,8 @@ def comprehensive_medical_record(request, patient_id):
         'social_history': getattr(patient, 'social_history', ''),
         'recent_imaging': imaging_studies,
         'external_documents': external_documents,
+        'can_upload_patient_documents': can_upload_patient_documents,
+        'records_upload_only': records_upload_only,
     }
     
     return render(request, 'hospital/medical_records/comprehensive_record.html', context)
@@ -420,3 +453,46 @@ def patient_timeline(request, patient_id):
     }
     
     return render(request, 'hospital/medical_records/patient_timeline.html', context)
+
+
+@login_required
+def patient_document_file(request, document_id):
+    """
+    Stream an uploaded patient document through the app (authenticated, correct MIME type).
+
+    Direct /media/ links often fail in production (DEBUG=False) or return HTML (e.g. login
+    or 404), which browsers report as a corrupted PDF. Staff must be logged in with a Staff profile.
+    """
+    doc = get_object_or_404(
+        PatientDocument.objects.select_related('patient'),
+        pk=document_id,
+        is_deleted=False,
+    )
+    if not doc.file:
+        raise Http404('No file attached to this document.')
+
+    staff = _get_current_staff(request)
+    if not (getattr(request.user, 'is_superuser', False) or staff):
+        raise PermissionDenied('You do not have access to open this document.')
+
+    try:
+        file_handle = doc.file.open('rb')
+    except FileNotFoundError:
+        raise Http404('The file is no longer on disk.')
+
+    basename = os.path.basename(getattr(doc.file, 'name', '') or '') or 'document'
+    content_type = (doc.file_type or '').strip()
+    if not content_type or content_type == 'application/octet-stream':
+        guessed, _ = mimetypes.guess_type(basename)
+        if guessed:
+            content_type = guessed
+    if not content_type:
+        content_type = 'application/octet-stream'
+
+    download = request.GET.get('download') == '1'
+    return FileResponse(
+        file_handle,
+        as_attachment=download,
+        filename=basename,
+        content_type=content_type,
+    )

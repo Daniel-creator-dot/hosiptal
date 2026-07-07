@@ -76,18 +76,20 @@ class Command(BaseCommand):
             update_fields = ['dispensing_status', 'payment_verified_at', 'modified']
             drug_to_dispense = disp.drug_to_dispense or (disp.prescription.drug if disp.prescription_id else None)
             qty = int(disp.quantity_ordered or (getattr(disp.prescription, 'quantity', 0) if disp.prescription_id else 0))
+            stock_applied_cmd = False
             if drug_to_dispense and qty > 0 and not getattr(disp, 'stock_reduced_at', None):
                 from hospital.models_payment_verification import PharmacyStockDeductionLog
                 from hospital.pharmacy_stock_utils import reduce_pharmacy_stock_once
 
-                shortfall = reduce_pharmacy_stock_once(
+                shortfall, stock_applied_cmd = reduce_pharmacy_stock_once(
                     drug_to_dispense,
                     qty,
                     PharmacyStockDeductionLog.SOURCE_PHARMACY_DISPENSING,
                     disp.id,
                 )
-                disp.stock_reduced_at = timezone.now()
-                update_fields.append('stock_reduced_at')
+                if stock_applied_cmd:
+                    disp.stock_reduced_at = timezone.now()
+                    update_fields.append('stock_reduced_at')
                 if shortfall > 0:
                     self.stdout.write(
                         self.style.WARNING(
@@ -96,9 +98,10 @@ class Command(BaseCommand):
                     )
             disp.save(update_fields=update_fields)
             approved += 1
+            stock_note = 'stock reduced' if stock_applied_cmd else 'approved (stock unchanged or already logged)'
             self.stdout.write(
                 self.style.SUCCESS(
-                    f'  Approved (stock reduced): RX {disp.prescription_id} – {getattr(disp.prescription.drug, "name", "?")} x{qty} – {patient.full_name}'
+                    f'  {stock_note}: RX {disp.prescription_id} – {getattr(disp.prescription.drug, "name", "?")} x{qty} – {patient.full_name}'
                 )
             )
 

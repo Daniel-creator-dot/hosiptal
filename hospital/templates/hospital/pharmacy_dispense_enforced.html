@@ -1,6 +1,6 @@
 {% extends 'hospital/base.html' %}
 {% load static %}
-{% load math_filters %}
+{% load math_filters hospital_extras %}
 
 {% block title %}{{ title }} · Pharmacy{% endblock %}
 
@@ -50,6 +50,48 @@
 
     <div class="row">
         <div class="col-md-8">
+            {% if dispensing_history %}
+            <div class="card shadow-sm mb-4 border-warning border-2">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-clock-history"></i> Dispensing audit log — check before giving medication</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped mb-0 align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>When</th>
+                                    <th>Qty</th>
+                                    <th>By</th>
+                                    <th>Receipt</th>
+                                    <th>Notes</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in dispensing_history %}
+                                <tr>
+                                    <td class="text-nowrap">{{ row.dispensed_at|date:"M d, Y H:i" }}</td>
+                                    <td><strong>{{ row.quantity_dispensed }}</strong></td>
+                                    <td>{% firstof row.dispensed_by_name row.dispensed_by.user.get_full_name "—" %}</td>
+                                    <td>{{ row.payment_receipt.receipt_number|default:"—" }}</td>
+                                    <td class="small text-muted">{{ row.notes|truncatewords:12|default:"—" }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="small text-muted mb-0 px-3 py-2 border-top">
+                        <strong>Total dispensed so far:</strong> {{ qty_dispensed }} / {{ qty_ordered }} ordered.
+                        {% if is_already_dispensed %}
+                        <span class="badge bg-success ms-1">Fully dispensed — do not dispense again</span>
+                        {% elif qty_dispensed > 0 %}
+                        <span class="badge bg-warning text-dark ms-1">Partial — only {{ remaining_to_dispense }} left to give</span>
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+            {% endif %}
+
             <!-- Prescription Details -->
             <div class="card shadow-sm mb-4">
                 <div class="card-header bg-primary text-white">
@@ -68,7 +110,7 @@
                         </div>
                         <div class="col-md-6">
                             <h6>Medication Details</h6>
-                            <p class="mb-1"><strong>Drug:</strong> {{ drug.name }} {{ drug.strength }} {{ drug.form }}</p>
+                            <p class="mb-1"><strong>Drug:</strong> {{ drug.name }} {{ drug.strength }} {{ drug.form }} {% include 'hospital/_drug_tablet_badge.html' with drug=drug %}</p>
                             <p class="mb-1"><strong>Quantity:</strong> {{ prescription.quantity }}</p>
                             <p class="mb-1"><strong>Prescribed:</strong> {{ prescription.created|date:"M d, Y" }}</p>
                             <p class="mb-1"><strong>Prescribed By:</strong> {{ prescription.prescribed_by.get_full_name }}</p>
@@ -111,13 +153,13 @@
                 <div class="card-body">
                     {% if can_dispense %}
                         {% if is_already_dispensed %}
-                        <div class="alert alert-info">
-                            <h5><i class="bi bi-check2-all"></i> Medication Already Dispensed</h5>
+                        <div class="alert alert-success border border-success">
+                            <h5><i class="bi bi-check2-all"></i> Fully dispensed — do not dispense again</h5>
                             <p class="mb-1"><strong>Status:</strong> {{ dispensing_record.get_dispensing_status_display }}</p>
-                            <p class="mb-1"><strong>Quantity Dispensed:</strong> {{ dispensing_record.quantity_dispensed }} / {{ dispensing_record.quantity_ordered }}</p>
-                            <p class="mb-1"><strong>Dispensed At:</strong> {{ dispensing_record.dispensed_at|date:"M d, Y H:i" }}</p>
-                            <p class="mb-1"><strong>Dispensed By:</strong> {{ dispensing_record.dispensed_by.user.get_full_name|default:"—" }}</p>
-                            <p class="mb-0 text-muted"><small>The record has been saved and moved to the Dispensed Records table. No further action is required.</small></p>
+                            <p class="mb-1"><strong>Quantity:</strong> {{ dispensing_record.quantity_dispensed }} / {{ dispensing_record.quantity_ordered }}</p>
+                            <p class="mb-1"><strong>Last dispensed:</strong> {{ dispensing_record.dispensed_at|date:"M d, Y H:i" }}</p>
+                            <p class="mb-1"><strong>Last by:</strong> {{ dispensing_record.dispensed_by.user.get_full_name|default:"—" }}</p>
+                            <p class="mb-0 text-muted"><small>Every issue is listed in the <strong>Dispensing audit log</strong> above. Handing out more would duplicate the order.</small></p>
                         </div>
                         <div class="d-grid gap-2 d-md-flex">
                             <a href="{% url 'hospital:pharmacy_label_print' prescription.id %}?auto_print=1" class="btn btn-primary" target="_blank">
@@ -128,6 +170,12 @@
                             </a>
                         </div>
                         {% else %}
+                        {% if qty_dispensed > 0 and not is_already_dispensed %}
+                        <div class="alert alert-warning border border-warning text-dark">
+                            <strong><i class="bi bi-exclamation-triangle me-1"></i>Partial fill in progress</strong>
+                            <p class="mb-0 small">Already given <strong>{{ qty_dispensed }}</strong> of <strong>{{ qty_ordered }}</strong>. Dispense at most <strong>{{ remaining_to_dispense }}</strong> more.</p>
+                        </div>
+                        {% endif %}
                         <div class="alert alert-success">
                             <h5><i class="bi bi-check-circle"></i> {% if payment_status.paid %}Payment Verified{% else %}Approved for Dispensing (Billed to Company){% endif %}</h5>
                             {% if payment_status.paid and payment_status.receipt %}
@@ -149,13 +197,16 @@
                             
                             <div class="mb-3">
                                 <label class="form-label w-100" for="dispense-quantity">
-                                    Quantity to Dispense
+                                    Quantity to dispense (remaining: {{ remaining_to_dispense }})
                                     <input type="number" class="form-control mt-1" id="dispense-quantity" name="quantity" 
-                                           value="{{ prescription.quantity }}" min="1" max="{{ prescription.quantity }}" required
-                                           placeholder="Enter quantity to dispense"
-                                           title="Quantity to dispense"
-                                           aria-label="Quantity to dispense" title="Enter number" placeholder="Enter number">
+                                           value="{% if remaining_to_dispense > 0 %}{{ remaining_to_dispense }}{% else %}1{% endif %}" min="1" max="{% if remaining_to_dispense > 0 %}{{ remaining_to_dispense }}{% else %}1{% endif %}" required
+                                           placeholder="Max {{ remaining_to_dispense }}"
+                                           title="Remaining to dispense for this prescription"
+                                           aria-label="Quantity to dispense">
                                 </label>
+                                {% if drug|drug_is_tablet %}
+                                <small class="text-info"><i class="bi bi-info-circle"></i> Sold per tablet — enter individual tablet count.</small>
+                                {% endif %}
                             </div>
                             
                             <div class="mb-3">

@@ -1,18 +1,22 @@
 """
 SMS Service Integration
-Handles SMS sending via API providers (Hubtel, Twilio, etc.)
+Handles SMS sending via Intek SMS API (https://www.inteksms.top).
 """
 import os
 import requests
 import json
 import logging
 import re
+from urllib.parse import urlparse, urljoin
 from django.conf import settings
 from django.utils import timezone
 from datetime import timedelta
 from ..models_advanced import SMSLog
 
 logger = logging.getLogger(__name__)
+
+# Appended to automated / manual lab SMS so patients know how to follow up clinically.
+LAB_SMS_NURSE_DOCTOR_LINE = "Please see a nurse to schedule you to see a doctor."
 
 # Patient SMS: only official payment receipts should show money (paid amount). Everything else
 # gets currency stripped so draft/pending totals never go out by SMS. Staff procurement alerts
@@ -46,17 +50,143 @@ class SMSService:
     """SMS sending service"""
     
     def __init__(self):
-        # SMS Notify GH API configuration
-        # IMPORTANT: Set SMS_API_KEY in environment or settings
-        # Default key may be invalid - always use your own API key
-        default_key = '84c879bb-f9f9-4666-84a8-9f70a9b238cc'
+        # Intek SMS API — override via SMS_API_KEY / SMS_SENDER_ID / SMS_API_URL in env or settings
+        default_key = 'INTEK_C29C88.0e7310c3b08164b4773cc74d81ab234b203b38a42800120f'
         self.api_key = getattr(settings, 'SMS_API_KEY', None) or os.environ.get('SMS_API_KEY', default_key)
-        self.sender_id = getattr(settings, 'SMS_SENDER_ID', None) or os.environ.get('SMS_SENDER_ID', 'PrimeCare')
-        self.base_url = getattr(settings, 'SMS_API_URL', None) or os.environ.get('SMS_API_URL', 'https://sms.smsnotifygh.com/smsapi')
-        
-        # Track if using default key (warn only when actually sending SMS)
+        self.sender_id = getattr(settings, 'SMS_SENDER_ID', None) or os.environ.get('SMS_SENDER_ID', 'Primecare')
+        self.base_url = getattr(settings, 'SMS_API_URL', None) or os.environ.get(
+            'SMS_API_URL', 'https://www.inteksms.top/api/v1/messages/send'
+        )
+        self.wallet_url = getattr(settings, 'SMS_WALLET_URL', None) or os.environ.get(
+            'SMS_WALLET_URL', 'https://www.inteksms.top/api/v1/balance'
+        )
+
         self._using_default_key = (self.api_key == default_key)
         self._default_key_warned = False
+
+    def _auth_headers(self, accept_json=True):
+        headers = {'Authorization': f'Bearer {self.api_key}'}
+        if accept_json:
+            headers['Accept'] = 'application/json'
+        return headers
+
+    @staticmethod
+    def _format_wallet_display(value):
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return str(value)
+        if isinstance(value, int):
+            return f'{value:,}'
+        if isinstance(value, float):
+            if value == int(value):
+                return f'{int(value):,}'
+            return f'{value:,.2f}'.rstrip('0').rstrip('.')
+        return str(value).strip()
+
+    @classmethod
+    def _parse_wallet_balance_payload(cls, data):
+        """Extract balance value and display string from provider JSON `data` (shape varies)."""
+        if data is None:
+            return None, None
+        if isinstance(data, (int, float)) and not isinstance(data, bool):
+            return data, cls._format_wallet_display(data)
+        if isinstance(data, str):
+            s = data.strip()
+            return (s, s) if s else (None, None)
+        if isinstance(data, dict):
+            for key in (
+                'balance', 'sms_balance', 'credit', 'credits', 'wallet_balance',
+                'amount', 'sms', 'units', 'remaining',
+            ):
+                if key not in data or data[key] in (None, ''):
+                    continue
+                val = data[key]
+                if isinstance(val, dict):
+                    nested_val, nested_disp = cls._parse_wallet_balance_payload(val)
+                    if nested_disp:
+                        return nested_val, nested_disp
+                else:
+                    return val, cls._format_wallet_display(val)
+            if isinstance(data.get('wallet'), dict):
+                return cls._parse_wallet_balance_payload(data['wallet'])
+        return None, None
+
+    def _wallet_url_candidates(self):
+        """Ordered URLs to try for balance (SMS_WALLET_URL, then …/api/v1/balance on send host)."""
+        seen = set()
+        out = []
+        for candidate in (self.wallet_url, getattr(settings, 'SMS_WALLET_URL', None), os.environ.get('SMS_WALLET_URL')):
+            if candidate and str(candidate).strip():
+                u = str(candidate).strip()
+                if u not in seen:
+                    seen.add(u)
+                    out.append(u)
+        parsed = urlparse(self.base_url)
+        if parsed.scheme and parsed.netloc:
+            origin = f'{parsed.scheme}://{parsed.netloc}'.rstrip('/')
+            derived = urljoin(origin + '/', 'api/v1/balance')
+            if derived not in seen:
+                seen.add(derived)
+                out.append(derived)
+        return out
+
+    def _interpret_intek_wallet_body(self, body, raw_text):
+        """Map Intek SMS ``GET /api/v1/balance`` JSON to a wallet result dict."""
+        if body.get('ok') is True:
+            data = body.get('data') or {}
+            units = data.get('balance_units')
+            display = self._format_wallet_display(units) if units is not None else None
+            if display:
+                display = f'{display} units'
+            return {
+                'ok': True,
+                'balance_display': display or '—',
+                'message': (body.get('message') or '').strip(),
+            }
+        err = body.get('error') or body.get('message') or (raw_text or '')[:200]
+        return {'ok': False, 'error': err, 'code': body.get('code')}
+
+    def _request_wallet_get(self, url, timeout=15):
+        """GET balance from Intek SMS (Bearer auth)."""
+        try:
+            response = requests.get(
+                url,
+                timeout=timeout,
+                headers=self._auth_headers(),
+            )
+        except requests.exceptions.Timeout:
+            return {'ok': False, 'error': 'SMS provider did not respond in time.'}
+        except requests.exceptions.RequestException as exc:
+            logger.warning('SMS wallet request failed (%s): %s', url, exc)
+            return {'ok': False, 'error': f'Could not reach SMS provider: {exc}'}
+
+        text = (response.text or '').strip()
+        if not text or text.lstrip().startswith('<'):
+            return None
+        try:
+            body = json.loads(text)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            logger.warning('SMS wallet: non-JSON from %s: %s', url, text[:300])
+            return None
+        if response.status_code == 401:
+            return {'ok': False, 'error': body.get('error') or 'Invalid API key', 'code': 401}
+        return self._interpret_intek_wallet_body(body, text)
+
+    def fetch_wallet_balance(self, timeout=15):
+        """Query SMS credit balance from Intek SMS ``GET /api/v1/balance``."""
+        for wallet_link in self._wallet_url_candidates():
+            result = self._request_wallet_get(wallet_link, timeout=timeout)
+            if result is None:
+                continue
+            if result.get('ok'):
+                return result
+            if result.get('code') in (401, '401'):
+                return result
+        return {
+            'ok': False,
+            'error': 'Could not read SMS wallet balance from Intek SMS.',
+        }
     
     def send_sms(self, phone_number, message, message_type='general', recipient_name='', 
                  related_object_id=None, related_object_type=''):
@@ -175,52 +305,35 @@ class SMSService:
                 sms_log.save()
                 return sms_log
             
-            # Prepare request payload for SMS Notify GH API
+            # Intek SMS API: POST JSON with Bearer token
             payload = {
-                'key': self.api_key,
-                'to': normalized_phone,
-                'msg': message_original,
-                'sender_id': self.sender_id
+                'recipients': [normalized_phone],
+                'message': message_original,
+                'sender': self.sender_id,
             }
-            
-            # Send SMS via API (GET request for SMS Notify GH)
-            response = requests.get(
+            headers = {**self._auth_headers(), 'Content-Type': 'application/json'}
+            response = requests.post(
                 self.base_url,
-                params=payload,
-                timeout=30
+                json=payload,
+                headers=headers,
+                timeout=30,
             )
-            
-            # Handle response - SMS Notify GH returns JSON format:
-            # {"success":true,"code":1000,"message":"message submitted successfully","data":{...}}
-            # OR plain text status codes: "1701" = Success, "1702" = Invalid URL, etc.
-            response_text = response.text.strip()
-            response_lower = response_text.lower()
-            
-            # Check for success indicators
-            if response.status_code == 200:
-                # Try to parse as JSON first (new API format)
+
+            response_text = (response.text or '').strip()
+            if response.status_code in (200, 201):
                 try:
-                    import json
                     response_json = json.loads(response_text)
-                    
-                    # Check for JSON success response
-                    # API returns: {"success":true,"code":1000,"message":"message submitted successfully",...}
-                    success_flag = response_json.get('success', False)
-                    code_value = response_json.get('code', None)
-                    
-                    # Handle both boolean True and string "true", and both int 1000 and string "1000"
-                    is_success = (
-                        success_flag is True or 
-                        (isinstance(success_flag, str) and success_flag.lower() == 'true') or
-                        code_value == 1000 or
-                        (isinstance(code_value, str) and code_value == '1000')
-                    )
-                    
-                    # Log the parsed values for debugging
-                    logger.debug(f"SMS API Response - success flag: {success_flag} (type: {type(success_flag)}), code: {code_value} (type: {type(code_value)}), is_success: {is_success}")
-                    logger.debug(f"Full API response: {response_json}")
-                    
-                    if is_success:
+                except (json.JSONDecodeError, ValueError):
+                    sms_log.status = 'failed'
+                    sms_log.error_message = f'Invalid JSON from SMS provider: {response_text[:200]}'
+                    sms_log.provider_response = {
+                        'status': 'failed',
+                        'status_code': response.status_code,
+                        'response': response_text,
+                        'phone_attempted': normalized_phone,
+                    }
+                else:
+                    if response_json.get('ok') is True:
                         sms_log.status = 'sent'
                         sms_log.sent_at = timezone.now()
                         sms_log.provider_response = {
@@ -229,86 +342,56 @@ class SMSService:
                             'response': response_text,
                             'parsed_response': response_json,
                             'phone_sent_to': normalized_phone,
-                            'api_success': success_flag,
-                            'api_code': code_value
                         }
-                        logger.info(f"✅ SMS marked as SENT for {normalized_phone}. API success={success_flag}, code={code_value}")
+                        logger.info('SMS sent via Intek for %s', normalized_phone)
                     else:
-                        # JSON response but not successful
-                        error_code = response_json.get('code', 'unknown')
-                        error_msg = response_json.get('message', response_text)
+                        error_msg = response_json.get('error') or response_json.get('message') or response_text
+                        hint = response_json.get('hint', '')
                         sms_log.status = 'failed'
-                        
-                        logger.warning(f"⚠️ SMS API returned failure for {normalized_phone}. Code: {error_code}, Message: {error_msg}")
-                        
-                        # Provide more helpful error messages
-                        if error_code == 1004:
-                            sms_log.error_message = f"INVALID API KEY (code {error_code}): {error_msg}. Please update SMS_API_KEY in settings or environment variables."
-                        elif error_code == 1707:
-                            sms_log.error_message = f"INSUFFICIENT BALANCE (code {error_code}): {error_msg}. Please top up your SMS account."
-                        elif error_code == 1704:
-                            sms_log.error_message = f"INVALID PHONE NUMBER (code {error_code}): {error_msg}. Phone: {normalized_phone}"
-                        elif error_code == 1706:
-                            sms_log.error_message = f"INVALID SENDER ID (code {error_code}): {error_msg}. Check SMS_SENDER_ID setting."
+                        if response.status_code == 401 or 'authorization' in str(error_msg).lower():
+                            sms_log.error_message = (
+                                f'Invalid API key: {error_msg}. Update SMS_API_KEY in settings or environment.'
+                            )
+                        elif 'sender' in str(error_msg).lower():
+                            sms_log.error_message = (
+                                f'Invalid sender ID ({self.sender_id}): {error_msg}. Check SMS_SENDER_ID.'
+                            )
+                        elif 'recipient' in str(error_msg).lower():
+                            sms_log.error_message = f'Invalid phone number: {error_msg}. Phone: {normalized_phone}'
                         else:
-                            sms_log.error_message = f"API Error (code {error_code}): {error_msg}"
-                        
+                            sms_log.error_message = f'API error: {error_msg}'
+                        if hint:
+                            sms_log.error_message += f' ({hint})'
                         sms_log.provider_response = {
                             'status': 'failed',
                             'status_code': response.status_code,
                             'response': response_text,
                             'parsed_response': response_json,
                             'phone_attempted': normalized_phone,
-                            'api_key_used': self.api_key[:10] + '...' if len(self.api_key) > 10 else self.api_key
                         }
-                except (json.JSONDecodeError, ValueError) as parse_error:
-                    # Not JSON - try old format (plain text status codes)
-                    logger.warning(f"SMS API returned non-JSON response. Trying to parse as plain text. Error: {str(parse_error)}, Response: {response_text[:200]}")
-                    
-                    # Success codes: "1701" or contains "success"/"sent"
-                    if response_text.startswith('1701') or 'success' in response_lower or 'sent' in response_lower or '1000' in response_text:
-                        sms_log.status = 'sent'
-                        sms_log.sent_at = timezone.now()
-                        sms_log.provider_response = {
-                            'status': 'success',
-                            'status_code': response.status_code,
-                            'response': response_text,
-                            'phone_sent_to': normalized_phone,
-                            'format': 'plain_text'
-                        }
-                        logger.info(f"✅ SMS marked as SENT (plain text format) for {normalized_phone}")
-                    else:
-                        # Error codes (old format)
-                        sms_log.status = 'failed'
-                        error_map = {
-                            '1702': 'Invalid URL',
-                            '1703': 'Invalid API key',
-                            '1704': 'Invalid phone number',
-                            '1705': 'Invalid message',
-                            '1706': 'Invalid sender ID',
-                            '1707': 'Insufficient balance',
-                            '1708': 'Invalid credentials'
-                        }
-                        error_code = response_text[:4] if len(response_text) >= 4 else 'unknown'
-                        error_msg = error_map.get(error_code, response_text[:200])
-                        sms_log.error_message = f"API Error ({error_code}): {error_msg}. Raw response: {response_text[:200]}"
-                        sms_log.provider_response = {
-                            'status': 'failed',
-                            'status_code': response.status_code,
-                            'response': response_text,
-                            'phone_attempted': normalized_phone,
-                            'format': 'plain_text',
-                            'parse_error': str(parse_error)
-                        }
-                        logger.error(f"❌ SMS failed (plain text format) for {normalized_phone}. Error code: {error_code}, Message: {error_msg}")
-            else:
+                        logger.warning('Intek SMS failed for %s: %s', normalized_phone, error_msg)
+            elif response.status_code == 401:
                 sms_log.status = 'failed'
-                sms_log.error_message = f"HTTP {response.status_code}: {response.text}"
+                try:
+                    body = json.loads(response_text)
+                    err = body.get('error', response_text)
+                except (json.JSONDecodeError, ValueError):
+                    err = response_text
+                sms_log.error_message = f'Invalid API key: {err}. Update SMS_API_KEY in settings or environment.'
                 sms_log.provider_response = {
                     'status': 'failed',
                     'status_code': response.status_code,
-                    'response': response.text,
-                    'phone_attempted': normalized_phone
+                    'response': response_text,
+                    'phone_attempted': normalized_phone,
+                }
+            else:
+                sms_log.status = 'failed'
+                sms_log.error_message = f'HTTP {response.status_code}: {response_text[:300]}'
+                sms_log.provider_response = {
+                    'status': 'failed',
+                    'status_code': response.status_code,
+                    'response': response_text,
+                    'phone_attempted': normalized_phone,
                 }
             
         except requests.exceptions.Timeout:
@@ -353,8 +436,39 @@ class SMSService:
             return ''
         # Collapse repeated whitespace but keep single spaces; strip ends
         return re.sub(r'\s+', ' ', message).strip()
-    
-    
+
+    @staticmethod
+    def pending_labs_followup_wording(pending_qs, now=None):
+        """
+        One or two sentences for outstanding labs (partial-encounter SMS).
+        Uses 'tomorrow' only when pending work clearly spills past today (TAT or expected date).
+        """
+        now = now or timezone.now()
+        local_now = timezone.localtime(now)
+        today = local_now.date()
+        suggests_next_calendar_day = False
+        for lr in pending_qs:
+            exp = getattr(lr, 'expected_completion_datetime', None)
+            if exp:
+                if timezone.localtime(exp).date() > today:
+                    suggests_next_calendar_day = True
+                    break
+                continue
+            test = getattr(lr, 'test', None)
+            tat = int(getattr(test, 'tat_minutes', 0) or 0)
+            if tat >= 1440:
+                suggests_next_calendar_day = True
+                break
+        if suggests_next_calendar_day:
+            return (
+                "Other tests are still running and may be ready tomorrow; "
+                "we will send another message when all are ready."
+            )
+        return (
+            "Other tests are still being processed; "
+            "we will notify you when all are ready."
+        )
+
     def send_appointment_reminder(self, appointment):
         """Send appointment reminder SMS"""
         patient = appointment.patient
@@ -423,6 +537,7 @@ class SMSService:
             message += f"Reference: {lab_result.order.encounter.patient.mrn}\n"
             
             message += "\nPlease visit the hospital or check your patient portal for full details.\n\n"
+            message += f"{LAB_SMS_NURSE_DOCTOR_LINE}\n\n"
             message += "Thank you,\nPrimeCare Hospital"
             
             return self.send_sms(
@@ -446,11 +561,143 @@ class SMSService:
                 related_object_type='LabResult'
             )
             return sms_log
-    
+
+    def send_encounter_lab_results_partial_ready(self, encounter):
+        """Send once per encounter when some (not all) non-cancelled lab results are completed."""
+        try:
+            from ..models import LabResult
+
+            patient = getattr(encounter, 'patient', None)
+            if not patient:
+                raise AttributeError("Encounter.patient missing")
+
+            if not getattr(patient, 'phone_number', None) or not patient.phone_number.strip():
+                sms_log = SMSLog.objects.create(
+                    recipient_phone='',
+                    recipient_name=getattr(patient, 'full_name', '') or '',
+                    message='',
+                    message_type='encounter_lab_results_partial',
+                    status='failed',
+                    error_message=f"Patient {getattr(patient, 'full_name', 'Unknown')} does not have a phone number",
+                    related_object_id=getattr(encounter, 'id', None),
+                    related_object_type='Encounter',
+                )
+                return sms_log
+
+            pending = (
+                LabResult.objects.filter(order__encounter=encounter, is_deleted=False)
+                .exclude(status__in=('completed', 'cancelled'))
+                .select_related('test')
+            )
+            if not pending.exists():
+                sms_log = SMSLog.objects.create(
+                    recipient_phone='',
+                    recipient_name=getattr(patient, 'full_name', '') or '',
+                    message='',
+                    message_type='encounter_lab_results_partial',
+                    status='failed',
+                    error_message='No pending lab results for partial encounter SMS',
+                    related_object_id=getattr(encounter, 'id', None),
+                    related_object_type='Encounter',
+                )
+                return sms_log
+
+            first_name = getattr(patient, 'first_name', None) or (
+                getattr(patient, 'full_name', '').split(' ')[0] if getattr(patient, 'full_name', None) else 'Patient'
+            )
+            follow = self.pending_labs_followup_wording(pending, now=timezone.now())
+            message = (
+                f"Dear {first_name},\n\n"
+                f"Some of your lab results for this visit are now ready.\n"
+                f"{follow}\n"
+                f"Reference: {getattr(patient, 'mrn', '') or ''}\n\n"
+                f"Please visit the hospital or check your patient portal for details.\n\n"
+                f"{LAB_SMS_NURSE_DOCTOR_LINE}\n\n"
+                f"Thank you,\nPrimeCare Hospital"
+            )
+
+            return self.send_sms(
+                phone_number=patient.phone_number,
+                message=message,
+                message_type='encounter_lab_results_partial',
+                recipient_name=getattr(patient, 'full_name', '') or '',
+                related_object_id=getattr(encounter, 'id', None),
+                related_object_type='Encounter',
+            )
+        except Exception as e:
+            sms_log = SMSLog.objects.create(
+                recipient_phone='',
+                recipient_name='',
+                message='',
+                message_type='encounter_lab_results_partial',
+                status='failed',
+                error_message=f"Failed to send partial encounter lab SMS: {str(e)}",
+                related_object_id=getattr(encounter, 'id', None) if encounter else None,
+                related_object_type='Encounter',
+            )
+            return sms_log
+
+    def send_encounter_lab_results_ready(self, encounter):
+        """Send one SMS when all labs for an encounter are completed/cancelled."""
+        try:
+            patient = getattr(encounter, 'patient', None)
+            if not patient:
+                raise AttributeError("Encounter.patient missing")
+
+            if not getattr(patient, 'phone_number', None) or not patient.phone_number.strip():
+                sms_log = SMSLog.objects.create(
+                    recipient_phone='',
+                    recipient_name=getattr(patient, 'full_name', '') or '',
+                    message='',
+                    message_type='encounter_lab_results_ready',
+                    status='failed',
+                    error_message=f"Patient {getattr(patient, 'full_name', 'Unknown')} does not have a phone number",
+                    related_object_id=getattr(encounter, 'id', None),
+                    related_object_type='Encounter',
+                )
+                return sms_log
+
+            first_name = getattr(patient, 'first_name', None) or (getattr(patient, 'full_name', '').split(' ')[0] if getattr(patient, 'full_name', None) else 'Patient')
+            message = (
+                f"Dear {first_name},\n\n"
+                f"All your lab results for this visit are now ready.\n"
+                f"Reference: {getattr(patient, 'mrn', '') or ''}\n\n"
+                f"Please visit the hospital or check your patient portal for full details.\n\n"
+                f"{LAB_SMS_NURSE_DOCTOR_LINE}\n\n"
+                f"Thank you,\nPrimeCare Hospital"
+            )
+
+            return self.send_sms(
+                phone_number=patient.phone_number,
+                message=message,
+                message_type='encounter_lab_results_ready',
+                recipient_name=getattr(patient, 'full_name', '') or '',
+                related_object_id=getattr(encounter, 'id', None),
+                related_object_type='Encounter',
+            )
+        except Exception as e:
+            sms_log = SMSLog.objects.create(
+                recipient_phone='',
+                recipient_name='',
+                message='',
+                message_type='encounter_lab_results_ready',
+                status='failed',
+                error_message=f"Failed to send encounter lab SMS: {str(e)}",
+                related_object_id=getattr(encounter, 'id', None) if encounter else None,
+                related_object_type='Encounter',
+            )
+            return sms_log
+
     def send_payment_reminder(self, invoice):
         """Send payment reminder SMS (no amounts — patient confirms total at Cashier)."""
+        from hospital.services.pending_payment_notification_service import (
+            should_send_payment_notification_sms,
+        )
+
         patient = invoice.patient
-        
+        if not should_send_payment_notification_sms(patient=patient, invoice=invoice):
+            return None
+
         message = (
             f"Dear {patient.first_name},\n\n"
             f"You have an outstanding balance on invoice {invoice.invoice_number}.\n"

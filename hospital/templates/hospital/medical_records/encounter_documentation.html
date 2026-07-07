@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load humanize %}
+{% load humanize hospital_extras %}
 
 {% block title %}Encounter Documentation - {{ encounter.patient.full_name }}{% endblock %}
 
@@ -86,6 +86,7 @@
                     <h6>Lab Results</h6>
                     <ul class="list-group mb-3">
                         {% for lab in lab_tests %}
+                        {% with s=lab|lab_list_summary %}
                         <li class="list-group-item">
                             <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
                                 <div class="flex-grow-1">
@@ -94,8 +95,8 @@
                                         <small class="text-muted">{{ lab.created|date:"M d, Y H:i" }}</small>
                                     </div>
                                     <div class="mb-1" style="font-size: 1.1rem;">
-                                        Result: <strong class="{% if lab.is_abnormal %}text-danger{% endif %}">{{ lab.value|default:lab.qualitative_result|default:"Pending" }}</strong>
-                                        {% if lab.units %}{{ lab.units }}{% endif %}
+                                        Result: <strong class="{% if lab.is_abnormal %}text-danger{% endif %}">{% if s.is_pending and lab.status != 'completed' %}Pending{% else %}{{ s.result_text }}{% endif %}</strong>
+                                        {% if s.unit_text != '—' %} {{ s.unit_text }}{% endif %}
                                         {% if lab.is_abnormal %}<i class="bi bi-exclamation-triangle text-danger ms-1"></i>{% endif %}
                                     </div>
                                     <small>Status: {{ lab.get_status_display }}</small>
@@ -105,6 +106,7 @@
                                 </a>
                             </div>
                         </li>
+                        {% endwith %}
                         {% empty %}
                         <li class="list-group-item text-muted">No lab results recorded.</li>
                         {% endfor %}
@@ -199,12 +201,12 @@
                                 </small>
                                 {% if doc.file and doc.file_type and "image" in doc.file_type %}
                                 <div class="mb-2">
-                                    <img src="{{ doc.file.url }}" alt="{{ doc.title }}" class="img-fluid rounded" style="max-height: 160px; object-fit: contain;">
+                                    <img src="{% url 'hospital:patient_document_file' doc.pk %}" alt="{{ doc.title }}" class="img-fluid rounded" style="max-height: 160px; object-fit: contain;">
                                 </div>
                                 {% endif %}
                                 <div class="d-flex gap-2">
-                                    <a href="{{ doc.file.url }}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="bi bi-eye"></i> View</a>
-                                    <a href="{{ doc.file.url }}" download class="btn btn-sm btn-outline-primary"><i class="bi bi-download"></i> Download</a>
+                                    <a href="{% url 'hospital:patient_document_file' doc.pk %}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="bi bi-eye"></i> View</a>
+                                    <a href="{% url 'hospital:patient_document_file' doc.pk %}?download=1" download class="btn btn-sm btn-outline-primary"><i class="bi bi-download"></i> Download</a>
                                 </div>
                             </div>
                         </div>

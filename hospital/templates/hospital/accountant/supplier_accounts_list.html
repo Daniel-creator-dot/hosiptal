@@ -1,0 +1,635 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Supplier accounts - HMS{% endblock %}
+{% block page_title %}Supplier accounts{% endblock %}
+{% block page_subtitle %}Vendor balances, analytics, and links to record payables &amp; payments{% endblock %}
+
+{% block extra_css %}
+<style>
+    .sa-hero {
+        border-radius: 16px;
+        padding: 1.5rem 1.75rem;
+        background: linear-gradient(135deg, #7c2d12 0%, #b45309 45%, #ea580c 100%);
+        color: #fff;
+        box-shadow: 0 12px 40px rgba(180, 83, 9, 0.35);
+        margin-bottom: 1.5rem;
+    }
+    .sa-hero h1 {
+        font-size: 1.5rem;
+        font-weight: 700;
+        margin: 0 0 0.35rem 0;
+        letter-spacing: -0.02em;
+    }
+    .sa-hero p { margin: 0; opacity: 0.92; font-size: 0.95rem; max-width: 52rem; }
+    .sa-kpi {
+        border-radius: 14px;
+        border: 1px solid rgba(0,0,0,0.08);
+        padding: 1rem 1.15rem;
+        height: 100%;
+        background: var(--bs-body-bg, #fff);
+        box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .sa-kpi:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+    }
+    .sa-kpi .kpi-label {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--bs-secondary-color, #6c757d);
+        margin-bottom: 0.35rem;
+    }
+    .sa-kpi .kpi-value {
+        font-size: 1.28rem;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    .sa-kpi .kpi-meta { font-size: 0.78rem; color: var(--bs-secondary-color); margin-top: 0.35rem; }
+    .sa-kpi.accent-amber { border-left: 4px solid #f59e0b; }
+    .sa-kpi.accent-red { border-left: 4px solid #dc2626; }
+    .sa-kpi.accent-teal { border-left: 4px solid #0d9488; }
+    .sa-kpi.accent-violet { border-left: 4px solid #7c3aed; }
+    .sa-kpi.accent-slate { border-left: 4px solid #475569; }
+    .sa-kpi.accent-blue { border-left: 4px solid #2563eb; }
+    body.theme-dark .sa-kpi {
+        background: #0f172a;
+        border-color: #334155;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.35);
+    }
+    body.theme-dark .sa-kpi .kpi-value { color: #f8fafc !important; }
+    body.theme-dark .sa-kpi .kpi-label,
+    body.theme-dark .sa-kpi .kpi-meta { color: #94a3b8 !important; }
+    .sa-flow {
+        border-radius: 14px;
+        border: 1px dashed rgba(0,0,0,0.12);
+        background: linear-gradient(180deg, rgba(13,148,136,0.06) 0%, transparent 100%);
+        padding: 1rem 1.25rem;
+    }
+    body.theme-dark .sa-flow {
+        border-color: #334155;
+        background: linear-gradient(180deg, rgba(13,148,136,0.12) 0%, transparent 100%);
+    }
+    .sa-chart-card {
+        border-radius: 14px;
+        border: 1px solid rgba(0,0,0,0.08);
+        background: var(--bs-body-bg, #fff);
+        box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+        overflow: hidden;
+    }
+    body.theme-dark .sa-chart-card {
+        background: #0f172a;
+        border-color: #334155;
+    }
+    .sa-chart-card .card-header {
+        background: linear-gradient(90deg, rgba(124,45,18,0.08), transparent);
+        border-bottom: 1px solid rgba(0,0,0,0.06);
+        font-weight: 600;
+    }
+    body.theme-dark .sa-chart-card .card-header {
+        background: linear-gradient(90deg, rgba(251,146,60,0.12), transparent);
+        border-bottom-color: #334155;
+        color: #e2e8f0;
+    }
+    .sa-chart-wrap { position: relative; height: 280px; }
+    .sa-chart-wrap.tall { height: 300px; }
+    .sa-table-wrap { border-radius: 14px; overflow: hidden; box-shadow: 0 2px 16px rgba(0,0,0,0.06); }
+    body.theme-dark .sa-table-wrap { box-shadow: 0 2px 16px rgba(0,0,0,0.35); }
+    .sa-table thead th {
+        background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+        color: #f1f5f9;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        border: none;
+        padding: 0.85rem 1rem;
+    }
+    body.theme-dark .sa-table thead th {
+        background: linear-gradient(180deg, #334155 0%, #1e293b 100%);
+    }
+    .sa-table tbody tr { transition: background 0.12s ease; }
+    .sa-table tbody tr:hover { background: rgba(13,148,136,0.06); }
+    .sa-table tbody td { vertical-align: middle; padding: 0.75rem 1rem; }
+    .sa-badge-owe { background: rgba(220,38,38,0.12); color: #b91c1c; font-weight: 600; }
+    body.theme-dark .sa-badge-owe { background: rgba(248,113,113,0.15); color: #fecaca; }
+    .sa-badge-ok { background: rgba(13,148,136,0.12); color: #0f766e; }
+    body.theme-dark .sa-badge-ok { background: rgba(45,212,191,0.12); color: #5eead4; }
+    .sa-section-head {
+        margin: 2rem 0 0.85rem 0;
+        padding-bottom: 0.35rem;
+        border-bottom: 2px solid rgba(180, 83, 9, 0.35);
+        font-size: 0.92rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--bs-secondary-color, #64748b);
+    }
+    .sa-section-head small { font-weight: 500; letter-spacing: 0; text-transform: none; }
+    body.theme-dark .sa-section-head { border-bottom-color: rgba(251, 146, 60, 0.35); color: #94a3b8; }
+    .sa-analytics-sheet {
+        border-radius: 16px;
+        border: 1px solid rgba(0,0,0,0.08);
+        background: var(--bs-body-bg, #fff);
+        box-shadow: 0 8px 32px rgba(0,0,0,0.06);
+        overflow: hidden;
+    }
+    body.theme-dark .sa-analytics-sheet {
+        border-color: #334155;
+        background: #0f172a;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+    }
+    .sa-analytics-sheet .sheet-banner {
+        background: linear-gradient(135deg, rgba(13,148,136,0.14) 0%, rgba(124,58,237,0.1) 100%);
+        padding: 1rem 1.35rem;
+        border-bottom: 1px solid rgba(0,0,0,0.06);
+    }
+    body.theme-dark .sa-analytics-sheet .sheet-banner {
+        border-bottom-color: #334155;
+    }
+    .sa-insight-mini {
+        border-radius: 12px;
+        border: 1px solid rgba(0,0,0,0.07);
+        padding: 1rem;
+        height: 100%;
+        background: rgba(255,255,255,0.5);
+    }
+    body.theme-dark .sa-insight-mini {
+        background: rgba(30,41,59,0.45);
+        border-color: #334155;
+    }
+    .sa-insight-mini .im-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--bs-secondary-color); }
+    .sa-insight-mini .im-value { font-size: 1.15rem; font-weight: 700; margin-top: 0.2rem; }
+    .sa-insight-mini .im-hint { font-size: 0.78rem; color: var(--bs-secondary-color); margin-top: 0.35rem; }
+    .sa-detail-table th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+    .sa-detail-table td { vertical-align: middle; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid pb-4">
+    <div class="sa-hero">
+        <h1><i class="bi bi-people-fill me-2"></i>Supplier accounts &amp; analytics</h1>
+        <p>Track what you owe each vendor. <strong>Drug quantities and batches</strong> are added under <em>Add pharmacy stock</em> (that flow posts value here when a supplier and cost are set). On each supplier’s ledger you can <strong>record manual payables</strong> (invoices not from stock) and <strong>record payments</strong> when you pay the vendor.</p>
+        <div class="d-flex flex-wrap gap-2 mt-3">
+            <a href="{% url 'hospital:pharmacy_stock_add' %}" class="btn btn-light btn-sm fw-semibold text-dark"><i class="bi bi-plus-lg"></i> Add pharmacy stock (qty, batch, supplier)</a>
+            <a href="{% url 'hospital:stock_management_monitoring' %}" class="btn btn-outline-light btn-sm"><i class="bi bi-box-seam"></i> Stock monitoring</a>
+            <a href="{% url 'hospital:accountant_comprehensive_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="bi bi-speedometer2"></i> Dashboard</a>
+        </div>
+    </div>
+
+    <div class="sa-flow mb-4">
+        <div class="row align-items-center g-3">
+            <div class="col-lg-8">
+                <strong class="d-block mb-1"><i class="bi bi-signpost-split text-success"></i> Where do I add items &amp; quantities?</strong>
+                <span class="text-muted small">Use <strong>Add pharmacy stock</strong> for inventory (drug, quantity, batch, expiry, supplier, cost). That creates the stock batch <em>and</em> increases this supplier’s balance when cost &gt; 0. This page is the <strong>money ledger</strong>, not the stock form.</span>
+            </div>
+            <div class="col-lg-4 text-lg-end">
+                <span class="badge bg-secondary bg-opacity-25 text-dark px-3 py-2 rounded-pill small">
+                    <i class="bi bi-pencil-square"></i> Payable / payment = open a supplier row below → <strong>Ledger</strong>
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body py-3">
+            {% if month_filter_active %}
+            <div class="alert alert-info py-2 px-3 small mb-3 mb-md-4 d-flex flex-wrap align-items-center gap-2" role="status">
+                <strong><i class="bi bi-calendar3 me-1"></i>Reporting period:</strong>
+                <span class="badge text-bg-dark fs-6">{{ period_label }}</span>
+                <span class="text-muted">Middle summary cards below use this month except “Total owed” and “Suppliers with balance”, which stay all‑time.</span>
+            </div>
+            {% elif view_lifetime %}
+            <div class="alert alert-secondary py-2 px-3 small mb-3 mb-md-4" role="status">
+                <strong><i class="bi bi-infinity me-1"></i>Lifetime mode.</strong>
+                Figures in the summary row are <strong>all-time</strong> ledger totals (not one month).
+                <a href="{% url 'hospital:supplier_accounts_list' %}?month={% now 'Y-m' %}" class="alert-link fw-semibold ms-1">Switch to this month</a>
+            </div>
+            {% endif %}
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+                <div>
+                    <h2 class="h6 mb-1 fw-semibold"><i class="bi bi-graph-up-arrow text-warning me-2"></i>Reporting &amp; month filter</h2>
+                    <p class="text-muted small mb-0" style="max-width: 48rem;">This page defaults to <strong>the current calendar month</strong> so period amounts are always visible (URL carries <code class="small">month=YYYY-MM</code>). Use <strong>Lifetime view</strong> for all‑time KPIs in the summary row.</p>
+                </div>
+                <form method="get" class="d-flex flex-wrap align-items-end gap-2 mb-0" id="supplier-month-filter-form">
+                    <div>
+                        <label for="id_month" class="form-label small text-muted mb-1">Calendar month</label>
+                        <input type="month" name="month" id="id_month" class="form-control form-control-sm" value="{{ month_filter }}" max="2999-12" required style="min-width: 12rem;">
+                    </div>
+                    <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-funnel"></i> Run report</button>
+                    <a href="{% url 'hospital:supplier_accounts_list' %}?view=lifetime" class="btn btn-sm btn-outline-secondary">Lifetime view</a>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <h3 class="sa-section-head">
+        {% if month_filter_active %}
+        <i class="bi bi-calendar-range me-2"></i>Summary · {{ period_label }}
+        {% else %}
+        <i class="bi bi-bank me-2"></i>All‑time summary
+        {% endif %}
+    </h3>
+    {% if month_filter_active %}<p class="small text-muted mb-3">First two tiles = <strong>open position</strong> (all‑time). Remaining tiles = <strong>{{ period_label }} only</strong>.</p>{% endif %}
+    <div class="row g-3 mb-2">
+        <div class="col-6 col-xl-2">
+            <div class="sa-kpi accent-amber">
+                <div class="kpi-label">Total owed (positive balances)</div>
+                <div class="kpi-value text-danger">GHS {{ total_positive_payables|floatformat:2|intcomma }}</div>
+                <div class="kpi-meta">Across suppliers with balance &gt; 0 (all-time)</div>
+            </div>
+        </div>
+        <div class="col-6 col-xl-2">
+            <div class="sa-kpi accent-slate">
+                <div class="kpi-label">Suppliers with balance &gt; 0</div>
+                <div class="kpi-value">{{ analytics.suppliers_owing|intcomma }}</div>
+                <div class="kpi-meta">{{ supplier_rows|length }} vendors{% if month_filter_active %} · directory (all-time){% endif %}</div>
+            </div>
+        </div>
+        <div class="col-6 col-xl-2">
+            <div class="sa-kpi accent-teal">
+                <div class="kpi-label">Stock &amp; lab receipts (sum)</div>
+                <div class="kpi-value">GHS {{ analytics.stock_receipts_total|floatformat:2|intcomma }}</div>
+                <div class="kpi-meta">{% if month_filter_active %}In {{ period_label }}{% else %}Posted from inventory receipts (lifetime){% endif %}</div>
+            </div>
+        </div>
+        <div class="col-6 col-xl-2">
+            <div class="sa-kpi accent-violet">
+                <div class="kpi-label">Manual payables (sum)</div>
+                <div class="kpi-value">GHS {{ analytics.manual_payables_total|floatformat:2|intcomma }}</div>
+                <div class="kpi-meta">{% if month_filter_active %}In {{ period_label }}{% else %}Entered on supplier ledgers{% endif %}</div>
+            </div>
+        </div>
+        <div class="col-6 col-xl-2">
+            <div class="sa-kpi accent-red">
+                <div class="kpi-label">Payments recorded (sum)</div>
+                <div class="kpi-value text-success">GHS {{ analytics.payments_total_abs|floatformat:2|intcomma }}</div>
+                <div class="kpi-meta">{% if month_filter_active %}In {{ period_label }}{% else %}Reduces balance (stored as credits){% endif %}</div>
+            </div>
+        </div>
+        <div class="col-6 col-xl-2">
+            <div class="sa-kpi accent-blue">
+                <div class="kpi-label">Ledger lines</div>
+                <div class="kpi-value">{{ analytics.line_count|intcomma }}</div>
+                <div class="kpi-meta">{% if month_filter_active %}Lines in {{ period_label }} · net all-time GHS {{ analytics.net_all_suppliers|floatformat:2|intcomma }}{% else %}Net all suppliers: GHS {{ analytics.net_all_suppliers|floatformat:2|intcomma }}{% endif %}</div>
+            </div>
+        </div>
+    </div>
+
+    {% if period_analysis %}
+    <div class="sa-analytics-sheet mb-4 mt-4">
+        <div class="sheet-banner d-flex flex-wrap justify-content-between align-items-start gap-2">
+            <div>
+                <span class="badge rounded-pill px-3 py-2 mb-2" style="border: 1px solid rgba(13,148,136,.45); background: rgba(13,148,136,.14); color: #0f766e;">Period report</span>
+                <div class="h5 mb-0 fw-bold">{{ period_label }}</div>
+                <div class="small text-muted mt-1 mb-0">Ledger timestamps from <strong>{{ period_analysis.period_range_start }}</strong> through <strong>{{ period_analysis.period_range_end }}</strong> (facility timezone).</div>
+            </div>
+            <div class="text-end">
+                <div class="small text-muted">Stock &amp; lab receipts vs {{ period_analysis.prev_month_label }}</div>
+                <div class="fs-6 fw-semibold {% if period_analysis.mom_direction == 'up' %}text-success{% elif period_analysis.mom_direction == 'down' %}text-danger{% elif period_analysis.mom_direction == 'new' %}text-info{% else %}text-secondary{% endif %}">{{ period_analysis.mom_label }}</div>
+                <div class="small text-muted">{{ period_analysis.prev_month_label }}: GHS {{ period_analysis.prev_month_stock_total|floatformat:2|intcomma }}</div>
+            </div>
+        </div>
+        <div class="card-body px-3 py-4">
+            <div class="row g-3 mb-4">
+                <div class="col-md-4">
+                    <div class="sa-insight-mini">
+                        <div class="im-label"><i class="bi bi-shop me-1"></i>Vendors posting this month</div>
+                        <div class="im-value">{{ period_analysis.distinct_suppliers_touched }}</div>
+                        <div class="im-hint">Distinct suppliers appearing on any ledger line in this window.</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="sa-insight-mini">
+                        <div class="im-label"><i class="bi bi-cart-check me-1"></i>With stock receipts</div>
+                        <div class="im-value">{{ period_analysis.suppliers_with_receipts }}</div>
+                        <div class="im-hint">Suppliers receiving inventory / lab postings (payable‑increasing receipts).</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="sa-insight-mini">
+                        <div class="im-label"><i class="bi bi-diagram-3 me-1"></i>Receipt concentration</div>
+                        <div class="im-value">
+                            {% if period_analysis.concentration_top3_pct is not none %}{{ period_analysis.concentration_top3_pct|floatformat:1 }}%{% else %}—{% endif %}
+                        </div>
+                        <div class="im-hint">Share of receipt value attributed to top three vendors (procurement dependence).</div>
+                    </div>
+                </div>
+            </div>
+            <div class="row g-4">
+                <div class="col-lg-7">
+                    <h4 class="h6 fw-semibold mb-3"><i class="bi bi-box-seam me-2" style="color:#0d9488;"></i>Receipt decomposition (posted value)</h4>
+                    <p class="text-muted small mb-3">Splits <strong>stock_receipt</strong> lines linked to pharmacy batches vs standalone lab purchases. “Other/unlinked” includes legacy or edge postings without both links.</p>
+                    <div class="table-responsive">
+                        <table class="table table-sm sa-detail-table mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Source</th>
+                                    <th class="text-end">Lines</th>
+                                    <th class="text-end">Amount (GHS)</th>
+                                    <th class="text-end">% of receipts</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td><i class="bi bi-capsule text-primary"></i> Pharmacy stock batches</td><td class="text-end">{{ period_analysis.receipt_lines_pharmacy|intcomma }}</td><td class="text-end fw-semibold">{{ period_analysis.receipt_amt_pharmacy|floatformat:2|intcomma }}</td>
+                                    <td class="text-end text-muted">{% if analytics.stock_receipts_total > 0 %}{% widthratio period_analysis.receipt_amt_pharmacy analytics.stock_receipts_total 100 %}%{% else %}—{% endif %}</td></tr>
+                                <tr><td><i class="bi bi-droplet-half text-info"></i> Lab reagents</td><td class="text-end">{{ period_analysis.receipt_lines_lab|intcomma }}</td><td class="text-end fw-semibold">{{ period_analysis.receipt_amt_lab|floatformat:2|intcomma }}</td>
+                                    <td class="text-end text-muted">{% if analytics.stock_receipts_total > 0 %}{% widthratio period_analysis.receipt_amt_lab analytics.stock_receipts_total 100 %}%{% else %}—{% endif %}</td></tr>
+                                {% if period_analysis.receipt_lines_other %}
+                                <tr><td><i class="bi bi-patch-question text-secondary"></i> Other / unlinked</td><td class="text-end">{{ period_analysis.receipt_lines_other|intcomma }}</td><td class="text-end fw-semibold">{{ period_analysis.receipt_amt_other|floatformat:2|intcomma }}</td><td class="text-end text-muted">—</td></tr>
+                                {% endif %}
+                            </tbody>
+                            <tfoot class="border-top fw-semibold"><tr><td>Total receipts</td><td class="text-end">{{ period_analysis.receipt_lines_total|intcomma }}</td><td class="text-end">GHS {{ analytics.stock_receipts_total|floatformat:2|intcomma }}</td><td class="text-end">100%</td></tr></tfoot>
+                        </table>
+                    </div>
+                    {% if period_analysis.avg_stock_receipt %}
+                    <p class="small text-muted mt-2 mb-0"><i class="bi bi-calculator"></i> Average receipt line (stock &amp; lab): <strong>GHS {{ period_analysis.avg_stock_receipt|floatformat:2|intcomma }}</strong> across {{ period_analysis.receipt_lines_total|intcomma }} lines.</p>
+                    {% endif %}
+                    <dl class="row small mb-0 mt-3 gx-4">
+                        <dt class="col-sm-5 col-lg-4 text-muted">Gross liabilities posted</dt><dd class="col-sm-7 col-lg-8 mb-2">Receipts + manual payables = <strong>GHS {{ period_analysis.gross_inflow|floatformat:2|intcomma }}</strong></dd>
+                        <dt class="col-sm-5 col-lg-4 text-muted">Signed net ledger movement</dt><dd class="col-sm-7 col-lg-8 mb-0">All line types summed = <strong>GHS {{ period_analysis.net_posted_delta|floatformat:2|intcomma }}</strong> (includes negative payments &amp; adjustments).</dd>
+                    </dl>
+                </div>
+                <div class="col-lg-5">
+                    <h4 class="h6 fw-semibold mb-3"><i class="bi bi-list-columns-reverse me-2" style="color:#7c3aed;"></i>Period ledger — lines &amp; mix</h4>
+                    {% if scoped_breakdown_rows %}
+                    <div class="table-responsive">
+                        <table class="table table-sm sa-detail-table mb-0 align-middle">
+                            <thead class="table-light"><tr><th>Entry type</th><th class="text-end"># Lines</th><th class="text-end">Volume (GHS)</th><th class="text-end">Share</th></tr></thead>
+                            <tbody>
+                                {% for br in scoped_breakdown_rows %}
+                                <tr><td>{{ br.title }}</td><td class="text-end">{{ br.lines|intcomma }}</td><td class="text-end">{% if br.title == 'Payments (credit)' %}{{ br.amount_display|floatformat:2|intcomma }}{% elif br.amount < 0 %}<span class="text-danger">{{ br.amount|floatformat:2|intcomma }}</span>{% else %}{{ br.amount|floatformat:2|intcomma }}{% endif %}</td><td class="text-end text-muted">{{ br.share_pct|floatformat:1 }}%</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="small text-muted mt-3 mb-0">Payment rows are stored as <strong>credits</strong> (typically negative balances); volumes show absolute magnitude in the breakdown.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <h3 class="sa-section-head"><small class="fw-normal opacity-75">Charts — </small>Rolling twelve months {% if month_filter_active %}<small class="fw-normal opacity-75">(right edge = {{ period_label }})</small>{% else %}<small class="fw-normal opacity-75">(through current month)</small>{% endif %}</h3>
+    <div class="row g-3 mb-4">
+        <div class="col-lg-7">
+            <div class="sa-chart-card h-100">
+                <div class="card-header py-3 px-3">
+                    <i class="bi bi-bar-chart-steps me-2 text-warning"></i>Procurement &amp; cash activity by month
+                    <div class="small fw-normal text-muted mt-1 mb-0">Stacked view: stock/lab receipts, manual payables, and absolute payment amounts. Highlighted group = focused month when a report is active.</div>
+                </div>
+                <div class="card-body">
+                    <div class="sa-chart-wrap tall">
+                        <canvas id="supplierMonthlyChart" aria-label="Monthly supplier ledger activity"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="sa-chart-card mb-3">
+                <div class="card-header py-3 px-3">
+                    <i class="bi bi-pie-chart-fill me-2 text-primary"></i>{% if month_filter_active %}Amount mix — {{ period_label }}{% else %}Lifetime amount mix{% endif %}
+                    <div class="small fw-normal text-muted mt-1 mb-0">{% if month_filter_active %}Selected month only; adjustments included when non‑zero.{% else %}All posted lines; payment slice uses absolute value.{% endif %}</div>
+                </div>
+                <div class="card-body">
+                    <div class="sa-chart-wrap">
+                        <canvas id="supplierMixChart" aria-label="Entry type mix"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-12">
+            <div class="sa-chart-card">
+                <div class="card-header py-3 px-3">
+                    <i class="bi bi-trophy me-2 text-danger"></i>{% if month_filter_active %}Top procurement — {{ period_label }}{% else %}Largest payables (positive balance){% endif %}
+                    <div class="small fw-normal text-muted mt-1 mb-0">{% if month_filter_active %}Ranked by stock &amp; lab receipt value posted in the report month.{% else %}Current balance owed per supplier (all-time running balance).{% endif %}</div>
+                </div>
+                <div class="card-body">
+                    <div class="sa-chart-wrap tall">
+                        <canvas id="supplierTopBarChart" aria-label="Top suppliers by balance"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {{ chart_payload|json_script:"supplier-accounts-chart-data" }}
+
+    <h3 class="sa-section-head"><small class="fw-normal opacity-75">Reference — </small>All-time ledger composition</h3>
+    <p class="text-muted small mb-2">{{ lifetime_line_count|intcomma }} lines across all suppliers · share uses absolute amounts so payments and receipts are comparable.</p>
+    <div class="table-responsive sa-table-wrap bg-body mb-4">
+        <table class="table table-sm sa-detail-table mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Category</th>
+                    <th class="text-end">Lines</th>
+                    <th class="text-end">Net amount (GHS)</th>
+                    <th class="text-end">Share of activity</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for lr in lifetime_breakdown_rows %}
+                <tr>
+                    <td>{{ lr.title }}</td>
+                    <td class="text-end">{{ lr.lines|intcomma }}</td>
+                    <td class="text-end {% if lr.key == 'payment' and lr.amount < 0 %}text-danger{% endif %}">{{ lr.amount|floatformat:2|intcomma }}</td>
+                    <td class="text-end text-muted">{{ lr.share_pct|floatformat:1 }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <h3 class="sa-section-head"><small class="fw-normal opacity-75">Directory — </small>Suppliers {% if month_filter_active %}&amp; {{ period_label }} activity{% endif %}</h3>
+    <div class="sa-table-wrap bg-body">
+        <table class="table sa-table mb-0 align-middle">
+            <thead>
+                <tr>
+                    <th>Supplier</th>
+                    {% if month_filter_active %}
+                    <th class="text-end">Receipts<br><span class="fw-normal opacity-75" style="font-size: 0.7rem;">stock &amp; lab</span></th>
+                    <th class="text-end">Manual<br><span class="fw-normal opacity-75" style="font-size: 0.65rem;">payables</span></th>
+                    <th class="text-end">Paid<br><span class="fw-normal opacity-75" style="font-size: 0.65rem;">(abs)</span></th>
+                    {% endif %}
+                    <th class="text-end">Balance <span class="fw-normal opacity-75" style="font-size: 0.65rem;">(all-time)</span></th>
+                    <th class="text-end" style="min-width: 220px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in supplier_rows %}
+                <tr>
+                    <td>
+                        <strong>{{ row.supplier.name }}</strong>
+                        {% if not row.supplier.is_active %}<span class="badge bg-secondary ms-1">Inactive</span>{% endif %}
+                    </td>
+                    {% if month_filter_active %}
+                    <td class="text-end">
+                        {% if row.period_purchases > 0 %}<span class="sa-badge-ok px-2 py-1 rounded fw-semibold">{{ row.period_purchases|floatformat:2|intcomma }}</span>{% else %}<span class="text-muted">{{ row.period_purchases|floatformat:2|intcomma }}</span>{% endif %}
+                    </td>
+                    <td class="text-end">{% if row.period_manual > 0 %}<span class="fw-semibold">{{ row.period_manual|floatformat:2|intcomma }}</span>{% else %}<span class="text-muted">{{ row.period_manual|floatformat:2|intcomma }}</span>{% endif %}</td>
+                    <td class="text-end">{% if row.period_payments_abs > 0 %}<span class="text-success fw-semibold">{{ row.period_payments_abs|floatformat:2|intcomma }}</span>{% else %}<span class="text-muted">{{ row.period_payments_abs|floatformat:2|intcomma }}</span>{% endif %}</td>
+                    {% endif %}
+                    <td class="text-end">
+                        {% if row.balance > 0 %}
+                        <span class="sa-badge-owe px-2 py-1 rounded">{{ row.balance|floatformat:2|intcomma }}</span>
+                        {% elif row.balance < 0 %}
+                        <span class="sa-badge-ok px-2 py-1 rounded">{{ row.balance|floatformat:2|intcomma }}</span>
+                        {% else %}
+                        <span class="text-muted">{{ row.balance|floatformat:2|intcomma }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">
+                        <div class="btn-group flex-wrap justify-content-end" role="group">
+                            <a href="{% url 'hospital:supplier_account_detail' supplier_id=row.supplier.id %}" class="btn btn-sm btn-primary"><i class="bi bi-journal-text"></i> Ledger</a>
+                            <a href="{% url 'hospital:supplier_account_detail' supplier_id=row.supplier.id %}#record-payable" class="btn btn-sm btn-outline-warning"><i class="bi bi-plus-circle"></i> Payable</a>
+                            <a href="{% url 'hospital:supplier_account_detail' supplier_id=row.supplier.id %}#record-payment" class="btn btn-sm btn-outline-success"><i class="bi bi-cash"></i> Pay</a>
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="{% if month_filter_active %}6{% else %}3{% endif %}" class="text-muted p-5 text-center">No suppliers defined.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <p class="text-muted small mt-3 mb-0"><i class="bi bi-shield-lock"></i> Opening <strong>Payable</strong> or <strong>Pay</strong> may ask you to confirm your password (same as other sensitive finance screens).</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    const root = document.getElementById('supplier-accounts-chart-data');
+    if (!root || !window.Chart) return;
+    let payload;
+    try { payload = JSON.parse(root.textContent); } catch (e) { return; }
+
+    const isDark = document.body.classList.contains('theme-dark');
+    const gridColor = isDark ? 'rgba(148,163,184,0.12)' : 'rgba(0,0,0,0.06)';
+    const tickColor = isDark ? '#cbd5e1' : '#64748b';
+    const common = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { labels: { color: tickColor, boxWidth: 12, font: { size: 11 } } },
+        },
+        scales: {
+            x: { ticks: { color: tickColor, maxRotation: 0 }, grid: { color: gridColor } },
+            y: { ticks: { color: tickColor }, grid: { color: gridColor } },
+        },
+    };
+
+    const mLabels = payload.monthLabels || [];
+    const hi = (typeof payload.trendHighlightIndex === 'number' && payload.trendHighlightIndex >= 0) ? payload.trendHighlightIndex : -1;
+    const nBars = mLabels.length || 0;
+    const dimA = 0.36;
+    const hiA = 0.93;
+    function barColors(rgb, otherA) {
+        if (hi < 0 || nBars <= 0) return `rgba(${rgb}, ${otherA})`;
+        return Array.from({ length: nBars }, (_, i) => `rgba(${rgb}, ${i === hi ? hiA : dimA})`);
+    }
+    const ctxM = document.getElementById('supplierMonthlyChart');
+    if (ctxM && mLabels.length) {
+        new Chart(ctxM, {
+            type: 'bar',
+            data: {
+                labels: mLabels,
+                datasets: [
+                    { label: 'Stock / lab receipts', data: payload.monthStock || [], backgroundColor: barColors('13, 148, 136', 0.75), borderRadius: 6 },
+                    { label: 'Manual payables', data: payload.monthManual || [], backgroundColor: barColors('124, 58, 237', 0.72), borderRadius: 6 },
+                    { label: 'Payments (abs)', data: payload.monthPayments || [], backgroundColor: barColors('220, 38, 38', 0.68), borderRadius: 6 },
+                ],
+            },
+            options: {
+                ...common,
+                plugins: {
+                    ...common.plugins,
+                    tooltip: {
+                        callbacks: {
+                            label: (c) => (c.dataset.label || '') + ': GHS ' + Number(c.parsed.y || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+                        },
+                    },
+                },
+            },
+        });
+    } else if (ctxM) {
+        ctxM.parentElement.innerHTML = '<p class="text-muted text-center py-5 mb-0">No ledger activity captured in this twelve‑month window yet.</p>';
+    }
+
+    const pLabels = payload.pieLabels || [];
+    const ctxP = document.getElementById('supplierMixChart');
+    if (ctxP && pLabels.length) {
+        const piePalette = ['rgba(13, 148, 136, 0.85)', 'rgba(124, 58, 237, 0.85)', 'rgba(220, 38, 38, 0.82)', 'rgba(245, 158, 11, 0.88)'];
+        new Chart(ctxP, {
+            type: 'doughnut',
+            data: {
+                labels: pLabels,
+                datasets: [{
+                    data: payload.pieData || [],
+                    backgroundColor: piePalette.slice(0, pLabels.length),
+                    borderWidth: 0,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { color: tickColor, boxWidth: 10 } },
+                    tooltip: {
+                        callbacks: {
+                            label: (c) => (c.label || '') + ': GHS ' + Number(c.raw || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+                        },
+                    },
+                },
+            },
+        });
+    } else if (ctxP) {
+        ctxP.parentElement.innerHTML = '<p class="text-muted text-center py-4 mb-0 small">No posted amounts yet — add stock with supplier/cost or record a payable.</p>';
+    }
+
+    const bLabels = payload.barLabels || [];
+    const purchasesBar = !!payload.barChartPurchasesMode;
+    const ctxB = document.getElementById('supplierTopBarChart');
+    if (ctxB && bLabels.length) {
+        new Chart(ctxB, {
+            type: 'bar',
+            data: {
+                labels: bLabels,
+                datasets: [{
+                    label: purchasesBar ? 'Stock & lab receipts (GHS)' : 'Balance owed (GHS)',
+                    data: payload.barData || [],
+                    backgroundColor: purchasesBar ? 'rgba(13, 148, 136, 0.75)' : 'rgba(180, 83, 9, 0.75)',
+                    borderRadius: 6,
+                }],
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (c) => 'GHS ' + Number(c.parsed.x || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+                        },
+                    },
+                },
+                scales: {
+                    x: { ticks: { color: tickColor }, grid: { color: gridColor } },
+                    y: { ticks: { color: tickColor }, grid: { display: false } },
+                },
+            },
+        });
+    } else if (ctxB) {
+        ctxB.parentElement.innerHTML = purchasesBar
+            ? '<p class="text-muted text-center py-5 mb-0">No stock or lab receipt lines in this month.</p>'
+            : '<p class="text-muted text-center py-5 mb-0">No positive balances right now — suppliers you owe will appear here.</p>';
+    }
+})();
+</script>
+{% endblock %}

@@ -7,13 +7,27 @@ from django.shortcuts import redirect
 from django.urls import reverse
 from .utils_roles import get_user_role
 
+
+def _accountant_path_allowed(path: str, patterns) -> bool:
+    """Match allowed URL prefixes without substring false positives."""
+    for pattern in patterns:
+        if pattern.endswith('/'):
+            if path.startswith(pattern):
+                return True
+        elif path == pattern or path.startswith(f'{pattern}/'):
+            return True
+    return False
+
+
 # URL patterns that accountants are allowed to access
 ACCOUNTING_ALLOWED_PATTERNS = [
     '/hms/accounting',
-    '/hms/accountant',  # All accountant features
+    '/hms/accountant',
+    '/hms/account-officer',
     '/hms/invoice',
     '/hms/payment',
     '/hms/cashier',
+    '/hms/cashier-sessions',  # Session list (hyphenated; not under /hms/cashier/)
     '/hms/revenue',
     '/hms/accounts',
     '/hms/budget',  # Budget vs Actual reports - accountants need access for financial analysis
@@ -22,9 +36,15 @@ ACCOUNTING_ALLOWED_PATTERNS = [
     '/hms/financial',  # Financial reports
     '/hms/receipt',  # Receipt verification (accounting-related)
     '/hms/reports/financial',  # Financial reports
+    '/hms/medical-analytics',  # Clinical analytics (same access as Django admin medical report)
     '/hms/payroll',  # Payroll access for accountants (special case)
     '/hms/hr/payroll',  # HR payroll access
     '/hms/locum',  # Locum doctor payment management
+    # Insurance claims + encounter clinical context (diagnosis) for claim updates
+    '/hms/insurance',
+    '/hms/claims',
+    '/insurance-claims/',  # /hms/patients/<id>/insurance-claims/
+    '/hms/encounter/',  # e.g. /hms/encounter/<id>/full-record/ (singular; not /encounters/)
     '/hms/staff',  # Staff portal - accountants are staff members and need access to their own portal
     '/hms/staff/portal',  # Staff portal dashboard
     '/hms/staff/leave',  # Staff leave requests and history
@@ -45,6 +65,7 @@ ACCOUNTING_ALLOWED_PATTERNS = [
     '/hms/notifications/mark-all-read',  # Allow notification actions
     '/hms/notifications/clear-all',  # Clear all notifications
     '/hms/notifications/',  # Allow notifications list
+    '/hms/chat/',  # Staff direct messaging (available to all authenticated users)
     '/admin/',  # Allow Django admin for account management and other necessary features
 ]
 
@@ -76,7 +97,7 @@ class AccountantRestrictionMiddleware:
                 if current_path.startswith('/api/'):
                     is_accounting_api = any(
                         pattern in current_path 
-                        for pattern in ['invoice', 'payment', 'accounting', 'cashier', 'revenue', 'receipt', 'payroll', 'locum']
+                        for pattern in ['invoice', 'payment', 'accounting', 'cashier', 'revenue', 'receipt', 'payroll', 'locum', 'insurance']
                     )
                     if not is_accounting_api:
                         messages.error(
@@ -97,10 +118,7 @@ class AccountantRestrictionMiddleware:
                     return redirect('hospital:accountant_comprehensive_dashboard')
                 
                 # Check if the current path is accounting-related
-                is_accounting_url = any(
-                    pattern in current_path 
-                    for pattern in ACCOUNTING_ALLOWED_PATTERNS
-                )
+                is_accounting_url = _accountant_path_allowed(current_path, ACCOUNTING_ALLOWED_PATTERNS)
                 
                 # Also allow root dashboard (will redirect to accountant dashboard)
                 if current_path in ['/hms/', '/hms', '/hms/dashboard/', '/hms/dashboard']:

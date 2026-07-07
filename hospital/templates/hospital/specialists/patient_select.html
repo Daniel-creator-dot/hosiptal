@@ -7,22 +7,107 @@
 {% block page_subtitle %}Select a patient to start consultation{% endblock %}
 
 {% block content %}
+<!-- Analytics / Overview -->
+<div class="modern-card mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-3">
+        <div>
+            <h5 style="margin: 0; font-weight: 600;">
+                <i class="bi bi-activity"></i> Active Encounter Overview
+            </h5>
+            <small class="text-muted">
+                {{ analytics.today|date:"D, M d, Y" }} • Showing filtered active encounters for {{ specialty_display }}
+            </small>
+        </div>
+    </div>
+    <div class="row g-3">
+        <div class="col-md-4">
+            <div class="modern-card" style="background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff;">
+                <div style="font-size: 12px; opacity: 0.8;">Filtered Active Patients</div>
+                <div style="font-size: 28px; font-weight: 700;">
+                    {{ analytics.filtered_count }}
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="modern-card" style="background: linear-gradient(135deg, #0ea5e9, #22c55e); color: #fff;">
+                <div style="font-size: 12px; opacity: 0.8;">All Active Patients (Today)</div>
+                <div style="font-size: 28px; font-weight: 700;">
+                    {{ analytics.today_active_all }}
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="modern-card" style="background: linear-gradient(135deg, #f97316, #ef4444); color: #fff;">
+                <div style="font-size: 12px; opacity: 0.8;">All Active Patients (Any Date)</div>
+                <div style="font-size: 28px; font-weight: 700;">
+                    {{ analytics.total_active_all }}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% if analytics.by_type %}
+    <div class="mt-3">
+        <small class="text-muted d-block mb-1">By encounter type (filtered set)</small>
+        <div class="d-flex flex-wrap gap-2">
+            {% for row in analytics.by_type %}
+            <span class="badge-modern badge-secondary">
+                {{ row.encounter_type|default:"Unknown"|upper }}: {{ row.count }}
+            </span>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
 <div class="mb-4">
     <a href="{% url 'hospital:specialist_dashboard' %}" class="btn btn-outline-secondary">
         <i class="bi bi-arrow-left"></i> Back to Specialists
     </a>
 </div>
 
-<!-- Search Box -->
+<!-- Filters / Search -->
 <div class="modern-card mb-4">
-    <form method="get" class="row g-3">
+    <form method="get" class="row g-3 align-items-end">
         <input type="hidden" name="specialty" value="{{ specialty }}">
-        <div class="col-md-10">
+        <div class="col-lg-3 col-md-6">
+            <label class="form-label small text-muted mb-1">Search</label>
             <input type="text" name="q" class="form-control" placeholder="Search by patient name or MRN..." value="{{ search_query }}" title="Enter text" placeholder="Enter text">
         </div>
-        <div class="col-md-2">
+        <div class="col-lg-3 col-md-6">
+            <label class="form-label small text-muted mb-1">From date</label>
+            <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+        </div>
+        <div class="col-lg-3 col-md-6">
+            <label class="form-label small text-muted mb-1">To date</label>
+            <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+        </div>
+        <div class="col-lg-2 col-md-6">
+            <label class="form-label small text-muted mb-1">Encounter type</label>
+            <select name="encounter_type" class="form-select" title="Select option" aria-label="Select option">
+                <option value="">All</option>
+                <option value="er" {% if encounter_type_filter == 'er' %}selected{% endif %}>Emergency</option>
+                <option value="outpatient" {% if encounter_type_filter == 'outpatient' %}selected{% endif %}>Outpatient</option>
+                <option value="inpatient" {% if encounter_type_filter == 'inpatient' %}selected{% endif %}>Inpatient</option>
+                <option value="surgery" {% if encounter_type_filter == 'surgery' %}selected{% endif %}>Surgery</option>
+            </select>
+        </div>
+        <div class="col-lg-1 col-md-6 d-flex gap-2">
             <button type="submit" class="btn btn-primary-modern w-100">
-                <i class="bi bi-search"></i> Search
+                <i class="bi bi-search"></i>
+            </button>
+        </div>
+        <div class="col-12 d-flex flex-wrap gap-2">
+            <a href="?specialty={{ specialty }}" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-x-circle"></i> Clear filters
+            </a>
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="setQuickRange('today')">
+                Today
+            </button>
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="setQuickRange('7')">
+                Last 7 days
+            </button>
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="setQuickRange('30')">
+                Last 30 days
             </button>
         </div>
     </form>
@@ -126,5 +211,31 @@
     <strong>Tip:</strong> Select a patient to start a {{ specialty_display }} consultation. 
     Only active encounters are shown here.
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function setQuickRange(range) {
+        const today = new Date();
+        const toInput = document.querySelector('input[name="date_to"]');
+        const fromInput = document.querySelector('input[name="date_from"]');
+
+        if (!toInput || !fromInput) return;
+
+        const pad = (n) => n.toString().padStart(2, '0');
+        const formatDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+        toInput.value = formatDate(today);
+
+        if (range === 'today') {
+            fromInput.value = formatDate(today);
+        } else {
+            const days = parseInt(range, 10) || 0;
+            const from = new Date(today);
+            from.setDate(from.getDate() - days + 1);
+            fromInput.value = formatDate(from);
+        }
+    }
+</script>
 {% endblock %}
 

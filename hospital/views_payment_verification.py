@@ -303,6 +303,8 @@ def pharmacy_dispensing_workflow(request):
     encounter_invoices = {}
 
     # Add dispensing status to each; ensure corporate/insurance are on invoice and ready_to_dispense
+    from .utils_pharmacy_dispensing_display import attributed_receipt_amounts_for_dispensing
+
     prescriptions_with_status = []
     for rx in prescriptions:
         try:
@@ -383,6 +385,7 @@ def pharmacy_dispensing_workflow(request):
                     payer_display = pi.name
                     payer_id_on_file = getattr(pi, 'pk', None)
 
+        rsplit = attributed_receipt_amounts_for_dispensing(dispensing_record)
         prescriptions_with_status.append({
             'prescription': rx,
             'dispensing_record': dispensing_record,
@@ -391,6 +394,9 @@ def pharmacy_dispensing_workflow(request):
             'payer_label': payer_label,
             'payer_display': payer_display,
             'payer_id_on_file': payer_id_on_file,
+            'receipt_line_amount': rsplit['line_amount'],
+            'receipt_full_amount': rsplit['receipt_full'],
+            'receipt_shared_count': rsplit['shared_count'],
         })
     
     # Filter by status (optional)
@@ -424,18 +430,18 @@ def pharmacy_dispensing_workflow(request):
     walkin_pending_qs = WalkInPharmacySale.objects.filter(
         is_deleted=False,
         payment_status__in=['pending', 'partial']
-    ).order_by('-sale_date')
+    ).select_related('patient').order_by('-sale_date')
 
     walkin_ready_qs = WalkInPharmacySale.objects.filter(
         is_deleted=False,
         payment_status='paid',
         is_dispensed=False
-    ).order_by('-sale_date')
+    ).select_related('patient').order_by('-sale_date')
 
     walkin_dispensed_qs = WalkInPharmacySale.objects.filter(
         is_deleted=False,
         is_dispensed=True
-    ).order_by('-dispensed_at')
+    ).select_related('patient').order_by('-dispensed_at')
 
     walkin_stats = {
         'pending': walkin_pending_qs.count(),
@@ -557,7 +563,7 @@ def verify_payment_for_pharmacy(request, prescription_id):
             drug_to_dispense = dispensing_record.drug_to_dispense or prescription.drug
             if drug_to_dispense and quantity > 0 and not getattr(dispensing_record, 'stock_reduced_at', None):
                 from .pharmacy_stock_utils import reduce_pharmacy_stock
-                shortfall = reduce_pharmacy_stock(drug_to_dispense, quantity)
+                shortfall = reduce_pharmacy_stock(drug_to_dispense, quantity)['shortfall']
                 if shortfall > 0:
                     messages.warning(
                         request,

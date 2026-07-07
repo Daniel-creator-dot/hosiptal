@@ -14,7 +14,7 @@ if %errorlevel% neq 0 (
 )
 
 echo Creating database backup...
-docker-compose exec web python manage.py db_backup --compress --cleanup --keep-days 30
+docker-compose exec web python manage.py db_backup --compress --cleanup --keep-days 14
 
 echo.
 echo ✅ Backup completed!

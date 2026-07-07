@@ -107,6 +107,7 @@ class UndepositedFunds(BaseModel):
                 'radiology': Account.objects.filter(account_code='4160').first(),
                 'dental': Account.objects.filter(account_code='4170').first(),
                 'physiotherapy': Account.objects.filter(account_code='4180').first(),
+                'consumables': Account.objects.filter(account_code='4190').first(),
             }
             
             # Create journal entry
@@ -219,7 +220,15 @@ class InsuranceReceivableEntry(BaseModel):
     
     # Links
     journal_entry = models.ForeignKey(AdvancedJournalEntry, on_delete=models.SET_NULL, null=True, blank=True)
-    
+    invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='insurance_receivable_entries',
+        help_text='Source invoice for allocation and reporting (set automatically from billing).',
+    )
+
     # Payment tracking
     amount_received = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     amount_rejected = models.DecimalField(max_digits=15, decimal_places=2, default=0)
@@ -255,6 +264,116 @@ class InsuranceReceivableEntry(BaseModel):
         value = f"{prefix}{timestamp}{suffix}"
         return value if (value and value.strip()) else f"{prefix}{uuid.uuid4().hex[:12]}"
 
+    def match_to_revenue(self, user):
+        """
+        Match insurance/corporate receivable to revenue accounts after 48 hours.
+        Creates journal entries:
+        Debit: Accounts Receivable (payer-specific)
+        Credit: Revenue accounts (4100–4190)
+        """
+        if self.journal_entry_id:
+            return self.journal_entry
+
+        if self.status == 'paid':
+            raise ValueError("Fully paid entries already have revenue via payment GL")
+
+        if self.status not in ('pending', 'partially_paid'):
+            raise ValueError("Only pending or partially_paid entries can be matched to revenue")
+
+        credit_amount = Decimal(str(self.outstanding_amount or 0))
+        if credit_amount <= 0:
+            raise ValueError("No outstanding credit amount to match")
+
+        from hospital.services.credit_revenue_service import (
+            REV_TYPE_TO_ACCOUNT_CODE,
+            prorate_ire_revenue_amounts,
+            resolve_payer_ar_account_meta,
+        )
+
+        revenue_amounts = prorate_ire_revenue_amounts(self, credit_amount)
+        if not revenue_amounts:
+            raise ValueError("Could not compute revenue breakdown for matching")
+
+        with transaction.atomic():
+            ar_code, ar_name = resolve_payer_ar_account_meta(self.payer)
+            ar_account, _ = Account.objects.get_or_create(
+                account_code=ar_code,
+                defaults={
+                    'account_name': ar_name,
+                    'account_type': 'asset',
+                },
+            )
+
+            revenue_accounts = {}
+            for rev_type, code in REV_TYPE_TO_ACCOUNT_CODE.items():
+                revenue_accounts[rev_type] = Account.objects.filter(account_code=code).first()
+
+            journal, _ = Journal.objects.get_or_create(
+                code='SALES',
+                defaults={'name': 'Sales Journal', 'journal_type': 'sales'},
+            )
+
+            je = AdvancedJournalEntry.objects.create(
+                journal=journal,
+                entry_date=self.entry_date,
+                description=f"Credit revenue matching - {self.payer.name} - {self.entry_number}",
+                reference=self.entry_number,
+                created_by=user,
+                status='draft',
+            )
+
+            line_number = 1
+            AdvancedJournalEntryLine.objects.create(
+                journal_entry=je,
+                line_number=line_number,
+                account=ar_account,
+                description=f"Accounts Receivable - {self.payer.name}",
+                debit_amount=credit_amount,
+                credit_amount=0,
+            )
+            line_number += 1
+
+            credit_total = Decimal('0.00')
+            for rev_type, amount in revenue_amounts.items():
+                amount = Decimal(str(amount or 0))
+                if amount <= 0:
+                    continue
+                account = revenue_accounts.get(rev_type)
+                if not account:
+                    continue
+                AdvancedJournalEntryLine.objects.create(
+                    journal_entry=je,
+                    line_number=line_number,
+                    account=account,
+                    description=f"{rev_type.title()} revenue",
+                    debit_amount=0,
+                    credit_amount=amount,
+                )
+                credit_total += amount
+                line_number += 1
+
+            if credit_total != credit_amount and line_number > 2:
+                diff = credit_amount - credit_total
+                last_line = je.lines.order_by('-line_number').first()
+                if last_line and diff != 0:
+                    last_line.credit_amount += diff
+                    last_line.save(update_fields=['credit_amount'])
+                    credit_total = credit_amount
+
+            je.total_debit = credit_amount
+            je.total_credit = credit_amount
+            je.save()
+
+            je.post(user)
+
+            self.status = 'matched'
+            self.matched_at = timezone.now()
+            self.matched_by = user
+            self.journal_entry = je
+            self.save()
+
+            return je
+
 
 class CorporateReceivableEntry(InsuranceReceivableEntry):
     """Proxy model for Corporate Receivable Entries - separates corporate from insurance"""
@@ -280,109 +399,6 @@ class CorporateReceivableEntry(InsuranceReceivableEntry):
         prefix = "AR"
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
         return f"{prefix}{timestamp}"
-    
-    def match_to_revenue(self, user):
-        """
-        Match insurance receivable to revenue accounts after 48 hours
-        Creates journal entries:
-        Debit: Accounts Receivable (Insurance Company)
-        Credit: Revenue accounts
-        """
-        if self.status != 'pending':
-            raise ValueError("Only pending entries can be matched to revenue")
-        
-        with transaction.atomic():
-            # Get or create AR account for this payer
-            ar_account, _ = Account.objects.get_or_create(
-                account_code=f'1200-{self.payer.id}',
-                defaults={
-                    'account_name': f'Accounts Receivable - {self.payer.name}',
-                    'account_type': 'asset',
-                }
-            )
-            
-            # Get revenue accounts
-            revenue_accounts = {
-                'registration': Account.objects.filter(account_code='4100').first(),
-                'consultation': Account.objects.filter(account_code='4110').first(),
-                'laboratory': Account.objects.filter(account_code='4120').first(),
-                'pharmacy': Account.objects.filter(account_code='4130').first(),
-                'surgeries': Account.objects.filter(account_code='4140').first(),
-                'admissions': Account.objects.filter(account_code='4150').first(),
-                'radiology': Account.objects.filter(account_code='4160').first(),
-                'dental': Account.objects.filter(account_code='4170').first(),
-                'physiotherapy': Account.objects.filter(account_code='4180').first(),
-            }
-            
-            # Create journal entry
-            journal, _ = Journal.objects.get_or_create(
-                code='SALES',
-                defaults={'name': 'Sales Journal', 'journal_type': 'sales'}
-            )
-            
-            je = AdvancedJournalEntry.objects.create(
-                journal=journal,
-                entry_date=self.entry_date,
-                description=f"Credit revenue matching - {self.payer.name} - {self.entry_number}",
-                reference=self.entry_number,
-                created_by=user,
-                status='draft',
-            )
-            
-            line_number = 1
-            
-            # Debit: Accounts Receivable (increase asset)
-            AdvancedJournalEntryLine.objects.create(
-                journal_entry=je,
-                line_number=line_number,
-                account=ar_account,
-                description=f"Accounts Receivable - {self.payer.name}",
-                debit_amount=self.total_amount,
-                credit_amount=0,
-            )
-            line_number += 1
-            
-            # Credit: Revenue accounts (increase revenue)
-            revenue_amounts = {
-                'registration': self.registration_amount,
-                'consultation': self.consultation_amount,
-                'laboratory': self.laboratory_amount,
-                'pharmacy': self.pharmacy_amount,
-                'surgeries': self.surgeries_amount,
-                'admissions': self.admissions_amount,
-                'radiology': self.radiology_amount,
-                'dental': self.dental_amount,
-                'physiotherapy': self.physiotherapy_amount,
-            }
-            
-            for rev_type, amount in revenue_amounts.items():
-                if amount > 0 and revenue_accounts[rev_type]:
-                    AdvancedJournalEntryLine.objects.create(
-                        journal_entry=je,
-                        line_number=line_number,
-                        account=revenue_accounts[rev_type],
-                        description=f"{rev_type.title()} revenue",
-                        debit_amount=0,
-                        credit_amount=amount,
-                    )
-                    line_number += 1
-            
-            # Update totals
-            je.total_debit = self.total_amount
-            je.total_credit = self.total_amount
-            je.save()
-            
-            # Post journal entry
-            je.post(user)
-            
-            # Update status
-            self.status = 'matched'
-            self.matched_at = timezone.now()
-            self.matched_by = user
-            self.journal_entry = je
-            self.save()
-            
-            return je
 
 
 class InsurancePaymentReceived(BaseModel):
@@ -442,11 +458,13 @@ class InsurancePaymentReceived(BaseModel):
         4. Credit: Accounts Receivable (total amount)
         """
         with transaction.atomic():
-            # Get or create accounts
+            from hospital.services.credit_revenue_service import resolve_payer_ar_account_meta
+
+            ar_code, ar_name = resolve_payer_ar_account_meta(self.payer)
             ar_account, _ = Account.objects.get_or_create(
-                account_code=f'1200-{self.payer.id}',
+                account_code=ar_code,
                 defaults={
-                    'account_name': f'Accounts Receivable - {self.payer.name}',
+                    'account_name': ar_name,
                     'account_type': 'asset',
                 }
             )
@@ -549,11 +567,12 @@ class InsurancePaymentReceived(BaseModel):
                 self.receivable_entry.amount_received += self.amount_received
                 self.receivable_entry.amount_rejected += self.amount_rejected
                 self.receivable_entry.withholding_tax += self.withholding_tax
-                self.receivable_entry.outstanding_amount = (
-                    self.receivable_entry.total_amount - 
-                    self.receivable_entry.amount_received - 
-                    self.receivable_entry.amount_rejected - 
-                    self.receivable_entry.withholding_tax
+                self.receivable_entry.outstanding_amount = max(
+                    Decimal('0.00'),
+                    self.receivable_entry.total_amount
+                    - self.receivable_entry.amount_received
+                    - self.receivable_entry.amount_rejected
+                    - self.receivable_entry.withholding_tax,
                 )
                 
                 if self.receivable_entry.outstanding_amount <= 0:

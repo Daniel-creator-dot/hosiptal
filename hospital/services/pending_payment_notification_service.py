@@ -8,6 +8,8 @@ from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
+NON_CASH_PAYER_TYPES = frozenset({'insurance', 'private', 'nhis', 'corporate'})
+
 SERVICE_TYPE_LAB = 'lab'
 SERVICE_TYPE_IMAGING = 'imaging'
 SERVICE_TYPE_PRESCRIPTION = 'prescription'
@@ -17,6 +19,67 @@ SERVICE_LABELS = {
     SERVICE_TYPE_IMAGING: 'Imaging',
     SERVICE_TYPE_PRESCRIPTION: 'Prescription',
 }
+
+
+def should_send_payment_notification_sms(
+    *,
+    patient=None,
+    invoice=None,
+    encounter=None,
+    payment_receipt=None,
+):
+    """
+    Payment SMS (pending payment, receipt, overdue reminder) is for cash billing only.
+    Skip insurance, NHIS, private insurance, and corporate payers.
+    """
+    if payment_receipt is not None:
+        patient = patient or getattr(payment_receipt, 'patient', None)
+        invoice = invoice or getattr(payment_receipt, 'invoice', None)
+
+    if invoice is not None:
+        patient = patient or getattr(invoice, 'patient', None)
+        if not encounter:
+            encounter = getattr(invoice, 'encounter', None)
+
+        payer = getattr(invoice, 'payer', None)
+        if payer and not getattr(payer, 'is_deleted', False):
+            payer_type = (getattr(payer, 'payer_type', '') or 'cash').strip().lower()
+            if payer_type in NON_CASH_PAYER_TYPES:
+                return False
+            # Invoice payer is cash — still verify patient is not corporate/insurance below.
+
+    if not patient:
+        return False
+
+    # Fast path: primary_insurance on patient record
+    primary = getattr(patient, 'primary_insurance', None)
+    if primary and not getattr(primary, 'is_deleted', False):
+        pt = (getattr(primary, 'payer_type', '') or 'cash').strip().lower()
+        if pt in NON_CASH_PAYER_TYPES:
+            return False
+
+    # Active corporate employee enrollment
+    try:
+        from hospital.models_enterprise_billing import CorporateEmployee
+
+        if CorporateEmployee.objects.filter(
+            patient=patient,
+            is_active=True,
+            is_deleted=False,
+            corporate_account__isnull=False,
+        ).exists():
+            return False
+    except Exception:
+        pass
+
+    try:
+        from hospital.utils_billing import get_patient_payer_info
+
+        info = get_patient_payer_info(patient, encounter)
+        return not info.get('is_insurance_or_corporate', False)
+    except Exception as exc:
+        logger.debug('Payer lookup failed for payment SMS guard: %s', exc)
+        return False
 
 
 def notify_patient_pending_payment(patient, service_type, service_name, amount,
@@ -40,6 +103,13 @@ def notify_patient_pending_payment(patient, service_type, service_name, amount,
 
     if not patient:
         result['errors'].append('Patient is required')
+        return result
+
+    if not should_send_payment_notification_sms(patient=patient):
+        logger.debug(
+            "Skipping pending payment SMS for non-cash patient %s",
+            getattr(patient, 'id', ''),
+        )
         return result
 
     try:

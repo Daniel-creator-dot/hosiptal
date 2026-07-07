@@ -3,13 +3,14 @@
 Cannot dispense drugs without payment verification
 """
 from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
 from django.contrib import messages
 from django.http import JsonResponse
 from django.utils import timezone
 from django.db import transaction, OperationalError, connection
-from django.db.models import Q, DateTimeField
+from django.db.models import Q, DateTimeField, F
 from django.db.models.functions import Coalesce
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
@@ -32,6 +33,11 @@ from .models_pharmacy_walkin import WalkInPharmacySale
 from .utils_billing import get_drug_price_for_prescription
 
 logger = logging.getLogger(__name__)
+
+
+def _redirect_pharmacy_dispensing_queue_all():
+    """Outpatients / walk-in items disappear from the inpatient-only queue; send users back to the full list."""
+    return redirect(f"{reverse('hospital:pharmacy_pending_dispensing')}?queue=all")
 
 DB_LOCK_RETRY_ATTEMPTS = 3
 
@@ -75,14 +81,10 @@ def pharmacy_pending_dispensing(request):
     Show prescriptions awaiting payment or ready for dispensing
     Pharmacists use this to see what can/cannot be dispensed
     """
-    # Ensure every prescription has a dispensing record
-    missing_dispensing = Prescription.objects.filter(
-        is_deleted=False,
-        dispensing_record__isnull=True
-    ).select_related('drug')[:100]
-    
-    for rx in missing_dispensing:
-        AutoBillingService.create_pharmacy_dispensing_record_only(rx)
+    # Ensure every prescription that has been *released to pharmacy* has a dispensing record.
+    # OPD prescriptions are gated on consultation completion; IPD (admitted) or completed-OPD
+    # prescriptions are backfilled here so doctors' in-progress drafts stay hidden from pharmacy.
+    AutoBillingService.backfill_missing_pharmacy_dispensing(limit=100)
     
     from .models import InvoiceLine
     
@@ -94,19 +96,44 @@ def pharmacy_pending_dispensing(request):
         waived_at__isnull=False
     ).values_list('prescription_id', flat=True)
     
-    base_dispensing_qs = PharmacyDispensing.objects.select_related(
-        'prescription__drug',
-        'prescription__order__encounter__patient',
-        'prescription__prescribed_by__user',
-        'patient',
-        'patient__primary_insurance',
-        'payment_receipt__invoice__payer',
-        'dispensed_by__user'
-    ).prefetch_related(
-        'prescription__invoice_lines'
-    ).exclude(
-        prescription_id__in=waived_prescription_ids
-    ).order_by('-created')
+    base_dispensing_qs = (
+        PharmacyDispensing.objects.filter(is_deleted=False, prescription__is_deleted=False)
+        .select_related(
+            'prescription__drug',
+            'prescription__order__encounter__patient',
+            'prescription__order__encounter__admission',
+            'prescription__prescribed_by__user',
+            'patient',
+            'patient__primary_insurance',
+            'payment_receipt__invoice__payer',
+            'dispensed_by__user',
+        )
+        .prefetch_related('prescription__invoice_lines')
+        .exclude(prescription_id__in=waived_prescription_ids)
+        .order_by('-created')
+    )
+
+    queue = (request.GET.get('queue') or 'all').strip().lower()
+    if queue not in ('all', 'inpatient'):
+        queue = 'all'
+
+    date_from = _parse_filter_date(request.GET.get('date_from'))
+    date_to = _parse_filter_date(request.GET.get('date_to'))
+    # Inpatient ward queue: default prescribed-date window to today when not specified
+    if queue == 'inpatient' and date_from is None and date_to is None:
+        today = timezone.localdate()
+        date_from = today
+        date_to = today
+
+    if queue == 'inpatient':
+        base_dispensing_qs = base_dispensing_qs.filter(
+            prescription__order__encounter__status='active',
+            prescription__order__encounter__is_deleted=False,
+            prescription__order__is_deleted=False,
+            prescription__order__encounter__admission__status='admitted',
+            prescription__order__encounter__admission__discharge_date__isnull=True,
+            prescription__order__encounter__admission__is_deleted=False,
+        )
 
     # Safety net: rows still pending after invoice was settled (legacy / edge paths)
     try:
@@ -120,15 +147,17 @@ def pharmacy_pending_dispensing(request):
         payment_receipt_id__isnull=True,
     )
     # Paid – ready to dispense: built after date params (prescribed date vs paid/ready date)
+    # Paid / ready: include partial fills until quantity_dispensed reaches quantity_ordered.
+    # (Previously excluding partially_dispensed hid follow-up dispenses from the green queue.)
     paid_ready_base = base_dispensing_qs.filter(
         Q(dispensing_status='ready_to_dispense') | Q(payment_receipt_id__isnull=False)
     ).exclude(
-        dispensing_status__in=['partially_dispensed', 'fully_dispensed']
+        dispensing_status='fully_dispensed'
+    ).filter(
+        Q(quantity_ordered__lte=0) | Q(quantity_dispensed__lt=F('quantity_ordered'))
     )
     dispensed_qs = base_dispensing_qs.filter(dispensing_status__in=['partially_dispensed', 'fully_dispensed'])
 
-    date_from = _parse_filter_date(request.GET.get('date_from'))
-    date_to = _parse_filter_date(request.GET.get('date_to'))
     date_filter_active = date_from is not None or date_to is not None
 
     paid_from = _parse_filter_date(request.GET.get('paid_from'))
@@ -400,31 +429,29 @@ def pharmacy_pending_dispensing(request):
     recent_limit = 100 if date_filter_active else 20
     recently_dispensed = list(dispensed_qs.order_by('-dispensed_at', '-created')[:recent_limit])
 
-    history_qs = PharmacyDispenseHistory.objects.select_related(
-        'prescription__drug',
-        'patient',
-        'dispensed_by__user',
-        'payment_receipt'
-    ).order_by('-dispensed_at')[:100]
+    if queue == 'inpatient':
+        walkin_pending_qs = WalkInPharmacySale.objects.none()
+        walkin_ready_qs = WalkInPharmacySale.objects.none()
+        walkin_dispensed_qs = WalkInPharmacySale.objects.none()
+    else:
+        walkin_pending_qs = WalkInPharmacySale.objects.filter(
+            is_deleted=False,
+            payment_status__in=['pending', 'partial']
+        ).select_related('payer', 'patient').order_by('-sale_date')
+        walkin_ready_qs = WalkInPharmacySale.objects.filter(
+            is_deleted=False,
+            payment_status='paid',
+            is_dispensed=False
+        ).select_related('payer', 'patient').order_by('-sale_date')
+        walkin_dispensed_qs = WalkInPharmacySale.objects.filter(
+            is_deleted=False,
+            is_dispensed=True
+        ).select_related('patient').order_by('-dispensed_at')
 
-    walkin_pending_qs = WalkInPharmacySale.objects.filter(
-        is_deleted=False,
-        payment_status__in=['pending', 'partial']
-    ).select_related('payer').order_by('-sale_date')
-    walkin_ready_qs = WalkInPharmacySale.objects.filter(
-        is_deleted=False,
-        payment_status='paid',
-        is_dispensed=False
-    ).select_related('payer').order_by('-sale_date')
-    walkin_dispensed_qs = WalkInPharmacySale.objects.filter(
-        is_deleted=False,
-        is_dispensed=True
-    ).order_by('-dispensed_at')
-
-    if bounds_start:
+    if queue != 'inpatient' and bounds_start:
         walkin_pending_qs = walkin_pending_qs.filter(sale_date__gte=bounds_start)
         walkin_dispensed_qs = walkin_dispensed_qs.filter(dispensed_at__gte=bounds_start)
-    if bounds_end_excl:
+    if queue != 'inpatient' and bounds_end_excl:
         walkin_pending_qs = walkin_pending_qs.filter(sale_date__lt=bounds_end_excl)
         walkin_dispensed_qs = walkin_dispensed_qs.filter(dispensed_at__lt=bounds_end_excl)
 
@@ -435,10 +462,32 @@ def pharmacy_pending_dispensing(request):
         if paid_bounds_end_excl:
             walkin_ready_qs = walkin_ready_qs.filter(sale_date__lt=paid_bounds_end_excl)
     else:
-        if bounds_start:
+        if queue != 'inpatient' and bounds_start:
             walkin_ready_qs = walkin_ready_qs.filter(sale_date__gte=bounds_start)
-        if bounds_end_excl:
+        if queue != 'inpatient' and bounds_end_excl:
             walkin_ready_qs = walkin_ready_qs.filter(sale_date__lt=bounds_end_excl)
+
+    history_qs = PharmacyDispenseHistory.objects.filter(is_deleted=False).select_related(
+        'prescription__drug',
+        'prescription__order__encounter',
+        'patient',
+        'dispensed_by__user',
+        'payment_receipt',
+    )
+    if queue == 'inpatient':
+        history_qs = history_qs.filter(
+            prescription__order__encounter__status='active',
+            prescription__order__encounter__is_deleted=False,
+            prescription__order__is_deleted=False,
+            prescription__order__encounter__admission__status='admitted',
+            prescription__order__encounter__admission__discharge_date__isnull=True,
+            prescription__order__encounter__admission__is_deleted=False,
+        )
+        if bounds_start:
+            history_qs = history_qs.filter(dispensed_at__gte=bounds_start)
+        if bounds_end_excl:
+            history_qs = history_qs.filter(dispensed_at__lt=bounds_end_excl)
+    history_qs = history_qs.order_by('-dispensed_at')[:100]
 
     walkin_list_limit = 200 if date_filter_active else 50
     walkin_pending_all = list(walkin_pending_qs[:walkin_list_limit])
@@ -495,6 +544,8 @@ def pharmacy_pending_dispensing(request):
         pass
     stats['pending_insurance_count'] = pending_insurance_count
 
+    from hospital.services.pharmacy_queue_service import pending_pharmacy_alert_items
+
     context = {
         'title': '💊 Pharmacy Dispensing - Payment Enforced',
         'pending_payment': pending_payment,
@@ -516,6 +567,10 @@ def pharmacy_pending_dispensing(request):
         'paid_date_filter_active': paid_date_filter_active,
         'payment_filter': payment_filter,
         'read_filter_active': read_filter_active,
+        'pharmacy_queue': queue,
+        'inpatient_queue_active': queue == 'inpatient',
+        'pharmacy_pending_alerts': pending_pharmacy_alert_items(limit=25),
+        'pharmacy_page_loaded_at': timezone.now().isoformat(),
     }
     return render(request, 'hospital/pharmacy_dispensing_enforced.html', context)
 
@@ -543,7 +598,7 @@ def send_prescribe_sale_to_insurance(request, sale_id):
                 request,
                 'No Insurance/Corporate on file for this patient. Set Payer on the sale (View Sale → edit) or add primary insurance to the patient.'
             )
-            return redirect('hospital:pharmacy_pending_dispensing')
+            return _redirect_pharmacy_dispensing_queue_all()
         sale.payer = payer
         sale.save(update_fields=['payer', 'modified'])
 
@@ -559,7 +614,7 @@ def send_prescribe_sale_to_insurance(request, sale_id):
     except Exception as e:
         logger.exception('Send prescribe sale to insurance failed: %s', e)
         messages.error(request, f'Could not send to insurance: {str(e)}')
-    return redirect('hospital:pharmacy_pending_dispensing')
+    return _redirect_pharmacy_dispensing_queue_all()
 
 
 @login_required
@@ -574,7 +629,7 @@ def send_prescription_to_payer(request, prescription_id):
 
     if not (is_pharmacy_user(request.user) or getattr(request.user, 'is_superuser', False)):
         messages.error(request, 'Only pharmacy staff can send prescriptions to payer.')
-        return redirect('hospital:pharmacy_pending_dispensing')
+        return _redirect_pharmacy_dispensing_queue_all()
 
     prescription = get_object_or_404(
         Prescription.objects.select_related('order__encounter__patient'),
@@ -585,7 +640,7 @@ def send_prescription_to_payer(request, prescription_id):
     patient = encounter.patient if encounter else None
     if not patient:
         messages.error(request, 'Patient information missing for this prescription.')
-        return redirect('hospital:pharmacy_pending_dispensing')
+        return _redirect_pharmacy_dispensing_queue_all()
 
     try:
         payer_info = get_patient_payer_info(patient, encounter)
@@ -662,7 +717,20 @@ def pharmacy_dispense_enforced(request, prescription_id):
     """
     Dispense medication - with integrated payment option
     """
-    prescription = get_object_or_404(Prescription, id=prescription_id, is_deleted=False)
+    prescription_any = Prescription.objects.filter(id=prescription_id).first()
+    if prescription_any is None:
+        messages.error(
+            request,
+            'No prescription exists for this link. Check the ID or open the patient from the pharmacy queue.',
+        )
+        return _redirect_pharmacy_dispensing_queue_all()
+    if prescription_any.is_deleted:
+        messages.warning(
+            request,
+            'This prescription was removed from the chart. It can no longer be dispensed from this link.',
+        )
+        return _redirect_pharmacy_dispensing_queue_all()
+    prescription = prescription_any
     patient = prescription.order.encounter.patient
 
     # Get or create dispensing record (no bill yet – pharmacy must Send to Cashier/Payer first)
@@ -715,7 +783,7 @@ def pharmacy_dispense_enforced(request, prescription_id):
                 request,
                 'This medication was waived from the bill. Quantity has been returned to stock.',
             )
-            return redirect('hospital:pharmacy_pending_dispensing')
+            return _redirect_pharmacy_dispensing_queue_all()
         if line_any and not line_any.waived_at:
             invoice_line = line_any
             requires_cash_payment = invoice_line.patient_pay_cash
@@ -737,10 +805,21 @@ def pharmacy_dispense_enforced(request, prescription_id):
     
     # Check payment status
     payment_status = AutoBillingService.check_payment_status('pharmacy', prescription_id)
-    is_already_dispensed = bool(dispensing_record and dispensing_record.dispensing_status in ['partially_dispensed', 'fully_dispensed'])
+
+    def _dispense_progress(dr):
+        if not dr:
+            return 0, 0, 0
+        qo = int(dr.quantity_ordered or 0)
+        qd = int(dr.quantity_dispensed or 0)
+        return qo, qd, max(0, qo - qd)
+
     # Corporate/insurance: can dispense when status is ready_to_dispense (bill sent to company; no cash receipt)
     is_corporate_insurance = payer_info.get('is_insurance_or_corporate')
-    can_dispense_corporate = is_corporate_insurance and dispensing_record and dispensing_record.dispensing_status == 'ready_to_dispense'
+    can_dispense_corporate = bool(
+        is_corporate_insurance
+        and dispensing_record
+        and dispensing_record.dispensing_status in ('ready_to_dispense', 'partially_dispensed')
+    )
     can_dispense = payment_status['paid'] or can_dispense_corporate
 
     # Check payment BEFORE allowing any action
@@ -749,8 +828,19 @@ def pharmacy_dispense_enforced(request, prescription_id):
         
         # ENFORCE: Payment must be made at CASHIER first (or approved for corporate/insurance)
         if action == 'dispense':
-            if is_already_dispensed:
-                messages.info(request, 'This medication has already been dispensed. No further action required.')
+            try:
+                dr_chk = prescription.dispensing_record
+            except Exception:
+                dr_chk = None
+            _qo, _qd, _ = _dispense_progress(dr_chk)
+            if dr_chk and _qo > 0 and _qd >= _qo:
+                messages.warning(
+                    request,
+                    'This prescription is already fully dispensed (see audit log below). Do not dispense again.',
+                )
+                return redirect('hospital:pharmacy_dispense_enforced', prescription_id=prescription.id)
+            if dr_chk and _qo <= 0:
+                messages.error(request, 'Ordered quantity is zero; update the prescription before dispensing.')
                 return redirect('hospital:pharmacy_dispense_enforced', prescription_id=prescription.id)
             if not can_dispense:
                 messages.error(
@@ -853,8 +943,14 @@ def pharmacy_dispense_enforced(request, prescription_id):
                             # Check if patient is inpatient - create MAR if needed
                             is_inpatient = encounter.encounter_type == 'inpatient'
                             
-                            # Prevent overdosing
-                            quantity = min(quantity, dispensing_record.quantity_ordered)
+                            # Cap by remaining quantity (prior partial dispenses)
+                            ordered = int(dispensing_record.quantity_ordered or 0)
+                            already = int(dispensing_record.quantity_dispensed or 0)
+                            room = max(0, ordered - already)
+                            quantity = min(quantity, room)
+                            if quantity <= 0:
+                                messages.warning(request, 'No remaining quantity to dispense.')
+                                return redirect('hospital:pharmacy_dispense_enforced', prescription_id=prescription.id)
                             
                             # Update dispensing record manually to guarantee status change
                             dispensing_record.quantity_dispensed = min(
@@ -885,6 +981,12 @@ def pharmacy_dispense_enforced(request, prescription_id):
                                 'counselling_given',
                                 'counselled_by'
                             ])
+
+                            if dispensing_record.dispensing_status == 'fully_dispensed':
+                                from hospital.services.pharmacy_queue_service import (
+                                    resolve_prescription_pharmacy_alerts,
+                                )
+                                resolve_prescription_pharmacy_alerts([prescription.id])
                             
                             dispensed_timestamp = dispensing_record.dispensed_at or timezone.now()
                             
@@ -905,12 +1007,16 @@ def pharmacy_dispense_enforced(request, prescription_id):
                                 dispensed_at=dispensed_timestamp,
                             )
                             
-                            # Reduce pharmacy stock when drugs are dispensed (skip if already reduced at Send to Payer)
-                            # Skip only when insurer/corporate billing already deducted full qty (stock_reduced_at).
-                            if not getattr(dispensing_record, 'stock_reduced_at', None):
+                            # Skip hand-out deduction only when billing logged PHARMACY_DISPENSING (not just stock_reduced_at).
+                            pre_billing = PharmacyStockDeductionLog.objects.filter(
+                                source_type=PharmacyStockDeductionLog.SOURCE_PHARMACY_DISPENSING,
+                                source_id=dispensing_record.id,
+                            ).exists()
+                            skip_pre = bool(getattr(dispensing_record, 'stock_reduced_at', None)) and pre_billing
+                            if not skip_pre:
                                 drug_to_dispense = dispensing_record.drug_to_dispense or prescription.drug
                                 if drug_to_dispense:
-                                    shortfall = reduce_pharmacy_stock_once(
+                                    shortfall, _ = reduce_pharmacy_stock_once(
                                         drug_to_dispense,
                                         quantity,
                                         PharmacyStockDeductionLog.SOURCE_DISPENSE_HISTORY,
@@ -920,12 +1026,10 @@ def pharmacy_dispense_enforced(request, prescription_id):
                                         messages.warning(request, f'⚠️ Insufficient stock for {drug_to_dispense.name}. Short by {shortfall} units.')
                             else:
                                 logger.info(
-                                    "Skipping dispense-time stock deduction for dispensing %s; pre-deduct recorded at %s",
+                                    "Skipping dispense-time stock deduction for dispensing %s; billing pre-deduct log present, stock_reduced_at=%s",
                                     getattr(dispensing_record, 'id', None),
                                     getattr(dispensing_record, 'stock_reduced_at', None),
                                 )
-                            
-                            is_already_dispensed = dispensing_record.is_dispensed
                             
                             # If inpatient, create MAR schedule
                             if is_inpatient:
@@ -954,8 +1058,6 @@ def pharmacy_dispense_enforced(request, prescription_id):
                 
                 if not success:
                     raise OperationalError('database is locked')
-                
-                is_already_dispensed = True
                 
                 receipt_msg = ''
                 if payment_status.get('receipt'):
@@ -1000,11 +1102,25 @@ def pharmacy_dispense_enforced(request, prescription_id):
                 messages.error(request, f'❌ Error dispensing: {str(e)}')
                 return redirect('hospital:pharmacy_dispense_enforced', prescription_id=prescription.id)
     
-    # Get dispensing record
+    # Refresh dispensing record for display (quantities / audit after any POST path that falls through)
     try:
         dispensing_record = prescription.dispensing_record
-    except:
+    except Exception:
         dispensing_record = None
+
+    qty_ordered, qty_dispensed, remaining_to_dispense = _dispense_progress(dispensing_record)
+    is_fully_dispensed = bool(
+        dispensing_record and qty_ordered > 0 and qty_dispensed >= qty_ordered
+    )
+    dispensing_history = list(
+        PharmacyDispenseHistory.objects.filter(
+            prescription=prescription,
+            is_deleted=False,
+        ).select_related(
+            'dispensed_by__user',
+            'payment_receipt',
+        ).order_by('-dispensed_at', '-created')
+    )
     
     # Check for existing receipts for this patient (in case payment was made but not linked)
     recent_receipts = PaymentReceipt.objects.filter(
@@ -1032,7 +1148,11 @@ def pharmacy_dispense_enforced(request, prescription_id):
         'can_dispense': can_dispense,
         'dispensing_record': dispensing_record,
         'receipt': payment_status.get('receipt'),
-        'is_already_dispensed': is_already_dispensed,
+        'is_already_dispensed': is_fully_dispensed,
+        'remaining_to_dispense': remaining_to_dispense,
+        'qty_ordered': qty_ordered,
+        'qty_dispensed': qty_dispensed,
+        'dispensing_history': dispensing_history,
         'recent_receipts': recent_receipts,
         'requires_cash_payment': requires_cash_payment,
         'exclusion_reason': exclusion_reason,

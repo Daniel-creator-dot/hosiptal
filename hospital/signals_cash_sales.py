@@ -32,6 +32,10 @@ def auto_create_cash_sale_from_walkin(sender, instance, created, **kwargs):
     try:
         with transaction.atomic():
             from .models_accounting_advanced import CashSale, Account
+            from hospital.services.service_account_mapping import (
+                CASH_AND_EQUIVALENTS_CODE,
+                CASH_AND_EQUIVALENTS_NAME,
+            )
             
             # Check if CashSale already exists for this walk-in sale
             existing = CashSale.objects.filter(
@@ -54,9 +58,9 @@ def auto_create_cash_sale_from_walkin(sender, instance, created, **kwargs):
             )
             
             cash_account, _ = Account.objects.get_or_create(
-                account_code='1000',
+                account_code=CASH_AND_EQUIVALENTS_CODE,
                 defaults={
-                    'account_name': 'Cash on Hand',
+                    'account_name': CASH_AND_EQUIVALENTS_NAME,
                     'account_type': 'asset',
                     'is_active': True,
                 }

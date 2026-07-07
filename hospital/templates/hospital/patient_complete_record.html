@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load static humanize %}
+{% load static humanize hospital_extras %}
 
 {% block title %}{{ title }}{% endblock %}
 
@@ -241,14 +241,15 @@
                             </thead>
                             <tbody>
                                 {% for result in all_lab_results %}
+                                {% with s=result|lab_list_summary %}
                                 <tr>
                                     <td>{% if result.verified_at %}{{ result.verified_at|date:"M d, Y" }}{% else %}{{ result.created|date:"M d, Y" }}{% endif %}</td>
                                     <td><strong>{{ result.test.name }}</strong></td>
                                     <td class="{% if result.is_abnormal %}text-danger fw-bold{% endif %}" style="font-size: 1.05rem;">
-                                        {{ result.value|default:result.qualitative_result|default:"-" }}
+                                        {% if s.is_pending and result.status != 'completed' %}—{% else %}{{ s.result_text }}{% endif %}
                                         {% if result.is_abnormal %}<i class="bi bi-exclamation-triangle text-danger ms-1"></i>{% endif %}
                                     </td>
-                                    <td class="text-muted small">{% if result.range_low and result.range_high %}{{ result.range_low }}–{{ result.range_high }}{% else %}-{% endif %}</td>
+                                    <td class="text-muted small">{{ s.ref_text }}</td>
                                     <td><span class="badge bg-{% if result.status == 'completed' %}success{% else %}warning{% endif %}">{{ result.get_status_display }}</span></td>
                                     <td>
                                         <a href="{% url 'hospital:print_lab_report' result.id %}" target="_blank" class="btn btn-sm btn-outline-primary" title="View full lab report">
@@ -256,6 +257,7 @@
                                         </a>
                                     </td>
                                 </tr>
+                                {% endwith %}
                                 {% endfor %}
                             </tbody>
                         </table>

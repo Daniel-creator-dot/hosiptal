@@ -16,6 +16,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+try:
+    from hms.py314_compat import apply_pkgutil_find_loader_shim
+    apply_pkgutil_find_loader_shim()
+except Exception:
+    pass
+
 # Fix for Windows colorama OSError: [Errno 22] Invalid argument
 if sys.platform == 'win32':
     os.environ.setdefault('COLORAMA_DISABLE_AUTOWRAP', '1')

@@ -1,13 +1,23 @@
 {% extends 'hospital/base.html' %}
-{% load static %}
+{% load static hospital_extras %}
 
 {% block title %}Edit Lab Result - {{ result.test.name }}{% endblock %}
 {% block page_title %}Edit Lab Result{% endblock %}
 {% block page_subtitle %}{{ result.order.encounter.patient.full_name }} · {{ result.test.name }}{% endblock %}
 
 {% block content %}
+{% lab_order_diagnosis result.order as ordering_diagnosis %}
+{% if ordering_diagnosis %}
+<div class="alert alert-warning border-2 mb-3" role="alert">
+  <div class="fw-semibold"><i class="bi bi-clipboard-pulse me-2"></i>Ordering diagnosis</div>
+  <div class="mt-1">{{ ordering_diagnosis }}</div>
+  {% if result.order.notes %}
+  <div class="small text-muted mt-2 mb-0">Clinical note: {{ result.order.notes }}</div>
+  {% endif %}
+</div>
+{% endif %}
 <div class="modern-card">
-  <form method="post" class="row g-3">
+  <form method="post" class="row g-3" enctype="multipart/form-data">
     {% csrf_token %}
 
     {% if is_single_value %}
@@ -20,6 +30,7 @@
               <th>Parameter</th>
               <th>Value</th>
               <th>Unit (optional)</th>
+              <th>Flag (optional)</th>
             </tr>
           </thead>
           <tbody>
@@ -27,6 +38,7 @@
               <td class="fw-bold">Result</td>
               <td><input type="text" name="result_value" value="{{ details.result_value|default:'' }}" class="form-control" placeholder="e.g. 15.2 or Positive" aria-label="Result value" /></td>
               <td><input type="text" name="result_unit" value="{{ details.result_unit|default:'' }}" class="form-control" placeholder="e.g. ng/mL, g/L" aria-label="Unit" /></td>
+              <td>{% lab_flag_select details 'result_value' %}</td>
             </tr>
           </tbody>
         </table>
@@ -186,17 +198,16 @@
                 id="expected_completion_datetime" 
                 name="expected_completion_datetime" 
                 class="form-control form-control-lg" 
-                value="{% if expected_completion_datetime %}{{ expected_completion_datetime|date:'Y-m-d' }}T{{ expected_completion_datetime|date:'H:i' }}{% endif %}"
-                {% if is_long_test %}required{% endif %}>
+                value="{% if expected_completion_datetime %}{{ expected_completion_datetime|date:'Y-m-d' }}T{{ expected_completion_datetime|date:'H:i' }}{% endif %}">
               {% if is_long_test %}
               <div class="form-text text-primary">
-                <i class="bi bi-info-circle me-1"></i><strong>This test takes {{ tat_minutes }} minutes 
+                <i class="bi bi-info-circle me-1"></i><strong>Typical turnaround: {{ tat_minutes }} minutes
                 {% if tat_minutes >= 1440 %}
                   ({% widthratio tat_minutes 1440 1 %} days)
                 {% elif tat_minutes >= 60 %}
                   ({% widthratio tat_minutes 60 1 %} hours)
                 {% endif %}
-                </strong> - Please set expected completion date and time.
+                </strong> — Expected completion is <strong>optional</strong>; you can save results or upload files anytime.
               </div>
               {% else %}
               <div class="form-text">
@@ -283,10 +294,10 @@
                     {% if doc.uploaded_by %} by {{ doc.uploaded_by.user.get_full_name|default:doc.uploaded_by.user.username }}{% endif %}
                   </small>
                 </div>
-                <a href="{{ doc.file.url }}" target="_blank" class="btn btn-sm btn-outline-primary me-1">
+                <a href="{% url 'hospital:patient_document_file' doc.pk %}" target="_blank" class="btn btn-sm btn-outline-primary me-1">
                   <i class="bi bi-eye me-1"></i>View
                 </a>
-                <a href="{{ doc.file.url }}" download class="btn btn-sm btn-outline-success">
+                <a href="{% url 'hospital:patient_document_file' doc.pk %}?download=1" download class="btn btn-sm btn-outline-success">
                   <i class="bi bi-download me-1"></i>Download
                 </a>
               </div>
@@ -350,26 +361,6 @@ document.addEventListener('DOMContentLoaded', function() {
         btnClearExpected.addEventListener('click', function() {
             if (confirm('Clear expected completion time?')) {
                 expectedCompletionInput.value = '';
-            }
-        });
-    }
-    
-    // Set minimum date to today
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    const minDateTime = `${year}-${month}-${day}T00:00`;
-    
-    if (expectedCompletionInput) {
-        expectedCompletionInput.min = minDateTime;
-        
-        // Validate that selected date is not in the past
-        expectedCompletionInput.addEventListener('change', function() {
-            const selectedDate = new Date(this.value);
-            if (selectedDate < today) {
-                alert('⚠️ Expected completion time cannot be in the past. Please select a future date and time.');
-                this.value = '';
             }
         });
     }

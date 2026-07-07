@@ -138,6 +138,7 @@
                     <option value="consultation" {% if service_filter == 'consultation' %}selected{% endif %}>Consultation</option>
                     <option value="bed" {% if service_filter == 'bed' %}selected{% endif %}>Bed / Admission</option>
                     <option value="invoice" {% if service_filter == 'invoice' %}selected{% endif %}>Invoice</option>
+                    <option value="consumables" {% if service_filter == 'consumables' %}selected{% endif %}>Consumables</option>
                 </select>
                 <label class="d-flex align-items-center gap-1 mb-0">
                     <span class="text-muted small">Date:</span>
@@ -185,14 +186,18 @@
                                                     </small>
                 </div>
                 <div class="text-end">
-                    {% if patient_bill.deposit_applied_to_bill > 0 %}
-                    <div class="text-muted small">Initial: GHS {{ patient_bill.initial_total|floatformat:2 }} → Deposit -GHS {{ patient_bill.deposit_applied_to_bill|floatformat:2 }}</div>
+                    <div class="text-muted small">Amount due (listed services): GHS {{ patient_bill.total|floatformat:2 }}</div>
+                    {% if patient_bill.patient_deposits_recorded_sum and patient_bill.patient_deposits_recorded_sum > 0 %}
+                    <div class="text-muted small">Deposits on file: GHS {{ patient_bill.patient_deposits_recorded_sum|floatformat:2 }}</div>
                     {% endif %}
-                    <div class="total-amount">GHS {{ patient_bill.total_outstanding|floatformat:2 }}</div>
+                    <div class="total-amount">Amount due (this bill): GHS {{ patient_bill.total|floatformat:2 }}</div>
+                    {% if patient_bill.total_outstanding != patient_bill.total %}
+                    <div class="text-muted small">Account balance (all visits): GHS {{ patient_bill.total_outstanding|floatformat:2 }}</div>
+                    {% endif %}
                     {% if patient_bill.deposit_balance > 0 %}
-                    <div class="text-success small">After deposit: GHS {{ patient_bill.amount_due_after_deposit|floatformat:2 }}</div>
+                    <div class="text-muted small">Available deposit: GHS {{ patient_bill.deposit_balance|floatformat:2 }} — apply on Total Bill</div>
                     {% endif %}
-                    <small class="text-muted">{{ patient_bill.services|length }} service(s)</small>
+                    <small class="text-muted">{{ patient_bill.services|length }} pending item(s) on this combined bill</small>
                 </div>
             </div>
             <div class="card-body">
@@ -226,37 +231,87 @@
                                                 <span class="badge bg-warning text-dark service-badge">🛏️ Bed</span>
                                             {% elif service.type == 'invoice' %}
                                                 <span class="badge bg-secondary service-badge">📄 Invoice</span>
+                                            {% elif service.type == 'consumables' %}
+                                                <span class="badge bg-teal service-badge" style="background-color: #0d9488; color: white;">🧴 Consumables</span>
+                                            {% elif service.type == 'invoice_line' %}
+                                                <span class="badge bg-secondary service-badge">📄 Line</span>
                                             {% elif service.type == 'registration_needed' %}
                                                 <span class="badge bg-info service-badge">📋 Reg. Fee</span>
                                             {% else %}
                                                 <span class="badge bg-secondary service-badge">{{ service.type|title }}</span>
                                             {% endif %}
                                         </td>
-                                        <td>{{ service.name }}</td>
-                                        <td class="text-end"><strong>GHS {{ service.price|floatformat:2 }}</strong></td>
+                                        <td>
+                                            {{ service.name }}
+                                            {% if service.is_paid %}
+                                                <span class="badge bg-success ms-2">Paid</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-end">
+                                            {% if service.is_paid %}
+                                                <span class="text-muted"><strong>GHS {{ service.price|floatformat:2 }}</strong></span>
+                                            {% else %}
+                                                <strong>GHS {{ service.price|floatformat:2 }}</strong>
+                                            {% endif %}
+                                        </td>
                                     </tr>
+                                    {% if service.breakdown %}
+                                    <tr class="table-light">
+                                        <td colspan="3" class="py-1 pt-0">
+                                            <table class="table table-sm table-bordered mb-0 ms-2" style="max-width: 96%;">
+                                                <thead class="table-light">
+                                                    <tr>
+                                                        <th class="py-1 small">Description</th>
+                                                        <th class="py-1 text-center small" style="width:50px;">Qty</th>
+                                                        <th class="py-1 text-end small" style="width:70px;">Unit</th>
+                                                        <th class="py-1 text-end small" style="width:80px;">Amount</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {% for row in service.breakdown %}
+                                                    {% if not row.is_waived %}
+                                                    <tr>
+                                                        <td class="py-1 small">{{ row.description|default:"—" }}</td>
+                                                        <td class="py-1 text-center small">{{ row.quantity|default:1 }}</td>
+                                                        <td class="py-1 text-end small">{{ row.unit_price|floatformat:2 }}</td>
+                                                        <td class="py-1 text-end small"><strong>{{ row.amount|floatformat:2 }}</strong></td>
+                                                    </tr>
+                                                    {% endif %}
+                                                    {% endfor %}
+                                                </tbody>
+                                            </table>
+                                        </td>
+                                    </tr>
+                                    {% endif %}
                                     {% endfor %}
                                 </tbody>
                                 <tfoot>
                                     <tr>
-                                        <th colspan="2" class="text-end">Initial (total from items):</th>
-                                        <th class="text-end">GHS {{ patient_bill.initial_total|default:patient_bill.total|floatformat:2 }}</th>
+                                        <th colspan="2" class="text-end">Total (sum of amounts above):</th>
+                                        <th class="text-end">GHS {{ patient_bill.total|floatformat:2 }}</th>
                                     </tr>
-                                    {% if patient_bill.deposit_applied_to_bill > 0 %}
-                                    <tr class="table-info">
-                                        <th colspan="2" class="text-end">Deposit (applied):</th>
-                                        <th class="text-end">- GHS {{ patient_bill.deposit_applied_to_bill|floatformat:2 }}</th>
+                                    {% if patient_bill.patient_deposits_recorded_sum and patient_bill.patient_deposits_recorded_sum > 0 %}
+                                    <tr class="table-light">
+                                        <th colspan="2" class="text-end">Total deposit made (slips on file):</th>
+                                        <th class="text-end">GHS {{ patient_bill.patient_deposits_recorded_sum|floatformat:2 }}</th>
                                     </tr>
-                                    {% elif patient_bill.deposit_balance > 0 %}
+                                    {% endif %}
+                                    {% if patient_bill.deposit_balance > 0 %}
                                     <tr class="table-info">
-                                        <th colspan="2" class="text-end">Deposit available (GHS {{ patient_bill.deposit_balance|floatformat:2 }}):</th>
-                                        <th class="text-end text-success">After deposit: GHS {{ patient_bill.amount_due_after_deposit|floatformat:2 }}</th>
+                                        <th colspan="2" class="text-end">Deposit available (not applied until Total Bill):</th>
+                                        <th class="text-end">GHS {{ patient_bill.deposit_balance|floatformat:2 }}</th>
                                     </tr>
                                     {% endif %}
                                     <tr>
-                                        <th colspan="2" class="text-end">Outstanding balance (before deposit):</th>
-                                        <th class="text-end text-success">GHS {{ patient_bill.total_outstanding|floatformat:2 }}</th>
+                                        <th colspan="2" class="text-end">Amount due (this bill):</th>
+                                        <th class="text-end text-success">GHS {{ patient_bill.total|floatformat:2 }}</th>
                                     </tr>
+                                    {% if patient_bill.total_outstanding != patient_bill.total %}
+                                    <tr class="table-light">
+                                        <th colspan="2" class="text-end text-muted small">Account balance (all visits, incl. other invoices):</th>
+                                        <th class="text-end text-muted small">GHS {{ patient_bill.total_outstanding|floatformat:2 }}</th>
+                                    </tr>
+                                    {% endif %}
                                 </tfoot>
                             </table>
                         </div>
@@ -277,8 +332,8 @@
                             {% if patient_bill.deposit_balance > 0 %}
                             <div class="alert alert-info mb-2 py-2">
                                 <small>
-                                    <strong>Deposit Balance (credit):</strong><br>
-                                    GHS {{ patient_bill.deposit_balance|floatformat:2 }} — reduces amount due to GHS {{ patient_bill.amount_due_after_deposit|floatformat:2 }}
+                                    <strong>Deposit on account:</strong><br>
+                                    GHS {{ patient_bill.deposit_balance|floatformat:2 }} — use <strong>Apply deposit to total bill</strong> to post it; until then, amount due on this bill stays <strong>GHS {{ patient_bill.total|floatformat:2 }}</strong> (full account balance may differ).
                                 </small>
                             </div>
                             {% endif %}

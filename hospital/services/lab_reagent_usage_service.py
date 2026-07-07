@@ -96,7 +96,7 @@ def consume_reagents_for_completed_lab_result(lab_result, performed_by=None):
             locked_reagent.last_used_at = timezone.now()
             locked_reagent.save(update_fields=["quantity_on_hand", "total_used", "last_used_at", "modified"])
 
-            ReagentTransaction.objects.create(
+            txn = ReagentTransaction.objects.create(
                 reagent=locked_reagent,
                 transaction_type="used",
                 quantity=DEFAULT_QTY_PER_TEST,
@@ -108,6 +108,20 @@ def consume_reagents_for_completed_lab_result(lab_result, performed_by=None):
                 purpose=f"Auto usage for completed test: {getattr(test, 'name', 'Lab Test')}",
                 test_name=getattr(test, "name", "") or "",
             )
+
+            unit_cost = locked_reagent.unit_cost or Decimal("0")
+            cogs_amount = (DEFAULT_QTY_PER_TEST * Decimal(str(unit_cost))).quantize(Decimal("0.01"))
+            try:
+                from hospital.services.inventory_gl_service import post_inventory_cogs_gl
+                post_inventory_cogs_gl(
+                    category_key="lab",
+                    amount=cogs_amount,
+                    reference=f"COGS-REAGENT-{txn.pk}",
+                    description=f"Lab reagent COGS: {locked_reagent.name} ×{DEFAULT_QTY_PER_TEST}",
+                    reagent_transaction=txn,
+                )
+            except Exception:
+                pass
 
             _sync_inventory_item_from_reagent(locked_reagent, DEFAULT_QTY_PER_TEST)
             summary["consumed"] += 1

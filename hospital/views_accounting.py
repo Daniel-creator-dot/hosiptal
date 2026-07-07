@@ -380,80 +380,64 @@ def accounting_dashboard(request):
 @login_required
 @user_passes_test(is_accountant, login_url='/admin/login/')
 def chart_of_accounts(request):
-    """Chart of Accounts view - List all accounts with balances"""
-    from .models_accounting import GeneralLedger
-    
+    """Chart of Accounts view - grouped financial statement layout."""
+    from hospital.services.trial_balance_service import get_account_ledger_totals, _account_balance_from_totals
+    from hospital.services.chart_of_accounts_grouping import build_chart_of_accounts_sections
+    from hospital.services.account_delete_service import can_delete_account, get_account_delete_blockers
+    from django.utils import timezone
+
     account_type_filter = request.GET.get('type', '')
     search_query = request.GET.get('search', '')
-    
+
     accounts = Account.objects.filter(is_deleted=False).select_related('parent_account')
-    
+
     if account_type_filter:
         accounts = accounts.filter(account_type=account_type_filter)
-    
+
     if search_query:
         accounts = accounts.filter(
             Q(account_code__icontains=search_query) |
             Q(account_name__icontains=search_query) |
             Q(description__icontains=search_query)
         )
-    
-    # Calculate balances for each account
+
     account_list = []
+    today = timezone.now().date()
     for account in accounts.order_by('account_code'):
-        # Get all GL entries for this account up to today
-        gl_entries = GeneralLedger.objects.filter(
-            account=account,
-            is_deleted=False
-        ).aggregate(
-            total_debits=Sum('debit_amount'),
-            total_credits=Sum('credit_amount')
-        )
-        
-        total_debits = gl_entries['total_debits'] or Decimal('0.00')
-        total_credits = gl_entries['total_credits'] or Decimal('0.00')
-        
-        # Calculate balance based on account type
-        if account.account_type in ['asset', 'expense']:
-            # Assets and Expenses: Debit increases, Credit decreases
-            balance = total_debits - total_credits
-        else:
-            # Liabilities, Equity, Revenue: Credit increases, Debit decreases
-            balance = total_credits - total_debits
-        
+        total_debits, total_credits, _ = get_account_ledger_totals(account, today)
+        balance = _account_balance_from_totals(account.account_type, total_debits, total_credits)
+        blockers = get_account_delete_blockers(account)
         account_list.append({
             'account': account,
             'balance': balance,
             'total_debits': total_debits,
             'total_credits': total_credits,
+            'can_delete': can_delete_account(account),
+            'delete_block_reason': '; '.join(blockers) if blockers else '',
         })
-    
-    # Calculate totals by account type
+
+    chart_sections = build_chart_of_accounts_sections(account_list)
+
     type_totals = {}
     for item in account_list:
         acc_type = item['account'].account_type
         if acc_type not in type_totals:
             type_totals[acc_type] = Decimal('0.00')
         type_totals[acc_type] += item['balance']
-    
-    # Check if PV/Cheque accounts are set up
+
     from .utils_pv_account_setup import get_pv_expense_accounts, get_pv_payment_accounts
-    expense_accounts = get_pv_expense_accounts()
-    payment_accounts = get_pv_payment_accounts()
-    
-    # Check for default accounts
     default_expense_codes = ['5010', '5020', '5030', '5040', '5050']
     default_payment_codes = ['1010', '1020', '1030']
-    
-    missing_expense = [code for code in default_expense_codes 
+    missing_expense = [code for code in default_expense_codes
                       if not Account.objects.filter(account_code=code, is_active=True).exists()]
-    missing_payment = [code for code in default_payment_codes 
+    missing_payment = [code for code in default_payment_codes
                      if not Account.objects.filter(account_code=code, is_active=True).exists()]
-    
     pv_accounts_setup = len(missing_expense) == 0 and len(missing_payment) == 0
-    
+
     context = {
+        'chart_sections': chart_sections,
         'accounts': account_list,
+        'account_list': account_list,
         'type_totals': type_totals,
         'account_types': Account.ACCOUNT_TYPES,
         'selected_type': account_type_filter,

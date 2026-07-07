@@ -202,9 +202,9 @@ class InventoryItemAdmin(admin.ModelAdmin):
     search_fields = ['item_name', 'item_code', 'description']
 
     def has_change_permission(self, request, obj=None):
-        """Only admins can edit inventory/stock - restrict procurement/pharmacy from changing quantities"""
-        from .views_procurement import is_admin_user
-        if not is_admin_user(request.user):
+        """Admin and procurement/stores staff may edit store inventory quantities."""
+        from .views_procurement import can_edit_inventory
+        if not can_edit_inventory(request.user):
             return False
         return super().has_change_permission(request, obj)
     fieldsets = (

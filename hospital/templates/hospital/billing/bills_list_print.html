@@ -1,0 +1,86 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Print bills — HMS{% endblock %}
+{% block page_title %}Print bills{% endblock %}
+
+{% block extra_head %}
+<style>
+@media print {
+    .sidebar, .topbar, .sidebar-overlay, .no-print, footer { display: none !important; }
+    .main-content { margin-left: 0 !important; width: 100% !important; max-width: 100% !important; }
+    body { background: #fff !important; }
+    .print-wrap { box-shadow: none !important; border: none !important; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid print-wrap">
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <div>
+                <h5 class="mb-1">Bills (filtered)</h5>
+                <p class="mb-0 small text-muted">{{ filter_caption }}</p>
+                <p class="mb-0 small text-muted">{{ row_count }} row{{ row_count|pluralize }} · {{ source_label }}</p>
+            </div>
+            <div class="no-print d-flex gap-2">
+                <button type="button" class="btn btn-primary btn-sm" onclick="window.print()">
+                    <i class="bi bi-printer"></i> Print
+                </button>
+                <a href="{% url 'hospital:bills_list' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-arrow-left"></i> Back to list
+                </a>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            {% if rows %}
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered mb-0 align-middle" style="font-size: 11px;">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Bill / Invoice #</th>
+                            <th>Patient</th>
+                            <th>MRN</th>
+                            <th>Insurance / Corp ID</th>
+                            <th>Type</th>
+                            <th>Payer / method</th>
+                            <th class="text-end">Total</th>
+                            <th class="text-end">Insurance</th>
+                            <th class="text-end">Paid</th>
+                            <th class="text-end">Deposit</th>
+                            <th class="text-end">Credit</th>
+                            <th class="text-end">Balance</th>
+                            <th>Status</th>
+                            <th>Issued</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in rows %}
+                        <tr>
+                            <td>{{ row.bill_number }}</td>
+                            <td>{{ row.patient_name }}</td>
+                            <td>{{ row.mrn }}</td>
+                            <td>{{ row.member_id|default:"—" }}</td>
+                            <td>{{ row.type_label }}</td>
+                            <td>{{ row.payer }}</td>
+                            <td class="text-end">GHS {{ row.total|floatformat:2|intcomma }}</td>
+                            <td class="text-end">GHS {{ row.insurance|floatformat:2|intcomma }}</td>
+                            <td class="text-end">{% if row.paid is not None %}GHS {{ row.paid|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+                            <td class="text-end">{% if row.deposit is not None %}GHS {{ row.deposit|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+                            <td class="text-end">GHS {{ row.credit|floatformat:2|intcomma }}</td>
+                            <td class="text-end">GHS {{ row.balance|floatformat:2|intcomma }}</td>
+                            <td>{{ row.status }}</td>
+                            <td>{% if row.issued %}{{ row.issued|date:"Y-m-d H:i" }}{% else %}—{% endif %}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted p-4 mb-0">No rows match the current filters.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

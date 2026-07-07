@@ -11,7 +11,8 @@ from django.core.exceptions import ValidationError
 from django.db.models import Q, Sum, F
 from django.db import models, transaction, connection, IntegrityError
 from django.db.transaction import TransactionManagementError
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, JsonResponse, FileResponse, Http404
+from django.template.loader import render_to_string
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.urls import reverse
@@ -128,6 +129,7 @@ from .utils_lab_templates import (
     SEROLOGY_ORDERED_KEYS,
     SEMEN_ORDERED_KEYS,
     AFB_ORDERED_KEYS,
+    build_lab_result_display_rows,
 )
 from .views_hod_shift_monitoring import is_hod
 try:
@@ -4661,6 +4663,83 @@ def update_invoice_line_quantity(request):
 
 @login_required
 @block_pharmacy_from_invoice_and_payment
+def update_invoice_line_discount(request):
+    """Apply a partial line discount on cashier invoice detail (not full waiver)."""
+    from decimal import Decimal
+    from django.db import transaction
+    from .models import InvoiceLine
+
+    if request.method != 'POST':
+        return redirect('hospital:cashier_invoices')
+
+    line_id = request.POST.get('line_id')
+    discount_raw = request.POST.get('discount_amount')
+
+    if not line_id or discount_raw is None or discount_raw == '':
+        messages.error(request, 'Line and discount amount are required.')
+        redirect_url = request.META.get('HTTP_REFERER') or reverse('hospital:cashier_invoices')
+        return redirect(redirect_url)
+
+    try:
+        discount = Decimal(str(discount_raw))
+        if discount < 0:
+            raise ValueError('negative')
+    except (ValueError, TypeError):
+        messages.error(request, 'Invalid discount amount.')
+        redirect_url = request.META.get('HTTP_REFERER') or reverse('hospital:cashier_invoices')
+        return redirect(redirect_url)
+
+    try:
+        line = InvoiceLine.objects.select_related('invoice', 'service_code').get(
+            pk=line_id, is_deleted=False
+        )
+    except (InvoiceLine.DoesNotExist, ValueError):
+        messages.error(request, 'Invoice line not found.')
+        redirect_url = request.META.get('HTTP_REFERER') or reverse('hospital:cashier_invoices')
+        return redirect(redirect_url)
+
+    if line.waived_at:
+        messages.error(request, 'Cannot edit discount for a waived line.')
+        redirect_url = request.META.get('HTTP_REFERER') or reverse(
+            'hospital:cashier_invoice_detail', args=[line.invoice_id]
+        )
+        return redirect(redirect_url)
+
+    if not line.invoice.is_payable:
+        messages.error(request, 'This invoice is not open for discount changes.')
+        redirect_url = request.META.get('HTTP_REFERER') or reverse(
+            'hospital:cashier_invoice_detail', args=[line.invoice_id]
+        )
+        return redirect(redirect_url)
+
+    subtotal = Decimal(str(line.quantity)) * Decimal(str(line.unit_price))
+    tax = Decimal(str(line.tax_amount or 0))
+    max_discount = subtotal + tax
+    if discount > max_discount:
+        messages.error(request, f'Discount cannot exceed GHS {max_discount:.2f} for this line.')
+        redirect_url = request.META.get('HTTP_REFERER') or reverse(
+            'hospital:cashier_invoice_detail', args=[line.invoice_id]
+        )
+        return redirect(redirect_url)
+
+    with transaction.atomic():
+        line.discount_amount = discount
+        line.save()
+        line.invoice.update_totals()
+        line.invoice.refresh_from_db()
+        if (line.invoice.balance or Decimal('0')) <= 0:
+            line.invoice.status = 'paid'
+            line.invoice.save(update_fields=['status'])
+
+    messages.success(request, f'Discount updated to GHS {discount:.2f}')
+    redirect_url = request.META.get('HTTP_REFERER') or reverse(
+        'hospital:cashier_invoice_detail', args=[line.invoice_id]
+    )
+    return redirect(redirect_url)
+
+
+@login_required
+@block_pharmacy_from_invoice_and_payment
 def invoice_print(request, pk):
     """Printable invoice view with detailed services"""
     invoice = get_object_or_404(
@@ -6069,124 +6148,108 @@ def tabular_lab_report(request, result_id):
 def print_lab_report(request, result_id):
     """Print-friendly lab report with logo and department info"""
     result = get_object_or_404(LabResult, pk=result_id, is_deleted=False)
-    settings = HospitalSettings.get_settings()
+    context = _lab_report_print_context(result)
+    return render(request, 'hospital/lab_report_print.html', context)
+
+
+def _lab_report_print_context(result):
     patient_gender = None
     if result.order and result.order.encounter and result.order.encounter.patient:
         patient_gender = getattr(result.order.encounter.patient, 'gender', None)
-
-    # Build display rows for TEST RESULTS so single-value tests (Typhidot, etc.) show test name, not WBC
-    result_rows = []
-    details = result.details or {}
-    if isinstance(details, dict):
-        result_value = details.get('result_value') or details.get('RESULT_VALUE')
-        if result_value:
-            # Single-value test: one row with test name and result
-            ref = '-'
-            if result.range_low and result.range_high:
-                ref = f'{result.range_low} - {result.range_high}'
-            elif result.range_low:
-                ref = result.range_low
-            elif result.range_high:
-                ref = result.range_high
-            units_val = (details.get('result_unit') or details.get('RESULT_UNIT') or result.units or
-                        infer_units_from_result(result_value) or 'N/A')
-            value_flag = compute_value_flag(result_value, ref, patient_gender)
-            flag_val = value_flag if value_flag else get_qualitative_flag(result_value, result.is_abnormal)
-            result_rows.append({
-                'parameter': result.test.name if result.test else 'Result',
-                'result': result_value,
-                'units': units_val,
-                'ref_range': ref,
-                'flag': flag_val,
-                'value_flag': value_flag,
-            })
-        else:
-            # Panel test (FBC, LFT, urine, stool): one row per detail, skip result_value/result_unit
-            test_type = get_lab_result_template_type(result.test) if result.test else None
-            ordered_keys = None
-            if test_type == TEMPLATE_FBC:
-                ordered_keys = FBC_ORDERED_KEYS
-            elif test_type == TEMPLATE_RFT:
-                ordered_keys = RFT_ORDERED_KEYS
-            elif test_type == TEMPLATE_LFT:
-                ordered_keys = LFT_ORDERED_KEYS
-            elif test_type == TEMPLATE_URINE:
-                ordered_keys = URINE_ORDERED_KEYS
-            elif test_type == TEMPLATE_STOOL:
-                ordered_keys = STOOL_ORDERED_KEYS
-            elif test_type == TEMPLATE_MALARIA:
-                ordered_keys = MALARIA_ORDERED_KEYS
-            elif test_type == TEMPLATE_BLOOD_GROUP:
-                ordered_keys = BLOOD_GROUP_ORDERED_KEYS
-            elif test_type == TEMPLATE_SICKLE:
-                ordered_keys = SICKLE_ORDERED_KEYS
-            elif test_type == TEMPLATE_COAGULATION:
-                ordered_keys = COAGULATION_ORDERED_KEYS
-            elif test_type == TEMPLATE_SEROLOGY:
-                ordered_keys = SEROLOGY_ORDERED_KEYS
-            elif test_type == TEMPLATE_SEMEN:
-                ordered_keys = SEMEN_ORDERED_KEYS
-            elif test_type == TEMPLATE_AFB:
-                ordered_keys = AFB_ORDERED_KEYS
-            keys_to_iterate = ordered_keys if ordered_keys else list(details.keys())
-            for key in keys_to_iterate:
-                if key.lower() in ('result_value', 'result_unit'):
-                    continue
-                if key.endswith('_unit'):
-                    continue
-                value = details.get(key)
-                if value is None or str(value).strip() == '':
-                    continue
-                param_label = get_param_display_name(key)
-                ref_range = get_param_ref_range(key)
-                units_val = get_param_units(key, details)
-                value_flag = compute_value_flag(str(value), ref_range, patient_gender)
-                flag_val = value_flag if value_flag else get_qualitative_flag(str(value), result.is_abnormal)
-                result_rows.append({
-                    'parameter': param_label,
-                    'result': value,
-                    'units': units_val,
-                    'ref_range': ref_range,
-                    'flag': flag_val,
-                    'value_flag': value_flag,
-                })
-    if not result_rows and result.value:
-        ref = '-'
-        if result.range_low and result.range_high:
-            ref = f'{result.range_low} - {result.range_high}'
-        elif result.range_low or result.range_high:
-            ref = (result.range_low or '') + (' - ' if result.range_low and result.range_high else '') + (result.range_high or '')
-        units_val = result.units or 'N/A'
-        value_flag = compute_value_flag(result.value, ref, patient_gender)
-        flag_val = value_flag if value_flag else ('ABNORMAL' if result.is_abnormal else 'NORMAL')
-        result_rows.append({
-            'parameter': result.test.name if result.test else 'Result',
-            'result': result.value,
-            'units': units_val,
-            'ref_range': ref,
-            'flag': flag_val,
-            'value_flag': value_flag,
-        })
-    if not result_rows and result.qualitative_result:
-        flag_val = get_qualitative_flag(result.qualitative_result, result.is_abnormal)
-        units_val = infer_units_from_result(result.qualitative_result) or 'Qualitative'
-        result_rows.append({
-            'parameter': result.test.name if result.test else 'Result',
-            'result': result.qualitative_result,
-            'units': units_val,
-            'ref_range': 'Reactive / Non-Reactive / Equivocal',
-            'flag': flag_val,
-            'value_flag': None,
-        })
-
-    context = {
+    return {
         'result': result,
-        'result_rows': result_rows,
-        'settings': settings,
+        'result_rows': build_lab_result_display_rows(result, patient_gender=patient_gender),
+        'settings': HospitalSettings.get_settings(),
         'now': timezone.now(),
     }
 
-    return render(request, 'hospital/lab_report_print.html', context)
+
+def _lab_report_pdf_link_callback(uri, rel):
+    import os
+    from django.conf import settings as django_settings
+
+    if uri.startswith(('http://', 'https://', 'file://')):
+        return uri
+    media_url = django_settings.MEDIA_URL or '/media/'
+    if uri.startswith(media_url):
+        path = uri[len(media_url):].lstrip('/')
+        return os.path.join(str(django_settings.MEDIA_ROOT), path)
+    if uri.startswith('/media/'):
+        path = uri[len('/media/'):]
+        return os.path.join(str(django_settings.MEDIA_ROOT), path)
+    static_url = django_settings.STATIC_URL or '/static/'
+    if uri.startswith(static_url):
+        path = uri[len(static_url):].lstrip('/')
+        return os.path.join(str(django_settings.STATIC_ROOT), path)
+    if uri.startswith('/static/'):
+        path = uri[len('/static/'):]
+        return os.path.join(str(django_settings.STATIC_ROOT), path)
+    return uri
+
+
+@login_required
+def download_lab_report_pdf(request, result_id):
+    """Download lab report as PDF (same layout as print view)."""
+    try:
+        from xhtml2pdf import pisa
+    except ImportError:
+        return HttpResponse(
+            'PDF export requires xhtml2pdf. Install with: pip install xhtml2pdf',
+            content_type='text/plain',
+            status=500,
+        )
+
+    result = get_object_or_404(LabResult, pk=result_id, is_deleted=False)
+    html = render_to_string(
+        'hospital/lab_report_print.html',
+        _lab_report_print_context(result),
+        request=request,
+    )
+    buffer = BytesIO()
+    pdf_status = pisa.CreatePDF(
+        html,
+        dest=buffer,
+        link_callback=_lab_report_pdf_link_callback,
+        encoding='utf-8',
+    )
+    if pdf_status.err:
+        logger.exception('Lab report PDF generation failed for result %s', result_id)
+        return HttpResponse(
+            'PDF generation failed. Use Print and choose Save as PDF in your browser.',
+            content_type='text/plain',
+            status=500,
+        )
+    buffer.seek(0)
+    test_slug = (result.test.name if result.test else 'lab_report').replace(' ', '_')[:40]
+    fname = f'lab_report_{test_slug}_{result.pk}.pdf'
+    response = HttpResponse(buffer.getvalue(), content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="{fname}"'
+    return response
+
+
+@login_required
+def lab_result_attachment_file(request, result_id):
+    """Stream optional lab result attachment (scanned report, image, PDF)."""
+    import mimetypes
+    import os
+
+    result = get_object_or_404(LabResult, pk=result_id, is_deleted=False)
+    if not result.attachment:
+        raise Http404('No attachment for this lab result.')
+    try:
+        file_handle = result.attachment.open('rb')
+    except FileNotFoundError:
+        raise Http404('Attachment file not found on disk.')
+    basename = os.path.basename(result.attachment.name) or 'lab_attachment'
+    content_type, _ = mimetypes.guess_type(basename)
+    content_type = content_type or 'application/octet-stream'
+    download = request.GET.get('download') == '1'
+    return FileResponse(
+        file_handle,
+        as_attachment=download,
+        filename=basename,
+        content_type=content_type,
+    )
 
 
 @login_required
@@ -6825,6 +6888,23 @@ def drug_detail(request, pk):
     # Dates for expiry checking
     today = timezone.now().date()
     expiring_soon = today + timedelta(days=30)
+
+    from .models_insurance_companies import InsuranceCompany, InsuranceExclusionRule
+    from .services.drug_formulary_insurance_exclusion import (
+        FORMULARY_DRUG_EXCLUSION_NOTE,
+        selected_formulary_company_ids,
+    )
+
+    insurance_companies = list(
+        InsuranceCompany.objects.filter(is_deleted=False, is_active=True).order_by('name')
+    )
+    selected_insurance_company_ids = selected_formulary_company_ids(drug=drug)
+    company_exclusion_rules = (
+        InsuranceExclusionRule.objects.filter(drug=drug, is_deleted=False)
+        .exclude(notes=FORMULARY_DRUG_EXCLUSION_NOTE)
+        .select_related('insurance_company', 'insurance_plan')
+        .order_by('insurance_company__name')[:50]
+    )
     
     context = {
         'drug': drug,
@@ -6841,6 +6921,9 @@ def drug_detail(request, pk):
         'today': today,
         'expiring_soon': expiring_soon,
         'can_edit_stock': is_admin_user(request.user),
+        'insurance_companies': insurance_companies,
+        'selected_insurance_company_ids': selected_insurance_company_ids,
+        'company_exclusion_rules': company_exclusion_rules,
     }
     return render(request, 'hospital/drug_detail.html', context)
 
@@ -7267,6 +7350,47 @@ def drug_edit(request, pk):
         'can_edit_stock': can_edit_stock,
     }
     return render(request, 'hospital/drug_form.html', context)
+
+
+@login_required
+@user_passes_test(_can_access_drug_catalog_edit, login_url='/admin/login/')
+def drug_insurance_settings(request, pk):
+    """POST: save drug formulary insurance exclusion flags."""
+    from django.contrib import messages
+
+    from .services.drug_formulary_insurance_exclusion import sync_drug_formulary_insurance_exclusions
+
+    drug = get_object_or_404(Drug, pk=pk, is_deleted=False)
+    if request.method != 'POST':
+        return redirect('hospital:drug_detail', pk=pk)
+
+    exclude_all = request.POST.get('exclude_from_insurance') == 'on'
+    company_ids = request.POST.getlist('excluded_insurance_companies')
+    reason = (request.POST.get('insurance_exclusion_reason') or '').strip()
+    sync_drug_formulary_insurance_exclusions(
+        drug=drug,
+        exclude_all=exclude_all,
+        company_ids=company_ids,
+        reason=reason,
+    )
+    messages.success(request, 'Insurance exclusion settings saved.')
+    return redirect('hospital:drug_detail', pk=pk)
+
+
+@login_required
+@user_passes_test(_can_access_drug_catalog_edit, login_url='/admin/login/')
+def drug_delete(request, pk):
+    """Soft-delete a drug from the formulary."""
+    from django.contrib import messages
+
+    drug = get_object_or_404(Drug, pk=pk, is_deleted=False)
+    if request.method == 'POST':
+        drug.is_deleted = True
+        drug.is_active = False
+        drug.save(update_fields=['is_deleted', 'is_active', 'modified'])
+        messages.success(request, f'Removed {drug.name} from the formulary.')
+        return redirect('hospital:drug_formulary_list')
+    return render(request, 'hospital/drug_confirm_delete.html', {'drug': drug})
 
 
 # ==================== LAB TESTS CATALOG MANAGEMENT ====================

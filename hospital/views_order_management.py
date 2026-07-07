@@ -14,15 +14,29 @@ from .models_advanced import ImagingStudy
 from .decorators import role_required
 
 
+def _staff_for_order_request(user):
+    """Resolve Staff for the logged-in user (User.staff is canonical; staff_profile is legacy)."""
+    staff = getattr(user, 'staff', None)
+    if staff is not None and not getattr(staff, 'is_deleted', False):
+        return staff
+    legacy = getattr(user, 'staff_profile', None)
+    if legacy is not None and not getattr(legacy, 'is_deleted', False):
+        return legacy
+    return Staff.objects.filter(user=user, is_deleted=False).first()
+
+
 @login_required
 @role_required('doctor', 'admin', message='Access denied. Only doctors can create orders.')
 def create_order(request, encounter_id):
     """Create order with proper type separation"""
     encounter = get_object_or_404(Encounter, pk=encounter_id, is_deleted=False)
-    doctor = request.user.staff_profile if hasattr(request.user, 'staff_profile') else None
-    
+    doctor = _staff_for_order_request(request.user)
+
     if not doctor:
-        messages.error(request, 'Staff profile not found.')
+        messages.error(
+            request,
+            'No staff profile is linked to your user account. Ask an administrator to link your login to a Staff record before creating orders.',
+        )
         return redirect('hospital:encounter_detail', pk=encounter_id)
     
     if request.method == 'POST':

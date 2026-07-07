@@ -107,6 +107,7 @@ class PaymentClearanceService:
             PharmacyDispensing,
             PaymentVerification,
         )
+        from hospital.models import InvoiceLine
 
         encounter = payment_receipt.invoice.encounter if payment_receipt.invoice else None
         qs = PharmacyDispensing.objects.filter(
@@ -117,9 +118,25 @@ class PaymentClearanceService:
         if encounter:
             qs = qs.filter(prescription__order__encounter=encounter)
 
-        rx_ids = payment_receipt.service_details.get('prescription_ids') if isinstance(payment_receipt.service_details, dict) else None
+        details = payment_receipt.service_details if isinstance(payment_receipt.service_details, dict) else {}
+        rx_ids = details.get('prescription_ids')
         if rx_ids:
+            # Explicit cashier targeting: only auto-link those prescriptions.
             qs = qs.filter(prescription_id__in=rx_ids)
+        else:
+            # Guard against false positives:
+            # combined/other/blank receipts can be created for non-pharmacy services, and should not
+            # auto-clear pharmacy queue entries unless the prescription was actually billed.
+            service_type = (payment_receipt.service_type or '').lower().strip()
+            if service_type in {'combined', 'other', ''}:
+                qs = qs.filter(
+                    prescription__in=InvoiceLine.objects.filter(
+                        prescription__isnull=False,
+                        is_deleted=False,
+                        waived_at__isnull=True,
+                        invoice=payment_receipt.invoice,
+                    ).values('prescription_id')
+                )
 
         records = list(qs[:5])
         if not records:
@@ -211,6 +228,13 @@ class PaymentClearanceService:
 
     @staticmethod
     def _send_receipt_sms(payment_receipt, service_type):
+        from hospital.services.pending_payment_notification_service import (
+            should_send_payment_notification_sms,
+        )
+
+        if not should_send_payment_notification_sms(payment_receipt=payment_receipt):
+            return
+
         patient = payment_receipt.patient
         phone = getattr(patient, 'phone_number', None)
         if not phone:

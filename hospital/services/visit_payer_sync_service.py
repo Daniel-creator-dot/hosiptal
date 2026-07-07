@@ -62,8 +62,46 @@ class VisitPayerSyncService:
                 payer = patient.primary_insurance
                 determined_payer_type = payer.payer_type
             else:
-                # Default to cash
+                # Default to cash — but check enrollments first (registration may have just created them)
                 determined_payer_type = 'cash'
+                try:
+                    from hospital.models_insurance_companies import PatientInsurance
+
+                    pi_row = PatientInsurance.objects.filter(
+                        patient=patient,
+                        is_primary=True,
+                        status='active',
+                        is_deleted=False,
+                    ).select_related('insurance_company').first()
+                    if not pi_row:
+                        pi_row = PatientInsurance.objects.filter(
+                            patient=patient,
+                            status='active',
+                            is_deleted=False,
+                        ).select_related('insurance_company').order_by('-is_primary', '-created').first()
+                    if pi_row and pi_row.insurance_company:
+                        from hospital.patient_payer import resolve_payer_for_insurance_company
+
+                        payer = resolve_payer_for_insurance_company(pi_row.insurance_company)
+                        determined_payer_type = payer.payer_type
+                except Exception:
+                    pass
+                if determined_payer_type == 'cash':
+                    try:
+                        from hospital.models_enterprise_billing import CorporateEmployee
+
+                        corp_enrollment = CorporateEmployee.objects.filter(
+                            patient=patient,
+                            is_active=True,
+                            is_deleted=False,
+                        ).select_related('corporate_account').first()
+                        if corp_enrollment:
+                            from hospital.patient_payer import ensure_corporate_payer
+
+                            payer = ensure_corporate_payer(corp_enrollment.corporate_account.company_name)
+                            determined_payer_type = 'corporate'
+                    except Exception:
+                        pass
             
             # Step 2: Get or create appropriate payer
             if payer:
@@ -262,6 +300,8 @@ class VisitPayerSyncService:
                 get_consultation_price_for_encounter_and_payer,
                 get_mat_anc_consultation_price,
                 get_or_create_encounter_invoice,
+                is_review_visit,
+                waive_encounter_consultation_fees_for_review,
             )
 
             # all_objects + IntegrityError pattern; avoids missing zero-total invoices and duplicate key errors
@@ -273,6 +313,10 @@ class VisitPayerSyncService:
                 invoice.payer = payer
                 invoice.save(update_fields=['payer'])
                 self.logger.info(f"Updated invoice {invoice.id} payer to {payer.name}")
+
+                if is_review_visit(encounter):
+                    waive_encounter_consultation_fees_for_review(encounter)
+                    return invoice
 
                 # Consultation lines: CON001/CON002/MAT-ANC — match reception billing
                 consultation_line = get_consultation_line_for_encounter(encounter)

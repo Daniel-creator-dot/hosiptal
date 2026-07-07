@@ -922,6 +922,17 @@ def staff_shift_create(request):
         except Exception:
             hod_department = None
 
+    form_data = {
+        'staff': '',
+        'department': str(hod_department.pk) if hod_department else '',
+        'shift_date': date.today().isoformat(),
+        'shift_type': 'day',
+        'start_time': '',
+        'end_time': '',
+        'location': '',
+        'notes': '',
+    }
+
     if request.method == 'POST':
         staff_id = request.POST.get('staff')
         shift_date = request.POST.get('shift_date')
@@ -972,6 +983,16 @@ def staff_shift_create(request):
             return redirect('hospital:staff_shift_list')
         except Exception as e:
             messages.error(request, f'Error creating shift: {str(e)}')
+            form_data = {
+                'staff': (staff_id or '').strip(),
+                'department': (department_id or '').strip(),
+                'shift_date': (shift_date or '').strip(),
+                'shift_type': (shift_type or 'day').strip(),
+                'start_time': (start_time or '').strip(),
+                'end_time': (end_time or '').strip(),
+                'location': (location_id or '').strip(),
+                'notes': (notes or '').strip(),
+            }
     
     from .models import Ward
     from django.db.models import OuterRef, Subquery
@@ -1002,7 +1023,7 @@ def staff_shift_create(request):
         staff_qs = staff_qs.filter(department=hod_department)
         departments_qs = departments_qs.filter(pk=hod_department.pk)
 
-    staff_list = staff_qs.order_by('user__last_name')
+    staff_list = staff_qs.select_related('user', 'department').order_by('user__last_name')
     departments = departments_qs
     wards = Ward.objects.filter(is_active=True, is_deleted=False)
     
@@ -1011,6 +1032,7 @@ def staff_shift_create(request):
         'departments': departments,
         'wards': wards,
         'shift_templates': ShiftTemplate.objects.filter(is_active=True),
+        'form_data': form_data,
     }
     return render(request, 'hospital/staff_shift_form.html', context)
 

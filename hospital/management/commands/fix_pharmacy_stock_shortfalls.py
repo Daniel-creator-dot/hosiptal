@@ -25,6 +25,6 @@ class Command(BaseCommand):
             if not drug:
                 self.stdout.write(self.style.WARNING(f"Drug not found: {name_part}"))
                 continue
-            shortfall = reduce_pharmacy_stock(drug, qty)
+            shortfall = reduce_pharmacy_stock(drug, qty)['shortfall']
             self.stdout.write(f"  {drug.name} x{qty} -> shortfall remaining: {shortfall}")
         self.stdout.write(self.style.SUCCESS("Shortfall fix complete."))

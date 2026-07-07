@@ -1,5 +1,6 @@
 {% extends 'hospital/base.html' %}
 {% load humanize %}
+{% load hospital_extras %}
 
 {% block title %}Combined Bill - {{ patient.full_name }} - HMS{% endblock %}
 
@@ -62,6 +63,14 @@
     </div>
     {% endif %}
 
+    {% if pre_go_live_registration_hidden_count %}
+    <div class="alert alert-secondary mb-3 small no-print">
+        <i class="bi bi-eye-slash me-1"></i>
+        <strong>{{ pre_go_live_registration_hidden_count }}</strong> registration fee line(s) dated before <strong>{{ bills_go_live_date }}</strong> are hidden from this combined bill (pre–go-live). Hidden item total: <strong>GHS {{ pre_go_live_registration_hidden_amount|floatformat:2|intcomma }}</strong>. Outstanding balance below still includes everything on file — waive old registration if it was already collected.
+        {% if not include_legacy %}<a href="?include_legacy=1" class="alert-link ms-1">Show hidden lines</a>{% endif %}
+    </div>
+    {% endif %}
+
     <!-- Invoice-style header for print (like Primecare bill) - logo and more info -->
     <div class="invoice-print-header">
         <div class="d-flex justify-content-between align-items-start">
@@ -100,8 +109,26 @@
             <div class="label mb-1">Bill details</div>
             <div class="value">ISSUE DATE: {% now "M d, Y" %}</div>
             <div class="value">DUE DATE: {% if unpaid_invoices and unpaid_invoices.0.due_at %}{{ unpaid_invoices.0.due_at|date:"M d, Y" }}{% else %}{% now "M d, Y" %}{% endif %}</div>
-            <div class="value">PAYER: {% if unpaid_invoices %}{{ unpaid_invoices.0.payer.name|default:"Cash" }}{% else %}Cash{% endif %}</div>
-            <div class="value">DEPOSIT APPLIED: <strong>GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }}</strong></div>
+            {% if payer_details.is_insurance_or_corporate %}
+            <div class="value">{% if payer_details.is_corporate %}COMPANY{% else %}PAYER / COMPANY{% endif %}: {{ payer_details.company_name|default:"Cash" }}</div>
+            {% if payer_details.plan_name %}
+            <div class="value">{% if payer_details.is_corporate %}SCHEME / DEPT{% else %}PLAN{% endif %}: {{ payer_details.plan_name }}</div>
+            {% endif %}
+            {% if payer_details.member_or_policy_number %}
+            <div class="value">{% if payer_details.is_corporate %}EMPLOYEE / CORP. ID{% else %}MEMBER / POLICY #{% endif %}: <strong>{{ payer_details.member_or_policy_number }}</strong></div>
+            {% endif %}
+            {% if bill_diagnoses.display_text %}
+            <div class="value">DIAGNOSIS: <span style="white-space: pre-wrap;">{{ bill_diagnoses.display_text }}</span></div>
+            {% endif %}
+            {% else %}
+            <div class="value">PAYER: {{ payer_details.company_name|default:"Cash" }}</div>
+            {% endif %}
+            {% if patient_deposits_recorded_sum and patient_deposits_recorded_sum > 0 %}
+            <div class="value">TOTAL DEPOSIT MADE: <strong>GHS {{ patient_deposits_recorded_sum|floatformat:2|intcomma }}</strong></div>
+            {% endif %}
+            {% if patient_deposit_balance and patient_deposit_balance > 0 %}
+            <div class="value">DEPOSIT AVAILABLE: <strong>GHS {{ patient_deposit_balance|floatformat:2|intcomma }}</strong> <span class="text-muted small">(apply on Total Bill)</span></div>
+            {% endif %}
             <div class="value">STATUS: <span class="badge bg-warning text-dark">OUTSTANDING</span></div>
         </div>
     </div>
@@ -168,7 +195,7 @@
                         <tr>
                             <td class="text-center">{{ num }}</td>
                             <td>{% if item.line.service_code %}<code class="small">{{ item.line.service_code.code }}</code>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-                            <td>{% if item.line.description %}{{ item.line.description }}{% elif item.line.service_code %}{{ item.line.service_code.description }}{% else %}—{% endif %} <span class="text-muted small">({{ item.invoice.invoice_number }})</span></td>
+                            <td class="small" style="line-height: 1.35;">{% invoice_print_line_description item.line category item.invoice.patient %} <span class="text-muted small">({{ item.invoice.invoice_number }})</span></td>
                             <td class="text-center text-nowrap">{% if item.line.created %}{{ item.line.created|date:"d M Y" }}{% elif item.invoice.issued_at %}{{ item.invoice.issued_at|date:"d M Y" }}{% else %}—{% endif %}</td>
                             <td class="text-center">{{ item.line.quantity }}</td>
                             <td class="text-end">GHS {{ item.line.display_unit_price|floatformat:2|intcomma }}</td>
@@ -206,19 +233,17 @@
             <div class="p-3 border-top bg-light">
                 <table class="combined-totals-table ms-auto">
                     <tr>
-                        <td class="text-end">Initial (total from items)</td>
+                        <td class="text-end">Total charges (lines)</td>
                         <td class="text-end">GHS {{ total_amount|floatformat:2|intcomma }}</td>
                     </tr>
+                    {% if patient_deposits_recorded_sum and patient_deposits_recorded_sum > 0 %}
                     <tr>
-                        <td class="text-end">Amount paid to date</td>
-                        <td class="text-end">GHS {{ total_paid|default:0|floatformat:2|intcomma }}</td>
+                        <td class="text-end">Total deposit made</td>
+                        <td class="text-end">GHS {{ patient_deposits_recorded_sum|floatformat:2|intcomma }}</td>
                     </tr>
-                    <tr>
-                        <td class="text-end">Deposit (applied)</td>
-                        <td class="text-end">{% if deposit_applied_to_bill > 0 %}- GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }}{% else %}GHS 0.00{% endif %}</td>
-                    </tr>
+                    {% endif %}
                     <tr class="outstanding-row">
-                        <td class="text-end">Outstanding balance</td>
+                        <td class="text-end">Outstanding</td>
                         <td class="text-end">GHS {{ total_balance|floatformat:2|intcomma }}</td>
                     </tr>
                 </table>
@@ -232,19 +257,17 @@
             <div class="p-3 border-top bg-light">
                 <table class="combined-totals-table ms-auto">
                     <tr>
-                        <td class="text-end">Initial (total from items)</td>
+                        <td class="text-end">Total charges (lines)</td>
                         <td class="text-end">GHS {{ total_amount|floatformat:2|intcomma }}</td>
                     </tr>
+                    {% if patient_deposits_recorded_sum and patient_deposits_recorded_sum > 0 %}
                     <tr>
-                        <td class="text-end">Amount paid to date</td>
-                        <td class="text-end">GHS {{ total_paid|default:0|floatformat:2|intcomma }}</td>
+                        <td class="text-end">Total deposit made</td>
+                        <td class="text-end">GHS {{ patient_deposits_recorded_sum|floatformat:2|intcomma }}</td>
                     </tr>
-                    <tr>
-                        <td class="text-end">Deposit (applied)</td>
-                        <td class="text-end">{% if deposit_applied_to_bill > 0 %}- GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }}{% else %}GHS 0.00{% endif %}</td>
-                    </tr>
+                    {% endif %}
                     <tr class="outstanding-row">
-                        <td class="text-end">Outstanding balance</td>
+                        <td class="text-end">Outstanding</td>
                         <td class="text-end">GHS {{ total_balance|floatformat:2|intcomma }}</td>
                     </tr>
                 </table>

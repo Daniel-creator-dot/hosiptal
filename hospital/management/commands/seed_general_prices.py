@@ -1,7 +1,7 @@
 """
 Seed general prices (cash, corporate, insurance) for consultation and imaging.
 Use these as the central source; billing picks from here via the pricing engine.
-- General consultation: cash 150, corporate/insurance from config (default 150)
+- General consultation: cash 150, corporate 160 (default), insurance from config (default 150)
 - Specialist consultation: cash 300, corporate/insurance from config (default 300)
 """
 from django.core.management.base import BaseCommand
@@ -22,7 +22,7 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             '--general-corp', type=float, default=None,
-            help='General consultation corporate price (default: same as cash)',
+            help='General consultation corporate price (default: 160)',
         )
         parser.add_argument(
             '--general-ins', type=float, default=None,
@@ -44,7 +44,9 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         today = timezone.now().date()
         gen_cash = Decimal(str(options['general_cash']))
-        gen_corp = Decimal(str(options['general_corp'] or options['general_cash']))
+        gen_corp = Decimal(str(
+            options['general_corp'] if options['general_corp'] is not None else 160.0
+        ))
         gen_ins = Decimal(str(options['general_ins'] or options['general_cash']))
         spec_cash = Decimal(str(options['specialist_cash']))
         spec_corp = Decimal(str(options['specialist_corp'] or options['specialist_cash']))

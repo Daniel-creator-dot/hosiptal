@@ -27,6 +27,7 @@ from hospital import views as hospital_views
 from hospital import views_centralized_cashier
 from hospital import views_waiver_audit
 from hospital import views_billing_claims
+from hospital import views_admission
 
 urlpatterns = [
     # Favicon - must be early to catch browser requests
@@ -44,6 +45,12 @@ urlpatterns = [
     path('hms/screening/report/<uuid:encounter_id>/', views_screening.screening_report_form, name='screening_report_form'),
     path('hms/screening/report/<uuid:encounter_id>/print/', views_screening.screening_report_print, name='screening_report_print'),
     path('hms/invoices/patient/<uuid:patient_id>/combined/', hospital_views.invoice_combined_patient, name='invoice_combined_patient'),
+    # Ward/bed transfer: global reverse name used by admission_review and admission detail templates
+    path(
+        'hms/admissions/<uuid:admission_id>/transfer/',
+        views_admission.admission_transfer,
+        name='hms_admission_transfer',
+    ),
     # Waiver audit: registered here so /hms/accountant/billing/waiver-audit/ works if hospital.urls on server lags deploy
     path(
         'hms/accountant/billing/waiver-audit/',
@@ -55,6 +62,12 @@ urlpatterns = [
         'hms/accountant/billing/receivable-entry/<uuid:entry_id>/',
         views_billing_claims.receivable_entry_detail,
         name='receivable_entry_detail',
+    ),
+    # Billing templates use this name (distinct from accountant receivables hub entry detail).
+    path(
+        'hms/accountant/billing/receivable-entry/<uuid:entry_id>/',
+        views_billing_claims.receivable_entry_detail,
+        name='billing_receivable_entry_detail',
     ),
     # Corporate bill pack export: before hospital.urls so reverse works if hospital.urls lags deploy
     path('hms/', include('hospital.urls_corporate_bill_pack_export')),
@@ -76,6 +89,7 @@ urlpatterns = [
     # Accountant payroll (RMC import): before hospital.urls so detail UUID path always resolves
     # even if a deployed hospital.urls is missing these routes. Reverse: accountant_payroll_* (no namespace).
     path('hms/', include('hospital.urls_accountant_payroll')),
+    # Priority HMS routes are merged at the top of hospital.urls urlpatterns (single namespace).
     # Backward-compatible global reverse name used by older deployed template variants.
     path(
         'hms/cashier/central/patient/<uuid:patient_id>/deposit/<uuid:deposit_id>/usage/',

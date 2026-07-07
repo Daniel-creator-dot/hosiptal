@@ -1,0 +1,69 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}Transfer ward / bed — {{ admission.encounter.patient.full_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4" style="max-width: 720px;">
+    <div class="card shadow-sm border-0">
+        <div class="card-header bg-primary text-white py-3">
+            <h5 class="mb-0">
+                <i class="bi bi-arrow-left-right me-2"></i>Transfer to another ward / bed
+            </h5>
+            <small class="opacity-75">{{ admission.encounter.patient.full_name }} · MRN {{ admission.encounter.patient.mrn|default:"—" }}</small>
+        </div>
+        <div class="card-body">
+            <p class="text-muted small mb-3">
+                The current bed is freed and a new billing segment starts. Accommodation is split by time in each ward
+                (e.g. ER at standard rate, VIP at VIP rate). Wards with <strong>vip</strong> in the name use the VIP nightly rate.
+            </p>
+            <div class="alert alert-light border mb-4">
+                <strong>Current:</strong>
+                {% if current_ward %}
+                    {{ current_ward.name }}
+                    {% if current_bed %}— Bed {{ current_bed.bed_number }}{% endif %}
+                {% else %}
+                    Not set
+                {% endif %}
+            </div>
+
+            {% if available_bed_count == 0 %}
+            <div class="alert alert-warning">
+                <strong>No free beds</strong> are available to move this patient to (other than the current bed).
+                Free or add a bed in Bed management, then try again.
+            </div>
+            {% endif %}
+
+            <form method="post">
+                {% csrf_token %}
+                <div class="mb-3">
+                    <label class="form-label fw-semibold" for="bed_id">Destination bed</label>
+                    <select class="form-select" name="bed_id" id="bed_id" required {% if available_bed_count == 0 %}disabled{% endif %}>
+                        <option value="">— Select bed —</option>
+                        {% for b in candidate_beds %}
+                            <option value="{{ b.pk }}" {% if b.status != 'available' %}disabled{% endif %}>
+                                {{ b.ward.name }} — Bed {{ b.bed_number }} ({{ b.get_status_display }})
+                            </option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">
+                        Only beds marked <strong>Available</strong> can be selected. Others are shown so you can see ward layout and occupancy.
+                    </div>
+                </div>
+                <div class="mb-4">
+                    <label class="form-label" for="transfer_notes">Notes (optional)</label>
+                    <textarea class="form-control" name="transfer_notes" id="transfer_notes" rows="2" maxlength="2000"
+                        placeholder="e.g. Upgraded to VIP per family request"></textarea>
+                </div>
+                <div class="d-flex gap-2 flex-wrap">
+                    <button type="submit" class="btn btn-primary" {% if available_bed_count == 0 %}disabled{% endif %}>
+                        <i class="bi bi-check2-circle me-1"></i>Confirm transfer
+                    </button>
+                    <a href="{% url 'hospital:admission_detail' admission.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                    <a href="{% url 'hospital:bed_management_worldclass' %}" class="btn btn-outline-info ms-auto">Bed management</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

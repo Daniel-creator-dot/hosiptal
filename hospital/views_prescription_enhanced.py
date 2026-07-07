@@ -6,7 +6,22 @@ from django.http import JsonResponse
 from django.db.models import Q, Count, Sum
 from django.contrib.auth.decorators import login_required
 from hospital.models import Drug, PharmacyStock
+from hospital.services.insurance_exclusion_service import catalog_exclusion_info
 from decimal import Decimal
+
+
+def _payer_from_encounter_id(encounter_id):
+    if not encounter_id:
+        return None
+    try:
+        from hospital.models import Encounter
+        from hospital.utils_billing import get_patient_payer_info
+        enc = Encounter.objects.filter(pk=encounter_id, is_deleted=False).select_related('patient').first()
+        if enc and enc.patient_id:
+            return get_patient_payer_info(enc.patient, enc).get('payer')
+    except Exception:
+        pass
+    return None
 
 
 @login_required
@@ -19,6 +34,7 @@ def api_search_drugs_by_category(request):
     query = request.GET.get('q', '').strip()
     category = request.GET.get('category', '').strip()
     include_stock = request.GET.get('include_stock', 'true').lower() == 'true'
+    payer = _payer_from_encounter_id(request.GET.get('encounter_id', '').strip())
     
     # Build queryset
     drugs = Drug.objects.filter(
@@ -75,10 +91,11 @@ def api_search_drugs_by_category(request):
                 
                 drug_data['stock_available'] = int(stock_sum)
                 drug_data['has_stock'] = stock_sum > 0
-            except:
+            except Exception:
                 drug_data['stock_available'] = 0
                 drug_data['has_stock'] = False
-        
+
+        drug_data.update(catalog_exclusion_info(item=drug, payer=payer))
         results.append(drug_data)
     
     return JsonResponse({
@@ -134,6 +151,8 @@ def api_get_drugs_by_category(request, category_code):
         is_active=True,
         is_deleted=False
     ).order_by('name')
+
+    payer = _payer_from_encounter_id(request.GET.get('encounter_id', '').strip())
     
     results = []
     for drug in drugs:
@@ -156,6 +175,7 @@ def api_get_drugs_by_category(request, category_code):
             'unit_price': str(drug.unit_price),
             'stock_available': int(stock_sum),
             'has_stock': stock_sum > 0,
+            **catalog_exclusion_info(item=drug, payer=payer),
         })
     
     return JsonResponse({

@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 from .models_accounting import Transaction, PaymentReceipt
 from .models_accounting_advanced import Cashbook, Account
+from hospital.services.service_account_mapping import resolve_payment_account_meta
 
 AUTO_CASHBOOK_ENABLED = True
 
@@ -30,11 +31,11 @@ def auto_create_cashbook_entry_on_payment(sender, instance, created, **kwargs):
     
     try:
         with transaction.atomic():
-            # Get or create cash account
+            pay_code, pay_name = resolve_payment_account_meta(instance.payment_method)
             cash_account, _ = Account.objects.get_or_create(
-                account_code='1000',
+                account_code=pay_code,
                 defaults={
-                    'account_name': 'Cash on Hand',
+                    'account_name': pay_name,
                     'account_type': 'asset',
                     'is_active': True,
                 }
@@ -89,11 +90,11 @@ def auto_create_cashbook_entry_on_receipt(sender, instance, created, **kwargs):
     
     try:
         with transaction.atomic():
-            # Get or create cash account
+            pay_code, pay_name = resolve_payment_account_meta(instance.payment_method)
             cash_account, _ = Account.objects.get_or_create(
-                account_code='1000',
+                account_code=pay_code,
                 defaults={
-                    'account_name': 'Cash on Hand',
+                    'account_name': pay_name,
                     'account_type': 'asset',
                     'is_active': True,
                 }

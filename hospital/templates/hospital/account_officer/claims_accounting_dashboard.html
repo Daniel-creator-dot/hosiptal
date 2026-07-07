@@ -1,0 +1,335 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Claims accounting — HMS{% endblock %}
+{% block page_title %}Claims &amp; receivables accounting{% endblock %}
+{% block page_subtitle %}Insurance claims, statements, and receivables — Account Officer workspace{% endblock %}
+
+{% block extra_css %}
+<style>
+    .ao-hero {
+        background: linear-gradient(135deg, #0f766e 0%, #0d9488 45%, #14b8a6 100%);
+        color: #fff;
+        border-radius: 14px;
+        padding: 1.5rem 1.75rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 8px 24px rgba(15, 118, 110, 0.25);
+    }
+    .ao-stat {
+        border-radius: 12px;
+        padding: 1.1rem 1.25rem;
+        color: #fff;
+        height: 100%;
+        box-shadow: 0 4px 14px rgba(0,0,0,.08);
+    }
+    .ao-stat h6 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: .04em; opacity: .9; margin-bottom: .35rem; }
+    .ao-stat .num { font-size: 1.65rem; font-weight: 700; line-height: 1.2; }
+    .ao-stat .sub { font-size: 0.85rem; opacity: .92; margin-top: .25rem; }
+    .bg-ao-pending { background: linear-gradient(135deg, #b45309 0%, #d97706 100%); }
+    .bg-ao-flight { background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%); }
+    .bg-ao-paid { background: linear-gradient(135deg, #047857 0%, #059669 100%); }
+    .bg-ao-ar { background: linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%); }
+    .bg-ao-monthly { background: linear-gradient(135deg, #0e7490 0%, #0891b2 100%); }
+    .bg-ao-reject { background: linear-gradient(135deg, #b91c1c 0%, #dc2626 100%); }
+    .ao-link-card {
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 1rem 1.1rem;
+        height: 100%;
+        transition: border-color .2s, box-shadow .2s, transform .15s;
+        background: #fff;
+        text-decoration: none;
+        color: inherit;
+        display: block;
+    }
+    .ao-link-card:hover {
+        border-color: #14b8a6;
+        box-shadow: 0 6px 18px rgba(20, 184, 166, 0.15);
+        transform: translateY(-2px);
+        color: inherit;
+    }
+    .ao-link-card i { font-size: 1.75rem; color: #0d9488; }
+    .ao-table-wrap { border-radius: 12px; border: 1px solid #e5e7eb; overflow: hidden; background: #fff; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="ao-hero">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <div>
+                <h4 class="mb-1 fw-semibold"><i class="bi bi-shield-check me-2"></i>Claims accounting control centre</h4>
+                <p class="mb-0 opacity-90 small">Track pending lines, submissions, insurer receivables, and billing packs in one place.</p>
+            </div>
+            <div class="text-md-end small opacity-95">
+                <div><i class="bi bi-calendar3 me-1"></i>{{ today|date:"l, j F Y" }}</div>
+                {% if request.user.get_full_name %}
+                <div class="mt-1"><i class="bi bi-person-badge me-1"></i>{{ request.user.get_full_name }}</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    {% if pending_count or rejected_count or monthly_draft %}
+    <div class="alert alert-light border d-flex flex-wrap gap-2 align-items-center mb-4" role="region" aria-label="Priority actions">
+        <span class="text-muted small me-1"><i class="bi bi-lightning-charge-fill text-warning"></i> Priority:</span>
+        {% if pending_count %}
+        <a href="{% url 'hospital:claims_list' %}?status=pending" class="btn btn-sm btn-warning">
+            {{ pending_count|intcomma }} pending submission
+        </a>
+        {% endif %}
+        {% if rejected_count %}
+        <a href="{% url 'hospital:claims_list' %}?status=rejected" class="btn btn-sm btn-outline-danger">
+            {{ rejected_count|intcomma }} rejected
+        </a>
+        {% endif %}
+        {% if monthly_draft %}
+        <a href="{% url 'hospital:monthly_claims_list' %}" class="btn btn-sm btn-outline-info">
+            {{ monthly_draft|intcomma }} monthly pack(s) draft / ready
+        </a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-6 col-xl-4">
+            <div class="ao-stat bg-ao-pending">
+                <h6>Pending submission</h6>
+                <div class="num">{{ pending_count|intcomma }} <span class="fs-6 fw-normal">lines</span></div>
+                <div class="sub">Billed GHS {{ pending_billed|floatformat:2|intcomma }}</div>
+            </div>
+        </div>
+        <div class="col-md-6 col-xl-4">
+            <div class="ao-stat bg-ao-flight">
+                <h6>With insurer / in progress</h6>
+                <div class="num">{{ in_flight_count|intcomma }} <span class="fs-6 fw-normal">lines</span></div>
+                <div class="sub">Billed GHS {{ in_flight_billed|floatformat:2|intcomma }}</div>
+            </div>
+        </div>
+        <div class="col-md-6 col-xl-4">
+            <div class="ao-stat bg-ao-paid">
+                <h6>Paid this month</h6>
+                <div class="num">{{ paid_month_count|intcomma }} <span class="fs-6 fw-normal">lines</span></div>
+                <div class="sub">Paid GHS {{ paid_month_amount|floatformat:2|intcomma }}</div>
+            </div>
+        </div>
+        <div class="col-md-6 col-xl-4">
+            <div class="ao-stat bg-ao-ar">
+                <h6>Insurance receivable (subledger)</h6>
+                <div class="num">GHS {{ insurance_ar_balance|floatformat:2|intcomma }}</div>
+                <div class="sub">Outstanding balance due (legacy receivable records)</div>
+            </div>
+        </div>
+        <div class="col-md-6 col-xl-4">
+            <div class="ao-stat bg-ao-monthly">
+                <h6>Monthly insurer packs</h6>
+                <div class="num">{{ monthly_draft|intcomma }} <span class="fs-6 fw-normal">draft / ready</span></div>
+                <div class="sub">{{ monthly_open|intcomma }} open (submitted or payment in progress)</div>
+            </div>
+        </div>
+        <div class="col-md-6 col-xl-4">
+            <div class="ao-stat bg-ao-reject">
+                <h6>Rejected lines</h6>
+                <div class="num">{{ rejected_count|intcomma }}</div>
+                <div class="sub">Follow up in claim line detail &amp; encounter context</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-lg-4 col-md-6">
+            <a class="ao-link-card" href="{% url 'hospital:centralized_cashier_dashboard' %}">
+                <div class="d-flex align-items-start gap-3">
+                    <i class="bi bi-cash-stack"></i>
+                    <div>
+                        <strong>Cashier Hub</strong>
+                        <div class="small text-muted mt-1">Pending payments, receipts, billing, and patient deposits.</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <div class="col-lg-4 col-md-6">
+            <a class="ao-link-card" href="{% url 'hospital:claims_bills_hub' %}">
+                <div class="d-flex align-items-start gap-3">
+                    <i class="bi bi-grid-1x2-fill"></i>
+                    <div>
+                        <strong>Claims bills hub</strong>
+                        <div class="small text-muted mt-1">Corporate packs, insurance bills, statements, and exports.</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <div class="col-lg-4 col-md-6">
+            <a class="ao-link-card" href="{% url 'hospital:insurance_claims_dashboard' %}">
+                <div class="d-flex align-items-start gap-3">
+                    <i class="bi bi-clipboard2-pulse"></i>
+                    <div>
+                        <strong>Insurance claims dashboard</strong>
+                        <div class="small text-muted mt-1">Payer overview, volumes, and workflow entry points.</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <div class="col-lg-4 col-md-6">
+            <a class="ao-link-card" href="{% url 'hospital:claims_list' %}">
+                <div class="d-flex align-items-start gap-3">
+                    <i class="bi bi-list-ul"></i>
+                    <div>
+                        <strong>All claim line items</strong>
+                        <div class="small text-muted mt-1">Filter, open lines, submit batches, record payments.</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <div class="col-lg-4 col-md-6">
+            <a class="ao-link-card" href="{% url 'hospital:insurance_claim_items_list' %}">
+                <div class="d-flex align-items-start gap-3">
+                    <i class="bi bi-card-checklist"></i>
+                    <div>
+                        <strong>Claim items (diagnosis context)</strong>
+                        <div class="small text-muted mt-1">Line-level view with encounter clinical record links.</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <div class="col-lg-4 col-md-6">
+            <a class="ao-link-card" href="{% url 'hospital:monthly_claims_list' %}">
+                <div class="d-flex align-items-start gap-3">
+                    <i class="bi bi-calendar-month"></i>
+                    <div>
+                        <strong>Monthly claims by payer</strong>
+                        <div class="small text-muted mt-1">Draft packs, submission, and remittance tracking.</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <div class="col-lg-4 col-md-6">
+            <a class="ao-link-card" href="{% url 'hospital:receivables_hub' %}">
+                <div class="d-flex align-items-start gap-3">
+                    <i class="bi bi-bank"></i>
+                    <div>
+                        <strong>Receivables hub</strong>
+                        <div class="small text-muted mt-1">Insurance &amp; corporate receivable entries and remittance.</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <div class="col-lg-4 col-md-6">
+            <a class="ao-link-card" href="{% url 'hospital:receivables_analytics' %}">
+                <div class="d-flex align-items-start gap-3">
+                    <i class="bi bi-graph-up-arrow"></i>
+                    <div>
+                        <strong>Receivables analytics</strong>
+                        <div class="small text-muted mt-1">Aging and outstanding by payer.</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <div class="col-lg-4 col-md-6">
+            <a class="ao-link-card" href="{% url 'hospital:insurance_receivable_list' %}">
+                <div class="d-flex align-items-start gap-3">
+                    <i class="bi bi-file-earmark-medical"></i>
+                    <div>
+                        <strong>Insurance receivable (list)</strong>
+                        <div class="small text-muted mt-1">Read-only legacy receivable register (no new entries here).</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <div class="col-lg-4 col-md-6">
+            <a class="ao-link-card" href="{% url 'hospital:revenue_payment_analysis' %}">
+                <div class="d-flex align-items-start gap-3">
+                    <i class="bi bi-pie-chart-fill"></i>
+                    <div>
+                        <strong>Revenue &amp; payment analysis</strong>
+                        <div class="small text-muted mt-1">Billed vs collected and bill-type trends.</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <div class="col-lg-4 col-md-6">
+            <a class="ao-link-card" href="{% url 'hospital:sales_details_claims' %}">
+                <div class="d-flex align-items-start gap-3">
+                    <i class="bi bi-receipt"></i>
+                    <div>
+                        <strong>Sales details (claims)</strong>
+                        <div class="small text-muted mt-1">Detailed claim-related sales views.</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-5">
+            <h6 class="text-muted text-uppercase small mb-2">Top payers — pending submission</h6>
+            <div class="ao-table-wrap mb-4">
+                <table class="table table-sm table-striped mb-0">
+                    <thead class="table-light">
+                        <tr><th>Payer</th><th class="text-end">Lines</th><th class="text-end">Billed (GHS)</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for row in top_payers_pending %}
+                        <tr>
+                            <td>{{ row.payer__name }}</td>
+                            <td class="text-end">{{ row.lines|intcomma }}</td>
+                            <td class="text-end">{{ row.billed|floatformat:2|intcomma }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="3" class="text-muted text-center py-3">No pending lines by payer.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <h6 class="text-muted text-uppercase small mb-2">Status mix (deduplicated lines)</h6>
+            <div class="ao-table-wrap">
+                <table class="table table-sm table-striped mb-0">
+                    <thead class="table-light">
+                        <tr><th>Status</th><th class="text-end">Lines</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for row in status_breakdown %}
+                        <tr>
+                            <td>{{ row.claim_status|title }}</td>
+                            <td class="text-end">{{ row.c|intcomma }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="2" class="text-muted text-center py-3">No claim lines found.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="col-lg-7">
+            <h6 class="text-muted text-uppercase small mb-2">Recent activity</h6>
+            <div class="ao-table-wrap">
+                <table class="table table-sm mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Patient</th>
+                            <th>Payer</th>
+                            <th>Status</th>
+                            <th class="text-end">Billed</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for line in recent_claim_lines %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'hospital:insurance_claim_item_detail' line.pk %}">{{ line.patient.full_name }}</a>
+                            </td>
+                            <td class="small">{{ line.payer.name }}</td>
+                            <td><span class="badge bg-secondary">{{ line.get_claim_status_display }}</span></td>
+                            <td class="text-end">{{ line.billed_amount|floatformat:2|intcomma }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="4" class="text-muted text-center py-3">No recent lines.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

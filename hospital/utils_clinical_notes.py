@@ -5,9 +5,35 @@ Assumes notes are ordered newest-first before calling dedupe_clinical_notes_time
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Any, List
 
 from django.utils import timezone
+
+
+def strip_billing_amounts_from_clinical_display(text: str | None) -> str:
+    """
+    Remove auto-logged billing snippets from text shown in consultation prefilled / clinical
+    blocks (e.g. lab batch lines that appended 'Total bill: GHS …').
+    """
+    if not text or not str(text).strip():
+        return (text or '').strip()
+    out = str(text)
+    # e.g. "[Lab] Tests ordered (1). Total bill: GHS 720.00 — 2026-04-14 11:35"
+    out = re.sub(
+        r'\.\s*Total bill:\s*GHS\s*[\d,]+\.\d{2}\s*—\s*',
+        '. — ',
+        out,
+        flags=re.IGNORECASE,
+    )
+    # Line-start variant (defensive)
+    out = re.sub(
+        r'^\s*Total bill:\s*GHS\s*[\d,]+\.\d{2}\s*—\s*',
+        '',
+        out,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    return out
 
 
 def clinical_note_content_fingerprint(note: Any) -> str:

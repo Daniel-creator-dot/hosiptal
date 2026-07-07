@@ -8,22 +8,37 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.core.exceptions import MultipleObjectsReturned
 from django.db.models import Q, Prefetch, Count, Case, When, Value, IntegerField
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
-from datetime import timedelta
+from datetime import timedelta, datetime
+from decimal import Decimal
 import logging
+import uuid
 
 from .models import Patient, Encounter, Staff, Prescription, Order, Drug, LabTest, LabResult
 from .models import VitalSign, Admission
 from .decorators import role_required
+from .utils_roles import is_pharmacy_user
 
 logger = logging.getLogger(__name__)
 
 
+def _queue_admission_prescription_for_pharmacy(prescription, encounter, doctor):
+    """Ensure an inpatient prescription has a PharmacyDispensing queue row and alerts pharmacy."""
+    from .services.pharmacy_queue_service import queue_prescription_for_pharmacy
+
+    queue_prescription_for_pharmacy(
+        prescription,
+        encounter,
+        doctor,
+        inpatient=True,
+    )
+
+
 @login_required
 @role_required(
-    'admin', 'doctor', 'nurse', 'midwife',
-    message='Only doctors, nurses, midwives, and admins can view the admitted patients list.',
+    'admin', 'doctor', 'nurse', 'midwife', 'pharmacist',
+    message='Only doctors, nurses, midwives, pharmacists, and admins can view the admitted patients list.',
 )
 def admitted_patients_list(request):
     """
@@ -106,6 +121,10 @@ def admitted_patients_list(request):
 
 
 @login_required
+@role_required(
+    'admin', 'doctor', 'nurse', 'midwife', 'pharmacist',
+    message='Only doctors, nurses, midwives, pharmacists, and admins can open the admission review page.',
+)
 def admission_review(request, encounter_id):
     """
     Review an admitted patient
@@ -124,9 +143,9 @@ def admission_review(request, encounter_id):
             is_deleted=False
         ).first()
         
-        # If encounter type is not admission but patient has admission record, update it
-        if admission and encounter.encounter_type != 'admission':
-            encounter.encounter_type = 'admission'
+        # Align encounter type with model choices (Admission flow uses 'inpatient')
+        if admission and encounter.encounter_type != 'inpatient':
+            encounter.encounter_type = 'inpatient'
             encounter.save(update_fields=['encounter_type'])
             
     except Exception:
@@ -140,7 +159,13 @@ def admission_review(request, encounter_id):
     
     if request.method == 'POST':
         action = request.POST.get('action')
-        
+        if action and is_pharmacy_user(request.user):
+            messages.error(
+                request,
+                'Pharmacy staff have read-only access here. Open the patient from the dispensing queue to verify and dispense medications.',
+            )
+            return redirect('hospital:admission_review', encounter_id=encounter.pk)
+
         if action == 'add_progress_note':
             # CRITICAL: Never allow auto-save to add progress notes (these are final submissions)
             is_auto_save = request.POST.get('auto_save') == 'true' or \
@@ -220,12 +245,24 @@ def admission_review(request, encounter_id):
         
         elif action == 'add_medication':
             # Add new medication (order goes to pharmacy as pending)
-            drug_id = request.POST.get('drug_id')
+            drug_id = (request.POST.get('drug_id') or '').strip()
             quantity = request.POST.get('quantity', 1)
             dosage = request.POST.get('dosage_instructions', '')
             frequency = request.POST.get('frequency', '')
             duration = request.POST.get('duration_days', '')
             route = request.POST.get('route', 'oral')
+
+            if not drug_id:
+                messages.error(
+                    request,
+                    'Please search and select a medication from the list before adding.',
+                )
+                return redirect('hospital:admission_review', encounter_id=encounter.pk)
+            try:
+                uuid.UUID(str(drug_id))
+            except (ValueError, TypeError, AttributeError):
+                messages.error(request, 'Invalid medication selection. Please search again and pick a drug from the list.')
+                return redirect('hospital:admission_review', encounter_id=encounter.pk)
             
             try:
                 with transaction.atomic():
@@ -250,7 +287,7 @@ def admission_review(request, encounter_id):
                     
                     # Create prescription (Prescription model uses: dose, duration, instructions)
                     duration_str = f"{duration} days" if duration and str(duration).strip() else "As directed"
-                    Prescription.objects.create(
+                    prescription = Prescription.objects.create(
                         order=med_order,
                         drug=drug,
                         quantity=int(quantity) if quantity else 1,
@@ -261,8 +298,12 @@ def admission_review(request, encounter_id):
                         instructions="",
                         prescribed_by=current_doctor,
                     )
+                    _queue_admission_prescription_for_pharmacy(prescription, encounter, current_doctor)
                 
-                messages.success(request, f'✅ Added {drug.name} to patient medications.')
+                messages.success(
+                    request,
+                    f'✅ Added {drug.name} to patient medications. Queued for pharmacy.',
+                )
                 
             except Drug.DoesNotExist:
                 messages.error(request, 'Drug not found.')
@@ -287,7 +328,7 @@ def admission_review(request, encounter_id):
                                 dup.is_deleted = True
                                 dup.save(update_fields=['is_deleted'])
                             duration_str = f"{duration} days" if duration and str(duration).strip() else "As directed"
-                            Prescription.objects.create(
+                            prescription = Prescription.objects.create(
                                 order=med_order,
                                 drug=drug,
                                 quantity=int(quantity) if quantity else 1,
@@ -298,7 +339,11 @@ def admission_review(request, encounter_id):
                                 instructions="",
                                 prescribed_by=current_doctor,
                             )
-                            messages.success(request, f'✅ Added {drug.name} to patient medications. Duplicate orders were merged.')
+                            _queue_admission_prescription_for_pharmacy(prescription, encounter, current_doctor)
+                            messages.success(
+                                request,
+                                f'✅ Added {drug.name} to patient medications. Duplicate orders were merged. Queued for pharmacy.',
+                            )
                 except Drug.DoesNotExist:
                     messages.error(request, 'Drug not found.')
                 except Exception as e2:
@@ -325,40 +370,72 @@ def admission_review(request, encounter_id):
             messages.success(request, '✅ Patient status updated.')
         
         elif action == 'order_labs':
-            test_ids = request.POST.getlist('test_ids')
+            test_ids = []
+            for raw in request.POST.getlist('test_ids'):
+                s = (raw or '').strip()
+                if not s:
+                    continue
+                try:
+                    uuid.UUID(s)
+                except (ValueError, TypeError, AttributeError):
+                    continue
+                test_ids.append(s)
             priority = request.POST.get('priority', 'routine')
             notes = request.POST.get('notes', '')
             if test_ids:
                 try:
-                    tests = LabTest.objects.filter(
-                        pk__in=test_ids,
-                        is_active=True,
-                        is_deleted=False,
-                        name__isnull=False
-                    ).exclude(name__iexact='').exclude(name__icontains='INVALID')
-                    if tests.exists():
-                        lab_order = Order.objects.create(
-                            encounter=encounter,
-                            order_type='lab',
-                            status='pending',
-                            priority=priority,
-                            notes=notes,
-                            requested_by=current_doctor
+                    with transaction.atomic():
+                        tests = list(
+                            LabTest.objects.filter(
+                                pk__in=test_ids,
+                                is_active=True,
+                                is_deleted=False,
+                                name__isnull=False,
+                            ).exclude(name__iexact='').exclude(name__icontains='INVALID')
                         )
-                        for test in tests:
-                            existing = LabResult.objects.filter(
-                                order=lab_order, test=test, is_deleted=False
-                            ).first()
-                            if not existing:
-                                LabResult.objects.create(
-                                    order=lab_order,
-                                    test=test,
-                                    status='pending'
+                        if tests:
+                            lab_order = Order.objects.create(
+                                encounter=encounter,
+                                order_type='lab',
+                                status='pending',
+                                priority=priority,
+                                notes=notes or '',
+                                requested_by=current_doctor,
+                                requested_at=timezone.now(),
+                            )
+                            lab_order.refresh_from_db()
+                            created_lines = 0
+                            for test in tests:
+                                existing = LabResult.objects.filter(
+                                    order=lab_order, test=test, is_deleted=False
+                                ).first()
+                                if not existing:
+                                    LabResult.objects.create(
+                                        order=lab_order,
+                                        test=test,
+                                        status='pending',
+                                    )
+                                    created_lines += 1
+                            if created_lines:
+                                messages.success(
+                                    request,
+                                    f'✅ Lab order created with {created_lines} test(s).',
                                 )
-                        messages.success(request, f'✅ Lab order created with {tests.count()} test(s).')
-                    else:
-                        messages.error(request, 'No valid tests selected.')
+                            else:
+                                messages.info(
+                                    request,
+                                    'Those tests are already on the most recent lab order for this patient.',
+                                )
+                        else:
+                            messages.error(request, 'No valid tests selected.')
+                except IntegrityError as e:
+                    logger.warning('Lab order integrity error for encounter %s: %s', encounter.pk, e)
+                    messages.error(
+                        request,
+                        'Could not create the lab order due to a data conflict. Please try again or order one panel at a time.',
+                    )
                 except Exception as e:
+                    logger.exception('Error creating lab order from admission review')
                     messages.error(request, f'Error creating lab order: {str(e)}')
             else:
                 messages.error(request, 'Please select at least one lab test.')
@@ -420,12 +497,283 @@ def admission_review(request, encounter_id):
             else:
                 messages.error(request, 'Please select at least one imaging study.')
         
+        elif action == 'record_vitals':
+            def _safe_int(value, default=None):
+                if value is None or str(value).strip() == '':
+                    return default
+                try:
+                    return int(value)
+                except (ValueError, TypeError):
+                    return default
+
+            def _safe_decimal(value, default=None):
+                if value is None or str(value).strip() == '':
+                    return default
+                try:
+                    return Decimal(str(value))
+                except (ValueError, TypeError):
+                    return default
+
+            vital_data = {
+                'systolic_bp': _safe_int(request.POST.get('systolic_bp')),
+                'diastolic_bp': _safe_int(request.POST.get('diastolic_bp')),
+                'pulse': _safe_int(request.POST.get('pulse')),
+                'temperature': _safe_decimal(request.POST.get('temperature')),
+                'spo2': _safe_int(request.POST.get('spo2')),
+                'respiratory_rate': _safe_int(request.POST.get('respiratory_rate')),
+            }
+            notes_text = (request.POST.get('notes') or '').strip()
+            blood_glucose = _safe_decimal(request.POST.get('blood_glucose'))
+            strip_type = (request.POST.get('poc_glucose_strip_type') or '').strip().lower()
+            poc_glucose_strip_type = strip_type if strip_type in ('rbs', 'fbs') else ''
+            has_any_core = any(
+                v is not None
+                for v in [
+                    vital_data['systolic_bp'],
+                    vital_data['diastolic_bp'],
+                    vital_data['pulse'],
+                    vital_data['temperature'],
+                    vital_data['spo2'],
+                    vital_data['respiratory_rate'],
+                ]
+            )
+            if (
+                not has_any_core
+                and blood_glucose is None
+                and not poc_glucose_strip_type
+                and not notes_text
+            ):
+                messages.error(request, 'Enter at least one vital sign, glucose reading, strip charge, or a short note.')
+                return redirect('hospital:admission_review', encounter_id=encounter.pk)
+
+            patient = encounter.patient
+            try:
+                patient_age = int(patient.age) if patient.age is not None else 30
+            except (TypeError, ValueError):
+                patient_age = 30
+            patient_gender = getattr(patient, 'gender', None) or None
+
+            try:
+                from .services.vital_signs_validator import VitalSignsValidator
+                validation_results = VitalSignsValidator.validate_all_vitals(
+                    vital_data,
+                    patient_age,
+                    patient_gender,
+                )
+            except Exception:
+                validation_results = {'overall': {'is_ok': True, 'message': 'Vital signs saved.', 'status': 'normal'}}
+
+            vital = VitalSign.objects.create(
+                encounter=encounter,
+                systolic_bp=vital_data['systolic_bp'],
+                diastolic_bp=vital_data['diastolic_bp'],
+                pulse=vital_data['pulse'],
+                temperature=vital_data['temperature'],
+                spo2=vital_data['spo2'],
+                respiratory_rate=vital_data['respiratory_rate'],
+                weight=_safe_decimal(request.POST.get('weight')),
+                height=_safe_decimal(request.POST.get('height')),
+                blood_glucose=blood_glucose,
+                poc_glucose_strip_type=poc_glucose_strip_type,
+                consciousness_level=request.POST.get('consciousness_level') or 'alert',
+                pain_score=_safe_int(request.POST.get('pain_score')),
+                supplemental_oxygen=request.POST.get('supplemental_oxygen') == 'on',
+                oxygen_flow_rate=_safe_decimal(request.POST.get('oxygen_flow_rate')),
+                position=request.POST.get('position') or '',
+                notes=request.POST.get('notes', ''),
+                recorded_by=current_doctor,
+            )
+            encounter.modified = timezone.now()
+            encounter.save(update_fields=['modified'])
+
+            if poc_glucose_strip_type:
+                from .services.auto_billing_service import AutoBillingService
+
+                bill_result = AutoBillingService.bill_poc_glucose_strip(
+                    encounter, poc_glucose_strip_type, vital_sign=vital
+                )
+                if bill_result.get('success'):
+                    messages.success(
+                        request,
+                        bill_result.get(
+                            'message',
+                            'POC glucose strip added to patient bill for cashier.',
+                        ),
+                    )
+                    sf = bill_result.get('stock_shortfall')
+                    if sf is not None and int(sf or 0) > 0:
+                        messages.warning(
+                            request,
+                            'Glucose strip stock: shortfall recorded — restock pharmacy store.',
+                        )
+                else:
+                    messages.warning(
+                        request,
+                        bill_result.get('message')
+                        or 'POC glucose strip could not be added to the bill.',
+                    )
+
+            overall = validation_results.get('overall', {})
+            if overall.get('is_ok'):
+                messages.success(
+                    request,
+                    overall.get('message', 'Vital signs recorded for this admission.'),
+                )
+            elif 'critical' in str(overall.get('status', '')):
+                messages.error(
+                    request,
+                    overall.get(
+                        'message',
+                        'Critical vital signs recorded — review immediately.',
+                    ),
+                )
+            else:
+                messages.warning(
+                    request,
+                    overall.get(
+                        'message',
+                        'Vital signs saved — one or more values are outside typical range.',
+                    ),
+                )
+
+        elif action == 'log_treatment_dose':
+            rx_id = (request.POST.get('prescription_id') or '').strip()
+            if not rx_id:
+                messages.error(request, 'Select a medication to log.')
+                return redirect('hospital:admission_review', encounter_id=encounter.pk)
+            rx = Prescription.objects.filter(
+                pk=rx_id,
+                is_deleted=False,
+                order__encounter=encounter,
+                order__order_type='medication',
+            ).select_related('order').first()
+            if not rx:
+                messages.error(request, 'Prescription not found for this admission.')
+                return redirect('hospital:admission_review', encounter_id=encounter.pk)
+            try:
+                from .models_advanced import MedicationAdministrationRecord
+            except ImportError:
+                messages.error(
+                    request,
+                    'Medication administration records are not available on this server.',
+                )
+                return redirect('hospital:admission_review', encounter_id=encounter.pk)
+
+            dose_given = (request.POST.get('dose_given') or '').strip() or (rx.dose or '')[:50]
+            notes = (request.POST.get('treatment_notes') or '').strip()
+            raw_dt = (request.POST.get('administered_at') or '').strip()
+            if raw_dt:
+                try:
+                    naive = datetime.strptime(raw_dt[:16], '%Y-%m-%dT%H:%M')
+                    admin_at = timezone.make_aware(naive, timezone.get_current_timezone())
+                except ValueError:
+                    admin_at = timezone.now()
+            else:
+                admin_at = timezone.now()
+            route = (rx.route or '')[:50]
+
+            try:
+                with transaction.atomic():
+                    mar = MedicationAdministrationRecord.objects.create(
+                        prescription=rx,
+                        encounter=encounter,
+                        patient=encounter.patient,
+                        scheduled_time=admin_at,
+                        administered_time=admin_at,
+                        status='given',
+                        administered_by=current_doctor,
+                        dose_given=dose_given[:50],
+                        route=route,
+                        notes=notes,
+                    )
+                try:
+                    from .models_drug_accountability import DrugAdministrationInventory
+
+                    DrugAdministrationInventory.create_from_mar(mar, current_doctor)
+                except Exception as inv_err:
+                    logger.warning(
+                        'Admission MAR logged; pharmacy inventory not updated: %s',
+                        inv_err,
+                    )
+                    messages.success(
+                        request,
+                        f'✅ Recorded {rx.drug.name}. Pharmacy stock was not adjusted (see logs if needed).',
+                    )
+                else:
+                    messages.success(
+                        request,
+                        f'✅ Recorded administration of {rx.drug.name}.',
+                    )
+                encounter.modified = timezone.now()
+                encounter.save(update_fields=['modified'])
+            except Exception as e:
+                logger.exception('log_treatment_dose failed')
+                messages.error(request, f'Could not log dose: {e}')
+
+        elif action == 'complete_scheduled_mar':
+            mar_id = (request.POST.get('mar_id') or '').strip()
+            if not mar_id:
+                messages.error(request, 'Missing administration record.')
+                return redirect('hospital:admission_review', encounter_id=encounter.pk)
+            try:
+                from .models_advanced import MedicationAdministrationRecord
+            except ImportError:
+                messages.error(request, 'Medication administration records are not available.')
+                return redirect('hospital:admission_review', encounter_id=encounter.pk)
+            mar = MedicationAdministrationRecord.objects.filter(
+                pk=mar_id,
+                encounter=encounter,
+                is_deleted=False,
+                status='scheduled',
+            ).select_related('prescription__drug').first()
+            if not mar:
+                messages.error(request, 'Scheduled dose not found or already completed.')
+                return redirect('hospital:admission_review', encounter_id=encounter.pk)
+            dose_given = (request.POST.get('dose_given') or '').strip() or (
+                (mar.prescription.dose or '')[:50] if mar.prescription else ''
+            )
+            notes = (request.POST.get('treatment_notes') or '').strip()
+            now = timezone.now()
+            try:
+                with transaction.atomic():
+                    mar.status = 'given'
+                    mar.administered_time = now
+                    mar.administered_by = current_doctor
+                    mar.dose_given = dose_given[:50]
+                    if notes:
+                        mar.notes = notes
+                    mar.save()
+                try:
+                    from .models_drug_accountability import DrugAdministrationInventory
+
+                    DrugAdministrationInventory.create_from_mar(mar, current_doctor)
+                except Exception as inv_err:
+                    logger.warning(
+                        'Scheduled MAR completed; inventory not updated: %s',
+                        inv_err,
+                    )
+                    messages.success(
+                        request,
+                        f'✅ Marked {mar.prescription.drug.name} as given. Stock may need manual check.',
+                    )
+                else:
+                    messages.success(
+                        request,
+                        f'✅ Marked {mar.prescription.drug.name} as given.',
+                    )
+                encounter.modified = now
+                encounter.save(update_fields=['modified'])
+            except Exception as e:
+                logger.exception('complete_scheduled_mar failed')
+                messages.error(request, f'Could not update dose: {e}')
+        
         return redirect('hospital:admission_review', encounter_id=encounter.pk)
     
     # Get all data for display
     # Latest vitals
-    latest_vitals = encounter.vitals.filter(is_deleted=False).order_by('-recorded_at').first()
-    recent_vitals = encounter.vitals.filter(is_deleted=False).order_by('-recorded_at')[:5]
+    _vitals_qs = encounter.vitals.filter(is_deleted=False).select_related('recorded_by__user')
+    latest_vitals = _vitals_qs.order_by('-recorded_at').first()
+    recent_vitals = _vitals_qs.order_by('-recorded_at')[:5]
     
     # Current medications
     current_prescriptions = Prescription.objects.filter(
@@ -433,6 +781,59 @@ def admission_review(request, encounter_id):
         order__order_type='medication',
         is_deleted=False
     ).select_related('drug', 'prescribed_by__user').order_by('-created')
+
+    treatment_chart_available = False
+    treatment_mar_given = []
+    treatment_mar_pending = []
+    admission_treatment_chart = {'events': []}
+    try:
+        from .models_advanced import MedicationAdministrationRecord
+
+        treatment_chart_available = True
+        treatment_mar_given = list(
+            MedicationAdministrationRecord.objects.filter(
+                encounter=encounter,
+                is_deleted=False,
+                status='given',
+                administered_time__isnull=False,
+            )
+            .select_related('prescription__drug', 'administered_by__user')
+            .order_by('-administered_time')[:80]
+        )
+        treatment_mar_pending = list(
+            MedicationAdministrationRecord.objects.filter(
+                encounter=encounter,
+                is_deleted=False,
+                status='scheduled',
+            )
+            .select_related('prescription__drug')
+            .order_by('scheduled_time')[:40]
+        )
+        _ev_sorted = sorted(
+            treatment_mar_given,
+            key=lambda m: m.administered_time or m.scheduled_time,
+        )[-60:]
+        admission_treatment_chart = {
+            'events': [
+                {
+                    't': timezone.localtime(
+                        m.administered_time or m.scheduled_time
+                    ).isoformat(),
+                    'drug': (
+                        m.prescription.drug.name
+                        if m.prescription and m.prescription.drug
+                        else 'Medication'
+                    ),
+                    'dose': (m.dose_given or '')[:80],
+                    'id': str(m.id),
+                }
+                for m in _ev_sorted
+            ]
+        }
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.exception('Admission treatment chart load failed: %s', e)
     
     # Clinical notes (progress notes for handover) — include this encounter AND any same-patient encounter during stay
     clinical_notes = []
@@ -528,9 +929,8 @@ def admission_review(request, encounter_id):
         except Exception:
             clinical_notes = []
     
-    # Lab results
+    # Lab results (LabResult must not be re-imported in this function — it shadows the module import and breaks POST handlers.)
     try:
-        from .models import LabResult
         recent_lab_results = LabResult.objects.filter(
             order__encounter=encounter,
             is_deleted=False
@@ -603,6 +1003,58 @@ def admission_review(request, encounter_id):
         hours_admitted = 0
     
     progress_notes_today_date = timezone.localdate()
+
+    # Time-series for TPR / vitals graphic sheet (Chart.js on admission review)
+    admission_vitals_chart = {'points': []}
+    try:
+        _chart_rows = (
+            encounter.vitals.filter(is_deleted=False)
+            .order_by('recorded_at')
+            .values(
+                'recorded_at',
+                'temperature',
+                'systolic_bp',
+                'diastolic_bp',
+                'pulse',
+                'spo2',
+                'respiratory_rate',
+            )[:240]
+        )
+        _pts = []
+        for row in _chart_rows:
+            ra = row.get('recorded_at')
+            if ra is None:
+                continue
+            if timezone.is_naive(ra):
+                ra = timezone.make_aware(ra, timezone.get_current_timezone())
+            temp = row.get('temperature')
+            sys_bp = row.get('systolic_bp')
+            dia_bp = row.get('diastolic_bp')
+            pulse_v = row.get('pulse')
+            spo2_v = row.get('spo2')
+            rr_v = row.get('respiratory_rate')
+            if not any(
+                v is not None
+                for v in (temp, sys_bp, dia_bp, pulse_v, spo2_v, rr_v)
+            ):
+                continue
+            _pts.append(
+                {
+                    't': timezone.localtime(ra).isoformat(),
+                    'temp': float(temp) if temp is not None else None,
+                    'sys': sys_bp,
+                    'dia': dia_bp,
+                    'pulse': pulse_v,
+                    'spo2': spo2_v,
+                    'rr': rr_v,
+                }
+            )
+        admission_vitals_chart = {'points': _pts}
+    except Exception as e:
+        logger.exception('admission_vitals_chart build failed: %s', e)
+
+    from django.conf import settings as django_settings
+
     context = {
         'title': f'Admission Review - {encounter.patient.full_name}',
         'encounter': encounter,
@@ -611,6 +1063,11 @@ def admission_review(request, encounter_id):
         'current_doctor': current_doctor,
         'latest_vitals': latest_vitals,
         'recent_vitals': recent_vitals,
+        'admission_vitals_chart': admission_vitals_chart,
+        'treatment_chart_available': treatment_chart_available,
+        'treatment_mar_given': treatment_mar_given,
+        'treatment_mar_pending': treatment_mar_pending,
+        'admission_treatment_chart': admission_treatment_chart,
         'current_prescriptions': current_prescriptions,
         'clinical_notes': clinical_notes,
         'clinical_notes_calendar_data': clinical_notes_calendar_data,
@@ -626,6 +1083,7 @@ def admission_review(request, encounter_id):
         'available_drugs': available_drugs,
         'days_admitted': days_admitted,
         'hours_admitted': hours_admitted,
+        'poc_glucose_strip_ghs': django_settings.POC_GLUCOSE_STRIP_GHS,
     }
     return render(request, 'hospital/admission_review.html', context)
 
@@ -690,13 +1148,12 @@ def shift_handover_report(request):
         
         # Recent lab results
         try:
-            from .models import LabResult
             recent_labs = LabResult.objects.filter(
                 order__encounter=encounter,
                 created__gte=shift_start,
                 is_deleted=False
             ).select_related('test')
-        except:
+        except Exception:
             recent_labs = []
         
         # Compile handover info

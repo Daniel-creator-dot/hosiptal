@@ -1,6 +1,6 @@
 """
 Patient Deposit System
-Allows patients to make deposits before treatment, which are automatically applied to invoices
+Allows patients to make deposits before treatment; application to invoices is cashier-driven (Apply deposit).
 """
 from django.db import models
 from django.contrib.auth.models import User
@@ -224,7 +224,7 @@ class PatientDeposit(BaseModel):
                 invoice=invoice,
                 applied_amount=amount,
                 applied_by=self.created_by,
-                notes=f"Auto-applied from deposit {self.deposit_number}"
+                notes=f"Applied from patient deposit {self.deposit_number}"
             )
             
             # Update deposit balance

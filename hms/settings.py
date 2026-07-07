@@ -60,6 +60,7 @@ if sys.platform == 'win32':
         # If anything fails, continue anyway
         pass
 
+from decimal import Decimal
 from pathlib import Path
 from decouple import config
 import dj_database_url
@@ -78,6 +79,12 @@ SECRET_KEY = config('SECRET_KEY', default='e77uf3k0c3!53--4jid)7%08=n(8vf)^)#utg
 # Production MUST set DEBUG=False in .env. When DEBUG is True: cached template
 # loaders are disabled, APP_DIRS template discovery is slower, WhiteNoise static
 # cache is 0, and security checks are relaxed.
+#
+# Performance / deployment checklist (.env):
+#   DEBUG=False                    — required in production; enables cached template loaders + static caching
+#   REDIS_URL=redis://...          — must be reachable if USE_REDIS_CACHE=True (default); else LocMem + DB sessions
+#   DATABASE_CONN_MAX_AGE=600      — connection reuse (already defaulted in this file)
+#   SECRET_KEY / ALLOWED_HOSTS     — set explicitly in production
 DEBUG = config('DEBUG', default=True, cast=bool)
 
 # Allow all hosts in DEBUG mode, or use configured hosts in production
@@ -86,7 +93,7 @@ DEBUG = config('DEBUG', default=True, cast=bool)
 if DEBUG:
     # In DEBUG mode, allow common development hosts and IP addresses
     # Include all common local network IPs for easier access from other devices
-    default_hosts = 'localhost,127.0.0.1,0.0.0.0,192.168.2.97,192.168.2.216,192.168.233.1,192.168.64.1,172.20.112.1,192.168.1.1,192.168.0.1,192.168.0.105,10.0.0.1,10.132.245.143'
+    default_hosts = 'localhost,127.0.0.1,0.0.0.0,192.168.2.97,192.168.2.216,192.168.2.218,192.168.233.1,192.168.64.1,172.20.112.1,192.168.1.1,192.168.0.1,192.168.0.105,10.0.0.1,10.132.245.143'
 else:
     # In production, require explicit ALLOWED_HOSTS configuration
     # Default to localhost only if not set (will fail in production - user must configure)
@@ -109,7 +116,7 @@ if DEBUG:
     # Add common local IPs if not already present
     # Also add common private network ranges for easier network access
     common_hosts = [
-        '192.168.2.97', '192.168.2.216', '127.0.0.1', 'localhost', '0.0.0.0',
+        '192.168.2.97', '192.168.2.216', '192.168.2.218', '127.0.0.1', 'localhost', '0.0.0.0',
         '192.168.233.1', '192.168.64.1', '172.20.112.1',
         '192.168.1.1', '192.168.0.1', '192.168.0.105', '10.0.0.1', '10.132.245.143'
     ]
@@ -195,12 +202,13 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'hospital.middleware_validation_error.ValidationErrorJSONMiddleware',  # Return safe JSON on ValidationError (e.g. invalid UUID)
     'django.contrib.auth.middleware.AuthenticationMiddleware',  # Must come before BulkCreationMonitorMiddleware
+    'hospital.middleware_request_role.RequestUserRoleMiddleware',  # Resolve HMS role once per request (Staff/groups)
     'hospital.middleware_finance_admin_access.FinanceAccountAdminAccessMiddleware',  # Grant finance/account users admin access (is_staff) so they are not asked to log in again
     'hospital.middleware_bulk_creation_monitor.BulkCreationMonitorMiddleware',  # Monitor and prevent bulk creation (after AuthenticationMiddleware)
     'django.contrib.messages.middleware.MessageMiddleware',  # Must come after SessionMiddleware and AuthenticationMiddleware
     'hospital.middleware_session_timeout.SessionTimeoutMiddleware',  # Auto-logout after 2 hours idle
     'hospital.middleware_audit.AuditMiddleware',  # Audit logging for compliance
-    # 'hospital.middleware_accountant_restriction.AccountantRestrictionMiddleware',  # DISABLED: Restrict accountants to accounting features only - temporarily disabled to restore app access
+    'hospital.middleware_accountant_restriction.AccountantRestrictionMiddleware',  # Restrict accountants to accounting features only
     # 'hospital.middleware_hr_restriction.HRRestrictionMiddleware',  # DISABLED: Restrict HR staff to HR features only - temporarily disabled to restore app access
     'hospital.middleware_midwife_restriction.MidwifeRestrictionMiddleware',  # Block midwives from finance/lab/pharmacy; allow nurse-equivalent clinical paths
     'allauth.account.middleware.AccountMiddleware',  # Required by allauth
@@ -383,6 +391,19 @@ DEFAULT_LOGIN_LATITUDE = config('DEFAULT_LOGIN_LATITUDE', default=5.6037, cast=f
 DEFAULT_LOGIN_LONGITUDE = config('DEFAULT_LOGIN_LONGITUDE', default=-0.1870, cast=float)
 DEFAULT_LOGIN_TIMEZONE = config('DEFAULT_LOGIN_TIMEZONE', default='Africa/Accra')
 
+# Accountant bills list / Excel / print: default lower bound on issued date (omit older rows).
+BILLS_LIST_GO_LIVE_DATE = config('BILLS_LIST_GO_LIVE_DATE', default='2026-03-10')
+
+# Nurse vitals: point-of-care glucose strip (RBS/FBS) — GHS charged per strip when type is selected on vitals form.
+POC_GLUCOSE_STRIP_GHS = Decimal(str(config('POC_GLUCOSE_STRIP_GHS', default='20')))
+# Optional UUID of a Drug (formulary) representing glucose test strips; when set, one unit is deducted
+# from pharmacy/store per billed strip (same flow as dispensing). Leave empty to bill only without stock move.
+POC_GLUCOSE_STRIP_DRUG_ID = config('POC_GLUCOSE_STRIP_DRUG_ID', default='').strip()
+
+# Perpetual inventory GL: post Dr 1400/Cr AP on receipt and Dr 511x/Cr 1400 on dispense.
+INVENTORY_GL_ENABLED = config('INVENTORY_GL_ENABLED', default=True, cast=bool)
+# Use Primecare revenue accounts (4120 lab, 4130 pharmacy, etc.) for cashier payments.
+USE_PRIMECARE_REVENUE_ACCOUNTS = config('USE_PRIMECARE_REVENUE_ACCOUNTS', default=True, cast=bool)
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
@@ -620,10 +641,11 @@ ACCOUNT_USERNAME_REQUIRED = False
 ACCOUNT_AUTHENTICATION_METHOD = 'email'
 ACCOUNT_EMAIL_VERIFICATION = 'mandatory'
 
-# SMS Configuration - SMS Notify GH
-SMS_API_KEY = config('SMS_API_KEY', default='84c879bb-f9f9-4666-84a8-9f70a9b238cc')
-SMS_SENDER_ID = config('SMS_SENDER_ID', default='PrimeCare')
-SMS_API_URL = config('SMS_API_URL', default='https://sms.smsnotifygh.com/smsapi')
+# SMS Configuration - Intek SMS (https://www.inteksms.top)
+SMS_API_KEY = config('SMS_API_KEY', default='INTEK_C29C88.0e7310c3b08164b4773cc74d81ab234b203b38a42800120f')
+SMS_SENDER_ID = config('SMS_SENDER_ID', default='Primecare')
+SMS_API_URL = config('SMS_API_URL', default='https://www.inteksms.top/api/v1/messages/send')
+SMS_WALLET_URL = config('SMS_WALLET_URL', default='https://www.inteksms.top/api/v1/balance')
 
 # Site URL for SMS links (appointments, confirmations, etc.)
 # Set this to your production domain (e.g., 'https://yourdomain.com')

@@ -3,7 +3,7 @@ Automatic Bed Billing Service
 
 Billing logic:
 - DETENTION: Stay < 12 hours → detention fee (GHS 120) + doctor care + nursing care + consumables (1 day equivalent each)
-- ADMISSION: Stay >= 12 hours → count by **nights** (each 12-hour period after admission threshold = 1 night), not 24-hour days
+- ADMISSION: Stay >= 12 hours → count by **nights** = calendar-style 24-hour periods (rounded up), not 12-hour half-day units
   - Accommodation: GHS 150 per night (regular), GHS 300 per night (VIP)
   - Doctor care, nursing care, consumables: same per-night count × their rates
 """
@@ -22,7 +22,7 @@ ACCOM_SERVICE_CODES = ['DETENTION', 'ADM-ACCOM', 'ADM-DOCTOR-CARE', 'ADM-NURSING
 class BedBillingService:
     """Service for automatic bed billing with detention vs admission logic."""
 
-    # Pricing (GHS) – per **night** for admission (stay >= 12h); night = 12-hour billing unit
+    # Pricing (GHS) – per **night** for admission (stay >= 12h); night = 24-hour billing unit (ceil of stay length)
     DETENTION_RATE = Decimal('120.00')           # Stay < 12 hours (flat)
     ADMISSION_NIGHTLY_RATE = Decimal('150.00')   # Stay >= 12 hours, regular ward (per night)
     VIP_ADMISSION_NIGHTLY_RATE = Decimal('300.00')  # VIP ward (per night)
@@ -39,10 +39,15 @@ class BedBillingService:
     CONSUMABLES_PER_DAY = CONSUMABLES_PER_NIGHT
 
     @staticmethod
+    def _ward_is_vip(ward):
+        """VIP accommodation if ward name contains 'vip' (case-insensitive)."""
+        return bool(ward and 'vip' in (ward.name or '').lower())
+
+    @staticmethod
     def _is_vip_ward(admission):
         """Check if ward is VIP (name contains 'vip')."""
         if admission and admission.ward:
-            return 'vip' in (admission.ward.name or '').lower()
+            return BedBillingService._ward_is_vip(admission.ward)
         return False
 
     @staticmethod
@@ -55,16 +60,82 @@ class BedBillingService:
         )
 
     @staticmethod
-    def _admission_night_count(total_hours):
+    def _billable_ward_segments(admission):
         """
-        Nights for admission (>= 12h): each 12-hour block counts as one night, minimum 1.
-        Example: 12–24h → 1 night; 25–36h → 2 nights; 48h → 3 nights.
+        Return [(ward, bed, hours), ...] from admit_date through discharge or now.
+        Hours sum to the total stay length; uses AdmissionWardStay when present.
+        """
+        end = admission.discharge_date or timezone.now()
+        admit = admission.admit_date
+        total_hours = max(0.0, (end - admit).total_seconds() / 3600.0)
+        from hospital.models import AdmissionWardStay
+
+        stays = list(
+            AdmissionWardStay.objects.filter(admission=admission, is_deleted=False).order_by(
+                'started_at', 'id'
+            )
+        )
+        if not stays:
+            return [(admission.ward, admission.bed, total_hours)]
+
+        segments = []
+        for st in stays:
+            s = max(st.started_at, admit)
+            e = min(st.ended_at or end, end)
+            if e > s:
+                segments.append((st.ward, st.bed, (e - s).total_seconds() / 3600.0))
+
+        if not segments:
+            return [(admission.ward, admission.bed, total_hours)]
+
+        sh = sum(h for *_, h in segments)
+        if sh <= 0:
+            return [(admission.ward, admission.bed, total_hours)]
+        if abs(sh - total_hours) > 1e-6:
+            if sh < total_hours:
+                segments.append((admission.ward, admission.bed, total_hours - sh))
+            else:
+                scale = total_hours / sh
+                segments = [(w, b, h * scale) for w, b, h in segments]
+        return segments
+
+    @staticmethod
+    def _allocate_nights_by_hours(total_nights, hours_per_segment):
+        """Split integer nights across segments proportionally to hours (largest remainder)."""
+        n = len(hours_per_segment)
+        if total_nights <= 0 or n == 0:
+            return [0] * n
+        th = sum(hours_per_segment)
+        if th <= 0:
+            out = [0] * n
+            out[0] = total_nights
+            return out
+        quotas = [total_nights * (h / th) for h in hours_per_segment]
+        floors = [int(q) for q in quotas]
+        rem = total_nights - sum(floors)
+        order = sorted(range(n), key=lambda i: quotas[i] - floors[i], reverse=True)
+        j = 0
+        while rem > 0:
+            floors[order[j % n]] += 1
+            rem -= 1
+            j += 1
+        return floors
+
+    @staticmethod
+    def _admission_night_count(admission, total_hours):
+        """
+        Nights for admission (>= 12h): at least one night; use the greater of
+        (local calendar dates spanned − 1 day boundary count) and ceil(hours/24).
+        Same end instant as _get_stay_hours so the two stay consistent.
         """
         if total_hours < BedBillingService.DETENTION_THRESHOLD_HOURS:
             return 0
-        # ceil(h/12) - 1 gives nights after the first 12h block; min 1 for any stay >= 12h
-        n = int(math.ceil(total_hours / 12.0)) - 1
-        return max(1, n)
+        end = admission.discharge_date or timezone.now()
+        start_local = timezone.localtime(admission.admit_date)
+        end_local = timezone.localtime(end)
+        cal_gap = (end_local.date() - start_local.date()).days
+        hour_nights = int(math.ceil(total_hours / 24.0))
+        return max(1, max(cal_gap, hour_nights))
 
     @staticmethod
     def _get_or_create_service_code(code, description, unit_price, category='accommodation'):
@@ -88,6 +159,55 @@ class BedBillingService:
         return delta.total_seconds() / 3600
 
     @staticmethod
+    def _repair_adm_lines_on_open_admission_invoice(admission):
+        """
+        Final ADM-* lines belong on the encounter invoice after discharge (provisional DETENTION only
+        while admitted). If ADM-* rows are present during an open admission, remove them and ensure
+        a provisional DETENTION line so Total Bill does not show stale night counts or double-count
+        bed charges (live bed row + invoice lines).
+        """
+        from hospital.models import Invoice, InvoiceLine
+
+        if admission.status != 'admitted' or not admission.encounter_id:
+            return
+        try:
+            invoice = Invoice.all_objects.get(
+                patient=admission.encounter.patient,
+                encounter=admission.encounter,
+                is_deleted=False,
+            )
+        except Invoice.DoesNotExist:
+            return
+
+        adm_codes = [
+            'ADM-ACCOM',
+            'ADM-DOCTOR-CARE',
+            'ADM-NURSING-CARE',
+            'ADM-CONSUMABLES',
+        ]
+        qs = InvoiceLine.objects.filter(
+            invoice=invoice,
+            is_deleted=False,
+            waived_at__isnull=True,
+            service_code__code__in=adm_codes,
+        )
+        if not qs.exists():
+            return
+
+        try:
+            with transaction.atomic():
+                qs.delete()
+                invoice.update_totals()
+                invoice.save(update_fields=['total_amount', 'balance', 'modified'])
+                result = BedBillingService.create_admission_bill(admission, days=1)
+                if not result.get('success'):
+                    raise RuntimeError(result.get('error') or 'create_admission_bill failed')
+        except Exception:
+            logger.exception(
+                'Could not repair ADM invoice lines for open admission %s', admission.pk
+            )
+
+    @staticmethod
     def calculate_admission_charges(admission, include_partial_days=True):
         """
         Calculate charges based on stay duration (detention vs admission).
@@ -101,12 +221,22 @@ class BedBillingService:
         - total_charge: Decimal
         - line_items: list of {code, description, quantity, unit_price, line_total}
         """
-        _ = include_partial_days  # API compatibility; billing uses 12h night units
+        _ = include_partial_days  # API compatibility; billing uses 24h night units
+        if admission.status == 'admitted':
+            BedBillingService._repair_adm_lines_on_open_admission_invoice(admission)
+
         total_hours = BedBillingService._get_stay_hours(admission)
         is_detention = total_hours < BedBillingService.DETENTION_THRESHOLD_HOURS
 
+        segments = BedBillingService._billable_ward_segments(admission)
         bed_num = admission.bed.bed_number if admission.bed else 'N/A'
         ward_name = admission.ward.name if admission.ward else 'N/A'
+        if segments:
+            w0, b0, _ = segments[0]
+            if w0:
+                ward_name = w0.name or ward_name
+            if b0:
+                bed_num = b0.bed_number or bed_num
 
         if is_detention:
             # Detention: base fee + doctor care + nursing care + consumables (1 night equivalent each)
@@ -163,26 +293,69 @@ class BedBillingService:
                 'line_items': line_items,
             }
 
-        # Admission: bill by nights (12-hour units), not 24-hour calendar days
-        nights = BedBillingService._admission_night_count(total_hours)
+        # Admission: bill by nights (24-hour units, ceil)
+        nights = BedBillingService._admission_night_count(admission, total_hours)
+        hours_list = [h for *_, h in segments]
+        allocated = BedBillingService._allocate_nights_by_hours(nights, hours_list)
 
-        nightly_rate = BedBillingService._get_admission_daily_rate(admission)
-        accom_total = nightly_rate * nights
+        accom_lines = []
+        accom_total = Decimal('0.00')
+        for (w, b, _), nseg in zip(segments, allocated):
+            if nseg <= 0:
+                continue
+            wname = w.name if w else 'N/A'
+            bnum = b.bed_number if b else 'N/A'
+            rate = (
+                BedBillingService.VIP_ADMISSION_NIGHTLY_RATE
+                if BedBillingService._ward_is_vip(w)
+                else BedBillingService.ADMISSION_NIGHTLY_RATE
+            )
+            seg_total = rate * nseg
+            accom_total += seg_total
+            accom_lines.append(
+                {
+                    'code': 'ADM-ACCOM',
+                    'description': (
+                        f'Admission - {wname} - Bed {bnum} '
+                        f'({nseg} night{"s" if nseg != 1 else ""} @ GHS {rate}/night)'
+                    ),
+                    'quantity': nseg,
+                    'unit_price': rate,
+                    'line_total': seg_total,
+                }
+            )
+
+        if not accom_lines and nights > 0:
+            nightly_rate = BedBillingService._get_admission_daily_rate(admission)
+            accom_total = nightly_rate * nights
+            accom_lines = [
+                {
+                    'code': 'ADM-ACCOM',
+                    'description': (
+                        f'Admission - {ward_name} - Bed {bed_num} '
+                        f'({nights} night{"s" if nights != 1 else ""} @ GHS {nightly_rate}/night)'
+                    ),
+                    'quantity': nights,
+                    'unit_price': nightly_rate,
+                    'line_total': accom_total,
+                }
+            ]
+
+        nightly_blended = (
+            (accom_total / nights) if nights > 0 else BedBillingService.ADMISSION_NIGHTLY_RATE
+        )
+
         doctor_care_total = BedBillingService.DOCTOR_CARE_PER_NIGHT * nights
         nursing_care_total = BedBillingService.NURSING_CARE_PER_NIGHT * nights
         consumables_total = BedBillingService.CONSUMABLES_PER_NIGHT * nights
 
-        line_items = [
-            {
-                'code': 'ADM-ACCOM',
-                'description': (
-                    f'Admission - {ward_name} - Bed {bed_num} '
-                    f'({nights} night{"s" if nights != 1 else ""} @ GHS {nightly_rate}/night)'
-                ),
-                'quantity': nights,
-                'unit_price': nightly_rate,
-                'line_total': accom_total,
-            },
+        ward_labels = []
+        for w, _, _ in segments:
+            if w and w.name and w.name not in ward_labels:
+                ward_labels.append(w.name)
+        ward_display = ', '.join(ward_labels) if ward_labels else ward_name
+
+        line_items = accom_lines + [
             {
                 'code': 'ADM-DOCTOR-CARE',
                 'description': f'Doctor Care ({nights} night{"s" if nights != 1 else ""} @ GHS {BedBillingService.DOCTOR_CARE_PER_NIGHT}/night)',
@@ -213,12 +386,12 @@ class BedBillingService:
             'total_hours': total_hours,
             'days': nights,
             'nights': nights,
-            'daily_rate': nightly_rate,
+            'daily_rate': nightly_blended,
             'total_charge': total_charge,
             'admission_date': admission.admit_date,
             'discharge_date': admission.discharge_date or timezone.now(),
             'bed': bed_num,
-            'ward': ward_name,
+            'ward': ward_display,
             'line_items': line_items,
         }
 
@@ -372,6 +545,35 @@ class BedBillingService:
                 'error': str(e),
                 'message': str(e),
             }
+
+    @staticmethod
+    def update_provisional_accommodation_description(admission):
+        """Refresh DETENTION provisional line text after ward/bed change (e.g. transfer)."""
+        from hospital.models import Invoice, ServiceCode
+
+        if not admission.encounter_id:
+            return
+        try:
+            invoice = Invoice.all_objects.get(
+                patient=admission.encounter.patient,
+                encounter=admission.encounter,
+                is_deleted=False,
+            )
+        except Invoice.DoesNotExist:
+            return
+        sc_det = ServiceCode.objects.filter(code='DETENTION', is_deleted=False).first()
+        if not sc_det:
+            return
+        line = invoice.lines.filter(service_code=sc_det, is_deleted=False).first()
+        if not line:
+            return
+        desc = (line.description or '').lower()
+        if 'provisional' not in desc:
+            return
+        ward_name = admission.ward.name if admission.ward else 'N/A'
+        bed_num = admission.bed.bed_number if admission.bed else 'N/A'
+        line.description = f'Accommodation (provisional) - {ward_name} - Bed {bed_num}'[:200]
+        line.save(update_fields=['description', 'modified'])
 
     @staticmethod
     def update_bed_charges_on_discharge(admission):

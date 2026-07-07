@@ -563,19 +563,60 @@ def journal_entry_create(request):
                 je.total_debit = total_debit
                 je.total_credit = total_credit
                 je.save()
-                
-                messages.success(request, f'Journal Entry {je.entry_number} created successfully')
+
+                post_immediately = request.POST.get('post_immediately') == '1'
+                if post_immediately:
+                    if je.is_balanced:
+                        je.post(request.user)
+                        messages.success(
+                            request,
+                            f'Journal Entry {je.entry_number} created and posted to the general ledger.',
+                        )
+                    else:
+                        messages.warning(
+                            request,
+                            f'Journal Entry {je.entry_number} saved as draft — debits and credits must balance before posting.',
+                        )
+                else:
+                    messages.success(request, f'Journal Entry {je.entry_number} created successfully')
+
+                return_account_id = request.POST.get('return_account_id', '').strip()
+                if return_account_id:
+                    return redirect('hospital:accountant_account_detail', account_id=return_account_id)
                 return redirect('hospital:journal_entry_detail', entry_id=je.id)
         except Exception as e:
             messages.error(request, f'Error creating journal entry: {str(e)}')
     
     # Get journals and accounts for dropdowns
     journals = Journal.objects.filter(is_active=True).order_by('code')
+    account_type_filter = request.GET.get('account_type', '').strip()
     accounts = Account.objects.filter(is_active=True, is_deleted=False).order_by('account_code')
-    
+    if account_type_filter:
+        accounts = accounts.filter(account_type=account_type_filter)
+
+    prefill_account = None
+    prefill_side = request.GET.get('side', '').strip().lower()
+    account_id = request.GET.get('account_id', '').strip()
+    if account_id:
+        prefill_account = Account.objects.filter(id=account_id, is_deleted=False, is_active=True).first()
+        if prefill_account and not prefill_side:
+            prefill_side = 'debit' if prefill_account.account_type in ('asset', 'expense') else 'credit'
+    if not prefill_side:
+        prefill_side = 'debit'
+
+    default_journal = (
+        Journal.objects.filter(journal_type='general', is_active=True, is_deleted=False).order_by('code').first()
+        or journals.first()
+    )
+
     context = {
         'journals': journals,
         'accounts': accounts,
+        'prefill_account': prefill_account,
+        'prefill_side': prefill_side,
+        'account_type_filter': account_type_filter,
+        'default_journal': default_journal,
+        'show_post_option': bool(prefill_account),
     }
     
     return render(request, 'hospital/accountant/journal_entry_create.html', context)
@@ -1935,3 +1976,355 @@ def bank_transaction_detail(request, transaction_id):
     }
     
     return render(request, 'hospital/accountant/bank_transaction_detail.html', context)
+
+
+# ==================== BANK PAYMENT VOUCHER ====================
+# Pass entries between Bank Accounts and Expense (or any GL) Accounts.
+# - Bank Payment: DR Expense, CR Bank  (e.g. paying rent from operating account)
+# - Refund Received: DR Bank, CR Expense  (e.g. supplier refund)
+# Posts to AdvancedGeneralLedger so it flows directly into the
+# Chart of Accounts balances and the Trial Balance report.
+
+def _get_or_create_bank_journal():
+    """Return (or create) the default 'Bank Journal' used to group entries."""
+    journal = Journal.objects.filter(journal_type='bank', is_active=True).order_by('code').first()
+    if journal:
+        return journal
+    journal = Journal.objects.filter(journal_type='general', is_active=True).order_by('code').first()
+    if journal:
+        return journal
+    return Journal.objects.create(
+        code='BNK',
+        name='Bank Journal',
+        journal_type='bank',
+        description='Auto-created bank payments / receipts journal',
+        is_active=True,
+    )
+
+
+@login_required
+@role_required('accountant', 'senior_account_officer')
+def bank_payment_list(request):
+    """List bank-to-expense payment vouchers (and refunds)."""
+    entries = AdvancedJournalEntry.objects.filter(
+        is_deleted=False,
+        reference__startswith='BPV-',
+    ).select_related('journal', 'created_by', 'posted_by').prefetch_related('lines__account').order_by('-entry_date', '-entry_number')
+
+    direction = request.GET.get('direction', '')
+    bank_filter = request.GET.get('bank', '')
+    status_filter = request.GET.get('status', '')
+    date_from = request.GET.get('date_from', '')
+    date_to = request.GET.get('date_to', '')
+
+    if status_filter:
+        entries = entries.filter(status=status_filter)
+    if date_from:
+        entries = entries.filter(entry_date__gte=date_from)
+    if date_to:
+        entries = entries.filter(entry_date__lte=date_to)
+
+    bank_accounts = BankAccount.objects.filter(is_active=True, is_deleted=False).select_related('gl_account').order_by('bank_name', 'account_name')
+
+    rows = []
+    total_paid = Decimal('0.00')
+    total_received = Decimal('0.00')
+    bank_gl_ids = {b.gl_account_id: b for b in bank_accounts if b.gl_account_id}
+
+    for je in entries:
+        bank_line = None
+        expense_lines = []
+        for line in je.lines.all():
+            if line.account_id in bank_gl_ids:
+                bank_line = line
+            else:
+                expense_lines.append(line)
+        if not bank_line:
+            continue
+
+        bank_obj = bank_gl_ids.get(bank_line.account_id)
+        is_payment = bank_line.credit_amount > 0  # CR Bank => money out
+        amount = bank_line.credit_amount if is_payment else bank_line.debit_amount
+        row_direction = 'payment' if is_payment else 'refund'
+
+        if direction and row_direction != direction:
+            continue
+        if bank_filter and (not bank_obj or str(bank_obj.id) != bank_filter):
+            continue
+
+        if is_payment:
+            total_paid += amount
+        else:
+            total_received += amount
+
+        rows.append({
+            'entry': je,
+            'bank': bank_obj,
+            'direction': row_direction,
+            'amount': amount,
+            'expense_lines': expense_lines,
+        })
+
+    paginator = Paginator(rows, 50)
+    page = request.GET.get('page')
+    rows_page = paginator.get_page(page)
+
+    context = {
+        'rows': rows_page,
+        'bank_accounts': bank_accounts,
+        'direction_filter': direction,
+        'bank_filter': bank_filter,
+        'status_filter': status_filter,
+        'date_from': date_from,
+        'date_to': date_to,
+        'total_paid': total_paid,
+        'total_received': total_received,
+    }
+    return render(request, 'hospital/accountant/bank_payment_list.html', context)
+
+
+@login_required
+@role_required('accountant', 'senior_account_officer')
+def bank_payment_create(request):
+    """Create a bank payment voucher (Bank <-> Expense entry)."""
+    if request.method == 'POST':
+        try:
+            with transaction.atomic():
+                bank_id = request.POST.get('bank_account')
+                entry_date = request.POST.get('entry_date') or timezone.now().date().isoformat()
+                direction = request.POST.get('direction', 'payment')  # payment | refund
+                payee = request.POST.get('payee', '').strip()
+                reference = request.POST.get('reference', '').strip()
+                description = request.POST.get('description', '').strip()
+                auto_post = request.POST.get('auto_post') == 'on'
+
+                if not bank_id:
+                    messages.error(request, 'Please select a bank account')
+                    return redirect('hospital:bank_payment_create')
+
+                bank = get_object_or_404(BankAccount, id=bank_id, is_deleted=False)
+                if not bank.gl_account_id:
+                    messages.error(request, f'Bank account "{bank.account_name}" has no GL account linked. Edit the bank account and link a Cash/Bank GL account first.')
+                    return redirect('hospital:bank_account_edit', bank_id=bank.id)
+
+                line_count = int(request.POST.get('line_count', '0') or '0')
+                items = []
+                total_amount = Decimal('0.00')
+                for i in range(1, line_count + 1):
+                    acct_id = request.POST.get(f'line_{i}_account')
+                    amt_raw = (request.POST.get(f'line_{i}_amount', '0') or '0').strip()
+                    line_desc = request.POST.get(f'line_{i}_description', '').strip()
+                    if not acct_id or not amt_raw:
+                        continue
+                    try:
+                        amt = Decimal(amt_raw)
+                    except Exception:
+                        amt = Decimal('0.00')
+                    if amt <= 0:
+                        continue
+                    acct = get_object_or_404(Account, id=acct_id, is_deleted=False)
+                    if acct.id == bank.gl_account_id:
+                        messages.error(request, 'You cannot use the bank account as an expense line.')
+                        return redirect('hospital:bank_payment_create')
+                    items.append((acct, amt, line_desc))
+                    total_amount += amt
+
+                if not items:
+                    messages.error(request, 'Add at least one expense line with an amount > 0.')
+                    return redirect('hospital:bank_payment_create')
+
+                journal = _get_or_create_bank_journal()
+
+                voucher_ref = f"BPV-{timezone.now().strftime('%Y%m%d%H%M%S')}"
+                full_reference = f"{voucher_ref}{(' / ' + reference) if reference else ''}"
+                full_description = description or (
+                    ('Bank payment to ' if direction == 'payment' else 'Refund received from ') + (payee or 'unspecified')
+                )
+
+                je = AdvancedJournalEntry.objects.create(
+                    journal=journal,
+                    entry_date=entry_date,
+                    description=full_description,
+                    reference=full_reference,
+                    notes=f'Payee/Counterparty: {payee}' if payee else '',
+                    created_by=request.user,
+                    status='draft',
+                )
+
+                line_no = 1
+                # Bank line first
+                if direction == 'payment':
+                    AdvancedJournalEntryLine.objects.create(
+                        journal_entry=je, line_number=line_no, account=bank.gl_account,
+                        description=f'{bank.bank_name} {bank.account_number} (payment)',
+                        debit_amount=Decimal('0.00'), credit_amount=total_amount,
+                    )
+                else:
+                    AdvancedJournalEntryLine.objects.create(
+                        journal_entry=je, line_number=line_no, account=bank.gl_account,
+                        description=f'{bank.bank_name} {bank.account_number} (refund received)',
+                        debit_amount=total_amount, credit_amount=Decimal('0.00'),
+                    )
+                line_no += 1
+
+                # Expense / counter-account lines
+                for acct, amt, line_desc in items:
+                    if direction == 'payment':
+                        AdvancedJournalEntryLine.objects.create(
+                            journal_entry=je, line_number=line_no, account=acct,
+                            description=line_desc or full_description,
+                            debit_amount=amt, credit_amount=Decimal('0.00'),
+                        )
+                    else:
+                        AdvancedJournalEntryLine.objects.create(
+                            journal_entry=je, line_number=line_no, account=acct,
+                            description=line_desc or full_description,
+                            debit_amount=Decimal('0.00'), credit_amount=amt,
+                        )
+                    line_no += 1
+
+                je.total_debit = total_amount
+                je.total_credit = total_amount
+                je.save()
+
+                # Mirror in BankTransaction so bank reconciliation reflects this.
+                bt_type = 'withdrawal' if direction == 'payment' else 'deposit'
+                bt = BankTransaction.objects.create(
+                    bank_account=bank,
+                    transaction_date=entry_date,
+                    transaction_type=bt_type,
+                    amount=total_amount,
+                    description=full_description[:500],
+                    reference=full_reference[:100],
+                    journal_entry=je,
+                )
+
+                # Update running bank balance
+                if direction == 'payment':
+                    bank.current_balance = (bank.current_balance or Decimal('0.00')) - total_amount
+                else:
+                    bank.current_balance = (bank.current_balance or Decimal('0.00')) + total_amount
+                bank.save(update_fields=['current_balance', 'modified'])
+
+                if auto_post:
+                    je.post(request.user)
+
+                messages.success(
+                    request,
+                    f"Bank {'payment' if direction == 'payment' else 'refund'} {je.entry_number} created"
+                    + (' and posted to GL' if auto_post else ' as a draft')
+                    + f' (Voucher {voucher_ref}).'
+                )
+                return redirect('hospital:bank_payment_detail', entry_id=je.id)
+        except Exception as e:
+            messages.error(request, f'Error creating bank payment: {str(e)}')
+
+    bank_accounts = BankAccount.objects.filter(is_active=True, is_deleted=False).select_related('gl_account').order_by('bank_name', 'account_name')
+    expense_accounts = Account.objects.filter(
+        account_type='expense', is_active=True, is_deleted=False
+    ).order_by('account_code')
+    other_accounts = Account.objects.filter(
+        is_active=True, is_deleted=False
+    ).exclude(account_type='expense').order_by('account_type', 'account_code')
+
+    bank_gl_ids = list(BankAccount.objects.filter(is_active=True, is_deleted=False).values_list('gl_account_id', flat=True))
+    other_accounts = other_accounts.exclude(id__in=bank_gl_ids)
+
+    context = {
+        'bank_accounts': bank_accounts,
+        'expense_accounts': expense_accounts,
+        'other_accounts': other_accounts,
+        'today': timezone.now().date().isoformat(),
+    }
+    return render(request, 'hospital/accountant/bank_payment_create.html', context)
+
+
+@login_required
+@role_required('accountant', 'senior_account_officer')
+def bank_payment_detail(request, entry_id):
+    """View a bank payment voucher with its journal entry & GL impact."""
+    je = get_object_or_404(
+        AdvancedJournalEntry.objects.select_related('journal', 'created_by', 'posted_by'),
+        id=entry_id, is_deleted=False
+    )
+    lines = list(je.lines.select_related('account', 'cost_center').order_by('line_number'))
+
+    bank_gl_to_account = {b.gl_account_id: b for b in BankAccount.objects.filter(is_deleted=False).select_related('gl_account')}
+    bank_line = None
+    counter_lines = []
+    for line in lines:
+        if line.account_id in bank_gl_to_account and bank_line is None:
+            bank_line = line
+        else:
+            counter_lines.append(line)
+
+    direction = 'payment' if (bank_line and bank_line.credit_amount > 0) else 'refund'
+    amount = (bank_line.credit_amount if direction == 'payment' else bank_line.debit_amount) if bank_line else Decimal('0.00')
+    bank = bank_gl_to_account.get(bank_line.account_id) if bank_line else None
+
+    bank_transaction = BankTransaction.objects.filter(journal_entry=je, is_deleted=False).select_related('bank_account').first()
+
+    context = {
+        'entry': je,
+        'lines': lines,
+        'bank_line': bank_line,
+        'counter_lines': counter_lines,
+        'direction': direction,
+        'amount': amount,
+        'bank': bank,
+        'bank_transaction': bank_transaction,
+    }
+    return render(request, 'hospital/accountant/bank_payment_detail.html', context)
+
+
+@login_required
+@role_required('accountant', 'senior_account_officer')
+def bank_payment_post(request, entry_id):
+    """Post a draft bank payment voucher to the General Ledger."""
+    je = get_object_or_404(AdvancedJournalEntry, id=entry_id, is_deleted=False)
+    if je.status == 'posted':
+        messages.info(request, 'Voucher already posted.')
+        return redirect('hospital:bank_payment_detail', entry_id=je.id)
+    if not je.is_balanced:
+        messages.error(request, 'Voucher is not balanced. Debits must equal credits.')
+        return redirect('hospital:bank_payment_detail', entry_id=je.id)
+    try:
+        je.post(request.user)
+        messages.success(request, f'Voucher {je.entry_number} posted to General Ledger.')
+    except Exception as e:
+        messages.error(request, f'Error posting voucher: {str(e)}')
+    return redirect('hospital:bank_payment_detail', entry_id=je.id)
+
+
+@login_required
+@role_required('accountant', 'senior_account_officer')
+def bank_payment_void(request, entry_id):
+    """Void a posted/draft bank payment voucher and reverse its bank transaction."""
+    je = get_object_or_404(AdvancedJournalEntry, id=entry_id, is_deleted=False)
+    if je.status == 'void':
+        messages.info(request, 'Voucher already voided.')
+        return redirect('hospital:bank_payment_detail', entry_id=je.id)
+
+    try:
+        with transaction.atomic():
+            bt = BankTransaction.objects.filter(journal_entry=je, is_deleted=False).first()
+            if bt:
+                if bt.transaction_type == 'withdrawal':
+                    bt.bank_account.current_balance = (bt.bank_account.current_balance or Decimal('0.00')) + bt.amount
+                else:
+                    bt.bank_account.current_balance = (bt.bank_account.current_balance or Decimal('0.00')) - bt.amount
+                bt.bank_account.save(update_fields=['current_balance', 'modified'])
+                bt.is_deleted = True
+                bt.save(update_fields=['is_deleted', 'modified'])
+
+            if je.status == 'posted':
+                je.void()
+            else:
+                je.status = 'void'
+                je.save(update_fields=['status', 'modified'])
+
+        messages.success(request, f'Voucher {je.entry_number} voided.')
+    except Exception as e:
+        messages.error(request, f'Error voiding voucher: {str(e)}')
+
+    return redirect('hospital:bank_payment_detail', entry_id=je.id)

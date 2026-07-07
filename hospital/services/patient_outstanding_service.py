@@ -1,13 +1,30 @@
 """
 Single source of truth for patient outstanding balance across the entire app.
 Use get_patient_outstanding(patient) everywhere; one URL serves the same data for frontends.
-Formula: total_outstanding = max(0, total_billed - total_paid)
-         amount_due_after_deposit = max(0, total_outstanding - deposit_balance)
+Formula: total_outstanding = total_billed - total_paid (can be negative = credit)
+         amount_due_after_deposit = max(0, total_outstanding) — unapplied deposit on account does NOT
+         reduce this; cashier must use Apply deposit to bill so it posts to invoices first.
 """
 from datetime import datetime, time
 from decimal import Decimal
 from django.db.models import Sum
 from django.utils import timezone
+
+
+def patient_billing_scope_ids(patient):
+    """
+    All patient primary keys that share the same MRN (duplicate registrations for one person).
+    Billing totals must aggregate across these rows so the profile matches any invoice for that person.
+    """
+    from ..models import Patient
+
+    mrn = (getattr(patient, "mrn", None) or "").strip()
+    if not mrn:
+        return [patient.pk]
+    ids = list(
+        Patient.objects.filter(mrn=mrn, is_deleted=False).values_list("id", flat=True)
+    )
+    return ids if ids else [patient.pk]
 
 
 def get_patient_outstanding(patient, include_deposit_breakdown=False):
@@ -23,31 +40,34 @@ def get_patient_outstanding(patient, include_deposit_breakdown=False):
             total_billed: Sum of all non-cancelled invoice total_amount.
             total_paid: Sum of all PaymentReceipt.amount_paid for patient (with legacy fallback).
             deposit_balance: Available deposit (uses get_patient_deposit_balance_display when available).
-            total_outstanding: max(0, total_billed - total_paid).
-            amount_due_after_deposit: max(0, total_outstanding - deposit_balance).
+            total_outstanding: total_billed - total_paid.
+            amount_due_after_deposit: max(0, total_outstanding); deposit_balance is informational only
+                until deposit is applied to invoices (no hypothetical subtraction).
             Optionally: total_deposited, deposit_used (when include_deposit_breakdown=True).
     """
     from ..models import Invoice
     from ..models_accounting import PaymentReceipt
 
+    scope_ids = patient_billing_scope_ids(patient)
+
     total_billed = (
-        Invoice.objects.filter(patient=patient, is_deleted=False)
+        Invoice.objects.filter(patient_id__in=scope_ids, is_deleted=False)
         .exclude(status='cancelled')
         .aggregate(s=Sum('total_amount'))['s'] or Decimal('0.00')
     )
 
     total_paid = (
-        PaymentReceipt.objects.filter(patient=patient, is_deleted=False)
+        PaymentReceipt.objects.filter(patient_id__in=scope_ids, is_deleted=False)
         .aggregate(s=Sum('amount_paid'))['s'] or Decimal('0.00')
     )
     if total_paid == 0:
         inv_total = (
-            Invoice.objects.filter(patient=patient, is_deleted=False)
+            Invoice.objects.filter(patient_id__in=scope_ids, is_deleted=False)
             .exclude(status='cancelled')
             .aggregate(s=Sum('total_amount'))['s'] or Decimal('0.00')
         )
         inv_balance = (
-            Invoice.objects.filter(patient=patient, is_deleted=False)
+            Invoice.objects.filter(patient_id__in=scope_ids, is_deleted=False)
             .exclude(status='cancelled')
             .aggregate(s=Sum('balance'))['s'] or Decimal('0.00')
         )
@@ -59,14 +79,14 @@ def get_patient_outstanding(patient, include_deposit_breakdown=False):
     credit_balance = max(Decimal('0.00'), (total_paid or Decimal('0.00')) - (total_billed or Decimal('0.00')))
 
     try:
-        from .deposit_payment_service import get_patient_deposit_balance_display
-        deposit_balance = get_patient_deposit_balance_display(patient)
+        from .deposit_payment_service import get_patients_deposit_balance_display
+        deposit_balance = get_patients_deposit_balance_display(scope_ids)
     except Exception:
         deposit_balance = Decimal('0.00')
     if not isinstance(deposit_balance, Decimal):
         deposit_balance = Decimal(str(deposit_balance))
 
-    amount_due_after_deposit = max(Decimal('0.00'), total_outstanding - deposit_balance)
+    amount_due_after_deposit = max(Decimal('0.00'), total_outstanding)
 
     result = {
         'total_billed': total_billed,
@@ -81,21 +101,25 @@ def get_patient_outstanding(patient, include_deposit_breakdown=False):
         try:
             from ..models_patient_deposits import PatientDeposit
             total_deposited = (
-                PatientDeposit.objects.filter(patient=patient, is_deleted=False)
+                PatientDeposit.objects.filter(patient_id__in=scope_ids, is_deleted=False)
                 .exclude(status__in=['cancelled', 'refunded'])
                 .aggregate(s=Sum('deposit_amount'))['s'] or Decimal('0.00')
             )
             if total_deposited == 0:
                 receipt_deposit = (
                     PaymentReceipt.objects.filter(
-                        patient=patient, is_deleted=False, payment_method='deposit'
+                        patient_id__in=scope_ids, is_deleted=False, payment_method='deposit'
                     ).aggregate(s=Sum('amount_paid'))['s'] or Decimal('0.00')
                 )
                 if receipt_deposit > 0:
                     total_deposited = receipt_deposit
             if total_deposited == 0:
                 from ..models_patient_deposits import DepositApplication
-                inv_ids = list(Invoice.objects.filter(patient=patient, is_deleted=False).values_list('id', flat=True))
+                inv_ids = list(
+                    Invoice.objects.filter(patient_id__in=scope_ids, is_deleted=False).values_list(
+                        'id', flat=True
+                    )
+                )
                 if inv_ids:
                     applied = DepositApplication.objects.filter(
                         invoice_id__in=inv_ids, is_deleted=False
@@ -208,6 +232,6 @@ def get_patient_outstanding_bulk(patient_ids):
         to = tb - tp  # can be negative (credit)
         by_patient[pid]['total_outstanding'] = to
         by_patient[pid]['credit_balance'] = max(Decimal('0.00'), tp - tb)
-        by_patient[pid]['amount_due_after_deposit'] = max(Decimal('0.00'), to - deposit_balance)
+        by_patient[pid]['amount_due_after_deposit'] = max(Decimal('0.00'), to)
 
     return by_patient

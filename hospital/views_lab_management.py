@@ -535,6 +535,36 @@ def record_reagent_transaction(request):
                 reagent.quantity_on_hand -= quantity
             
             reagent.save()
+
+            try:
+                from decimal import Decimal as D
+                from hospital.services.inventory_gl_service import (
+                    post_inventory_cogs_gl,
+                    post_inventory_receipt_gl,
+                )
+                if transaction_type == 'received':
+                    unit_cost = reagent.unit_cost or D('0')
+                    total = (D(str(quantity)) * D(str(unit_cost))).quantize(D('0.01'))
+                    post_inventory_receipt_gl(
+                        category_key='lab',
+                        amount=total,
+                        reference=f'LAB-RCV-TXN-{transaction.pk}',
+                        description=f'Lab reagent receipt: {reagent.name} qty {quantity}',
+                        user=getattr(staff, 'user', None),
+                    )
+                elif transaction_type == 'used':
+                    unit_cost = reagent.unit_cost or D('0')
+                    cogs = (D(str(quantity)) * D(str(unit_cost))).quantize(D('0.01'))
+                    post_inventory_cogs_gl(
+                        category_key='lab',
+                        amount=cogs,
+                        reference=f'COGS-REAGENT-{transaction.pk}',
+                        description=f'Lab reagent COGS: {reagent.name} ×{quantity}',
+                        user=getattr(staff, 'user', None),
+                        reagent_transaction=transaction,
+                    )
+            except Exception:
+                pass
             
             # Create alert if low stock
             if reagent.is_low_stock and not QCAlert.objects.filter(

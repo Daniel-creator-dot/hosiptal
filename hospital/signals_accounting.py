@@ -27,6 +27,40 @@ from .models_primecare_accounting import InsuranceReceivableEntry
 AUTO_SYNC_ENABLED = True
 
 
+def _find_insurance_receivable_entry_for_payment(invoice, payer):
+    """
+    Match a payment to the correct InsuranceReceivableEntry: invoice FK first,
+    then notes containing invoice number, then oldest open line for payer (FIFO).
+    """
+    if not invoice or not payer:
+        return None
+    base = InsuranceReceivableEntry.objects.filter(
+        payer=payer,
+        is_deleted=False,
+        outstanding_amount__gt=0,
+    )
+    receivable_entry = base.filter(invoice=invoice).order_by('-entry_date', '-created').first()
+    if receivable_entry:
+        return receivable_entry
+    receivable_entry = base.filter(
+        notes__icontains=invoice.invoice_number
+    ).order_by('-entry_date', '-created').first()
+    if receivable_entry:
+        if receivable_entry.invoice_id is None:
+            receivable_entry.invoice = invoice
+            receivable_entry.save(update_fields=['invoice'])
+        return receivable_entry
+    receivable_entry = base.order_by('entry_date', 'created').first()
+    if receivable_entry:
+        logger.warning(
+            '[AUTO-SYNC] InsuranceReceivableEntry matched by FIFO fallback for payer %s invoice %s — '
+            'consider linking IRE.invoice',
+            getattr(payer, 'name', str(payer)),
+            getattr(invoice, 'invoice_number', invoice),
+        )
+    return receivable_entry
+
+
 @receiver(post_save, sender=Invoice)
 def auto_create_ar_on_invoice(sender, instance, created, **kwargs):
     """
@@ -54,74 +88,39 @@ def auto_create_ar_on_invoice(sender, instance, created, **kwargs):
         payer_type = payer.payer_type if hasattr(payer, 'payer_type') else None
         
         # For insurance or corporate payers, create InsuranceReceivableEntry
-        if payer_type in ['private', 'nhis', 'corporate']:
-            # Check if entry already exists for this invoice (prevent duplicates)
-            # Use a more specific check to avoid duplicates - check by invoice number in notes
+        if payer_type in ['private', 'nhis', 'corporate', 'insurance']:
+            # Prefer invoice FK, then notes containing invoice number
             existing_entry = InsuranceReceivableEntry.objects.filter(
-                payer=payer,
-                notes__icontains=instance.invoice_number,  # Check if notes mention this invoice
-                is_deleted=False
-            ).order_by('-created').first()  # Get most recent entry for this invoice
-            
+                invoice=instance,
+                is_deleted=False,
+            ).order_by('-created').first()
+            if not existing_entry:
+                existing_entry = InsuranceReceivableEntry.objects.filter(
+                    payer=payer,
+                    notes__icontains=instance.invoice_number,
+                    is_deleted=False,
+                ).order_by('-created').first()
+
             # Update existing entry if invoice amount changed (e.g., on discharge)
             if existing_entry and existing_entry.total_amount != instance.total_amount:
                 old_amount = existing_entry.total_amount
-                # Recalculate revenue breakdown from invoice lines
-                consultation_amount = Decimal('0.00')
-                registration_amount = Decimal('0.00')
-                laboratory_amount = Decimal('0.00')
-                pharmacy_amount = Decimal('0.00')
-                surgeries_amount = Decimal('0.00')
-                admissions_amount = Decimal('0.00')
-                radiology_amount = Decimal('0.00')
-                dental_amount = Decimal('0.00')
-                physiotherapy_amount = Decimal('0.00')
-                
-                # Try to break down by service type from invoice lines
-                if hasattr(instance, 'lines'):
-                    for line in instance.lines.all():
-                        if hasattr(line, 'service_code') and line.service_code:
-                            service_desc = line.service_code.description.lower() if line.service_code.description else ''
-                            amount = line.line_total or Decimal('0.00')
-                            
-                            if 'consultation' in service_desc or 'consult' in service_desc:
-                                consultation_amount += amount
-                            elif 'registration' in service_desc or 'reg' in service_desc:
-                                registration_amount += amount
-                            elif 'lab' in service_desc or 'laboratory' in service_desc:
-                                laboratory_amount += amount
-                            elif 'pharmacy' in service_desc or 'drug' in service_desc or 'medication' in service_desc:
-                                pharmacy_amount += amount
-                            elif 'surgery' in service_desc or 'surgical' in service_desc:
-                                surgeries_amount += amount
-                            elif 'admission' in service_desc or 'ward' in service_desc or 'bed' in service_desc:
-                                admissions_amount += amount
-                            elif 'radiology' in service_desc or 'x-ray' in service_desc or 'imaging' in service_desc:
-                                radiology_amount += amount
-                            elif 'dental' in service_desc:
-                                dental_amount += amount
-                            elif 'physiotherapy' in service_desc or 'physio' in service_desc:
-                                physiotherapy_amount += amount
-                            else:
-                                # Default to consultation if unclear
-                                consultation_amount += amount
-                
-                # If no breakdown found, allocate all to consultation
-                if consultation_amount == 0 and registration_amount == 0:
-                    consultation_amount = instance.total_amount
-                
-                # Update existing entry
+                from hospital.services.credit_revenue_service import build_ire_revenue_breakdown
+
+                breakdown = build_ire_revenue_breakdown(instance)
                 existing_entry.total_amount = instance.total_amount
-                existing_entry.outstanding_amount = instance.balance or instance.total_amount
-                existing_entry.consultation_amount = consultation_amount
-                existing_entry.registration_amount = registration_amount
-                existing_entry.laboratory_amount = laboratory_amount
-                existing_entry.pharmacy_amount = pharmacy_amount
-                existing_entry.surgeries_amount = surgeries_amount
-                existing_entry.admissions_amount = admissions_amount
-                existing_entry.radiology_amount = radiology_amount
-                existing_entry.dental_amount = dental_amount
-                existing_entry.physiotherapy_amount = physiotherapy_amount
+                existing_entry.outstanding_amount = (
+                    instance.balance if getattr(instance, 'balance', None) is not None else instance.total_amount
+                )
+                existing_entry.consultation_amount = breakdown['consultation_amount']
+                existing_entry.registration_amount = breakdown['registration_amount']
+                existing_entry.laboratory_amount = breakdown['laboratory_amount']
+                existing_entry.pharmacy_amount = breakdown['pharmacy_amount']
+                existing_entry.surgeries_amount = breakdown['surgeries_amount']
+                existing_entry.admissions_amount = breakdown['admissions_amount']
+                existing_entry.radiology_amount = breakdown['radiology_amount']
+                existing_entry.dental_amount = breakdown['dental_amount']
+                existing_entry.physiotherapy_amount = breakdown['physiotherapy_amount']
+                existing_entry.invoice = instance
                 existing_entry.notes = f"Auto-updated from invoice {instance.invoice_number} for patient {instance.patient.full_name if instance.patient else 'N/A'}"
                 existing_entry.save()
                 
@@ -129,52 +128,26 @@ def auto_create_ar_on_invoice(sender, instance, created, **kwargs):
                     f"[AUTO-SYNC] Updated InsuranceReceivableEntry {existing_entry.entry_number} for {payer_type} payer {payer.name} - "
                     f"Invoice {instance.invoice_number}: GHS {old_amount} → GHS {instance.total_amount}"
                 )
+            elif existing_entry:
+                # Totals unchanged: still sync invoice link and outstanding from invoice balance
+                update_fields = []
+                if existing_entry.invoice_id != instance.id:
+                    existing_entry.invoice = instance
+                    update_fields.append('invoice')
+                new_out = (
+                    instance.balance
+                    if getattr(instance, 'balance', None) is not None
+                    else existing_entry.outstanding_amount
+                )
+                if existing_entry.outstanding_amount != new_out:
+                    existing_entry.outstanding_amount = new_out
+                    update_fields.append('outstanding_amount')
+                if update_fields:
+                    existing_entry.save(update_fields=update_fields)
             elif not existing_entry:
-                # Calculate revenue breakdown from invoice lines
-                consultation_amount = Decimal('0.00')
-                registration_amount = Decimal('0.00')
-                laboratory_amount = Decimal('0.00')
-                pharmacy_amount = Decimal('0.00')
-                surgeries_amount = Decimal('0.00')
-                admissions_amount = Decimal('0.00')
-                radiology_amount = Decimal('0.00')
-                dental_amount = Decimal('0.00')
-                physiotherapy_amount = Decimal('0.00')
-                
-                # Try to break down by service type from invoice lines
-                if hasattr(instance, 'lines'):
-                    for line in instance.lines.all():
-                        if hasattr(line, 'service_code') and line.service_code:
-                            service_desc = line.service_code.description.lower() if line.service_code.description else ''
-                            amount = line.line_total or Decimal('0.00')
-                            
-                            if 'consultation' in service_desc or 'consult' in service_desc:
-                                consultation_amount += amount
-                            elif 'registration' in service_desc or 'reg' in service_desc:
-                                registration_amount += amount
-                            elif 'lab' in service_desc or 'laboratory' in service_desc:
-                                laboratory_amount += amount
-                            elif 'pharmacy' in service_desc or 'drug' in service_desc or 'medication' in service_desc:
-                                pharmacy_amount += amount
-                            elif 'surgery' in service_desc or 'surgical' in service_desc:
-                                surgeries_amount += amount
-                            elif 'admission' in service_desc or 'ward' in service_desc or 'bed' in service_desc:
-                                admissions_amount += amount
-                            elif 'radiology' in service_desc or 'x-ray' in service_desc or 'imaging' in service_desc:
-                                radiology_amount += amount
-                            elif 'dental' in service_desc:
-                                dental_amount += amount
-                            elif 'physiotherapy' in service_desc or 'physio' in service_desc:
-                                physiotherapy_amount += amount
-                            else:
-                                # Default to consultation if unclear
-                                consultation_amount += amount
-                
-                # If no breakdown found, allocate all to consultation
-                if consultation_amount == 0 and registration_amount == 0:
-                    consultation_amount = instance.total_amount
-                
-                # Generate non-empty unique entry_number (includes uuid suffix to avoid duplicates).
+                from hospital.services.credit_revenue_service import build_ire_revenue_breakdown
+
+                breakdown = build_ire_revenue_breakdown(instance)
                 # Catch IntegrityError and do not re-raise so the outer transaction is not broken
                 # (avoids TransactionManagementError for audit log and cashier flow).
                 entry_number = InsuranceReceivableEntry.generate_entry_number()
@@ -185,18 +158,23 @@ def auto_create_ar_on_invoice(sender, instance, created, **kwargs):
                         receivable_entry = InsuranceReceivableEntry.objects.create(
                             entry_number=entry_number,
                             payer=payer,
+                            invoice=instance,
                             entry_date=instance.issued_at.date() if instance.issued_at else timezone.now().date(),
                             total_amount=instance.total_amount,
-                            outstanding_amount=instance.balance or instance.total_amount,
-                            consultation_amount=consultation_amount,
-                            registration_amount=registration_amount,
-                            laboratory_amount=laboratory_amount,
-                            pharmacy_amount=pharmacy_amount,
-                            surgeries_amount=surgeries_amount,
-                            admissions_amount=admissions_amount,
-                            radiology_amount=radiology_amount,
-                            dental_amount=dental_amount,
-                            physiotherapy_amount=physiotherapy_amount,
+                            outstanding_amount=(
+                                instance.balance
+                                if getattr(instance, 'balance', None) is not None
+                                else instance.total_amount
+                            ),
+                            consultation_amount=breakdown['consultation_amount'],
+                            registration_amount=breakdown['registration_amount'],
+                            laboratory_amount=breakdown['laboratory_amount'],
+                            pharmacy_amount=breakdown['pharmacy_amount'],
+                            surgeries_amount=breakdown['surgeries_amount'],
+                            admissions_amount=breakdown['admissions_amount'],
+                            radiology_amount=breakdown['radiology_amount'],
+                            dental_amount=breakdown['dental_amount'],
+                            physiotherapy_amount=breakdown['physiotherapy_amount'],
                             status='pending',
                             notes=f"Auto-created from invoice {instance.invoice_number} for patient {instance.patient.full_name if instance.patient else 'N/A'}"
                         )
@@ -278,150 +256,56 @@ def auto_create_revenue_on_payment(sender, instance, created, **kwargs):
     if getattr(instance, 'payment_method', None) == 'deposit':
         return
     
-    try:
-        with db_transaction.atomic():
-            # Get default accounts
-            cash_account, _ = Account.objects.get_or_create(
-                account_code='1000',
-                defaults={'account_name': 'Cash on Hand', 'account_type': 'asset'}
-            )
-            
-            revenue_account, _ = Account.objects.get_or_create(
-                account_code='4000',
-                defaults={'account_name': 'Patient Services Revenue', 'account_type': 'revenue'}
-            )
-            
-            # Get revenue category
-            revenue_category, _ = RevenueCategory.objects.get_or_create(
-                code='REV-PATIENT',
-                defaults={'name': 'Patient Services', 'account': revenue_account}
-            )
-            
-            # Create revenue entry
-            revenue = Revenue.objects.create(
-                revenue_date=instance.transaction_date.date() if hasattr(instance.transaction_date, 'date') else instance.transaction_date,
-                category=revenue_category,
-                description=f"Payment: {instance.patient.full_name if instance.patient else 'Patient'} - {instance.transaction_number}",
-                amount=instance.amount,
-                patient=instance.patient,
-                invoice=instance.invoice,
-                payment_method=instance.payment_method,
-                reference=instance.transaction_number,
-                recorded_by=instance.processed_by,
-            )
-            
-            # Create receipt voucher
-            receipt = ReceiptVoucher.objects.create(
-                receipt_date=revenue.revenue_date,
-                received_from=instance.patient.full_name if instance.patient else 'Patient',
-                patient=instance.patient,
-                amount=instance.amount,
-                payment_method=instance.payment_method,
-                description=revenue.description,
-                reference=instance.transaction_number,
-                status='issued',
-                revenue_account=revenue_account,
-                cash_account=cash_account,
-                invoice=instance.invoice,
-                received_by=instance.processed_by,
-            )
-            
-            # Create journal entry
-            journal = Journal.objects.filter(journal_type='receipt').first()
-            if journal:
-                je = AdvancedJournalEntry.objects.create(
-                    journal=journal,
-                    entry_date=revenue.revenue_date,
-                    description=revenue.description,
-                    reference=instance.transaction_number,
-                    status='draft',  # Will be posted below
-                    total_debit=instance.amount,
-                    total_credit=instance.amount,
-                    created_by=instance.processed_by,
-                    invoice=instance.invoice,
-                )
-                
-                # Dr: Cash
-                AdvancedJournalEntryLine.objects.create(
-                    journal_entry=je,
-                    line_number=1,
-                    account=cash_account,
-                    description="Cash received",
-                    debit_amount=instance.amount,
-                    credit_amount=Decimal('0.00'),
-                    patient=instance.patient,
-                )
-                
-                # Cr: Revenue
-                AdvancedJournalEntryLine.objects.create(
-                    journal_entry=je,
-                    line_number=2,
-                    account=revenue_account,
-                    description="Patient services revenue",
-                    debit_amount=Decimal('0.00'),
-                    credit_amount=instance.amount,
-                    patient=instance.patient,
-                )
-                
-                # Post to GL
-                je.post(instance.processed_by)
-                
-                # Link to revenue
-                revenue.journal_entry = je
-                revenue.save()
-                
-                receipt.journal_entry = je
-                receipt.save()
-            
-            # Update AR or InsuranceReceivableEntry based on payer type
-            if instance.invoice and instance.invoice.payer:
-                payer = instance.invoice.payer
+    txn_id = instance.pk
+
+    def _post_after_commit():
+        try:
+            from hospital.models_accounting import Transaction as TxnModel
+            txn = TxnModel.objects.get(pk=txn_id)
+            from hospital.services.payment_revenue_gl_service import post_payment_revenue_gl
+            post_payment_revenue_gl(txn)
+
+            if txn.invoice and txn.invoice.payer:
+                payer = txn.invoice.payer
                 payer_type = payer.payer_type if hasattr(payer, 'payer_type') else None
-                
-                # For insurance/corporate: Update InsuranceReceivableEntry
-                if payer_type in ['private', 'nhis', 'corporate']:
+
+                if payer_type in ['private', 'nhis', 'corporate', 'insurance']:
                     try:
-                        # Find the most recent receivable entry for this payer and invoice date
-                        receivable_entry = InsuranceReceivableEntry.objects.filter(
-                            payer=payer,
-                            is_deleted=False,
-                            outstanding_amount__gt=0
-                        ).order_by('-entry_date', '-created').first()
-                        
+                        receivable_entry = _find_insurance_receivable_entry_for_payment(
+                            txn.invoice, payer
+                        )
                         if receivable_entry:
-                            receivable_entry.amount_received += instance.amount
+                            receivable_entry.amount_received += txn.amount
                             receivable_entry.outstanding_amount = (
-                                receivable_entry.total_amount - 
-                                receivable_entry.amount_received - 
-                                receivable_entry.amount_rejected - 
-                                receivable_entry.withholding_tax
+                                receivable_entry.total_amount
+                                - receivable_entry.amount_received
+                                - receivable_entry.amount_rejected
+                                - receivable_entry.withholding_tax
                             )
-                            
-                            # Update status
                             if receivable_entry.outstanding_amount <= 0:
                                 receivable_entry.status = 'paid'
                             elif receivable_entry.amount_received > 0:
                                 receivable_entry.status = 'partially_paid'
-                            
                             receivable_entry.save()
-                            logger.info(f"[AUTO-SYNC] Updated InsuranceReceivableEntry {receivable_entry.entry_number} - Payment: GHS {instance.amount}, Outstanding: GHS {receivable_entry.outstanding_amount}")
+                            logger.info(
+                                '[AUTO-SYNC] Updated InsuranceReceivableEntry %s',
+                                receivable_entry.entry_number,
+                            )
                     except Exception as e:
-                        logger.warning(f"[AUTO-SYNC] Could not update InsuranceReceivableEntry for payment: {e}")
-                
-                # For cash: Update AdvancedAccountsReceivable
+                        logger.warning(
+                            '[AUTO-SYNC] Could not update InsuranceReceivableEntry: %s', e
+                        )
                 else:
                     try:
-                        ar = AdvancedAccountsReceivable.objects.get(invoice=instance.invoice)
-                        ar.amount_paid += instance.amount
+                        ar = AdvancedAccountsReceivable.objects.get(invoice=txn.invoice)
+                        ar.amount_paid += txn.amount
                         ar.balance_due = ar.invoice_amount - ar.amount_paid
                         ar.save()
-                        logger.info(f"[AUTO-SYNC] Updated AdvancedAccountsReceivable for invoice {instance.invoice.invoice_number} - Payment: GHS {instance.amount}")
                     except AdvancedAccountsReceivable.DoesNotExist:
                         pass
-            
-            logger.info(f"[AUTO-SYNC] Payment GHS {instance.amount} to Revenue to JE to GL [OK]")
-    
-    except Exception as e:
-        print(f"[AUTO-SYNC ERROR] Payment sync failed: {e}")
-        import traceback
-        traceback.print_exc()
+
+            logger.info('[AUTO-SYNC] Payment GHS %s revenue GL posted [OK]', txn.amount)
+        except Exception as e:
+            logger.error('[AUTO-SYNC ERROR] Payment sync failed: %s', e, exc_info=True)
+
+    db_transaction.on_commit(_post_after_commit)

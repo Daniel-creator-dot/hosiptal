@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load static humanize %}
+{% load static humanize hospital_extras %}
 
 {% block title %}Pharmacy Stock - HMS{% endblock %}
 {% block page_title %}Pharmacy inventory{% endblock %}
@@ -29,6 +29,9 @@
             <h1>Inventory intelligence</h1>
             <p class="mb-0 small" style="opacity:0.92;">Live aggregates across all pharmacy batches (not limited to the table below).</p>
         </div>
+        <a href="{% url 'hospital:pharmacy_stock_utilization' %}?movement_days={{ movement_window_days|default:30 }}" class="btn btn-light btn-sm fw-semibold">
+            <i class="bi bi-graph-up-arrow me-1"></i>{{ movement_window_days|default:30 }}-day utilization
+        </a>
         <a href="{% url 'hospital:pharmacy_dashboard' %}" class="btn btn-light btn-sm fw-semibold">
             <i class="bi bi-arrow-left me-1"></i>Pharmacy dashboard
         </a>
@@ -60,6 +63,12 @@
             <span class="small d-block mt-1" style="opacity:0.85;">Table shows up to 100</span>
         </div>
     </div>
+    <p class="small mb-0 mt-2" style="opacity:0.9;">
+        <strong>Estimated movement</strong> uses dispensing history, walk-in sales, and recorded stock losses
+        over the last <strong>{{ movement_window_days }}</strong> days (drug-level totals). “Cover” divides
+        <em>all batches on hand for that drug</em> by average daily outflow. “Suggest” is a rough restock line
+        for the next ~4 weeks plus the batch reorder buffer — adjust before ordering.
+    </p>
 </header>
 
 <div class="rx-filter-card">
@@ -77,17 +86,20 @@
                 <i class="bi bi-plus-circle"></i> Add stock
             </a>
             {% endif %}
+            <a href="{% url 'hospital:pharmacy_stock_loss_log' %}" class="btn btn-sm btn-outline-danger fw-semibold">
+                <i class="bi bi-clipboard2-pulse"></i> Breakage &amp; expiry register
+            </a>
             <a href="{% url 'hospital:drug_classification_guide' %}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-info">
                 <i class="bi bi-book"></i> Classification guide
             </a>
         </div>
     </div>
     <form method="get" class="row g-3">
-        <div class="col-md-4">
+        <div class="col-lg-4 col-md-6">
             <label class="form-label small fw-semibold">Search</label>
             <input type="text" name="q" value="{{ query }}" class="form-control" placeholder="Drug name, batch number…">
         </div>
-        <div class="col-md-3">
+        <div class="col-lg-3 col-md-6">
             <label class="form-label small fw-semibold">Drug category</label>
             <select name="category" class="form-select" aria-label="Drug category">
                 <option value="">All categories</option>
@@ -96,16 +108,25 @@
                 {% endfor %}
             </select>
         </div>
-        <div class="col-md-3">
+        <div class="col-lg-3 col-md-6">
             <label class="form-label small fw-semibold">Stock filter</label>
             <select name="filter" class="form-select" aria-label="Stock filter">
                 <option value="all">All stock</option>
                 <option value="low_stock" {% if filter_type == 'low_stock' %}selected{% endif %}>Low stock</option>
                 <option value="expiring" {% if filter_type == 'expiring' %}selected{% endif %}>Expiring soon</option>
+                <option value="movement_risk" {% if filter_type == 'movement_risk' %}selected{% endif %}>Run-out risk (movement)</option>
             </select>
         </div>
-        <div class="col-md-2 d-flex align-items-end">
+        <div class="col-lg-2 col-md-6 d-flex align-items-end">
             <button type="submit" class="btn btn-success w-100 fw-semibold">Apply</button>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label small fw-semibold">Movement window (days)</label>
+            <input type="number" name="movement_days" class="form-control" min="1" max="365" value="{{ movement_window_days|default:30 }}">
+        </div>
+        <div class="col-md-4">
+            <label class="form-label small fw-semibold">Cover alert (days)</label>
+            <input type="number" name="cover_alert_days" class="form-control" min="1" max="180" value="{{ cover_alert_days|default:14 }}" title="Flag run-out risk when drug-level cover falls below this">
         </div>
     </form>
     {% if inventory_count %}
@@ -131,10 +152,17 @@
                     <th>Batch</th>
                     <th>Added</th>
                     <th>Location</th>
+                    <th>Supplier</th>
                     <th>Qty</th>
                     <th>Reorder</th>
+                    <th class="small text-muted" title="Total on hand for this drug (all batches)">Drug OH</th>
+                    <th class="small text-muted" title="Units out (dispense + walk-in + losses) in window">{{ movement_window_days }}d out</th>
+                    <th class="small text-muted">Avg/day</th>
+                    <th class="small text-muted" title="Drug total ÷ avg daily out">Cover</th>
+                    <th class="small text-muted" title="Heuristic suggested procurement quantity">Suggest</th>
                     <th>Expiry</th>
-                    <th>Unit cost</th>
+                    <th>Cost price</th>
+                    <th>Selling price</th>
                     <th>Status</th>
                     <th></th>
                 </tr>
@@ -145,6 +173,7 @@
                     <td>
                         <div class="fw-semibold">{{ stock.drug.name }}</div>
                         <div class="small text-muted">{{ stock.drug.strength }} {{ stock.drug.form }}</div>
+                        {% include 'hospital/_drug_tablet_badge.html' with drug=stock.drug %}
                         {% if stock.drug.category %}
                         <span class="badge bg-info bg-opacity-10 text-info small">{{ stock.drug.get_category_display|truncatewords:3 }}</span>
                         {% endif %}
@@ -152,6 +181,7 @@
                     <td><code class="small">{{ stock.batch_number }}</code></td>
                     <td class="small text-muted">{{ stock.created|date:"d/m/Y H:i" }}</td>
                     <td>{{ stock.location }}</td>
+                    <td class="small">{% if stock.supplier %}{{ stock.supplier.name }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
                     <td>
                         {% if stock.quantity_on_hand <= stock.reorder_level %}
                         <span class="badge text-bg-warning">{{ stock.quantity_on_hand }}</span>
@@ -160,6 +190,21 @@
                         {% endif %}
                     </td>
                     <td>{{ stock.reorder_level }}</td>
+                    {% with m=stock.movement_estimate %}
+                    <td class="small text-muted">{% if m %}{{ m.total_on_hand|intcomma }}{% else %}—{% endif %}</td>
+                    <td class="small">{% if m %}{{ m.total_out_window|intcomma }}{% else %}—{% endif %}</td>
+                    <td class="small font-monospace">{% if m %}{{ m.avg_daily_out_display }}{% else %}—{% endif %}</td>
+                    <td class="small">
+                        {% if m and m.avg_daily_out %}
+                            <span {% if m.is_runout_risk %}class="text-warning fw-semibold"{% endif %}>{{ m.days_cover_display }}</span>
+                        {% elif m %}
+                            —
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                    <td class="small">{% if m %}{{ m.suggested_order_qty|intcomma }}{% else %}—{% endif %}</td>
+                    {% endwith %}
                     <td>
                         {% if stock.expiry_date|date:"Y-m-d" <= expiry_threshold %}
                         <span class="badge text-bg-danger">{{ stock.expiry_date|date:"d/m/Y" }}</span>
@@ -168,6 +213,13 @@
                         {% endif %}
                     </td>
                     <td class="font-monospace small">GHS {{ stock.unit_cost|floatformat:2 }}</td>
+                    <td class="font-monospace small">
+                        {% if stock.drug.unit_price > 0 %}
+                        <span class="text-success fw-semibold">GHS {{ stock.drug.unit_price|floatformat:2 }}</span>
+                        {% else %}
+                        <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
                     <td>
                         {% with expiry_date_str=stock.expiry_date|date:"Y-m-d" %}
                         {% if expiry_date_str <= expiry_threshold %}
@@ -180,11 +232,21 @@
                         {% endwith %}
                     </td>
                     <td class="text-end">
-                        {% if can_edit_existing_stock %}
-                        <a href="{% url 'hospital:pharmacy_stock_edit' stock.pk %}" class="btn btn-sm btn-outline-primary">Edit</a>
-                        {% else %}
-                        <span class="text-muted small">View</span>
-                        {% endif %}
+                        <div class="d-flex flex-wrap gap-1 justify-content-end">
+                            {% if is_pharmacy %}
+                            <a href="{% url 'hospital:procurement_request_create' %}?drug={{ stock.drug_id }}{% if stock.movement_estimate %}&amp;qty={{ stock.movement_estimate.suggested_order_qty }}{% endif %}" class="btn btn-sm btn-outline-warning">Request</a>
+                            {% endif %}
+                            {% if can_record_stock_loss and stock.quantity_on_hand > 0 %}
+                            <a href="{% url 'hospital:pharmacy_stock_loss_record' stock.pk %}" class="btn btn-sm btn-outline-danger">Record loss</a>
+                            {% endif %}
+                            {% if can_edit_existing_stock %}
+                            <a href="{% url 'hospital:pharmacy_stock_edit' stock.pk %}" class="btn btn-sm btn-outline-primary">Edit</a>
+                            {% elif not can_record_stock_loss or stock.quantity_on_hand <= 0 %}
+                            {% if not is_pharmacy %}
+                            <span class="text-muted small align-self-center">View</span>
+                            {% endif %}
+                            {% endif %}
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}
@@ -210,7 +272,13 @@
                     <th>Category</th>
                     <th>Qty</th>
                     <th>Reorder</th>
-                    <th>Unit cost</th>
+                    <th class="small text-muted">Drug OH</th>
+                    <th class="small text-muted">{{ movement_window_days }}d out</th>
+                    <th class="small text-muted">Avg/day</th>
+                    <th class="small text-muted">Cover</th>
+                    <th class="small text-muted">Suggest</th>
+                    <th>Cost price</th>
+                    <th>Selling price</th>
                     <th>Line value</th>
                     <th>Status</th>
                     <th></th>
@@ -224,6 +292,7 @@
                     <td>
                         {% if item.drug %}
                             <span class="small">{{ item.drug.name }}<br><span class="text-muted">{{ item.drug.strength }} {{ item.drug.form }}</span></span>
+                            {% include 'hospital/_drug_tablet_badge.html' with drug=item.drug %}
                         {% else %}
                             <span class="text-muted">—</span>
                         {% endif %}
@@ -243,7 +312,25 @@
                         {% endif %}
                     </td>
                     <td>{{ item.reorder_level|intcomma }}</td>
+                    {% with m=item.movement_estimate %}
+                    <td class="small text-muted">{% if m %}{{ m.total_on_hand|intcomma }}{% else %}—{% endif %}</td>
+                    <td class="small">{% if m %}{{ m.total_out_window|intcomma }}{% else %}—{% endif %}</td>
+                    <td class="small font-monospace">{% if m %}{{ m.avg_daily_out_display }}{% else %}—{% endif %}</td>
+                    <td class="small">
+                        {% if m and m.avg_daily_out %}
+                            <span {% if m.is_runout_risk %}class="text-warning fw-semibold"{% endif %}>{{ m.days_cover_display }}</span>
+                        {% elif m %}—{% else %}—{% endif %}
+                    </td>
+                    <td class="small">{% if m %}{{ m.suggested_order_qty|intcomma }}{% else %}—{% endif %}</td>
+                    {% endwith %}
                     <td class="font-monospace small">GHS {{ item.unit_cost|floatformat:2|intcomma }}</td>
+                    <td class="font-monospace small">
+                        {% if item.drug and item.drug.unit_price > 0 %}
+                        <span class="text-success fw-semibold">GHS {{ item.drug.unit_price|floatformat:2|intcomma }}</span>
+                        {% else %}
+                        <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
                     <td class="fw-semibold font-monospace small">GHS {{ item.total_value|floatformat:2|intcomma }}</td>
                     <td>
                         {% if item.quantity_on_hand <= item.reorder_level %}
@@ -257,8 +344,10 @@
                     <td class="text-end">
                         {% if can_edit %}
                         <a href="{% url 'hospital:inventory_item_edit' item.pk %}" class="btn btn-sm btn-outline-primary">Edit</a>
-                        {% elif item.quantity_on_hand <= item.reorder_level and is_pharmacy %}
+                        {% elif is_pharmacy and item.quantity_on_hand <= item.reorder_level %}
                         <a href="{% url 'hospital:procurement_request_create' %}?item={{ item.pk }}" class="btn btn-sm btn-outline-warning">Request</a>
+                        {% elif is_pharmacy and item.drug and item.movement_estimate and item.movement_estimate.is_runout_risk %}
+                        <a href="{% url 'hospital:procurement_request_create' %}?drug={{ item.drug_id }}&amp;qty={{ item.movement_estimate.suggested_order_qty }}" class="btn btn-sm btn-outline-warning">Request</a>
                         {% else %}
                         <span class="text-muted small">View</span>
                         {% endif %}

@@ -146,7 +146,7 @@ class Command(BaseCommand):
                 applied += 1
                 continue
 
-            shortfall = reduce_pharmacy_stock_once(
+            shortfall, _ = reduce_pharmacy_stock_once(
                 drug,
                 qty,
                 PharmacyStockDeductionLog.SOURCE_DISPENSE_HISTORY,
@@ -216,7 +216,7 @@ class Command(BaseCommand):
                 applied += 1
                 continue
 
-            shortfall = reduce_pharmacy_stock_once(
+            shortfall, _ = reduce_pharmacy_stock_once(
                 drug,
                 qty,
                 PharmacyStockDeductionLog.SOURCE_PHARMACY_DISPENSING,
@@ -262,7 +262,7 @@ class Command(BaseCommand):
                     applied += 1
                     continue
 
-                shortfall = reduce_pharmacy_stock_once(
+                shortfall, _ = reduce_pharmacy_stock_once(
                     item.drug,
                     item.quantity,
                     PharmacyStockDeductionLog.SOURCE_WALKIN_SALE_ITEM,

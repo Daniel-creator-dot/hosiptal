@@ -2,6 +2,7 @@
 Accounting and Financial Management Models
 """
 import uuid
+from decimal import Decimal
 from django.db import models, IntegrityError
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -32,10 +33,22 @@ class Account(BaseModel):
         ('revenue', 'Revenue'),
         ('expense', 'Expense'),
     ]
+
+    ACCOUNT_SUBGROUPS = [
+        ('non_current_asset', 'Non-Current Asset'),
+        ('current_asset', 'Current Asset'),
+        ('non_current_liability', 'Non-Current Liability'),
+        ('current_liability', 'Current Liability'),
+        ('direct_expense', 'Direct Expense'),
+        ('indirect_expense', 'Indirect Expense'),
+    ]
     
     account_code = models.CharField(max_length=20, unique=True)
     account_name = models.CharField(max_length=200)
     account_type = models.CharField(max_length=20, choices=ACCOUNT_TYPES)
+    account_subgroup = models.CharField(
+        max_length=30, choices=ACCOUNT_SUBGROUPS, blank=True, default='',
+    )
     parent_account = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='sub_accounts')
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
@@ -112,6 +125,8 @@ class PaymentReceipt(BaseModel):
     """Payment receipts for patients"""
     SERVICE_TYPES = [
         ('lab', 'Laboratory Test'),
+        ('lab_test', 'Laboratory Test (order)'),
+        ('lab_result', 'Laboratory Result'),
         ('pharmacy', 'Pharmacy/Medication'),
         ('pharmacy_prescription', 'Pharmacy Prescription'),
         ('pharmacy_walkin', 'Walk-in Pharmacy Sale'),
@@ -119,17 +134,23 @@ class PaymentReceipt(BaseModel):
         ('imaging', 'Imaging/Radiology'),
         ('imaging_study', 'Imaging Study'),
         ('consultation', 'Consultation'),
+        ('gynecology', 'Gynecology / ANC'),
         ('admission', 'Admission'),
         ('detainment', 'Detainment'),
+        ('bed', 'Bed / accommodation'),
         ('procedure', 'Procedure'),
+        ('consumables', 'Clinical Consumables'),
         ('combined', 'Combined Services'),
+        ('general', 'General / accounting sync'),
         ('other', 'Other'),
     ]
     
     receipt_number = models.CharField(max_length=50, unique=True)
     transaction = models.OneToOneField(Transaction, on_delete=models.CASCADE, related_name='receipt')
     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='receipts')
-    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='receipts')
+    patient = models.ForeignKey(
+        Patient, on_delete=models.CASCADE, related_name='receipts', null=True, blank=True
+    )
     
     amount_paid = models.DecimalField(max_digits=12, decimal_places=2)
     payment_method = models.CharField(max_length=20, choices=Transaction.PAYMENT_METHODS)

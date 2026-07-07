@@ -11,6 +11,11 @@ from . import views_billing_claims
 
 urlpatterns = [
     path(
+        'accountant/billing/company-bills/export/excel/',
+        views_billing_claims.company_bills_list_export_excel,
+        name='company_bills_list_export_excel',
+    ),
+    path(
         'accountant/billing/corporate-bills/payer/<uuid:payer_id>/export/excel/',
         views_billing_claims.corporate_bill_pack_export_excel,
         name='corporate_bill_pack_export_excel',

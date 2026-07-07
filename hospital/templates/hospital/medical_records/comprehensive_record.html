@@ -303,6 +303,20 @@
             </div>
         </div>
 
+        {% if records_upload_only %}
+        <div class="alert alert-info mb-4">
+            <i class="bi bi-info-circle me-2"></i>
+            Upload patient documents below. Full clinical history is available to doctors and nurses.
+        </div>
+        {% endif %}
+
+        <div class="row mb-4">
+            <div class="col-12">
+                {% include 'hospital/medical_records/_patient_document_upload.html' %}
+            </div>
+        </div>
+
+        {% if not records_upload_only %}
         <!-- Statistics Row -->
         <div class="row mb-4">
             <div class="col-md-3">
@@ -359,6 +373,24 @@
                                 {{ patient.emergency_contact_phone }}
                             </div>
                             {% endif %}
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Bill to / Company</div>
+                            <div class="info-value">
+                                {% if payer_info.is_insurance_or_corporate %}
+                                    {% with n=payer_info.name b=payer_info.corporate_badge_name %}
+                                        {% if n and b and n != b %}
+                                            {{ n }}<span class="text-muted"> · </span>{{ b }}
+                                        {% else %}
+                                            {% firstof n b "Insurance / Corporate" %}
+                                        {% endif %}
+                                    {% endwith %}
+                                {% elif patient.primary_insurance and patient.primary_insurance.payer_type != 'cash' %}
+                                    {{ patient.primary_insurance.name }}
+                                {% else %}
+                                    Self pay
+                                {% endif %}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -512,60 +544,6 @@
                     {% endif %}
                 </div>
 
-                <!-- External Reports & Scans (from other hospitals) -->
-                <div class="section-card">
-                    <div class="section-title">
-                        <div class="section-icon"><i class="bi bi-cloud-upload"></i></div>
-                        <span>External Reports & Scans</span>
-                    </div>
-                    <p class="text-muted small mb-3">
-                        Patient brought reports or scans from another facility? Upload them here to attach to this patient's folder.
-                    </p>
-                    <form method="post" action="{% url 'hospital:comprehensive_medical_record' patient.pk %}" enctype="multipart/form-data" class="mb-4">
-                        {% csrf_token %}
-                        <input type="hidden" name="action" value="upload_external_report">
-                        <div class="mb-2">
-                            <label class="form-label small fw-semibold">Title <span class="text-danger">*</span></label>
-                            <input type="text" name="title" class="form-control form-control-sm" placeholder="e.g. Lab results from Ridge Hospital" maxlength="255" required>
-                        </div>
-                        <div class="mb-2">
-                            <label class="form-label small fw-semibold">Source / notes (optional)</label>
-                            <input type="text" name="description" class="form-control form-control-sm" placeholder="e.g. XYZ Hospital, Jan 2025">
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label small fw-semibold">File</label>
-                            <input type="file" name="external_report_file" class="form-control form-control-sm" accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.bmp,.doc,.docx,.dcm" required>
-                            <small class="text-muted">PDF, images, or DOC. Max 25MB.</small>
-                        </div>
-                        <button type="submit" class="btn btn-primary btn-sm">
-                            <i class="bi bi-upload me-1"></i>Upload to patient folder
-                        </button>
-                    </form>
-                    {% if external_documents %}
-                        <hr class="my-3">
-                        <div class="info-label mb-2">Uploaded documents</div>
-                        <ul class="list-unstyled mb-0">
-                            {% for doc in external_documents %}
-                                <li class="d-flex align-items-center justify-content-between py-2 border-bottom border-light">
-                                    <div>
-                                        <i class="bi bi-file-earmark-pdf text-danger me-2"></i>
-                                        <strong>{{ doc.title }}</strong>
-                                        {% if doc.description %}<br><small class="text-muted">{{ doc.description }}</small>{% endif %}
-                                        <br><small class="text-muted">{{ doc.document_date|date:"M d, Y" }}{% if doc.uploaded_by %} · {{ doc.uploaded_by.user.get_full_name|default:doc.uploaded_by.user.username }}{% endif %}</small>
-                                    </div>
-                                    {% if doc.file %}
-                                    <a href="{{ doc.file.url }}" target="_blank" class="btn btn-outline-primary btn-sm" title="View/Download">
-                                        <i class="bi bi-download"></i>
-                                    </a>
-                                    {% endif %}
-                                </li>
-                            {% endfor %}
-                        </ul>
-                    {% else %}
-                        <p class="text-muted small mb-0">No external reports uploaded yet.</p>
-                    {% endif %}
-                </div>
-
                 <!-- Medical History -->
                 {% if medical_history %}
                 <div class="section-card">
@@ -580,6 +558,78 @@
 
             <!-- Right Column - Encounters -->
             <div class="col-md-8">
+                <!-- Ward / bed admissions (formal Admission records) -->
+                <div class="section-card" style="border-left-color: #f5576c;">
+                    <div class="section-title">
+                        <div class="section-icon" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                            <i class="bi bi-door-open"></i>
+                        </div>
+                        <span>Admission History (Ward / Bed)</span>
+                    </div>
+                    {% if patient_admissions %}
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Admitted</th>
+                                    <th>Discharged</th>
+                                    <th>Status</th>
+                                    <th>Ward / Bed</th>
+                                    <th>Admitting doctor</th>
+                                    <th>Diagnosis</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for adm in patient_admissions %}
+                                <tr>
+                                    <td>
+                                        {% if adm.admit_date %}
+                                            <strong>{{ adm.admit_date|date:"M d, Y" }}</strong><br>
+                                            <small class="text-muted">{{ adm.admit_date|date:"H:i" }}</small>
+                                        {% else %}—{% endif %}
+                                    </td>
+                                    <td>
+                                        {% if adm.discharge_date %}
+                                            <strong>{{ adm.discharge_date|date:"M d, Y" }}</strong>
+                                        {% elif adm.status == 'admitted' %}
+                                            <span class="text-muted">Still admitted</span>
+                                        {% else %}—{% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="badge {% if adm.status == 'admitted' %}bg-warning text-dark{% elif adm.status == 'discharged' %}bg-success{% else %}bg-secondary{% endif %}">
+                                            {{ adm.get_status_display }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        {% if adm.ward %}{{ adm.ward.name }}{% else %}—{% endif %}
+                                        {% if adm.bed %}<br><small class="text-muted">Bed {{ adm.bed.bed_number }}</small>{% endif %}
+                                    </td>
+                                    <td>
+                                        {% if adm.admitting_doctor and adm.admitting_doctor.user %}
+                                            {{ adm.admitting_doctor.user.get_full_name|default:adm.admitting_doctor.user.username }}
+                                        {% else %}—{% endif %}
+                                    </td>
+                                    <td><small>{{ adm.diagnosis_icd10|default:"—"|truncatewords:8 }}</small></td>
+                                    <td class="text-end">
+                                        <a href="{% url 'hospital:admission_detail' adm.pk %}" class="btn btn-sm btn-outline-primary">View</a>
+                                        {% if adm.encounter_id %}
+                                        <a href="{% url 'hospital:encounter_detail' adm.encounter_id %}" class="btn btn-sm btn-outline-secondary">Encounter</a>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% if total_admissions > patient_admissions|length %}
+                    <p class="text-muted small mt-2 mb-0">Showing {{ patient_admissions|length }} most recent of {{ total_admissions }} admission(s).</p>
+                    {% endif %}
+                    {% else %}
+                    <p class="text-muted mb-0">No formal ward admission records for this patient (same MRN across merged profiles is included).</p>
+                    {% endif %}
+                </div>
+
                 <div class="section-card">
                     <div class="section-title">
                         <div class="section-icon"><i class="bi bi-clock-history"></i></div>
@@ -732,6 +782,7 @@
                 </div>
             </div>
         </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

@@ -5,6 +5,7 @@ from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib import messages
 from django.utils import timezone
+from django.db import transaction
 from django.db.models import Q, Sum, Count, F
 from django.http import JsonResponse
 from django.forms import inlineformset_factory
@@ -20,11 +21,31 @@ from .forms_procurement import (
     ProcurementRequestForm, ProcurementRequestItemFormSet,
     StoreTransferForm, StoreTransferLineFormSet
 )
-from .models import Staff
+from .models import Drug, Staff
+from .models_supplier_payables import SupplierPayableLine
+
+
+def _maybe_record_supplier_opening_invoice(supplier, form, user):
+    """Create supplier payable line when opening invoice fields are filled."""
+    amt = form.cleaned_data.get('opening_invoice_amount')
+    if amt is None or amt <= 0:
+        return False
+    ref = (form.cleaned_data.get('opening_invoice_reference') or '').strip()
+    desc = (form.cleaned_data.get('opening_invoice_description') or '').strip()
+    with transaction.atomic():
+        SupplierPayableLine.objects.create(
+            supplier=supplier,
+            entry_type=SupplierPayableLine.ENTRY_MANUAL_PAYABLE,
+            amount=Decimal(str(amt)),
+            description=desc or 'Opening supplier invoice',
+            reference=ref,
+            created_by=user if getattr(user, 'is_authenticated', False) else None,
+        )
+    return True
 
 
 def is_admin_user(user):
-    """Check if user is admin - only admins can edit/change stock levels"""
+    """Check if user is in Admin/Administrator groups (not procurement/stores)."""
     if not user or not user.is_authenticated:
         return False
     if user.is_superuser:
@@ -33,31 +54,9 @@ def is_admin_user(user):
 
 
 def is_procurement_staff(user):
-    """Check if user has procurement access"""
-    if not user.is_authenticated:
-        return False
-    if user.is_superuser:
-        return True
-    # Check if user is in Procurement group
-    if user.groups.filter(name__in=[
-        'Admin', 'Administrator',
-        'Store Manager', 'Inventory Stores Manager',
-        'Procurement', 'Procurement Officer'
-    ]).exists():
-        return True
-    # Check if user's staff profession is store_manager (procurement officer)
-    try:
-        if hasattr(user, 'staff'):
-            if user.staff.profession in ['store_manager', 'inventory_manager', 'procurement_officer']:
-                return True
-            # Also check department name for procurement/stores
-            if user.staff.department and user.staff.department.name:
-                dept = user.staff.department.name.lower()
-                if 'procurement' in dept or 'store' in dept:
-                    return True
-    except:
-        pass
-    return False
+    """Check if user has procurement / stores access (single source of truth in utils_roles)."""
+    from .utils_roles import is_procurement_staff as _is_procurement_staff
+    return _is_procurement_staff(user)
 
 
 def is_pharmacy_staff(user):
@@ -89,6 +88,13 @@ def can_add_pharmacy_stock(user):
     if not user or not user.is_authenticated:
         return False
     return is_admin_user(user) or is_procurement_staff(user)
+
+
+def can_record_pharmacy_stock_loss(user):
+    """Pharmacists and inventory staff may record breakage / expiry write-offs with audit trail."""
+    if not user or not user.is_authenticated:
+        return False
+    return is_pharmacy_staff(user) or can_edit_inventory(user)
 
 
 @login_required
@@ -335,7 +341,7 @@ def store_detail(request, pk):
         'pending_out': pending_out,
         'pending_in': pending_in,
         'other_stores': other_stores,
-        'can_edit_stock': is_procurement_staff(request.user),
+        'can_edit_stock': can_edit_inventory(request.user),
     }
     return render(request, 'hospital/store_detail.html', context)
 
@@ -589,7 +595,16 @@ def supplier_create(request):
         form = SupplierForm(request.POST)
         if form.is_valid():
             supplier = form.save()
-            messages.success(request, f'Supplier "{supplier.name}" created successfully!')
+            extra = ''
+            try:
+                if _maybe_record_supplier_opening_invoice(supplier, form, request.user):
+                    extra = ' Opening supplier invoice recorded on supplier ledger.'
+            except Exception as exc:
+                messages.warning(request, f'Opening invoice not recorded: {exc}')
+            messages.success(
+                request,
+                f'Supplier "{supplier.name}" created successfully!{extra}',
+            )
             return redirect('hospital:suppliers_list')
     else:
         form = SupplierForm()
@@ -611,7 +626,16 @@ def supplier_edit(request, pk):
         form = SupplierForm(request.POST, instance=supplier)
         if form.is_valid():
             supplier = form.save()
-            messages.success(request, f'Supplier "{supplier.name}" updated successfully!')
+            extra = ''
+            try:
+                if _maybe_record_supplier_opening_invoice(supplier, form, request.user):
+                    extra = ' Supplier payable (invoice) line added.'
+            except Exception as exc:
+                messages.warning(request, f'Opening invoice line not recorded: {exc}')
+            messages.success(
+                request,
+                f'Supplier "{supplier.name}" updated successfully!{extra}',
+            )
             return redirect('hospital:suppliers_list')
     else:
         form = SupplierForm(instance=supplier)
@@ -774,12 +798,20 @@ def procurement_request_create(request):
     
     # Pre-fill from low stock item if provided
     item_id = request.GET.get('item')
+    drug_id = request.GET.get('drug')
+    suggested_qty = request.GET.get('qty')
     prefill_item = None
+    prefill_drug = None
     if item_id:
         try:
             prefill_item = InventoryItem.objects.get(pk=item_id, is_deleted=False)
         except InventoryItem.DoesNotExist:
             pass
+    elif drug_id:
+        try:
+            prefill_drug = Drug.objects.get(pk=int(drug_id), is_deleted=False, is_active=True)
+        except (Drug.DoesNotExist, ValueError, TypeError):
+            prefill_drug = None
     
     if request.method == 'POST':
         action = (request.POST.get('action') or 'save').strip().lower()
@@ -867,6 +899,31 @@ def procurement_request_create(request):
                 for field_name, value in first_form.initial.items():
                     if field_name in first_form.fields:
                         first_form.fields[field_name].initial = value
+        elif prefill_drug and formset.forms:
+            first_form = formset.forms[0]
+            qty_line = None
+            if suggested_qty is not None and str(suggested_qty).strip().isdigit():
+                qty_line = max(1, int(str(suggested_qty).strip()))
+            if qty_line is None:
+                qty_line = 30
+            item_label = str(prefill_drug).strip()
+            first_form.initial = {
+                'item_name': item_label[:200],
+                'item_code': '',
+                'description': '',
+                'drug': prefill_drug.pk,
+                'quantity': qty_line,
+                'unit_of_measure': (prefill_drug.form or 'units')[:50],
+                'estimated_unit_price': float(prefill_drug.cost_price or prefill_drug.unit_price or 0),
+                'preferred_supplier': (
+                    prefill_drug.preferred_supplier.pk
+                    if prefill_drug.preferred_supplier_id
+                    else None
+                ),
+            }
+            for field_name, value in first_form.initial.items():
+                if field_name in first_form.fields:
+                    first_form.fields[field_name].initial = value
     
     context = {
         'form': form,

@@ -60,10 +60,7 @@ class Command(BaseCommand):
         else:
             self.stdout.write(self.style.WARNING(f'⚠️ Payer already exists: {payer.name}'))
         
-        # Link corporate account to payer
-        if not hasattr(corporate_account, 'payer') or not corporate_account.payer:
-            # We need to check if there's a relationship field
-            # For now, we'll just ensure the payer exists
+        # Link corporate account to payer (payer is assigned via patient.primary_insurance below)
         
         # Get all Primecare staff (staff with PCMC employee IDs)
         primecare_staff = Staff.objects.filter(

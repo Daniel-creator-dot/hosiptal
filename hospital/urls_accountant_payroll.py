@@ -14,6 +14,16 @@ urlpatterns = [
     path('accountant/payroll/import/', views_accountant_comprehensive.accountant_payroll_import, name='accountant_payroll_import'),
     path('accountant/payroll/template.xlsx', views_accountant_comprehensive.accountant_payroll_template_download, name='accountant_payroll_template'),
     path(
+        'accountant/payroll/analytics/<int:year>/<int:month>/',
+        views_accountant_comprehensive.accountant_payroll_analytics_month,
+        name='accountant_payroll_analytics_month',
+    ),
+    path(
+        'accountant/payroll/analytics/',
+        views_accountant_comprehensive.accountant_payroll_analytics,
+        name='accountant_payroll_analytics',
+    ),
+    path(
         'accountant/payroll/export-runs.xlsx',
         views_accountant_comprehensive.accountant_payroll_export_runs,
         name='accountant_payroll_export_runs',

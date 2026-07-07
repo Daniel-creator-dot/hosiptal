@@ -239,6 +239,22 @@ class ReagentTransaction(BaseModel):
     lab_result = models.ForeignKey('LabResult', on_delete=models.SET_NULL, null=True, blank=True, related_name='reagent_transactions', help_text="Lab result/test for which reagent was used")
     purpose = models.TextField(blank=True, help_text="Purpose/clinical indication for reagent usage")
     test_name = models.CharField(max_length=200, blank=True, help_text="Name of test performed (for quick reference)")
+
+    cogs_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Cost of reagent units consumed (for GL COGS posting)',
+    )
+    gl_journal_entry = models.ForeignKey(
+        'hospital.AdvancedJournalEntry',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reagent_transactions',
+    )
+    cogs_posted_at = models.DateTimeField(null=True, blank=True)
     
     class Meta:
         ordering = ['-created']

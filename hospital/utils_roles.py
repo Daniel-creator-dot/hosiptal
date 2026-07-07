@@ -2,8 +2,51 @@
 Role-Based Access Control Utilities
 Detect user roles and provide appropriate permissions
 """
+from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
 from django.contrib.contenttypes.models import ContentType
+
+
+def _user_group_names(user):
+    """
+    Return Django auth Group names for a user.
+
+    Uses the User↔Group M2M through table directly so we never query
+    ``Group.objects.filter(user=...)`` (Group has no ``user`` field; that
+    pattern raises FieldError on every authenticated page via role middleware).
+    """
+    if not user or not getattr(user, 'is_authenticated', False):
+        return []
+    user_pk = getattr(user, 'pk', None)
+    if not user_pk:
+        return []
+    try:
+        User = get_user_model()
+        groups_field = User._meta.get_field('groups')
+        through = groups_field.remote_field.through
+        user_column = groups_field.m2m_field_name()
+        group_column = groups_field.m2m_reverse_field_name()
+        group_ids = through.objects.filter(**{user_column: user_pk}).values_list(
+            group_column, flat=True
+        )
+        return list(
+            Group.objects.filter(pk__in=group_ids)
+            .order_by('name')
+            .values_list('name', flat=True)
+        )
+    except Exception:
+        try:
+            return list(user.groups.values_list('name', flat=True))
+        except Exception:
+            return []
+
+
+def _user_has_group(user, group_names):
+    """True when the user belongs to any of the named auth Groups."""
+    if not group_names:
+        return False
+    wanted = {str(n).lower() for n in group_names}
+    return any(g.lower() in wanted for g in _user_group_names(user))
 
 
 # Role definitions with their features
@@ -77,9 +120,9 @@ ROLE_FEATURES = {
         'color': '#f59e0b',
         'icon': 'shield-check',
         'dashboards': [
-            'accounting',
+            'claims_accounting',
+            'cashier',
             'petty_cash',
-            'approvals',
         ],
         'features': [
             'view_account',
@@ -88,8 +131,7 @@ ROLE_FEATURES = {
             'add_pettycashtransaction',
             'change_pettycashtransaction',
             'approve_pettycashtransaction',
-            'can_approve_procurement_accounts',
-            'view_procurementrequest',
+            'view_cashiersession',
         ]
     },
     'senior_account_officer': {
@@ -420,6 +462,7 @@ ROLE_FEATURES = {
             'appointments',
             'patients',
             'registration',
+            'medical_records',
         ],
         'features': [
             'view_patient',
@@ -428,6 +471,7 @@ ROLE_FEATURES = {
             'view_appointment',
             'add_appointment',
             'change_appointment',
+            'view_medicalrecord',
         ]
     },
     'cashier': {
@@ -601,18 +645,20 @@ def is_procurement_staff(user):
         pass
 
     # Explicit group-based access (legacy support)
-    if user.groups.filter(name__in=[
+    if _user_has_group(user, [
         'Admin', 'Administrator',
         'Store Manager', 'Inventory Stores Manager',
         'Procurement', 'Procurement Officer'
-    ]).exists():
+    ]):
         return True
 
     # Staff profile fallback (department/profession)
     try:
         from .models import Staff
         staff = Staff.objects.filter(user=user, is_deleted=False).order_by('-created').first()
-        if staff and staff.profession in ['store_manager', 'inventory_manager', 'procurement_officer']:
+        if staff and staff.profession in [
+            'store_manager', 'inventory_manager', 'procurement_officer', 'procurement_manager',
+        ]:
             return True
         if staff and staff.department and staff.department.name:
             dept_name = staff.department.name.lower()
@@ -624,17 +670,12 @@ def is_procurement_staff(user):
     return False
 
 
-def get_user_role(user):
+def _compute_user_role(user):
     """
-    Detect user's primary role based on groups and staff profession
-    Returns role slug (e.g., 'accountant', 'hr_manager', etc.)
+    Resolve HMS role for authenticated, non-superuser users.
+    Returns (role_slug, staff_instance_or_none). Uses at most one Staff SELECT.
     """
-    if not user or not getattr(user, 'is_authenticated', False):
-        return 'staff'
-    
-    if user.is_superuser:
-        _ensure_staff_flag(user, ensure_superuser=True)
-        return 'admin'
+    from .models import Staff
 
     def _is_lab_profession(prof_norm):
         """Treat common lab profession variants as lab_technician role."""
@@ -653,88 +694,103 @@ def get_user_role(user):
         }
         return prof_norm in lab_aliases or ('lab' in prof_norm and 'assistant' not in prof_norm)
 
-    # Staff profession wins over generic Django groups (e.g. user in "Nurse" group but job is lab tech → lab)
-    try:
-        from .models import Staff
-        _staff_for_role = Staff.objects.filter(user=user, is_deleted=False).order_by('-created').first()
-        if _staff_for_role:
-            _prof = getattr(_staff_for_role, 'profession', None)
-            _prof_norm = (_prof or '').strip().lower().replace(' ', '_').replace('-', '_')
-            if _prof_norm == 'midwife':
-                _ensure_staff_flag(user)
-                return 'midwife'
-            if _is_lab_profession(_prof_norm):
-                _ensure_staff_flag(user)
-                return 'lab_technician'
-    except Exception:
-        pass
+    staff = (
+        Staff.objects.filter(user=user, is_deleted=False)
+        .select_related('department')
+        .order_by('-created')
+        .first()
+    )
 
-    # Check Django groups first
-    user_groups = user.groups.values_list('name', flat=True)
-    
-    # PRIORITY 1: Check for Procurement/Store Manager groups FIRST (before other groups)
-    procurement_groups = ['procurement', 'procurement_officer', 'store_manager', 'inventory_manager', 'inventory_stores_manager']
+    if staff:
+        _prof = getattr(staff, 'profession', None)
+        _prof_norm = (_prof or '').strip().lower().replace(' ', '_').replace('-', '_')
+        if _prof_norm == 'midwife':
+            _ensure_staff_flag(user)
+            return 'midwife', staff
+        if _is_lab_profession(_prof_norm):
+            _ensure_staff_flag(user)
+            return 'lab_technician', staff
+        # Hospital administrators must keep full HMS access (including HR) even if they also
+        # belong to clinical groups like Doctor/Nurse — group list order would otherwise win.
+        if _prof_norm in ('admin', 'administrator'):
+            _ensure_staff_flag(user)
+            return 'admin', staff
+
+    user_groups = _user_group_names(user)
+
+    procurement_groups = [
+        'procurement',
+        'procurement_officer',
+        'store_manager',
+        'inventory_manager',
+        'inventory_stores_manager',
+    ]
     for group_name in user_groups:
         group_lower = group_name.lower().replace(' ', '_').replace('&', '_')
         if group_lower in procurement_groups:
             _ensure_staff_flag(user)
-            # Map to the correct role
             if group_lower in ['store_manager', 'inventory_manager', 'inventory_stores_manager']:
-                return 'inventory_stores_manager'
-            elif group_lower in ['procurement', 'procurement_officer']:
-                return 'procurement_officer'
-    
-    # PRIORITY 2: Check for Marketing/Business Development groups (before admin)
+                return 'inventory_stores_manager', staff
+            if group_lower in ['procurement', 'procurement_officer']:
+                return 'procurement_officer', staff
+
     marketing_groups = ['marketing', 'business_development', 'bd', 'marketer']
     for group_name in user_groups:
         group_lower = group_name.lower().replace(' ', '_').replace('&', '_')
         if group_lower in marketing_groups:
             _ensure_staff_flag(user)
-            return 'marketing'
-    
-    # PRIORITY 3: Prioritize Accountant group over Account Personnel
-    for group_name in user_groups:
-        group_lower = group_name.lower().replace(' ', '_')
-        if group_lower == 'accountant':  # Check for Accountant first
+            return 'marketing', staff
+
+    # Finance/account groups win over Doctor/Nurse when a user wears both hats.
+    finance_group_priority = (
+        ('senior_account_officer', 'senior_account_officer'),
+        ('account_officer', 'account_officer'),
+        ('accountant', 'accountant'),
+        ('finance', 'accountant'),
+        ('financer', 'accountant'),
+        ('account_personnel', 'account_personnel'),
+    )
+    normalized_groups = {
+        g.lower().replace(' ', '_').replace('&', '_') for g in user_groups
+    }
+    for group_slug, role_slug in finance_group_priority:
+        if group_slug in normalized_groups:
             _ensure_staff_flag(user)
-            return 'accountant'
-    
-    # PRIORITY 4: Then check other groups (but exclude admin for marketing users)
+            return role_slug, staff
+
+    # Resolve Admin/Administrator from any group membership before clinical ROLE_FEATURES
+    # (avoids Doctor/Nurse winning when that group appears earlier in M2M ordering).
     for group_name in user_groups:
         group_lower = group_name.lower().replace(' ', '_').replace('&', '_')
-        # Treat "Admin"/"Administrator" groups as system admin role
-        if group_lower in ['admin', 'administrator']:
-            _ensure_staff_flag(user)
-            return 'admin'
-        # Skip admin group if user has marketing profession
-        if group_lower == 'admin':
+        if group_lower in ('admin', 'administrator'):
             try:
-                from .models import Staff
-                staff = Staff.objects.filter(user=user, is_deleted=False).first()
-                if staff and staff.profession in ['marketer', 'marketing', 'business_development', 'bd']:
-                    continue  # Skip admin group for marketing users
-            except:
+                if group_lower == 'admin' and staff:
+                    prof_m = (staff.profession or '').strip().lower()
+                    if prof_m in ('marketer', 'marketing', 'business_development', 'bd'):
+                        continue
+            except Exception:
                 pass
+            _ensure_staff_flag(user)
+            return 'admin', staff
+
+    for group_name in user_groups:
+        group_lower = group_name.lower().replace(' ', '_').replace('&', '_')
         if group_lower in ROLE_FEATURES:
             _ensure_staff_flag(user)
-            return group_lower
-    
-    # Fall back to staff profession
+            return group_lower, staff
+
     try:
-        from .models import Staff
-        # Use filter().first() instead of get() to handle multiple staff records
-        # This prevents MultipleObjectsReturned errors
-        staff = Staff.objects.filter(user=user, is_deleted=False).order_by('-created').first()
-        
         if not staff:
             _ensure_staff_flag(user)
-            return 'staff'
-        
+            return 'staff', None
+
         profession_role_map = {
+            'admin': 'admin',
             'doctor': 'doctor',
             'nurse': 'nurse',
             'midwife': 'midwife',
             'pharmacist': 'pharmacist',
+            'pharmacy_technician': 'pharmacist',
             'lab_technician': 'lab_technician',
             'lab_tech': 'lab_technician',
             'lab': 'lab_technician',
@@ -746,68 +802,129 @@ def get_user_role(user):
             'radiologist': 'radiologist',
             'receptionist': 'receptionist',
             'cashier': 'cashier',
-            'store_manager': 'inventory_stores_manager',  # Store managers are inventory/stores managers
+            'store_manager': 'inventory_stores_manager',
             'inventory_manager': 'inventory_stores_manager',
             'procurement_officer': 'procurement_officer',
+            'procurement_manager': 'procurement_officer',
             'hr_manager': 'hr_manager',
             'accountant': 'accountant',
             'senior_account_officer': 'senior_account_officer',
+            'account_officer': 'account_officer',
+            'account_personnel': 'account_personnel',
             'it': 'it',
             'it_staff': 'it',
-            'it_support': 'it',  # IT Support profession maps to IT role
-            'it_operations': 'it',  # IT Operations profession maps to IT role
-            'marketing': 'marketing',  # Marketing profession maps to marketing role
-            'marketer': 'marketing',  # Marketer profession maps to marketing role
-            'business_development': 'marketing',  # Business Development profession maps to marketing role
-            'bd': 'marketing',  # BD profession maps to marketing role
+            'it_support': 'it',
+            'it_operations': 'it',
+            'marketing': 'marketing',
+            'marketer': 'marketing',
+            'business_development': 'marketing',
+            'bd': 'marketing',
         }
-        
+
         prof_norm = (staff.profession or '').strip().lower().replace(' ', '_').replace('-', '_')
 
         if _is_lab_profession(prof_norm):
             _ensure_staff_flag(user)
-            return 'lab_technician'
+            return 'lab_technician', staff
 
-        # PRIORITY: Check profession FIRST for procurement/store_manager/marketing (before groups)
-        if prof_norm in ['store_manager', 'inventory_manager', 'procurement_officer', 'marketer', 'marketing', 'business_development', 'bd']:
+        if prof_norm in [
+            'store_manager',
+            'inventory_manager',
+            'procurement_officer',
+            'procurement_manager',
+            'marketer',
+            'marketing',
+            'business_development',
+            'bd',
+        ]:
             role = profession_role_map.get(prof_norm, 'staff')
             if role in ['inventory_stores_manager', 'procurement_officer', 'marketing']:
                 _ensure_staff_flag(user)
-                return role
-        
-        # Check if user is in IT group
+                return role, staff
+
         for group_name in user_groups:
             group_lower = group_name.lower().replace(' ', '_')
             if group_lower in ['it', 'it_staff', 'it_operations', 'it_support']:
                 _ensure_staff_flag(user)
-                return 'it'
-        
-        # Check if user is in Marketing group
+                return 'it', staff
+
         for group_name in user_groups:
             group_lower = group_name.lower().replace(' ', '_')
             if group_lower in ['marketing', 'marketing_&_business_development', 'business_development', 'bd']:
                 _ensure_staff_flag(user)
-                return 'marketing'
-        
-        # Now check profession (for other roles)
+                return 'marketing', staff
+
         role = profession_role_map.get(prof_norm, 'staff')
-        
-        # Special case: If profession contains "it" or "support" and user is staff, map to IT
+
         if role == 'staff' and prof_norm:
             profession_lower = prof_norm
-            if 'it' in profession_lower or ('support' in profession_lower and 'it' in str(staff.department).lower() if staff.department else False):
+            if 'it' in profession_lower or (
+                'support' in profession_lower
+                and 'it' in str(staff.department).lower()
+                if staff.department
+                else False
+            ):
                 role = 'it'
-        
+
         _ensure_staff_flag(user)
-        return role
-        
+        return role, staff
+
     except Exception as e:
-        # Log the error for debugging but don't break the app
         import logging
+
         logger = logging.getLogger(__name__)
-        logger.warning(f"Error getting user role for {user.username}: {e}", exc_info=True)
+        logger.warning('Error getting user role for %s: %s', user.username, e, exc_info=True)
         _ensure_staff_flag(user)
-        return 'staff'  # Default fallback
+        return 'staff', staff
+
+
+def attach_user_role_to_request(request):
+    """
+    Set request.hms_user_role, request.hms_staff, and request._hms_user_role_done.
+    Call once per request after AuthenticationMiddleware.
+    """
+    user = getattr(request, 'user', None)
+    if not user or not getattr(user, 'is_authenticated', False):
+        request.hms_user_role = None
+        request.hms_staff = None
+        request._hms_user_role_done = True
+        return
+    if user.is_superuser:
+        _ensure_staff_flag(user, ensure_superuser=True)
+        request.hms_user_role = 'admin'
+        request.hms_staff = None
+        request._hms_user_role_done = True
+        return
+    role, staff = _compute_user_role(user)
+    request.hms_user_role = role
+    request.hms_staff = staff
+    request._hms_user_role_done = True
+
+
+def get_user_role(user, request=None):
+    """
+    Detect user's primary role based on groups and staff profession.
+    Returns role slug (e.g., 'accountant', 'hr_manager', etc.)
+
+    Pass ``request`` when available so role is resolved once per HTTP request
+    (populated by RequestUserRoleMiddleware).
+    """
+    if not user or not getattr(user, 'is_authenticated', False):
+        return 'staff'
+
+    if user.is_superuser:
+        _ensure_staff_flag(user, ensure_superuser=True)
+        return 'admin'
+
+    if request is not None and getattr(request, '_hms_user_role_done', False):
+        return request.hms_user_role
+
+    role, staff = _compute_user_role(user)
+    if request is not None:
+        request.hms_user_role = role
+        request.hms_staff = staff
+        request._hms_user_role_done = True
+    return role
 
 
 def get_user_dashboard_url(user, role=None):
@@ -820,6 +937,8 @@ def get_user_dashboard_url(user, role=None):
         'admin': '/hms/admin-dashboard/',
         'accountant': '/hms/accountant/comprehensive-dashboard/',
         'senior_account_officer': '/hms/senior-account-officer/dashboard/',
+        'account_officer': '/hms/account-officer/claims-accounting/',
+        'account_personnel': '/hms/accountant/comprehensive-dashboard/',
         'hr_manager': '/hms/hr/worldclass/',
         'hr': '/hms/hr/service-desk/',
         'doctor': '/hms/medical-dashboard/',
@@ -891,7 +1010,7 @@ def is_pharmacy_user(user):
             return True
     except Exception:
         pass
-    return user.groups.filter(name__in=['Pharmacy', 'Pharmacist']).exists()
+    return _user_has_group(user, ['Pharmacy', 'Pharmacist'])
 
 
 def get_role_navigation(user):
@@ -915,16 +1034,20 @@ def get_role_navigation(user):
             {'title': 'Encounters', 'url': '/hms/encounters/', 'icon': 'card-list'},
             {'title': 'Inventory Management', 'url': '/hms/inventory/dashboard/', 'icon': 'box-seam'},
             {'title': 'Accounting', 'url': '/hms/accountant/comprehensive-dashboard/', 'icon': 'calculator'},
+            {'title': 'Service price book', 'url': '/hms/admin/cashier-quick-services/', 'icon': 'tags'},
             {'title': 'HR Management', 'url': '/hms/hr/worldclass/', 'icon': 'people'},
             {'title': 'Medical Chits', 'url': '/hms/hr/medical-chits/', 'icon': 'heart-pulse'},
             {'title': 'Pharmacy', 'url': '/hms/pharmacy/', 'icon': 'capsule'},
             {'title': 'Laboratory', 'url': '/hms/laboratory/', 'icon': 'clipboard2-pulse'},
+            {'title': 'Lab report & financials', 'url': '/hms/laboratory/report/', 'url_name': 'laboratory_financial_report', 'path_prefix': '/hms/laboratory/report', 'icon': 'file-earmark-bar-graph'},
             {'title': 'Pre-employment / Pre-admission', 'url': '/hms/screening/', 'url_name': 'screening_dashboard', 'icon': 'clipboard2-check'},
             {'title': 'Reports', 'url': '/hms/reports/', 'icon': 'graph-up'},
+            {'title': 'Medical analytics', 'url': '/hms/medical-analytics/', 'url_name': 'admin_medical_analytics_report', 'icon': 'clipboard-data'},
             {'title': 'Settings', 'url': '/hms/settings/', 'icon': 'gear'},
         ],
         'accountant': [
             {'title': 'Comprehensive Dashboard', 'url': '/hms/accountant/comprehensive-dashboard/', 'icon': 'speedometer2'},
+            {'title': 'Management reports', 'url': '/hms/accountant/management-reports/', 'icon': 'easel'},
             {'title': 'Cashier — Patients & Create Bill', 'url': '/hms/cashier/central/patients/', 'icon': 'people', 'url_name': 'cashier_patient_list'},
             {'title': 'Create Billing', 'url': '/hms/cashier/central/create-billing/', 'icon': 'file-earmark-plus', 'url_name': 'cashier_create_billing'},
             {'title': 'Claims Bills', 'url': '/hms/accountant/billing/claims-hub/', 'icon': 'file-earmark-text', 'path_prefix': '/hms/accountant/billing/'},
@@ -935,7 +1058,7 @@ def get_role_navigation(user):
             {'title': 'Insurance Receivable', 'url': '/hms/accountant/insurance-receivable/', 'icon': 'file-earmark-medical'},
             {'title': 'Procurement Purchases', 'url': '/hms/accountant/procurement-purchases/', 'icon': 'cart'},
             {'title': 'Payroll', 'url': '/hms/accountant/payroll/', 'icon': 'people'},
-            {'title': 'Doctor Commissions', 'url': '/hms/accountant/doctor-commissions/', 'icon': 'person-badge'},
+            {'title': 'Specialist commissions', 'url': '/hms/accountant/doctor-commissions/', 'icon': 'person-badge'},
             {'title': 'Profit & Loss', 'url': '/hms/accountant/profit-loss/', 'icon': 'graph-up'},
             {'title': 'Detailed Financial Report', 'url': '/hms/accountant/detailed-financial-report/', 'icon': 'file-earmark-spreadsheet'},
             {'title': 'Registration Fees', 'url': '/hms/accountant/registration-fees/', 'icon': 'cash-coin'},
@@ -951,6 +1074,7 @@ def get_role_navigation(user):
             {'title': 'Financial Reports', 'url': '/hms/accounting/reports/', 'icon': 'graph-up'},
             {'title': 'Invoices', 'url': '/hms/invoices/', 'icon': 'receipt', 'url_name': 'invoice_list'},
             {'title': 'Payments', 'url': '/hms/cashier/receipts/', 'icon': 'credit-card', 'url_name': 'cashier_receipts_list'},
+            {'title': 'Cashier Sessions', 'url': '/hms/cashier-sessions/', 'icon': 'clock-history', 'url_name': 'cashier_sessions_list'},
         ],
         'senior_account_officer': [
             {'title': 'Senior Dashboard', 'url': '/hms/senior-account-officer/dashboard/', 'icon': 'speedometer2'},
@@ -958,12 +1082,13 @@ def get_role_navigation(user):
             {'title': 'Claims Bills', 'url': '/hms/accountant/billing/claims-hub/', 'icon': 'file-earmark-text', 'path_prefix': '/hms/accountant/billing/'},
             {'title': 'Revenue / Payment Analysis', 'url': '/hms/accountant/billing/revenue-payment-analysis/', 'icon': 'graph-up-arrow', 'path_prefix': '/hms/accountant/billing/'},
             {'title': 'Comprehensive Dashboard', 'url': '/hms/accountant/comprehensive-dashboard/', 'icon': 'calculator'},
+            {'title': 'Management reports', 'url': '/hms/accountant/management-reports/', 'icon': 'easel'},
             {'title': 'Cashbook', 'url': '/hms/accountant/cashbook/', 'icon': 'journal-text'},
             {'title': 'Bank Reconciliation', 'url': '/hms/accountant/bank-reconciliation/', 'icon': 'bank'},
             {'title': 'Insurance Receivable', 'url': '/hms/accountant/insurance-receivable/', 'icon': 'file-earmark-medical'},
             {'title': 'Procurement Purchases', 'url': '/hms/accountant/procurement-purchases/', 'icon': 'cart'},
             {'title': 'Payroll', 'url': '/hms/accountant/payroll/', 'icon': 'people'},
-            {'title': 'Doctor Commissions', 'url': '/hms/accountant/doctor-commissions/', 'icon': 'person-badge'},
+            {'title': 'Specialist commissions', 'url': '/hms/accountant/doctor-commissions/', 'icon': 'person-badge'},
             {'title': 'Profit & Loss', 'url': '/hms/accountant/profit-loss/', 'icon': 'graph-up'},
             {'title': 'Chart of Accounts', 'url': '/hms/accountant/chart-of-accounts/', 'icon': 'list-ul'},
             {'title': 'Payment Vouchers', 'url': '/hms/accounting/payment-vouchers/', 'icon': 'receipt-cutoff'},
@@ -996,6 +1121,7 @@ def get_role_navigation(user):
         ],
         'doctor': [
             {'title': 'Medical Dashboard', 'url': '/hms/medical-dashboard/', 'icon': 'speedometer2'},
+            {'title': 'Consultation billed (invoices)', 'url': '/hms/reports/department-billed-revenue/?dept=consultation', 'icon': 'file-earmark-spreadsheet'},
             {'title': 'Patient Flowboard', 'url': '/hms/doctor/flowboard/', 'url_name': 'doctor_patient_flowboard', 'icon': 'diagram-3'},
             {'title': 'My Patients', 'url': '/hms/patients/', 'icon': 'person'},
             {'title': 'Admitted Patients', 'url': '/hms/admitted-patients/', 'url_name': 'admitted_patients_list', 'icon': 'hospital'},
@@ -1041,7 +1167,9 @@ def get_role_navigation(user):
         ],
         'pharmacist': [
             {'title': 'Pharmacy Flowboard', 'url': '/hms/pharmacy/flowboard/', 'url_name': 'pharmacy_flowboard', 'icon': 'diagram-3'},
+            {'title': 'Admitted Patients', 'url': '/hms/admitted-patients/', 'url_name': 'admitted_patients_list', 'icon': 'hospital'},
             {'title': 'Dispensing Queue', 'url': '/hms/pharmacy/pending-dispensing/', 'icon': 'bag-check'},
+            {'title': 'Billed revenue (invoices)', 'url': '/hms/reports/department-billed-revenue/?dept=pharmacy', 'icon': 'file-earmark-bar-graph'},
             {'title': 'My Sales (Verify)', 'url': '/hms/pharmacy/my-sales/', 'url_name': 'pharmacy_my_sales', 'icon': 'receipt-cutoff'},
             {'title': 'Payment Verification', 'url': '/hms/payment/pharmacy/dispensing/', 'icon': 'lock'},
             {'title': 'Drug Classification Guide', 'url': '/hms/drug-classification-guide/', 'icon': 'book'},
@@ -1102,11 +1230,14 @@ def get_role_navigation(user):
             {'title': 'Lab team summary', 'url': '/hms/dashboard/lab/', 'url_name': 'lab_technician_dashboard', 'icon': 'people'},
             {'title': 'Patient Flowboard', 'url': '/hms/flow/dashboard/', 'url_name': 'flow_dashboard', 'icon': 'diagram-3'},
             {'title': 'Lab Results', 'url': '/hms/lab-results/', 'icon': 'clipboard2-pulse'},
+            {'title': 'Lab report & financials', 'url': '/hms/laboratory/report/', 'url_name': 'laboratory_financial_report', 'path_prefix': '/hms/laboratory/report', 'icon': 'file-earmark-bar-graph'},
+            {'title': 'Lab billed (invoices)', 'url': '/hms/reports/department-billed-revenue/?dept=lab', 'icon': 'file-earmark-spreadsheet'},
             {'title': 'Lab Tests catalog', 'url': '/hms/lab-tests/', 'icon': 'flask'},
         ],
         'radiologist': [
             {'title': 'Radiology Dashboard', 'url': '/hms/dashboard/radiology/', 'url_name': 'radiologist_dashboard', 'icon': 'camera-reels-fill'},
             {'title': 'Imaging Dashboard', 'url': '/hms/imaging/', 'url_name': 'imaging_dashboard', 'icon': 'camera'},
+            {'title': 'Imaging billed (invoices)', 'url': '/hms/reports/department-billed-revenue/?dept=imaging', 'icon': 'file-earmark-bar-graph'},
             {'title': 'Patient Flowboard', 'url': '/hms/flow/dashboard/', 'url_name': 'flow_dashboard', 'icon': 'diagram-3'},
             {'title': 'Pending Orders', 'url': '/hms/imaging/pending/', 'url_name': 'radiologist_pending_orders', 'icon': 'clock-history'},
             {'title': 'My Studies', 'url': '/hms/imaging/my-studies/', 'url_name': 'radiologist_my_studies', 'icon': 'person-badge'},
@@ -1118,8 +1249,10 @@ def get_role_navigation(user):
         ],
         'receptionist': [
             {'title': 'Reception Dashboard', 'url': '/hms/reception-dashboard/', 'icon': 'speedometer2'},
+            {'title': 'Service charges (reference)', 'url': '/hms/frontdesk/service-charges/', 'url_name': 'frontdesk_service_charges', 'icon': 'currency-exchange'},
             {'title': 'Patient Flowboard', 'url': '/hms/flow/dashboard/', 'url_name': 'flow_dashboard', 'icon': 'diagram-3'},
             {'title': 'Patients', 'url': '/hms/patients/', 'icon': 'person'},
+            {'title': 'Patient Records', 'url': '/hms/medical-records/', 'url_name': 'medical_records_list', 'icon': 'file-earmark-arrow-up'},
             {'title': 'Appointments', 'url': '/hms/appointments/', 'icon': 'calendar-event'},
             {'title': 'Registration', 'url': '/hms/patient-registration/', 'icon': 'person-plus'},
         ],
@@ -1148,6 +1281,20 @@ def get_role_navigation(user):
             {'title': 'Security Alerts', 'url': '/hms/security-alerts/', 'icon': 'shield-exclamation'},
             {'title': 'Audit Logs', 'url': '/hms/audit-logs/', 'icon': 'file-earmark-text'},
             {'title': 'User Sessions', 'url': '/hms/admin/sessions/', 'icon': 'people'},
+        ],
+        'account_officer': [
+            {'title': 'Claims accounting home', 'url': '/hms/account-officer/claims-accounting/', 'icon': 'speedometer2'},
+            {'title': 'Cashier Hub', 'url': '/hms/cashier/central/', 'icon': 'cash-stack', 'url_name': 'centralized_cashier_dashboard'},
+            {'title': 'Claims bills hub', 'url': '/hms/accountant/billing/claims-hub/', 'icon': 'grid-1x2', 'path_prefix': '/hms/accountant/billing/'},
+            {'title': 'Insurance claims dashboard', 'url': '/hms/insurance/claims/', 'icon': 'clipboard2-pulse'},
+            {'title': 'Claim line items', 'url': '/hms/claims/', 'icon': 'list-ul'},
+            {'title': 'Claim items (clinical)', 'url': '/hms/insurance/claim-items/', 'icon': 'card-checklist'},
+            {'title': 'Monthly claims', 'url': '/hms/insurance/monthly-claims/', 'icon': 'calendar-month'},
+            {'title': 'Receivables hub', 'url': '/hms/accountant/receivables/', 'icon': 'bank'},
+            {'title': 'Receivables analytics', 'url': '/hms/accountant/receivables/analytics/', 'icon': 'graph-up-arrow'},
+            {'title': 'Insurance receivable (list)', 'url': '/hms/accountant/insurance-receivable/', 'icon': 'file-earmark-medical'},
+            {'title': 'Revenue & payment analysis', 'url': '/hms/accountant/billing/revenue-payment-analysis/', 'icon': 'pie-chart', 'path_prefix': '/hms/accountant/billing/'},
+            {'title': 'Petty cash', 'url': '/hms/accounting/petty-cash/', 'icon': 'wallet'},
         ],
         'marketing': [
             {'title': 'Marketing Dashboard', 'url': '/hms/marketing/', 'icon': 'speedometer2'},
@@ -1190,6 +1337,14 @@ def get_role_navigation(user):
     return nav_items
 
 
+# Permissions removed from Account Officer (claims-only; no procurement approval).
+ACCOUNT_OFFICER_REVOKED_PERMISSIONS = frozenset({
+    'can_approve_procurement_accounts',
+    'view_procurementrequest',
+    'view_procurementrequestitem',
+})
+
+
 def create_default_groups():
     """
     Create default role groups with appropriate permissions
@@ -1215,6 +1370,16 @@ def create_default_groups():
                     group.permissions.add(permission)
                 except Permission.DoesNotExist:
                     print(f"Permission {perm_codename} not found")
+            if role_slug == 'account_officer':
+                for perm_codename in ACCOUNT_OFFICER_REVOKED_PERMISSIONS:
+                    try:
+                        permission = Permission.objects.get(
+                            codename=perm_codename,
+                            content_type__app_label='hospital',
+                        )
+                        group.permissions.remove(permission)
+                    except Permission.DoesNotExist:
+                        pass
     
     return True
 
@@ -1246,11 +1411,11 @@ def assign_user_to_role(user, role_slug):
     return True
 
 
-def get_role_display_info(user):
+def get_role_display_info(user, request=None):
     """
     Get role display information for UI
     """
-    role = get_user_role(user)
+    role = get_user_role(user, request)
     role_config = ROLE_FEATURES.get(role, {
         'name': 'Staff',
         'color': '#6b7280',
@@ -1269,22 +1434,113 @@ def get_role_display_info(user):
 # ----------------------------------------------------------------------
 # Access helpers for sensitive modules (e.g., cashier)
 # ----------------------------------------------------------------------
-CASHIER_ACCESS_ROLES = {'admin', 'accountant', 'cashier'}
+CASHIER_ACCESS_ROLES = {
+    'admin',
+    'accountant',
+    'senior_account_officer',
+    'account_officer',
+    'account_personnel',
+    'cashier',
+}
 
 # Roles that can add manual charges (reception adds charges for cashier to collect)
-MANUAL_CHARGE_ACCESS_ROLES = {'admin', 'accountant', 'cashier', 'receptionist'}
+MANUAL_CHARGE_ACCESS_ROLES = {
+    'admin',
+    'accountant',
+    'senior_account_officer',
+    'account_officer',
+    'cashier',
+    'receptionist',
+}
+
+# Front desk may attach external reports/scans to a patient folder (not clinical documentation).
+PATIENT_DOCUMENT_UPLOAD_ROLES = frozenset({
+    'receptionist',
+    'frontdesk',
+    'doctor',
+    'nurse',
+    'midwife',
+    'admin',
+})
 
 
-def user_has_cashier_access(user):
+def user_can_upload_patient_documents(user, request=None):
+    """True when staff may upload files (images, PDFs) to a patient's record folder."""
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if getattr(user, 'is_superuser', False):
+        return True
+    return get_user_role(user, request) in PATIENT_DOCUMENT_UPLOAD_ROLES
+
+
+def user_has_finance_account_access(user, request=None):
     """
-    Only Administrators and Accounting can access cashier features.
+    True for account/finance staff (group, profession, or resolved role).
+    Uses group membership so finance users are not blocked when get_user_role()
+    resolves to doctor/nurse from an extra clinical group.
     """
     if not user or not getattr(user, 'is_authenticated', False):
         return False
     if user.is_superuser:
         return True
-    user_role = get_user_role(user)
-    return user_role in CASHIER_ACCESS_ROLES
+    finance_slugs = {
+        'accountant',
+        'finance',
+        'financer',
+        'senior_account_officer',
+        'account_officer',
+        'account_personnel',
+    }
+    for name in _user_group_names(user):
+        g = name.lower().replace(' ', '_').replace('&', '_')
+        if g in finance_slugs:
+            return True
+    finance_roles = {
+        'accountant',
+        'senior_account_officer',
+        'account_personnel',
+        'account_officer',
+    }
+    if get_user_role(user, request) in finance_roles:
+        return True
+    try:
+        from .models import Staff
+
+        staff = Staff.objects.filter(user=user, is_deleted=False).order_by('-created').first()
+        if staff and (staff.profession or '') in (
+            'accountant',
+            'senior_account_officer',
+            'account_officer',
+            'account_personnel',
+        ):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def user_has_cashier_access(user, request=None):
+    """
+    Administrators, accountants, account officers, and cashiers can access cashier features.
+    """
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if user.is_superuser:
+        return True
+    if user_has_finance_account_access(user, request):
+        return True
+    return get_user_role(user, request) in CASHIER_ACCESS_ROLES
+
+
+def user_can_view_all_cashier_sessions(user, request=None):
+    """Finance staff and admins can list, print, and oversee any cashier session."""
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if user.is_superuser:
+        return True
+    if get_user_role(user, request) == 'admin':
+        return True
+    return user_has_finance_account_access(user, request)
 
 
 def user_can_add_manual_charges(user):
@@ -1300,7 +1556,15 @@ def user_can_add_manual_charges(user):
 # Who may remove an invoice from the total bill or waive Prescribe Sales (must match
 # cashier_patient_total_bill.html). Uses **group names**, not get_user_role(), so users
 # with multiple groups (e.g. Procurement + Accountant) are not denied when they have Accountant.
-INVOICE_FROM_BILL_REMOVER_GROUPS = frozenset({'Accountant', 'Admin', 'Administrator'})
+INVOICE_FROM_BILL_REMOVER_GROUPS = frozenset({
+    'Accountant',
+    'Finance',
+    'Account Personnel',
+    'Account Officer',
+    'Senior Account Officer',
+    'Admin',
+    'Administrator',
+})
 
 
 def user_can_remove_invoice_from_bill(user):
@@ -1309,37 +1573,68 @@ def user_can_remove_invoice_from_bill(user):
         return False
     if user.is_superuser:
         return True
-    groups = set(user.groups.values_list('name', flat=True))
+    groups = set(_user_group_names(user))
     return bool(groups & INVOICE_FROM_BILL_REMOVER_GROUPS)
 
 
-# Waiver of invoice lines / prescribe sales: Admin / Administrator group or resolved admin role only.
+def user_can_apply_total_bill_discount(user):
+    """True if user may apply a combined total-bill discount from the Total Bill page (same groups as remove-invoice)."""
+    return user_can_remove_invoice_from_bill(user)
+
+
+# Account and finance roles (price visibility, waiver eligibility)
+ACCOUNT_FINANCE_ROLES = {'accountant', 'senior_account_officer', 'account_personnel', 'account_officer'}
+
+# Waiver of invoice lines / prescribe sales: administrators plus account/finance staff.
 # get_user_role() checks "Accountant" before "Admin"/"Administrator", so users in both groups
-# resolve as accountant — we must also check Django groups (same idea as INVOICE_FROM_BILL_REMOVER_GROUPS).
+# resolve as accountant — check Django groups explicitly (same idea as INVOICE_FROM_BILL_REMOVER_GROUPS).
 WAIVER_ACCESS_ROLES = {'admin'}
 WAIVER_ADMIN_GROUP_SLUGS = frozenset({'admin', 'administrator'})
+WAIVER_FINANCE_GROUP_SLUGS = frozenset({
+    'accountant',
+    'finance',
+    'financer',
+    'senior_account_officer',
+    'account_officer',
+    'account_personnel',
+})
 
 
 def user_has_waiver_admin_group(user):
     """True if user is in Admin or Administrator Django group (normalized name)."""
     if not user or not getattr(user, 'is_authenticated', False):
         return False
-    for name in user.groups.values_list('name', flat=True):
+    for name in _user_group_names(user):
         g = name.lower().replace(' ', '_').replace('&', '_')
         if g in WAIVER_ADMIN_GROUP_SLUGS:
             return True
     return False
 
 
+def user_has_waiver_finance_group(user):
+    """True if user is in an account/finance Django group (normalized name)."""
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    for name in _user_group_names(user):
+        g = name.lower().replace(' ', '_').replace('&', '_')
+        if g in WAIVER_FINANCE_GROUP_SLUGS:
+            return True
+    return False
+
+
 def user_can_waive(user):
-    """Only administrators can waive invoice lines and prescribe-sale charges. Accountants cannot waive."""
+    """Administrators and account/finance roles may waive invoice lines and prescribe-sale charges."""
     if not user or not getattr(user, 'is_authenticated', False):
         return False
     if user.is_superuser:
         return True
     if user_has_waiver_admin_group(user):
         return True
+    if user_has_waiver_finance_group(user):
+        return True
     user_role = get_user_role(user)
+    if user_role in ACCOUNT_FINANCE_ROLES:
+        return True
     return user_role in WAIVER_ACCESS_ROLES
 
 
@@ -1356,16 +1651,53 @@ def user_can_edit_invoice_line_amounts(user):
     return get_user_role(user) != 'cashier'
 
 
-# Account and finance roles: can view price but only admin can change it
-ACCOUNT_FINANCE_ROLES = {'accountant', 'senior_account_officer', 'account_personnel', 'account_officer'}
-
-
-def is_account_or_finance(user):
+def is_account_or_finance(user, request=None):
     """True if user is in account/finance role (can view prices, not edit)."""
+    return user_has_finance_account_access(user, request)
+
+
+def user_can_edit_imaging_catalog_prices(user):
+    """
+    True if user may update ImagingCatalog prices (cash/corporate/insurance).
+
+    Business rule:
+    - Admins/superusers always allowed
+    - Finance roles allowed (legacy behavior)
+    - Imaging staff (radiologist role) allowed
+    - Specific imaging staff accounts (Dorcas/Charity) allowed even if role mapping is inconsistent
+    """
     if not user or not getattr(user, 'is_authenticated', False):
         return False
-    user_role = get_user_role(user)
-    return user_role in ACCOUNT_FINANCE_ROLES
+    if getattr(user, 'is_superuser', False):
+        return True
+
+    try:
+        role = get_user_role(user)
+    except Exception:
+        role = 'staff'
+
+    if role == 'admin':
+        return True
+    if role in ACCOUNT_FINANCE_ROLES:
+        return True
+    if role == 'radiologist':
+        return True
+
+    u = (getattr(user, 'username', '') or '').strip().lower()
+    if u in {'dorcas.adjei', 'charity.kotey', 'charisty.kotey'}:
+        return True
+
+    try:
+        if _user_has_group(user, [
+            'Radiology', 'Radiologist',
+            'Imaging', 'Imaging Staff',
+            'Scan', 'X-ray', 'Xray',
+        ]):
+            return True
+    except Exception:
+        pass
+
+    return False
 
 
 # ----------------------------------------------------------------------

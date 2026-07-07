@@ -1,0 +1,498 @@
+{% extends 'hospital/base.html' %}
+
+{% load humanize %}
+
+
+
+{% block title %}Record remittance — Receivables{% endblock %}
+
+{% block page_title %}Record payer remittance{% endblock %}
+
+{% block page_subtitle %}Pay by company + month (recommended) or settle a single line{% endblock %}
+
+
+
+{% block content %}
+
+<div class="container-fluid py-2" style="max-width: 960px;">
+
+  <a href="{% url 'hospital:receivables_hub' %}?view=grouped" class="btn btn-outline-secondary btn-sm mb-3"><i class="bi bi-arrow-left"></i> Back to hub</a>
+
+
+
+  {% if batch_summary %}
+
+  <div class="alert alert-success">
+
+    <strong>Batch remittance:</strong> {{ batch_summary.payer.name }} — {{ batch_summary.month_key }}
+
+    · {{ batch_summary.line_count }} open line{{ batch_summary.line_count|pluralize }}
+
+    · outstanding <strong>GHS {{ batch_summary.outstanding|floatformat:2|intcomma }}</strong>
+
+  </div>
+
+  {% endif %}
+
+
+
+  <div class="card shadow-sm mb-3">
+
+    <div class="card-header bg-success text-white">
+
+      <h5 class="mb-0"><i class="bi bi-bank me-2"></i>Record remittance</h5>
+
+    </div>
+
+    <div class="card-body">
+
+      <form method="post" id="paymentForm">
+
+        {% csrf_token %}
+
+        {% if batch_summary %}
+
+        <input type="hidden" name="batch_payer" value="{{ batch_summary.payer.id }}">
+
+        <input type="hidden" name="batch_month" value="{{ batch_summary.month_key }}">
+
+        <input type="hidden" name="payer" value="{{ batch_summary.payer.id }}">
+
+        {% endif %}
+
+
+
+        <div class="row mb-3">
+
+          <div class="col-md-6">
+
+            <label class="form-label" for="entry_date">Payment date <span class="text-danger">*</span></label>
+
+            <input type="date" class="form-control" id="entry_date" name="entry_date" value="{{ today|date:'Y-m-d' }}" required>
+
+          </div>
+
+          <div class="col-md-6">
+
+            <label class="form-label" for="payer">Payer <span class="text-danger">*</span></label>
+
+            <select class="form-select" id="payer" name="payer" required onchange="loadReceivable()" {% if batch_summary %}disabled{% endif %}>
+
+              <option value="">Select payer</option>
+
+              {% for payer in payers %}
+
+              <option value="{{ payer.id }}" {% if batch_summary and batch_summary.payer.id == payer.id %}selected{% endif %}>{{ payer.name }} ({{ payer.get_payer_type_display }})</option>
+
+              {% endfor %}
+
+            </select>
+
+            {% if batch_summary %}<small class="text-muted">Locked to batch payer.</small>{% endif %}
+
+          </div>
+
+        </div>
+
+
+
+        {% if not batch_summary %}
+
+        <div class="mb-3">
+
+          <label class="form-label">Remittance mode</label>
+
+          <div class="form-check">
+
+            <input class="form-check-input" type="radio" name="remit_mode" id="mode_batch" value="batch" checked onchange="toggleRemitMode()">
+
+            <label class="form-check-label" for="mode_batch"><strong>By company + month</strong> (insurance/corporate pays one total per month)</label>
+
+          </div>
+
+          <div class="form-check">
+
+            <input class="form-check-input" type="radio" name="remit_mode" id="mode_line" value="line" onchange="toggleRemitMode()">
+
+            <label class="form-check-label" for="mode_line">Single receivable line (advanced)</label>
+
+          </div>
+
+        </div>
+
+
+
+        <div id="batchFields" class="row mb-3">
+
+          <div class="col-md-12">
+
+            <label class="form-label" for="batch_group">Company + billing month <span class="text-danger">*</span></label>
+
+            <select class="form-select" id="batch_group" name="batch_group" onchange="selectBatchGroup()">
+
+              <option value="">Select company and month…</option>
+
+              {% for g in batch_groups %}
+
+              {% if g.outstanding > 0 %}
+
+              <option value="{{ g.payer_id }}|{{ g.month_key }}"
+
+                data-outstanding="{{ g.outstanding }}"
+
+                data-label="{{ g.payer_name }} — {{ g.month_label }} — GHS {{ g.outstanding|floatformat:2 }}">
+
+                {{ g.payer_name }} — {{ g.month_label }} — {{ g.line_count }} lines — out GHS {{ g.outstanding|floatformat:2|intcomma }}
+
+              </option>
+
+              {% endif %}
+
+              {% endfor %}
+
+            </select>
+
+            <input type="hidden" name="batch_payer" id="batch_payer" value="">
+
+            <input type="hidden" name="batch_month" id="batch_month" value="">
+
+          </div>
+
+        </div>
+
+
+
+        <div id="lineFields" class="row mb-3 d-none">
+
+          <div class="col-md-12">
+
+            <label class="form-label" for="receivable_entry">Receivable line</label>
+
+            <select class="form-select" id="receivable_entry" name="receivable_entry" onchange="loadReceivableDetails()">
+
+              <option value="">Select receivable line</option>
+
+              {% for entry in receivable_entries %}
+
+              <option value="{{ entry.id }}" data-payer="{{ entry.payer.id }}">
+
+                {{ entry.entry_number }} — {{ entry.payer.name }} — GHS {{ entry.outstanding_amount|floatformat:2 }}
+
+              </option>
+
+              {% endfor %}
+
+            </select>
+
+          </div>
+
+        </div>
+
+        {% endif %}
+
+
+
+        <div class="row mb-3">
+
+          <div class="col-md-12">
+
+            <label class="form-label" for="bank_account">Bank account <span class="text-danger">*</span></label>
+
+            <select class="form-select" id="bank_account" name="bank_account" required>
+
+              <option value="">Select bank</option>
+
+              {% for bank in bank_accounts %}
+
+              <option value="{{ bank.id }}">{{ bank.account_name }} ({{ bank.account_number }})</option>
+
+              {% endfor %}
+
+            </select>
+
+          </div>
+
+        </div>
+
+        <hr>
+
+        <h6 class="mb-3">Amounts</h6>
+
+        <div class="row mb-3">
+
+          <div class="col-md-6">
+
+            <label class="form-label" for="total_amount">Total from payer <span class="text-danger">*</span></label>
+
+            <input type="number" class="form-control" id="total_amount" name="total_amount" step="0.01" min="0" required onchange="calculateAmounts()"
+
+              {% if batch_summary %}value="{{ batch_summary.outstanding }}"{% endif %}>
+
+          </div>
+
+          <div class="col-md-6">
+
+            <label class="form-label" for="amount_received">Received in bank <span class="text-danger">*</span></label>
+
+            <input type="number" class="form-control" id="amount_received" name="amount_received" step="0.01" min="0" required onchange="calculateAmounts()"
+
+              {% if batch_summary %}value="{{ batch_summary.outstanding }}"{% endif %}>
+
+          </div>
+
+        </div>
+
+        <div class="row mb-3">
+
+          <div class="col-md-4">
+
+            <label class="form-label" for="amount_rejected">Rejected</label>
+
+            <input type="number" class="form-control" id="amount_rejected" name="amount_rejected" step="0.01" min="0" value="0" onchange="calculateAmounts()">
+
+          </div>
+
+          <div class="col-md-4">
+
+            <label class="form-label" for="withholding_tax">Withholding tax</label>
+
+            <input type="number" class="form-control" id="withholding_tax" name="withholding_tax" step="0.01" min="0" value="0" onchange="calculateAmounts()">
+
+          </div>
+
+          <div class="col-md-4">
+
+            <label class="form-label" for="withholding_tax_rate">WHT %</label>
+
+            <input type="number" class="form-control" id="withholding_tax_rate" name="withholding_tax_rate" step="0.01" min="0" max="100" value="0" onchange="calculateWHT()">
+
+          </div>
+
+        </div>
+
+        <div class="mb-3">
+
+          <label class="form-label" for="payment_reference">Payment reference</label>
+
+          <input type="text" class="form-control" id="payment_reference" name="payment_reference" placeholder="Transfer ref, cheque #, etc.">
+
+        </div>
+
+        <div class="mb-3">
+
+          <label class="form-label" for="notes">Notes</label>
+
+          <textarea class="form-control" id="notes" name="notes" rows="2"></textarea>
+
+        </div>
+
+        <div class="alert alert-info py-2 d-none" id="amountCheck"><span id="amountCheckMessage"></span></div>
+
+        <button type="submit" class="btn btn-success"><i class="bi bi-check2-circle"></i> Post remittance</button>
+
+      </form>
+
+    </div>
+
+  </div>
+
+</div>
+
+
+
+<script>
+
+const RECEIVABLE_API_TMPL = "{% url 'hospital:receivable_entry_api' '00000000-0000-0000-0000-000000000001' %}";
+
+function receivableApiUrl(entryId) {
+
+  return RECEIVABLE_API_TMPL.replace('00000000-0000-0000-0000-000000000001', entryId);
+
+}
+
+function toggleRemitMode() {
+
+  const batch = document.getElementById('mode_batch').checked;
+
+  document.getElementById('batchFields').classList.toggle('d-none', !batch);
+
+  document.getElementById('lineFields').classList.toggle('d-none', batch);
+
+}
+
+function selectBatchGroup() {
+
+  const sel = document.getElementById('batch_group');
+
+  const val = sel.value;
+
+  if (!val) return;
+
+  const parts = val.split('|');
+
+  document.getElementById('batch_payer').value = parts[0];
+
+  document.getElementById('batch_month').value = parts[1];
+
+  document.getElementById('payer').value = parts[0];
+
+  const opt = sel.options[sel.selectedIndex];
+
+  const out = parseFloat(opt.getAttribute('data-outstanding')) || 0;
+
+  document.getElementById('total_amount').value = out.toFixed(2);
+
+  document.getElementById('amount_received').value = out.toFixed(2);
+
+  calculateAmounts();
+
+}
+
+function calculateAmounts() {
+
+  const total = parseFloat(document.getElementById('total_amount').value) || 0;
+
+  const received = parseFloat(document.getElementById('amount_received').value) || 0;
+
+  const rejected = parseFloat(document.getElementById('amount_rejected').value) || 0;
+
+  const wht = parseFloat(document.getElementById('withholding_tax').value) || 0;
+
+  const sum = received + rejected + wht;
+
+  const diff = Math.abs(total - sum);
+
+  const checkDiv = document.getElementById('amountCheck');
+
+  const message = document.getElementById('amountCheckMessage');
+
+  if (total > 0 && diff > 0.01) {
+
+    checkDiv.className = 'alert alert-warning py-2';
+
+    message.textContent = 'Received + rejected + WHT must equal total (' + total.toFixed(2) + ').';
+
+    checkDiv.classList.remove('d-none');
+
+  } else if (total > 0 && diff <= 0.01) {
+
+    checkDiv.className = 'alert alert-success py-2';
+
+    message.textContent = 'Amounts balance.';
+
+    checkDiv.classList.remove('d-none');
+
+  } else {
+
+    checkDiv.classList.add('d-none');
+
+  }
+
+}
+
+function calculateWHT() {
+
+  const rate = parseFloat(document.getElementById('withholding_tax_rate').value) || 0;
+
+  const total = parseFloat(document.getElementById('total_amount').value) || 0;
+
+  if (rate > 0 && total > 0) {
+
+    document.getElementById('withholding_tax').value = (total * rate / 100).toFixed(2);
+
+    calculateAmounts();
+
+  }
+
+}
+
+function loadReceivable() {
+
+  const payerId = document.getElementById('payer').value;
+
+  const receivableSelect = document.getElementById('receivable_entry');
+
+  if (!receivableSelect) return;
+
+  Array.from(receivableSelect.options).forEach(option => {
+
+    if (option.value === '') {
+
+      option.style.display = 'block';
+
+    } else {
+
+      option.style.display = option.getAttribute('data-payer') === payerId ? 'block' : 'none';
+
+    }
+
+  });
+
+  receivableSelect.value = '';
+
+}
+
+function loadReceivableDetails() {
+
+  const entryId = document.getElementById('receivable_entry').value;
+
+  if (!entryId) return;
+
+  fetch(receivableApiUrl(entryId), { headers: { 'Accept': 'application/json' } })
+
+    .then(r => r.json())
+
+    .then(data => {
+
+      if (data.success) {
+
+        const out = parseFloat(data.outstanding_amount) || 0;
+
+        document.getElementById('amount_rejected').value = '0';
+
+        document.getElementById('withholding_tax').value = '0';
+
+        document.getElementById('withholding_tax_rate').value = '0';
+
+        document.getElementById('total_amount').value = out.toFixed(2);
+
+        document.getElementById('amount_received').value = out.toFixed(2);
+
+        calculateAmounts();
+
+      }
+
+    })
+
+    .catch(() => {});
+
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+
+  calculateAmounts();
+
+  {% if batch_payer_id and batch_month %}
+
+  const batchSel = document.getElementById('batch_group');
+
+  if (batchSel) {
+
+    const target = '{{ batch_payer_id }}|{{ batch_month }}';
+
+    for (const opt of batchSel.options) {
+
+      if (opt.value === target) { batchSel.value = target; selectBatchGroup(); break; }
+
+    }
+
+  }
+
+  {% endif %}
+
+});
+
+</script>
+
+{% endblock %}
+

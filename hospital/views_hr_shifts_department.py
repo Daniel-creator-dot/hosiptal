@@ -14,22 +14,21 @@ from datetime import datetime, timedelta, date
 from .models import Staff, Department
 from .models_hr import StaffShift, ShiftTemplate
 from .models_auto_attendance import StaffAttendance
-from .decorators import role_required
+from .utils_roles import get_user_role
 
 
 def is_hr_or_admin(user):
-    """Check if user is HR Manager or Admin"""
+    """HR Manager, HR desk, hospital admin, or superuser."""
+    if not user or not user.is_authenticated:
+        return False
     if user.is_superuser:
         return True
-    if user.is_staff:
-        if user.groups.filter(name__in=['HR Manager', 'Admin']).exists():
-            return True
-        try:
-            if hasattr(user, 'staff') and user.staff.profession in ['hr_manager', 'admin']:
-                return True
-        except:
-            pass
-    return False
+    role = get_user_role(user)
+    if role in ('admin', 'hr_manager', 'hr'):
+        return True
+    return user.groups.filter(
+        name__in=['HR Manager', 'Admin', 'Administrator', 'Human Resources', 'HR']
+    ).exists()
 
 
 @login_required

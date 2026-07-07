@@ -250,7 +250,10 @@ def record_vitals(request, encounter_id):
             current_staff = request.user.staff
         elif hasattr(request.user, 'staff'):
             current_staff = request.user.staff
-        
+
+        strip_type = (request.POST.get('poc_glucose_strip_type') or '').strip().lower()
+        poc_glucose_strip_type = strip_type if strip_type in ('rbs', 'fbs') else ''
+
         # Create vital sign record with enhanced fields
         vital = VitalSign.objects.create(
             encounter=encounter,
@@ -265,6 +268,7 @@ def record_vitals(request, encounter_id):
             weight=safe_decimal(request.POST.get('weight')),
             height=safe_decimal(request.POST.get('height')),
             blood_glucose=safe_decimal(request.POST.get('blood_glucose')),
+            poc_glucose_strip_type=poc_glucose_strip_type,
             # Clinical assessment
             consciousness_level=request.POST.get('consciousness_level', 'alert'),
             pain_score=safe_int(request.POST.get('pain_score')),
@@ -277,6 +281,29 @@ def record_vitals(request, encounter_id):
             recorded_by=current_staff,
         )
         # Scores are auto-calculated in model's save() method
+
+        if strip_type in ('rbs', 'fbs'):
+            from .services.auto_billing_service import AutoBillingService
+
+            bill_result = AutoBillingService.bill_poc_glucose_strip(
+                encounter, strip_type, vital_sign=vital
+            )
+            if bill_result.get('success'):
+                messages.success(
+                    request,
+                    bill_result.get('message', 'POC glucose strip added to patient bill for cashier.'),
+                )
+                sf = bill_result.get('stock_shortfall')
+                if sf is not None and int(sf or 0) > 0:
+                    messages.warning(
+                        request,
+                        'Glucose strip stock: shortfall recorded — restock pharmacy store.',
+                    )
+            else:
+                messages.warning(
+                    request,
+                    bill_result.get('message') or 'POC glucose strip could not be added to the bill.',
+                )
 
         ensure_patient_flow_stages(encounter)
 
@@ -348,9 +375,12 @@ def record_vitals(request, encounter_id):
     # Get previous vitals for comparison
     previous_vitals = encounter.vitals.filter(is_deleted=False).order_by('-recorded_at')[:10]
     
+    from django.conf import settings as django_settings
+
     context = {
         'encounter': encounter,
         'previous_vitals': previous_vitals,
+        'poc_glucose_strip_ghs': django_settings.POC_GLUCOSE_STRIP_GHS,
     }
     return render(request, 'hospital/record_vitals_worldclass.html', context)
 

@@ -19,7 +19,7 @@ from .decorators import role_required
 
 
 @login_required
-@role_required('hr_manager', 'hr')
+@role_required('hr_manager', 'hr', 'admin')
 def hr_worldclass_dashboard(request):
     """World-class HR dashboard with comprehensive features"""
     today = timezone.now().date()
@@ -225,7 +225,7 @@ def hr_worldclass_dashboard(request):
 
 
 @login_required
-@role_required('hr_manager', 'hr')
+@role_required('hr_manager', 'hr', 'admin')
 def hr_services_dashboard(request):
     """Focused HR services dashboard for day-to-day operations"""
     today = timezone.now().date()
@@ -436,7 +436,7 @@ def hr_services_dashboard(request):
 
 
 @login_required
-@role_required('hr_manager', 'hr')
+@role_required('hr_manager', 'hr', 'admin')
 def leave_calendar(request):
     """Calendar view of all leaves"""
     year = int(request.GET.get('year', timezone.now().year))
@@ -501,7 +501,7 @@ def leave_calendar(request):
 
 
 @login_required
-@role_required('hr_manager', 'hr')
+@role_required('hr_manager', 'hr', 'admin')
 def shift_calendar(request):
     """Calendar view of all shifts"""
     year = int(request.GET.get('year', timezone.now().year))
@@ -554,7 +554,7 @@ def shift_calendar(request):
 
 
 @login_required
-@role_required('hr_manager', 'hr')
+@role_required('hr_manager', 'hr', 'admin')
 def attendance_calendar(request):
     """Attendance calendar view"""
     year = int(request.GET.get('year', timezone.now().year))

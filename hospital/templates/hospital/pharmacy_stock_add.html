@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load static %}
+{% load static hospital_extras %}
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'hospital/css/pharmacy_ui.css' %}">
@@ -35,9 +35,16 @@
                         <div id="drugSelectedInfo" class="mt-2 p-2 rounded border" style="display: none; background: #e8f5e9;">
                             <small><i class="bi bi-check-circle text-success"></i> Selected: <strong id="drugSelectedName">-</strong>
                                 <span id="drugSelectedDetails" class="text-muted"></span>
+                                <span id="drugSelectedTabletBadge" style="display: none;">
+                                    <span class="badge bg-info text-dark ms-1" title="Quantity is counted in individual tablets">Sold per tablet</span>
+                                </span>
+                                <a href="#" id="drugInsuranceSettingsLink" class="ms-2" style="display: none;" target="_blank">
+                                    <i class="bi bi-shield-x"></i> Insurance settings
+                                </a>
                                 <a href="#" id="clearDrugSelection" class="ms-2">Change</a></small>
                         </div>
-                        <small class="form-text text-muted">Type at least 2 characters to see search results. Click a drug to select.</small>
+                        <small class="form-text text-muted">Type at least 2 characters to see search results. Click a drug to select.
+                            Insurance exclusions are set on the drug record (not here) — use <strong>Insurance settings</strong> after selecting a drug.</small>
                     </div>
                     
                     <div class="rx-form-section-title mt-4"><span class="badge rounded-pill bg-secondary">2</span> Batch, location &amp; quantity</div>
@@ -69,6 +76,18 @@
                     
                     <div class="rx-form-section-title mt-4"><span class="badge rounded-pill bg-secondary">3</span> Supplier cost &amp; pricing</div>
                     <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Supplier (vendor)</label>
+                            <select class="form-select form-control-modern" name="supplier" id="supplierSelect" title="Who this batch was received from">
+                                <option value="">— Not specified —</option>
+                                {% for s in suppliers %}
+                                <option value="{{ s.pk }}">{{ s.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <small class="form-text text-muted">Optional. Use when quantities come from a specific vendor (accounts can cross-check).</small>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
                         <div class="col-12">
                             <label class="form-label">Supplier cost</label>
                             <div class="form-check">
@@ -84,27 +103,33 @@
                     <div class="row mb-3">
                         <div class="col-md-6">
                             <label class="form-label">Reorder level</label>
-                            <input type="number" name="reorder_level" class="form-control form-control-modern" 
-                                   value="10" min="0">
+                            <input type="number" name="reorder_level" id="reorderLevelInput" class="form-control form-control-modern" 
+                                   value="" min="0" placeholder="Fills to 50% of quantity">
+                            <small class="form-text text-muted">Defaults to <strong>half</strong> of the quantity you enter (minimum 1). You can change it before saving.</small>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">Total cost for batch (GHS)</label>
                             <input type="number" name="total_cost" id="totalCostInput" class="form-control form-control-modern" 
                                    value="" min="0" step="0.01" placeholder="Select batch-total mode above first">
-                            <small class="form-text text-muted" id="totalCostHint">Available when you choose total-for-batch. Disabled fields are not saved.</small>
+                            <small class="form-text text-muted" id="totalCostHint">Fill in when you choose total-for-batch mode.</small>
                         </div>
                     </div>
                     <div class="row mb-3">
                         <div class="col-md-6">
-                            <label class="form-label">Cost price per unit (GHS)</label>
+                            <label class="form-label">Cost price — purchase (GHS)</label>
                             <input type="number" name="unit_cost" id="costPriceInput" class="form-control form-control-modern" 
-                                   value="0" min="0" step="0.01" placeholder="Type unit cost here">
-                            <small class="form-text text-muted">Use this when “unit cost manually” is selected, or as the result when using total ÷ quantity.</small>
+                                   value="" min="0" step="0.01" placeholder="What you paid the supplier per unit">
+                            <small class="form-text text-muted">Use when entering unit cost manually, or as the result when using total ÷ quantity.</small>
+                            <small class="form-text text-success fw-semibold" id="unitCostPreview" style="display:none;"></small>
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label">Unit price (GHS)</label>
+                            <label class="form-label">Selling price — unit price to patient (GHS)</label>
                             <input type="number" name="unit_price" id="unitPriceDisplay" class="form-control form-control-modern" 
-                                   value="0" min="0" step="0.01" placeholder="Selling price (from drug or override here)">
+                                   value="" min="0" step="0.01" placeholder="Patient charge per unit">
+                            <small class="form-text text-muted">Leave blank to keep the drug&apos;s current selling price unchanged.</small>
+                            <div class="alert alert-warning border-0 py-2 px-3 small mb-0 mt-2" id="sellingPriceWarning" style="display: none;">
+                                <i class="bi bi-exclamation-triangle"></i> Enter a selling price that is <strong>different</strong> from the cost price.
+                            </div>
                         </div>
                     </div>
                     
@@ -120,6 +145,12 @@
     </div>
 </div>
 
+{% if prefill_drug_json %}
+<script>
+window.__PHARMACY_STOCK_PREFILL = {{ prefill_drug_json|safe }};
+</script>
+{% endif %}
+
 <script>
 (function() {
     const drugSearchInput = document.getElementById('drugSearchInput');
@@ -128,8 +159,21 @@
     const drugSelectedInfo = document.getElementById('drugSelectedInfo');
     const drugSelectedName = document.getElementById('drugSelectedName');
     const drugSelectedDetails = document.getElementById('drugSelectedDetails');
+    const drugInsuranceSettingsLink = document.getElementById('drugInsuranceSettingsLink');
     const clearDrugSelection = document.getElementById('clearDrugSelection');
     const form = document.getElementById('pharmacyStockForm');
+    const drugDetailInsuranceUrlBase = '{% url "hospital:drug_detail" "00000000-0000-0000-0000-000000000000" %}'.replace('00000000-0000-0000-0000-000000000000', '');
+
+    function setDrugInsuranceLink(drugId) {
+        if (!drugInsuranceSettingsLink) return;
+        if (drugId) {
+            drugInsuranceSettingsLink.href = drugDetailInsuranceUrlBase + drugId + '/#insurance';
+            drugInsuranceSettingsLink.style.display = 'inline';
+        } else {
+            drugInsuranceSettingsLink.href = '#';
+            drugInsuranceSettingsLink.style.display = 'none';
+        }
+    }
     
     let drugSearchTimeout;
     
@@ -174,6 +218,7 @@
                         <div class="list-group-item list-group-item-action drug-option py-3" 
                              data-id="${d.id}" data-name="${d.name || d.text}" 
                              data-details="${[d.strength, d.form, d.generic_name].filter(Boolean).join(' ')}"
+                             data-form="${d.form || ''}"
                              data-unit-price="${(d.unit_price != null ? d.unit_price : d.price) || '0'}"
                              data-cost-price="${d.cost_price != null ? d.cost_price : '0'}">
                             <strong>${d.name || d.text}</strong>
@@ -193,9 +238,90 @@
     const unitPriceDisplay = document.getElementById('unitPriceDisplay');
     const costPriceInput = document.getElementById('costPriceInput');
     const quantityInput = document.getElementById('quantityInput');
+    const reorderLevelInput = document.getElementById('reorderLevelInput');
+    const sellingPriceWarning = document.getElementById('sellingPriceWarning');
+    const drugSelectedTabletBadge = document.getElementById('drugSelectedTabletBadge');
+
+    function isTabletForm(form) {
+        const f = String(form || '').trim().toLowerCase();
+        return f.startsWith('tab') || f.indexOf('tablet') !== -1;
+    }
+
+    function updateTabletBadge(form) {
+        if (!drugSelectedTabletBadge) return;
+        drugSelectedTabletBadge.style.display = isTabletForm(form) ? 'inline' : 'none';
+    }
+
+    function applyDrugPrices(unitPrice, costPrice) {
+        const up = parseFloat(unitPrice || 0);
+        const cp = parseFloat(costPrice || 0);
+        if (unitPriceDisplay) {
+            if (up > 0 && cp > 0 && up === cp) {
+                unitPriceDisplay.value = '';
+            } else if (up > 0) {
+                unitPriceDisplay.value = up.toFixed(2);
+            } else {
+                unitPriceDisplay.value = '';
+            }
+        }
+        if (costPriceInput) {
+            costPriceInput.value = cp > 0 ? cp.toFixed(2) : '';
+        }
+        syncSellingPriceWarning();
+    }
+
+    function syncSellingPriceWarning() {
+        if (!sellingPriceWarning || !unitPriceDisplay || !costPriceInput) return;
+        const selling = parseFloat(String(unitPriceDisplay.value).replace(/,/g, ''));
+        const cost = parseFloat(String(costPriceInput.value).replace(/,/g, ''));
+        const show = !isNaN(selling) && selling > 0 && !isNaN(cost) && cost > 0 && selling === cost;
+        sellingPriceWarning.style.display = show ? 'block' : 'none';
+    }
+
+    if (unitPriceDisplay) {
+        ['input', 'change', 'blur'].forEach(function(evt) {
+            unitPriceDisplay.addEventListener(evt, syncSellingPriceWarning);
+        });
+    }
+    if (costPriceInput) {
+        ['input', 'change', 'blur'].forEach(function(evt) {
+            costPriceInput.addEventListener(evt, syncSellingPriceWarning);
+        });
+    }
+
+    if (typeof window.__PHARMACY_STOCK_PREFILL === 'object' && window.__PHARMACY_STOCK_PREFILL && window.__PHARMACY_STOCK_PREFILL.id) {
+        var p = window.__PHARMACY_STOCK_PREFILL;
+        drugIdHidden.value = p.id;
+        drugSelectedName.textContent = p.name || '';
+        drugSelectedDetails.textContent = p.details ? (' - ' + p.details) : '';
+        drugSelectedInfo.style.display = 'block';
+        setDrugInsuranceLink(p.id);
+        updateTabletBadge(p.details || '');
+        applyDrugPrices(p.unitPrice, p.costPrice);
+        drugSearchInput.required = false;
+    }
+
+    function syncReorderFromQuantity() {
+        if (!reorderLevelInput || !quantityInput) return;
+        const q = parseInt(quantityInput.value, 10);
+        if (!isNaN(q) && q > 0) {
+            reorderLevelInput.placeholder = 'e.g. ' + Math.max(1, Math.floor(q / 2));
+            if (reorderLevelInput.dataset.userEdited !== '1') {
+                reorderLevelInput.value = String(Math.max(1, Math.floor(q / 2)));
+            }
+        } else {
+            reorderLevelInput.placeholder = 'Enter quantity first';
+        }
+    }
+    if (reorderLevelInput) {
+        reorderLevelInput.addEventListener('input', function() {
+            reorderLevelInput.dataset.userEdited = '1';
+        });
+    }
     const totalCostInput = document.getElementById('totalCostInput');
     const costModeManual = document.getElementById('costModeManual');
     const costModeFromTotal = document.getElementById('costModeFromTotal');
+    const unitCostPreview = document.getElementById('unitCostPreview');
 
     function isFromTotalMode() {
         return costModeFromTotal && costModeFromTotal.checked;
@@ -204,46 +330,68 @@
     function syncCostModeUi() {
         if (!totalCostInput) return;
         const fromTotal = isFromTotalMode();
-        totalCostInput.disabled = !fromTotal;
+        totalCostInput.readOnly = !fromTotal;
+        totalCostInput.classList.toggle('bg-light', !fromTotal);
+        totalCostInput.tabIndex = fromTotal ? 0 : -1;
         if (!fromTotal) {
             totalCostInput.value = '';
         } else {
             totalCostInput.placeholder = 'e.g. invoice line total';
         }
-        if (costPriceInput) {
-            costPriceInput.readOnly = fromTotal;
-            costPriceInput.classList.toggle('bg-light', fromTotal);
+        if (unitCostPreview) {
+            unitCostPreview.style.display = 'none';
         }
     }
 
     function recalcUnitCostFromTotal() {
-        if (!isFromTotalMode() || !quantityInput || !totalCostInput || !costPriceInput) return;
-        const q = parseFloat(quantityInput.value, 10);
-        const t = parseFloat(totalCostInput.value, 10);
-        if (!isNaN(t) && t > 0 && !isNaN(q) && q > 0) {
-            costPriceInput.value = (Math.round((t / q) * 100) / 100).toFixed(2);
+        if (!isFromTotalMode() || !quantityInput || !totalCostInput || !costPriceInput) {
+            if (unitCostPreview) unitCostPreview.style.display = 'none';
+            return;
         }
+        const q = parseFloat(String(quantityInput.value).replace(/,/g, ''));
+        const t = parseFloat(String(totalCostInput.value).replace(/,/g, ''));
+        if (!isNaN(t) && t > 0 && !isNaN(q) && q > 0) {
+            const unit = (Math.round((t / q) * 100) / 100).toFixed(2);
+            costPriceInput.value = unit;
+            if (unitCostPreview) {
+                unitCostPreview.textContent = 'Calculated: GHS ' + unit + ' per unit (' + t.toFixed(2) + ' ÷ ' + q + ')';
+                unitCostPreview.style.display = 'block';
+            }
+        } else if (unitCostPreview) {
+            unitCostPreview.style.display = 'none';
+        }
+        syncSellingPriceWarning();
     }
 
     function onCostModeChange() {
         syncCostModeUi();
-        if (isFromTotalMode()) {
-            recalcUnitCostFromTotal();
-        }
+        recalcUnitCostFromTotal();
     }
 
-    if (costModeManual) costModeManual.addEventListener('change', onCostModeChange);
-    if (costModeFromTotal) costModeFromTotal.addEventListener('change', onCostModeChange);
+    document.querySelectorAll('input[name="stock_cost_mode"]').forEach(function(radio) {
+        radio.addEventListener('change', onCostModeChange);
+        radio.addEventListener('click', onCostModeChange);
+    });
     syncCostModeUi();
 
-    if (totalCostInput) {
-        totalCostInput.addEventListener('input', recalcUnitCostFromTotal);
-        totalCostInput.addEventListener('blur', recalcUnitCostFromTotal);
+    function bindCostRecalc(el) {
+        if (!el) return;
+        ['input', 'change', 'keyup', 'blur'].forEach(function(evt) {
+            el.addEventListener(evt, recalcUnitCostFromTotal);
+        });
     }
+    bindCostRecalc(totalCostInput);
     if (quantityInput) {
-        quantityInput.addEventListener('input', recalcUnitCostFromTotal);
-        quantityInput.addEventListener('blur', recalcUnitCostFromTotal);
+        quantityInput.addEventListener('input', function() {
+            recalcUnitCostFromTotal();
+            syncReorderFromQuantity();
+        });
+        quantityInput.addEventListener('blur', function() {
+            recalcUnitCostFromTotal();
+            syncReorderFromQuantity();
+        });
     }
+    syncReorderFromQuantity();
     drugSearchDropdown.addEventListener('click', function(e) {
         const option = e.target.closest('.drug-option');
         if (option && option.dataset.id) {
@@ -253,14 +401,9 @@
             drugSelectedName.textContent = option.dataset.name;
             drugSelectedDetails.textContent = option.dataset.details ? ' - ' + option.dataset.details : '';
             drugSelectedInfo.style.display = 'block';
-            var unitPrice = option.dataset.unitPrice || '0';
-            var costPrice = option.dataset.costPrice || '0';
-            if (unitPriceDisplay) {
-                unitPriceDisplay.value = parseFloat(unitPrice).toFixed(2);
-            }
-            if (costPriceInput) {
-                costPriceInput.value = parseFloat(costPrice).toFixed(2);
-            }
+            setDrugInsuranceLink(option.dataset.id);
+            updateTabletBadge(option.dataset.form || option.dataset.details || '');
+            applyDrugPrices(option.dataset.unitPrice, option.dataset.costPrice);
             if (costModeManual) costModeManual.checked = true;
             if (costModeFromTotal) costModeFromTotal.checked = false;
             syncCostModeUi();
@@ -276,12 +419,13 @@
             e.preventDefault();
             drugIdHidden.value = '';
             drugSelectedInfo.style.display = 'none';
+            setDrugInsuranceLink('');
+            updateTabletBadge('');
             if (unitPriceDisplay) unitPriceDisplay.value = '';
             if (costPriceInput) {
-                costPriceInput.value = '0';
-                costPriceInput.readOnly = false;
-                costPriceInput.classList.remove('bg-light');
+                costPriceInput.value = '';
             }
+            if (sellingPriceWarning) sellingPriceWarning.style.display = 'none';
             if (totalCostInput) totalCostInput.value = '';
             if (costModeManual) costModeManual.checked = true;
             if (costModeFromTotal) costModeFromTotal.checked = false;
@@ -306,7 +450,31 @@
             alert('Please select a drug from the search.');
             return false;
         }
+        if (totalCostInput) {
+            totalCostInput.readOnly = false;
+            if (!isFromTotalMode()) {
+                totalCostInput.value = '';
+            }
+        }
         recalcUnitCostFromTotal();
+        syncSellingPriceWarning();
+        const selling = parseFloat(String(unitPriceDisplay && unitPriceDisplay.value).replace(/,/g, ''));
+        const cost = parseFloat(String(costPriceInput && costPriceInput.value).replace(/,/g, ''));
+        if (!isNaN(selling) && selling > 0 && !isNaN(cost) && cost > 0 && selling === cost) {
+            e.preventDefault();
+            alert('Selling price must differ from cost price.');
+            if (unitPriceDisplay) unitPriceDisplay.focus();
+            return false;
+        }
+        if (isFromTotalMode()) {
+            const q = parseFloat(String(quantityInput && quantityInput.value).replace(/,/g, ''));
+            const t = parseFloat(String(totalCostInput && totalCostInput.value).replace(/,/g, ''));
+            if (isNaN(t) || t <= 0 || isNaN(q) || q <= 0) {
+                e.preventDefault();
+                alert('Enter both quantity and total batch cost so unit cost can be calculated.');
+                return false;
+            }
+        }
     });
 })();
 </script>

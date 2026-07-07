@@ -13,8 +13,8 @@
             {% if showing_invoices_fallback %}
             <div class="d-flex align-items-center gap-2 me-2">
                 <div class="btn-group btn-group-sm" role="group">
-                    <a href="?view=patient{% if search %}&search={{ search }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" class="btn btn-{% if view_mode == 'patient' %}primary{% else %}outline-secondary{% endif %}">By Patient (Combined)</a>
-                    <a href="?view=invoice{% if search %}&search={{ search }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" class="btn btn-{% if view_mode == 'invoice' %}primary{% else %}outline-secondary{% endif %}">By Invoice</a>
+                    <a href="?view=patient{% if search %}&search={{ search }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if bill_type_filter %}&bill_type={{ bill_type_filter }}{% endif %}{% if payer_filter %}&payer={{ payer_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if include_legacy %}&include_legacy=1{% endif %}" class="btn btn-{% if view_mode == 'patient' %}primary{% else %}outline-secondary{% endif %}">By Patient (Combined)</a>
+                    <a href="?view=invoice{% if search %}&search={{ search }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if bill_type_filter %}&bill_type={{ bill_type_filter }}{% endif %}{% if payer_filter %}&payer={{ payer_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if include_legacy %}&include_legacy=1{% endif %}" class="btn btn-{% if view_mode == 'invoice' %}primary{% else %}outline-secondary{% endif %}">By Invoice</a>
                 </div>
                 <div class="alert alert-info py-2 px-3 mb-0">
                     <small><i class="bi bi-info-circle"></i> Showing Invoices (no Bill records). Bills are created from Patient Flow workflow.</small>
@@ -56,22 +56,24 @@
                             <option value="mixed" {% if bill_type_filter == 'mixed' %}selected{% endif %}>Mixed</option>
                         </select>
                     </div>
-                    {% if bill_type_filter == 'corporate' %}
-                    <div class="col-md-2">
-                        <select name="payer" class="form-select">
-                            <option value="">All corporate payers</option>
-                            {% for p in corporate_payers %}
-                            <option value="{{ p.id }}" {% if payer_filter and payer_filter == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    {% elif insurance_payers %}
-                    <div class="col-md-2">
-                        <select name="payer" class="form-select">
-                            <option value="">All insurance payers</option>
-                            {% for p in insurance_payers %}
-                            <option value="{{ p.id }}" {% if payer_filter and payer_filter == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
-                            {% endfor %}
+                    {% if insurance_payers or corporate_payers %}
+                    <div class="col-md-3">
+                        <select name="payer" class="form-select" aria-label="Payer" title="Optional: only bills/invoices for this payer">
+                            <option value="">All payers</option>
+                            {% if insurance_payers %}
+                            <optgroup label="Insurance / NHIS">
+                                {% for p in insurance_payers %}
+                                <option value="{{ p.id }}" {% if payer_filter and payer_filter == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
+                                {% endfor %}
+                            </optgroup>
+                            {% endif %}
+                            {% if corporate_payers %}
+                            <optgroup label="Corporate">
+                                {% for p in corporate_payers %}
+                                <option value="{{ p.id }}" {% if payer_filter and payer_filter == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
+                                {% endfor %}
+                            </optgroup>
+                            {% endif %}
                         </select>
                     </div>
                     {% endif %}
@@ -83,6 +85,28 @@
                     </div>
                     <div class="col-md-1">
                         <button type="submit" class="btn btn-primary w-100">Filter</button>
+                    </div>
+                </div>
+                <div class="row g-2 mt-1 align-items-center">
+                    <div class="col-auto">
+                        <div class="form-check mb-0">
+                            <input class="form-check-input" type="checkbox" name="include_legacy" value="1" id="id_include_legacy_bills" {% if include_legacy %}checked{% endif %}>
+                            <label class="form-check-label small" for="id_include_legacy_bills">Include bills before go-live ({{ bills_go_live_date|default:"2026-03-10" }})</label>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <p class="small text-muted mb-0">Lists, Excel, and print default to <strong>issued on or after {{ bills_go_live_date|default:"2026-03-10" }}</strong> so older scrape/test data stays out. Check the box to include earlier rows.</p>
+                    </div>
+                </div>
+                <div class="row mt-2">
+                    <div class="col-12 d-flex flex-wrap gap-2 align-items-center">
+                        <span class="text-muted small me-1">Filtered results:</span>
+                        <a class="btn btn-sm btn-success" href="{% url 'hospital:bills_list_export_excel' %}?{% if view_mode %}view={{ view_mode }}&{% endif %}{% if search and search|lower != 'invalid' %}search={{ search|urlencode }}&{% endif %}{% if status_filter %}status={{ status_filter }}&{% endif %}{% if bill_type_filter %}bill_type={{ bill_type_filter }}&{% endif %}{% if payer_filter %}payer={{ payer_filter }}&{% endif %}{% if date_from and date_from|lower != 'invalid' %}date_from={{ date_from }}&{% endif %}{% if date_to and date_to|lower != 'invalid' %}date_to={{ date_to }}&{% endif %}{% if include_legacy %}include_legacy=1&{% endif %}">
+                            <i class="bi bi-file-earmark-excel"></i> Download Excel
+                        </a>
+                        <a class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener" href="{% url 'hospital:bills_list_print' %}?{% if view_mode %}view={{ view_mode }}&{% endif %}{% if search and search|lower != 'invalid' %}search={{ search|urlencode }}&{% endif %}{% if status_filter %}status={{ status_filter }}&{% endif %}{% if bill_type_filter %}bill_type={{ bill_type_filter }}&{% endif %}{% if payer_filter %}payer={{ payer_filter }}&{% endif %}{% if date_from and date_from|lower != 'invalid' %}date_from={{ date_from }}&{% endif %}{% if date_to and date_to|lower != 'invalid' %}date_to={{ date_to }}&{% endif %}{% if include_legacy %}include_legacy=1&{% endif %}">
+                            <i class="bi bi-printer"></i> Print list
+                        </a>
                     </div>
                 </div>
             </form>
@@ -197,6 +221,7 @@
                             {% if grouped_invoice_bills|default:False %}<th style="width:2rem;"></th>{% endif %}
                             <th>{% if grouped_by_patient %}Patient{% elif grouped_invoice_bills|default:False %}{% if bill_type_filter == 'cash' %}Patient{% else %}Payer / company{% endif %}{% else %}Bill #{% endif %}</th>
                             {% if grouped_by_patient %}<th>Invoices</th>{% else %}<th>{% if grouped_invoice_bills|default:False %}Invoices{% else %}Patient{% endif %}</th>{% endif %}
+                            <th>Insurance / Corp ID</th>
                             <th>Type</th>
                             <th>Payer / method</th>
                             <th>Total Amount</th>
@@ -216,6 +241,9 @@
                             <td class="text-center"><i class="bi bi-chevron-right expand-icon" aria-hidden="true"></i></td>
                             <td><strong>{{ group.label }}</strong></td>
                             <td><span class="badge bg-dark">{{ group.invoice_count }} invoice{{ group.invoice_count|pluralize }}</span></td>
+                            <td class="small font-monospace">
+                                {% if group.reference_label %}<code title="Company code / account">{{ group.reference_label }}</code>{% else %}<span class="text-muted">—</span>{% endif %}
+                            </td>
                             <td><span class="badge bg-info">{% if bill_type_filter == 'insurance' %}Insurance Bill{% elif bill_type_filter == 'corporate' %}Corporate{% else %}Cash Bill{% endif %}</span></td>
                             <td class="text-muted small">—</td>
                             <td><strong>GHS {{ group.total_amount|floatformat:2|intcomma }}</strong></td>
@@ -232,6 +260,7 @@
                             <td></td>
                             <td><strong>{% if bill.bill_number and bill.bill_number|lower != 'invalid' %}{{ bill.bill_number }}{% else %}—{% endif %}</strong></td>
                             <td>{% if bill.patient %}{{ bill.patient.full_name|default:"—" }}{% else %}—{% endif %}</td>
+                            <td><code class="small">{{ bill.billing_member_id|default:"—" }}</code></td>
                             <td><span class="badge bg-info">{% if bill.bill_type|lower == "invalid" or bill.get_bill_type_display|lower == "invalid" %}Cash Bill{% else %}{{ bill.get_bill_type_display|default:"Cash Bill" }}{% endif %}</span></td>
                             <td>{% if bill.payer_display %}{{ bill.payer_display }}{% elif bill.invoice and bill.invoice.payer %}{{ bill.invoice.payer.name }}{% else %}—{% endif %}</td>
                             <td><strong>GHS {{ bill.total_amount|floatformat:2|intcomma }}</strong></td>
@@ -284,6 +313,7 @@
                             <td><strong>{% if bill.bill_number and bill.bill_number|lower != 'invalid' %}{{ bill.bill_number }}{% else %}—{% endif %}</strong></td>
                             <td>{% if bill.patient %}{{ bill.patient.full_name|default:"—" }}{% else %}—{% endif %}</td>
                             {% endif %}
+                            <td><code class="small">{{ bill.billing_member_id|default:"—" }}</code></td>
                             <td><span class="badge bg-info">{% if bill.bill_type|lower == "invalid" or bill.get_bill_type_display|lower == "invalid" %}Cash Bill{% else %}{{ bill.get_bill_type_display|default:"Cash Bill" }}{% endif %}</span></td>
                             <td>{% if bill.payer_display %}{{ bill.payer_display }}{% elif bill.invoice and bill.invoice.payer %}{{ bill.invoice.payer.name }}{% else %}—{% endif %}</td>
                             <td><strong>GHS {{ bill.total_amount|floatformat:2|intcomma }}</strong></td>
@@ -337,11 +367,11 @@
             <nav aria-label="Page navigation">
                 <ul class="pagination justify-content-center">
                     {% if bills.has_previous %}
-                    <li class="page-item"><a class="page-link" href="?page={{ bills.previous_page_number }}{% if view_mode %}&view={{ view_mode }}{% endif %}{% if search %}&search={{ search }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if bill_type_filter %}&bill_type={{ bill_type_filter }}{% endif %}{% if payer_filter %}&payer={{ payer_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Previous</a></li>
+                    <li class="page-item"><a class="page-link" href="?page={{ bills.previous_page_number }}{% if view_mode %}&view={{ view_mode }}{% endif %}{% if search %}&search={{ search }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if bill_type_filter %}&bill_type={{ bill_type_filter }}{% endif %}{% if payer_filter %}&payer={{ payer_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if include_legacy %}&include_legacy=1{% endif %}">Previous</a></li>
                     {% endif %}
                     <li class="page-item active"><span class="page-link">Page {{ bills.number }} of {{ bills.paginator.num_pages }}</span></li>
                     {% if bills.has_next %}
-                    <li class="page-item"><a class="page-link" href="?page={{ bills.next_page_number }}{% if view_mode %}&view={{ view_mode }}{% endif %}{% if search %}&search={{ search }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if bill_type_filter %}&bill_type={{ bill_type_filter }}{% endif %}{% if payer_filter %}&payer={{ payer_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Next</a></li>
+                    <li class="page-item"><a class="page-link" href="?page={{ bills.next_page_number }}{% if view_mode %}&view={{ view_mode }}{% endif %}{% if search %}&search={{ search }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if bill_type_filter %}&bill_type={{ bill_type_filter }}{% endif %}{% if payer_filter %}&payer={{ payer_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if include_legacy %}&include_legacy=1{% endif %}">Next</a></li>
                     {% endif %}
                 </ul>
             </nav>

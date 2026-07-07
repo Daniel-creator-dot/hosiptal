@@ -147,9 +147,41 @@
     
     .badge-pending { background: #fef3c7; color: #92400e; }
     .badge-submitted { background: #dbeafe; color: #1e40af; }
+    .badge-processing { background: #e0e7ff; color: #3730a3; }
     .badge-approved { background: #d1fae5; color: #065f46; }
+    .badge-partially_paid { background: #cffafe; color: #0e7490; }
     .badge-paid { background: #d1fae5; color: #065f46; }
     .badge-rejected { background: #fee2e2; color: #991b1b; }
+    .badge-reversed { background: #f3f4f6; color: #4b5563; }
+    .analytics-canvas-wrap {
+        position: relative;
+        min-height: 260px;
+        max-height: 320px;
+    }
+    .filter-card .form-label { font-size: 0.75rem; font-weight: 600; color: #4b5563; text-transform: uppercase; letter-spacing: 0.03em; }
+    .mini-metric {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 12px 14px;
+        text-align: center;
+    }
+    .mini-metric .val { font-size: 1.25rem; font-weight: 700; color: #1e293b; }
+    .mini-metric .lbl { font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
+    .claim-patient-header {
+        cursor: pointer;
+        background: linear-gradient(90deg, #eef2ff 0%, #f8fafc 100%);
+        border-left: 4px solid #667eea;
+    }
+    .claim-patient-header:hover { background: #e0e7ff; }
+    .claim-visit-header {
+        cursor: pointer;
+        background: #f8fafc;
+        border-left: 4px solid #cbd5e1;
+    }
+    .claim-visit-header:hover { background: #f1f5f9; }
+    .claim-line-row td { background: #fff; font-size: 0.875rem; }
+    .claims-patient-table .claim-visit-header td { border-top: 1px dashed #e2e8f0; }
     
     .action-buttons {
         display: flex;
@@ -233,10 +265,99 @@
                 <div class="stat-label">Outstanding Amount</div>
             </div>
         </div>
+
+        {% if has_any_claims %}
+        <!-- Analytics (same period as charts subtitle) -->
+        <div class="content-card mb-4">
+            <div class="section-title">
+                <i class="bi bi-graph-up-arrow"></i>
+                Claims analytics
+            </div>
+            <p class="small text-muted mb-3">
+                Volume and billed amounts by month, and top payers for the period
+                <strong>{{ chart_range_label }}</strong>
+                (independent of the table search — uses service dates in this range).
+            </p>
+            <div class="row g-4">
+                <div class="col-lg-7">
+                    <div class="fw-semibold small mb-2 text-secondary">Items & billed amount by month</div>
+                    <div class="analytics-canvas-wrap">
+                        <canvas id="claimsTrendChart" aria-label="Monthly claims trend"></canvas>
+                    </div>
+                </div>
+                <div class="col-lg-5">
+                    <div class="fw-semibold small mb-2 text-secondary">Top payers by billed (same period)</div>
+                    <div class="analytics-canvas-wrap">
+                        <canvas id="claimsPayerChart" aria-label="Top payers chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filters (apply to claim items table below) -->
+        <div class="content-card filter-card mb-4">
+            <div class="section-title mb-3">
+                <i class="bi bi-funnel"></i>
+                Filter claim items
+            </div>
+            <form method="get" class="row g-2 align-items-end">
+                <div class="col-lg-3 col-md-6">
+                    <label class="form-label" for="dash_q">Search</label>
+                    <input type="text" id="dash_q" name="q" class="form-control" placeholder="Patient name, MRN, insurance ID…" value="{{ query }}">
+                    <div class="form-text">Matching a patient shows <strong>all</strong> their bills under one row — expand to see each invoice.</div>
+                </div>
+                <div class="col-lg-2 col-md-6">
+                    <label class="form-label" for="dash_status">Status</label>
+                    <select id="dash_status" name="status" class="form-select">
+                        <option value="">All statuses</option>
+                        {% for val, label in claim_status_choices %}
+                        <option value="{{ val }}" {% if status_filter == val %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-lg-2 col-md-6">
+                    <label class="form-label" for="dash_payer">Payer</label>
+                    <select id="dash_payer" name="payer" class="form-select">
+                        <option value="">All payers</option>
+                        {% for payer in payers %}
+                        <option value="{{ payer.id }}" {% if payer_filter == payer.id|stringformat:"s" %}selected{% endif %}>{{ payer.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-lg-2 col-md-3">
+                    <label class="form-label" for="dash_df">From</label>
+                    <input type="date" id="dash_df" name="date_from" class="form-control" value="{{ date_from }}" max="{{ today_iso }}">
+                </div>
+                <div class="col-lg-2 col-md-3">
+                    <label class="form-label" for="dash_dt">To</label>
+                    <input type="date" id="dash_dt" name="date_to" class="form-control" value="{{ date_to }}" max="{{ today_iso }}">
+                </div>
+                <div class="col-lg-1 col-md-6">
+                    <label class="form-label" for="dash_pp">Rows</label>
+                    <select id="dash_pp" name="per_page" class="form-select">
+                        <option value="10" {% if per_page == 10 %}selected{% endif %}>10</option>
+                        <option value="25" {% if per_page == 25 %}selected{% endif %}>25</option>
+                        <option value="50" {% if per_page == 50 %}selected{% endif %}>50</option>
+                        <option value="100" {% if per_page == 100 %}selected{% endif %}>100</option>
+                    </select>
+                </div>
+                <div class="col-lg-12 col-md-6 d-flex flex-wrap gap-2 mt-2">
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-search me-1"></i>Apply</button>
+                    <a class="btn btn-outline-secondary" href="{% url 'hospital:insurance_claims_dashboard' %}">Clear filters</a>
+                </div>
+            </form>
+            <div class="mt-3 pt-3 border-top d-flex flex-wrap align-items-center gap-2">
+                <span class="small text-muted fw-semibold me-1">Quick date range:</span>
+                <a class="btn btn-sm btn-light border" href="?date_from={{ preset_7_from }}&amp;date_to={{ today_iso }}">Last 7 days</a>
+                <a class="btn btn-sm btn-light border" href="?date_from={{ preset_30_from }}&amp;date_to={{ today_iso }}">Last 30 days</a>
+                <a class="btn btn-sm btn-light border" href="?date_from={{ month_start_iso }}&amp;date_to={{ today_iso }}">This month</a>
+            </div>
+        </div>
+        {% endif %}
         
         <!-- Action Buttons -->
         <div class="action-buttons">
-            <a href="{% url 'hospital:insurance_claim_items_list' %}" class="btn btn-modern btn-primary-modern">
+            <a href="{% url 'hospital:insurance_claim_items_list' %}{% if claim_items_list_query %}?{{ claim_items_list_query }}{% endif %}" class="btn btn-modern btn-primary-modern">
                 <i class="bi bi-list-ul"></i>
                 View All Claims
             </a>
@@ -295,57 +416,83 @@
         </div>
         {% endif %}
         
-        <!-- Recent Claims -->
-        {% if recent_claims %}
+        <!-- Recent / filtered claim items -->
+        {% if has_any_claims %}
         <div class="content-card">
             <div class="section-title">
                 <i class="bi bi-clock-history"></i>
-                Recent Claim Items
+                Claim items by patient
+                <span class="badge bg-secondary ms-2">{{ recent_claims.paginator.count|intcomma }} patient{{ recent_claims.paginator.count|pluralize }}</span>
             </div>
-            
-            <div class="table-responsive">
-                <table class="claims-table">
-                    <thead>
-                        <tr>
-                            <th>Date</th>
-                            <th>Patient</th>
-                            <th>Service</th>
-                            <th>Payer</th>
-                            <th>Amount</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for claim in recent_claims %}
-                        <tr>
-                            <td>{{ claim.service_date }}</td>
-                            <td>
-                                <strong>{{ claim.patient.full_name }}</strong><br>
-                                <small class="text-muted">MRN: {{ claim.patient.mrn }}</small>
-                            </td>
-                            <td>{{ claim.service_description|truncatewords:8 }}</td>
-                            <td>{{ claim.payer.name }}</td>
-                            <td>GH₵ {{ claim.billed_amount|floatformat:2|intcomma }}</td>
-                            <td>
-                                <span class="badge-status badge-{{ claim.claim_status }}">
-                                    {{ claim.get_claim_status_display }}
-                                </span>
-                            </td>
-                            <td>
-                                <a href="{% url 'hospital:insurance_claim_item_detail' claim.pk %}" class="btn btn-sm btn-outline-primary">
-                                    <i class="bi bi-eye"></i> View
-                                </a>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+            {% if claims_groups_truncated %}
+            <div class="alert alert-warning border-0 small py-2 mb-3">
+                <i class="bi bi-exclamation-triangle me-1"></i>
+                Narrow filters to see all patients — grouping is limited to the first 3,000 claim lines.
             </div>
+            {% endif %}
+
+            {% if filters_active %}
+            <div class="row g-2 mb-4">
+                <div class="col-6 col-md-3">
+                    <div class="mini-metric">
+                        <div class="lbl">Matching rows</div>
+                        <div class="val">{{ filtered_summary.total_items|intcomma }}</div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="mini-metric">
+                        <div class="lbl">Billed (filtered)</div>
+                        <div class="val">GH₵ {{ filtered_summary.total_billed|default:0|floatformat:0|intcomma }}</div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="mini-metric">
+                        <div class="lbl">Paid (filtered)</div>
+                        <div class="val">GH₵ {{ filtered_summary.total_paid|default:0|floatformat:0|intcomma }}</div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="mini-metric">
+                        <div class="lbl">Outstanding</div>
+                        <div class="val">GH₵ {{ filtered_summary.total_outstanding|floatformat:0|intcomma }}</div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if filtered_empty %}
+            <div class="alert alert-info border-0 shadow-sm">
+                <i class="bi bi-info-circle me-2"></i>No claim items match the current filters.
+                <a href="{% url 'hospital:insurance_claims_dashboard' %}" class="alert-link">Clear filters</a> or widen the date range.
+            </div>
+            {% else %}
+            {% include 'hospital/insurance/_claims_patient_grouped_table.html' with claims_page=recent_claims %}
+
+            {% if recent_claims.paginator.num_pages > 1 %}
+            <nav class="mt-3 d-flex flex-wrap justify-content-between align-items-center gap-2" aria-label="Claim items pagination">
+                <div class="small text-muted">
+                    Page {{ recent_claims.number }} of {{ recent_claims.paginator.num_pages }}
+                    ({{ recent_claims.paginator.count|intcomma }} patients)
+                </div>
+                <ul class="pagination pagination-sm mb-0">
+                    {% if recent_claims.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?{% if pagination_base %}{{ pagination_base }}&amp;{% endif %}page={{ recent_claims.previous_page_number }}">Previous</a>
+                    </li>
+                    {% endif %}
+                    {% if recent_claims.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?{% if pagination_base %}{{ pagination_base }}&amp;{% endif %}page={{ recent_claims.next_page_number }}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% endif %}
             
             <div class="text-center mt-3">
-                <a href="{% url 'hospital:insurance_claim_items_list' %}" class="btn btn-link">
-                    View All Claim Items <i class="bi bi-arrow-right"></i>
+                <a href="{% url 'hospital:insurance_claim_items_list' %}{% if claim_items_list_query %}?{{ claim_items_list_query }}{% endif %}" class="btn btn-link">
+                    Open full claim list with export &nbsp;<i class="bi bi-arrow-right"></i>
                 </a>
             </div>
         </div>
@@ -356,7 +503,12 @@
         <div class="content-card">
             <div class="section-title">
                 <i class="bi bi-pie-chart"></i>
-                Claims by Status
+                Breakdown by status
+                {% if filters_active %}
+                <span class="badge bg-info text-dark ms-2">Matches current filters</span>
+                {% else %}
+                <span class="badge bg-light text-dark border ms-2">All items</span>
+                {% endif %}
             </div>
             
             <div class="table-responsive">
@@ -387,7 +539,7 @@
         {% endif %}
         
         <!-- Empty State -->
-        {% if not recent_claims and not monthly_claims %}
+        {% if not has_any_claims and not monthly_claims %}
         <div class="content-card text-center py-5">
             <i class="bi bi-inbox" style="font-size: 64px; color: #d1d5db;"></i>
             <h3 class="mt-4 mb-3">No Insurance Claims Yet</h3>
@@ -404,6 +556,121 @@
         {% endif %}
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    var trend = {{ chart_monthly_trend_json|safe }};
+    var payers = {{ chart_top_payers_json|safe }};
+    if (typeof Chart === 'undefined') return;
+
+    var tc = document.getElementById('claimsTrendChart');
+    if (tc && trend && trend.length) {
+        new Chart(tc, {
+            type: 'bar',
+            data: {
+                labels: trend.map(function (r) { return r.label; }),
+                datasets: [
+                    {
+                        label: 'Items',
+                        data: trend.map(function (r) { return r.count; }),
+                        yAxisID: 'y',
+                        backgroundColor: 'rgba(102, 126, 234, 0.55)',
+                        borderRadius: 6,
+                    },
+                    {
+                        label: 'Billed (GH₵)',
+                        data: trend.map(function (r) { return r.billed; }),
+                        yAxisID: 'y1',
+                        type: 'line',
+                        borderColor: 'rgba(6, 182, 212, 1)',
+                        backgroundColor: 'rgba(6, 182, 212, 0.15)',
+                        tension: 0.25,
+                        fill: true,
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { position: 'bottom' } },
+                scales: {
+                    y: { type: 'linear', position: 'left', title: { display: true, text: 'Count' }, beginAtZero: true },
+                    y1: { type: 'linear', position: 'right', title: { display: true, text: 'GH₵' }, grid: { drawOnChartArea: false }, beginAtZero: true },
+                },
+            },
+        });
+    }
+
+    var patientTable = document.getElementById('claimsPatientTable');
+    if (patientTable) {
+        function setChevron(icon, open) {
+            if (!icon) return;
+            icon.classList.toggle('bi-chevron-right', !open);
+            icon.classList.toggle('bi-chevron-down', open);
+        }
+        function togglePatientGroup(pidx, header) {
+            var visits = patientTable.querySelectorAll('.claim-pv-' + pidx);
+            var open = header.getAttribute('aria-expanded') === 'true';
+            visits.forEach(function (row) { row.classList.toggle('d-none', open); });
+            header.setAttribute('aria-expanded', open ? 'false' : 'true');
+            setChevron(header.querySelector('.expand-icon'), !open);
+        }
+        function toggleVisitGroup(key, header) {
+            var lines = patientTable.querySelectorAll('.claim-gc-' + key);
+            var open = header.getAttribute('aria-expanded') === 'true';
+            lines.forEach(function (row) { row.classList.toggle('d-none', open); });
+            header.setAttribute('aria-expanded', open ? 'false' : 'true');
+            setChevron(header.querySelector('.visit-icon'), !open);
+        }
+        patientTable.querySelectorAll('.claim-patient-header').forEach(function (header) {
+            var pidx = header.getAttribute('data-patient-group');
+            header.addEventListener('click', function () { togglePatientGroup(pidx, header); });
+            header.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePatientGroup(pidx, header); }
+            });
+        });
+        patientTable.querySelectorAll('.claim-visit-header').forEach(function (header) {
+            var key = header.getAttribute('data-visit-group');
+            header.addEventListener('click', function (e) {
+                e.stopPropagation();
+                toggleVisitGroup(key, header);
+            });
+            header.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggleVisitGroup(key, header); }
+            });
+        });
+    }
+
+    var pc = document.getElementById('claimsPayerChart');
+    if (pc && payers && payers.length) {
+        new Chart(pc, {
+            type: 'bar',
+            data: {
+                labels: payers.map(function (r) { return r.name; }),
+                datasets: [{
+                    label: 'Billed (GH₵)',
+                    data: payers.map(function (r) { return r.billed; }),
+                    backgroundColor: 'rgba(118, 75, 162, 0.65)',
+                    borderRadius: 6,
+                }],
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { beginAtZero: true, title: { display: true, text: 'GH₵' } },
+                },
+            },
+        });
+    }
+})();
+</script>
 {% endblock %}
 
 

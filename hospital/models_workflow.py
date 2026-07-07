@@ -217,6 +217,12 @@ class CashierSession(BaseModel):
     actual_cash = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     
     total_payments = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    deposit_received_total = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Patient deposit intake recorded this session (PatientDeposit), not deposit applied to bills",
+    )
     total_refunds = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_transactions = models.PositiveIntegerField(default=0)
     
@@ -233,7 +239,17 @@ class CashierSession(BaseModel):
     
     def __str__(self):
         return f"Session {self.session_number} - {self.cashier.username} - {self.opened_at.date()}"
-    
+
+    @property
+    def bill_payments_total(self):
+        """Bill/service payment_received totals (excludes patient deposit intake and deposit-to-bill postings)."""
+        from decimal import Decimal
+
+        tp = self.total_payments or Decimal('0')
+        dr = self.deposit_received_total or Decimal('0')
+        out = tp - dr
+        return out if out > 0 else Decimal('0')
+
     def save(self, *args, **kwargs):
         if not self.session_number:
             self.session_number = self.generate_session_number()
@@ -248,46 +264,79 @@ class CashierSession(BaseModel):
         return f"{prefix}{timestamp}"
     
     def calculate_totals(self):
-        """Calculate session totals from transactions - ALL payment methods"""
+        """Calculate session totals: bill/service payments, patient deposit intake, refunds, expected cash."""
         from .models_accounting import Transaction
+        from .models_patient_deposits import PatientDeposit
         from django.db import models as db_models
         from decimal import Decimal
-        
-        # Get all transactions for this session
+
+        session_end = self.closed_at if self.closed_at else timezone.now()
+
         transactions = Transaction.objects.filter(
             processed_by=self.cashier,
             transaction_date__gte=self.opened_at,
-            transaction_date__lte=self.closed_at if self.closed_at else timezone.now(),
-            is_deleted=False
+            transaction_date__lte=session_end,
+            is_deleted=False,
         )
-        
-        # Calculate total payments (ALL payment methods)
+
         payments = transactions.filter(transaction_type='payment_received')
-        self.total_payments = payments.aggregate(
+        # Exclude deposit-to-invoice postings (not new money at the drawer)
+        bill_payments = payments.exclude(payment_method='deposit')
+        bill_payments_total = bill_payments.aggregate(
             total=db_models.Sum('amount')
         )['total'] or Decimal('0.00')
-        
-        # Calculate total refunds (ALL payment methods)
+
+        deposit_qs = PatientDeposit.objects.filter(
+            received_by_id=self.cashier_id,
+            deposit_date__gte=self.opened_at,
+            deposit_date__lte=session_end,
+            is_deleted=False,
+        ).exclude(status='cancelled')
+
+        self.deposit_received_total = deposit_qs.aggregate(
+            total=db_models.Sum('deposit_amount')
+        )['total'] or Decimal('0.00')
+
+        self.total_payments = bill_payments_total + self.deposit_received_total
+
         refunds = transactions.filter(transaction_type='refund_issued')
         self.total_refunds = refunds.aggregate(
             total=db_models.Sum('amount')
         )['total'] or Decimal('0.00')
-        
-        # Calculate expected cash (only cash payments)
-        cash_payments = payments.filter(payment_method='cash')
-        cash_payments_total = cash_payments.aggregate(
+
+        cash_bill_payments = bill_payments.filter(payment_method='cash')
+        cash_payments_total = cash_bill_payments.aggregate(
             total=db_models.Sum('amount')
         )['total'] or Decimal('0.00')
-        
+
+        cash_deposit_intake = (
+            deposit_qs.filter(payment_method='cash').aggregate(
+                total=db_models.Sum('deposit_amount')
+            )['total']
+            or Decimal('0.00')
+        )
+
         cash_refunds = refunds.filter(payment_method='cash')
         cash_refunds_total = cash_refunds.aggregate(
             total=db_models.Sum('amount')
         )['total'] or Decimal('0.00')
-        
-        self.expected_cash = self.opening_cash + cash_payments_total - cash_refunds_total
-        
-        # Count total transactions
+
+        self.expected_cash = (
+            self.opening_cash
+            + cash_payments_total
+            + cash_deposit_intake
+            - cash_refunds_total
+        )
+
         self.total_transactions = transactions.count()
-        
-        self.save(update_fields=['total_payments', 'total_refunds', 'expected_cash', 'total_transactions'])
+
+        self.save(
+            update_fields=[
+                'total_payments',
+                'deposit_received_total',
+                'total_refunds',
+                'expected_cash',
+                'total_transactions',
+            ]
+        )
 

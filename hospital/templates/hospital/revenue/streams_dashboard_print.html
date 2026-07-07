@@ -1,0 +1,137 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Revenue Streams (Print){% endblock %}
+
+{% block extra_css %}
+<style>
+@media print {
+    .sidebar, .topbar, .sidebar-overlay, .no-print, footer { display: none !important; }
+    .main-content { margin-left: 0 !important; width: 100% !important; max-width: 100% !important; }
+    body { background: #fff !important; }
+    .print-wrap { box-shadow: none !important; border: none !important; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center no-print mb-3">
+        <a class="btn btn-sm btn-outline-secondary"
+           href="{% url 'hospital:revenue_streams_dashboard' %}?date_from={{ date_from|date:'Y-m-d' }}&date_to={{ date_to|date:'Y-m-d' }}">
+            <i class="bi bi-arrow-left"></i> Back
+        </a>
+        <button type="button" class="btn btn-sm btn-primary" onclick="window.print()">
+            <i class="bi bi-printer"></i> Print
+        </button>
+    </div>
+
+    <div class="card print-wrap">
+        <div class="card-body">
+            <div class="text-center mb-3">
+                <h4 class="mb-1">Revenue Streams</h4>
+                <div class="text-muted small">{{ date_from|date:"M d, Y" }} → {{ date_to|date:"M d, Y" }}</div>
+                <div class="mt-2 fs-5 fw-semibold">Total: GHS {{ total_revenue|floatformat:2|intcomma }}</div>
+            </div>
+
+            <div class="row g-2 mb-3">
+                <div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">Consultation</div><div class="fw-semibold">GHS {{ kpis.consultation|default:0|floatformat:2|intcomma }}</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">Laboratory</div><div class="fw-semibold">GHS {{ kpis.lab|default:0|floatformat:2|intcomma }}</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">Pharmacy</div><div class="fw-semibold">GHS {{ kpis.pharmacy|default:0|floatformat:2|intcomma }}</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">Imaging</div><div class="fw-semibold">GHS {{ kpis.imaging|default:0|floatformat:2|intcomma }}</div></div></div>
+            </div>
+            <div class="mb-3">
+                <div class="small text-muted">
+                    Patient deposits (included in totals):
+                    <strong>GHS {{ kpis.deposit_total|default:0|floatformat:2|intcomma }}</strong>
+                    · <strong>{{ kpis.deposit_count|default:0|intcomma }}</strong> receipt(s)
+                </div>
+            </div>
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <h6 class="mb-2">By service type</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Service</th>
+                                    <th class="text-end">Amount</th>
+                                    <th class="text-end">Txns</th>
+                                    <th class="text-end">%</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in revenue_by_service %}
+                                <tr>
+                                    <td>{{ item.service_name|default:item.service_type }}</td>
+                                    <td class="text-end">GHS {{ item.total|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">{{ item.count|default:0|intcomma }}</td>
+                                    <td class="text-end">{{ item.percentage|floatformat:1 }}%</td>
+                                </tr>
+                                {% empty %}
+                                <tr><td colspan="4" class="text-center text-muted py-3">No data.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <h6 class="mb-2">By department</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Department</th>
+                                    <th class="text-end">Amount</th>
+                                    <th class="text-end">Txns</th>
+                                    <th class="text-end">%</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in revenue_by_dept %}
+                                <tr>
+                                    <td>{{ item.department }}</td>
+                                    <td class="text-end">GHS {{ item.total|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">{{ item.count|default:0|intcomma }}</td>
+                                    <td class="text-end">{{ item.percentage|floatformat:1 }}%</td>
+                                </tr>
+                                {% empty %}
+                                <tr><td colspan="4" class="text-center text-muted py-3">No data.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-4">
+                <h6 class="mb-2">Other breakdown (reasons)</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Reason</th>
+                                <th class="text-end">Count</th>
+                                <th class="text-end">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for r in analytics_data.breakdowns.other_reasons %}
+                            <tr>
+                                <td>{{ r.reason }}</td>
+                                <td class="text-end">{{ r.count|default:0|intcomma }}</td>
+                                <td class="text-end">GHS {{ r.total|default:0|floatformat:2|intcomma }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="3" class="text-center text-muted py-3">No data.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

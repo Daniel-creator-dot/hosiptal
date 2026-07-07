@@ -1,0 +1,146 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Management reports{% endblock %}
+{% block page_title %}Management reports{% endblock %}
+{% block page_subtitle %}Billed mix by service, cash streams, and ledger views{% endblock %}
+
+{% block extra_css %}
+<style>
+    .mr-hero {
+        background: linear-gradient(135deg, #0f766e, #1d4ed8);
+        border-radius: 18px;
+        padding: 28px 32px;
+        color: #fff;
+        margin-bottom: 24px;
+    }
+    .mr-card {
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        padding: 18px 20px;
+        border-radius: 14px;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        background: #f8fafc;
+        text-decoration: none;
+        color: inherit;
+        height: 100%;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+    .mr-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
+        border-color: var(--bs-primary);
+        color: inherit;
+    }
+    .mr-card i {
+        font-size: 1.5rem;
+        color: var(--bs-primary);
+    }
+    .mr-card h5 { font-weight: 600; margin-bottom: 4px; }
+    .mr-card p { margin: 0; font-size: 0.875rem; color: #64748b; }
+    .mr-note {
+        background: #fff;
+        border-radius: 14px;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        padding: 16px 20px;
+        margin-bottom: 24px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="mr-hero">
+        <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+            <div>
+                <h2 class="h4 mb-2"><i class="bi bi-easel me-2"></i>Management reporting</h2>
+                <p class="mb-0 opacity-90">Compare <strong>billed</strong> service mix (invoice catalog) with <strong>cash collected</strong> by stream. Each card opens the right tool.</p>
+            </div>
+            <a href="{% url 'hospital:accountant_comprehensive_dashboard' %}" class="btn btn-light">
+                <i class="bi bi-arrow-left me-1"></i>Accountant dashboard
+            </a>
+        </div>
+    </div>
+
+    <div class="mr-note small text-muted">
+        <strong>Billed</strong> = non-waived invoice lines on invoices issued in the selected period (stored line totals).
+        <strong>Cash / streams</strong> = receipts allocated to clinical streams (combined payments split where metadata exists).
+    </div>
+
+    <div class="row g-3">
+        <div class="col-md-6 col-lg-4">
+            <a class="mr-card" href="{% url 'hospital:management_service_revenue_report' %}">
+                <i class="bi bi-grid-3x3-gap"></i>
+                <div>
+                    <h5>Service revenue (billed)</h5>
+                    <p>Roll-up by service code: quantity, line count, amount, share of period.</p>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-6 col-lg-4">
+            <a class="mr-card" href="{% url 'hospital:department_billed_revenue_report' %}">
+                <i class="bi bi-hospital"></i>
+                <div>
+                    <h5>Department billed (cash + insurance)</h5>
+                    <p>Pharmacy, lab, imaging, consultation — invoice lines by payer; CSV/Excel for departments.</p>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-6 col-lg-4">
+            <a class="mr-card" href="{% url 'hospital:revenue_streams_dashboard' %}?date_from={{ start_of_month|date:'Y-m-d' }}&date_to={{ today|date:'Y-m-d' }}">
+                <i class="bi bi-bar-chart-line-fill"></i>
+                <div>
+                    <h5>Revenue streams (cash)</h5>
+                    <p>Dashboard: allocated collections by service type and department.</p>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-6 col-lg-4">
+            <a class="mr-card" href="{% url 'hospital:revenue_streams_service_details' %}?service=lab&date_from={{ start_of_month|date:'Y-m-d' }}&date_to={{ today|date:'Y-m-d' }}">
+                <i class="bi bi-receipt"></i>
+                <div>
+                    <h5>Receipt drilldown</h5>
+                    <p>Example: laboratory bucket — change the <code>service</code> query parameter as needed.</p>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-6 col-lg-4">
+            <a class="mr-card" href="{% url 'hospital:accounting_stream_reports_export_excel' %}?date_from={{ start_of_month|date:'Y-m-d' }}&date_to={{ today|date:'Y-m-d' }}&stream=all">
+                <i class="bi bi-file-earmark-excel-fill text-success"></i>
+                <div>
+                    <h5>Stream Excel (sendable)</h5>
+                    <p>Multi-sheet workbook: cash headline, per-receipt allocations.</p>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-6 col-lg-4">
+            <a class="mr-card" href="{% url 'hospital:revenue_report' %}">
+                <i class="bi bi-journal-text"></i>
+                <div>
+                    <h5>Ledger revenue report</h5>
+                    <p>Advanced accounting <code>Revenue</code> entries by category and method.</p>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-6 col-lg-4">
+            <a class="mr-card" href="{% url 'hospital:detailed_financial_report' %}">
+                <i class="bi bi-file-earmark-spreadsheet"></i>
+                <div>
+                    <h5>Detailed financial report</h5>
+                    <p>Accountant comprehensive financial export and analysis.</p>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-6 col-lg-4">
+            <a class="mr-card" href="{% url 'hospital:accounting_reports_hub' %}">
+                <i class="bi bi-collection"></i>
+                <div>
+                    <h5>Financial reports center</h5>
+                    <p>All accounting reports and shortcuts in one hub.</p>
+                </div>
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

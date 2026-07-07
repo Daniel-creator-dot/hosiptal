@@ -13,35 +13,17 @@
         border-radius: 15px;
         margin-bottom: 30px;
     }
-    
     .trial-balance-table {
         background: white;
         border-radius: 10px;
         overflow: hidden;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
-    
-    .trial-balance-table thead {
-        background: #667eea;
-        color: white;
-    }
-    
-    .trial-balance-table th {
-        padding: 15px;
-        font-weight: 600;
-    }
-    
-    .trial-balance-table td {
-        padding: 12px 15px;
-        border-bottom: 1px solid #f0f0f0;
-    }
-    
-    .account-type-header {
-        background: #f8f9fa;
-        font-weight: 600;
-        color: #495057;
-    }
-    
+    .trial-balance-table thead { background: #667eea; color: white; }
+    .trial-balance-table th { padding: 15px; font-weight: 600; }
+    .trial-balance-table td { padding: 12px 15px; border-bottom: 1px solid #f0f0f0; }
+    .account-type-header { background: #f8f9fa; font-weight: 600; color: #495057; }
+    .section-subtotal { background: #eef2ff; font-weight: 600; }
     .balance-check {
         background: white;
         padding: 20px;
@@ -49,75 +31,125 @@
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         margin-top: 20px;
     }
-    
-    .account-row {
-        cursor: pointer;
-        transition: background-color 0.2s;
+    .stock-panel {
+        background: white;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 24px;
+        border-left: 4px solid #667eea;
     }
-    
-    .account-row:hover {
-        background-color: #f8f9fa;
-    }
-    
-    .account-details {
-        display: none;
-        background-color: #f8f9fa;
-    }
-    
-    .account-details.show {
-        display: table-row;
-    }
-    
-    .account-details td {
-        padding: 8px 15px;
-        font-size: 0.9em;
-        border-top: none;
-    }
-    
-    .account-details td:first-child {
-        padding-left: 40px;
-    }
-    
-    .expand-icon {
-        transition: transform 0.2s;
-        display: inline-block;
-    }
-    
-    .expanded .expand-icon {
-        transform: rotate(90deg);
-    }
-    
-    .entry-source {
-        font-size: 0.75em;
-        color: #6c757d;
-        font-style: italic;
-    }
+    .account-row { cursor: pointer; transition: background-color 0.2s; }
+    .account-row:hover { background-color: #f8f9fa; }
+    .account-details { display: none; background-color: #f8f9fa; }
+    .account-details.show { display: table-row; }
+    .account-details td { padding: 8px 15px; font-size: 0.9em; border-top: none; }
+    .expand-icon { transition: transform 0.2s; display: inline-block; }
+    .expanded .expand-icon { transform: rotate(90deg); }
+    .entry-source { font-size: 0.75em; color: #6c757d; font-style: italic; }
+    .variance-positive { color: #198754; }
+    .variance-negative { color: #dc3545; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="container-fluid py-4">
-    
-    <!-- Header -->
+
     <div class="report-header">
-        <div class="d-flex justify-content-between align-items-center">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
             <div>
                 <h2 class="mb-2"><i class="bi bi-calculator"></i> Trial Balance</h2>
                 <p class="mb-1">As of {{ as_of_date|date:"M d, Y" }}</p>
-                <p class="mb-0"><small>Hospital Name | Generated: {{ today|date:"M d, Y h:i A" }}</small></p>
+                <p class="mb-0"><small>Generated: {{ today|date:"M d, Y h:i A" }}</small></p>
             </div>
-            <div>
-                <button onclick="window.print()" class="btn btn-outline-primary">
+            <div class="d-flex gap-2 flex-wrap align-items-center">
+                <form method="get" class="d-flex gap-2 align-items-center">
+                    <label class="small mb-0 text-nowrap">As of date:</label>
+                    <input type="date" name="as_of_date" value="{{ as_of_date|date:'Y-m-d' }}" class="form-control form-control-sm">
+                    <button type="submit" class="btn btn-sm btn-primary">Apply</button>
+                </form>
+                <button onclick="window.print()" class="btn btn-outline-primary btn-sm">
                     <i class="bi bi-printer"></i> Print
                 </button>
-                <a href="{% url 'hospital:accounting_dashboard' %}" class="btn btn-outline-secondary">
+                <a href="{% url 'hospital:accounting_dashboard' %}" class="btn btn-outline-secondary btn-sm">
                     <i class="bi bi-arrow-left"></i> Back
                 </a>
             </div>
         </div>
     </div>
-    
-    <!-- Trial Balance Table -->
+
+    <!-- Inventory / Stock panel -->
+    <div class="stock-panel p-4">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
+            <div>
+                <h5 class="mb-3"><i class="bi bi-box-seam"></i> Inventory / Stock (Account 1400)</h5>
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <div class="small text-muted">Operational stock value</div>
+                        <div class="h5 mb-0">GHS {{ stock_operational_value|floatformat:2|intcomma }}</div>
+                        <small class="text-muted">{{ stock_summary.pharmacy_batch_count }} pharmacy batches · {{ stock_summary.pharmacy_drug_count }} drugs</small>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="small text-muted">GL balance (1400)</div>
+                        <div class="h5 mb-0">GHS {{ stock_gl_balance|floatformat:2|intcomma }}</div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="small text-muted">Variance (operational − GL)</div>
+                        <div class="h5 mb-0 {% if stock_variance > 0 %}variance-positive{% elif stock_variance < 0 %}variance-negative{% endif %}">
+                            GHS {{ stock_variance|floatformat:2|intcomma }}
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="small text-muted">Store inventory value</div>
+                        <div class="h6 mb-0">GHS {{ stock_summary.store_value|floatformat:2|intcomma }}</div>
+                        <small class="text-muted">{{ stock_summary.store_item_count }} store items</small>
+                    </div>
+                </div>
+                {% if inventory_gl_activity %}
+                <div class="row g-3 mt-2 pt-2 border-top">
+                    <div class="col-md-4">
+                        <div class="small text-muted">1400 — receipts (Dr)</div>
+                        <div class="fw-semibold">GHS {{ inventory_gl_activity.receipts_debit_1400|floatformat:2|intcomma }}</div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="small text-muted">1400 — COGS issued (Cr)</div>
+                        <div class="fw-semibold">GHS {{ inventory_gl_activity.cogs_credit_1400|floatformat:2|intcomma }}</div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="small text-muted">1400 — closing adj. (net)</div>
+                        <div class="fw-semibold">GHS {{ inventory_gl_activity.closing_adjustment_net|floatformat:2|intcomma }}</div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            <div class="text-end">
+                <a href="{% url 'hospital:stock_management_monitoring' %}" class="btn btn-outline-secondary btn-sm mb-2">
+                    <i class="bi bi-list-ul"></i> Stock detail
+                </a>
+                {% if stock_live_only %}
+                <p class="small text-warning mb-0">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    Operational stock is live-only; sync to GL is available for today's date only.
+                </p>
+                {% elif stock_can_post %}
+                <form method="post" action="{% url 'hospital:sync_closing_stock' %}" class="d-inline">
+                    {% csrf_token %}
+                    <input type="hidden" name="as_of_date" value="{{ as_of_date|date:'Y-m-d' }}">
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="bi bi-arrow-repeat"></i> Sync Closing Stock to GL
+                    </button>
+                </form>
+                <p class="small text-muted mt-2 mb-0">
+                    Posts Dr 1400 / Cr 5120 (GHS {{ stock_adjustment.adjustment_amount|floatformat:2|intcomma }})
+                </p>
+                {% elif stock_adjustment.direction != 'none' %}
+                <p class="small text-muted mb-0">Variance noted — no sync action for this date.</p>
+                {% else %}
+                <p class="small text-success mb-0"><i class="bi bi-check-circle"></i> GL inventory matches operational stock</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
     <div class="trial-balance-table">
         <table class="table mb-0">
             <thead>
@@ -131,631 +163,146 @@
                 </tr>
             </thead>
             <tbody>
-                <!-- Assets -->
+                {% for section in sections %}
                 <tr class="account-type-header">
-                    <td colspan="6">ASSETS</td>
+                    <td colspan="5">{{ section.label }}</td>
+                    <td class="text-end">
+                        {% if section.type == 'asset' %}
+                        <a href="{% url 'hospital:journal_entry_create' %}?account_type=asset"
+                           class="btn btn-sm btn-light"
+                           onclick="event.stopPropagation();">
+                            <i class="bi bi-journal-plus"></i> Add Asset Entry
+                        </a>
+                        {% endif %}
+                    </td>
                 </tr>
-                {% for account in accounts %}
-                    {% if account.account_type == 'asset' %}
-                    <tr class="account-row" onclick="toggleDetails('{{ account.account_code }}')">
-                        <td>
-                            <span class="expand-icon">▶</span>
+                {% for account in section.accounts %}
+                <tr class="account-row" onclick="toggleDetails('{{ account.account_code }}')">
+                    <td><span class="expand-icon">▶</span>
+                        <a href="{% url 'hospital:accountant_account_detail' account.id %}?end_date={{ as_of_date|date:'Y-m-d' }}"
+                           onclick="event.stopPropagation();">
                             {{ account.account_code }}
-                        </td>
-                        <td><strong>{{ account.account_name }}</strong></td>
-                        <td><span class="badge bg-primary">{{ account.account_type|title }}</span></td>
-                        <td class="text-end">
-                            {% if account.balance >= 0 %}
-                                <strong>GHS {{ account.balance|floatformat:2|intcomma }}</strong>
-                            {% else %}
-                                -
-                            {% endif %}
-                        </td>
-                        <td class="text-end">
-                            {% if account.balance < 0 %}
-                                <strong>GHS {{ account.balance|floatformat:2|intcomma|slice:"1:" }}</strong>
-                            {% else %}
-                                -
-                            {% endif %}
-                        </td>
-                        <td class="text-muted small">
-                            {% if account.entry_count is not None %}
-                                {{ account.entry_count }} entries
-                            {% else %}
-                                0 entries
-                            {% endif %}
-                        </td>
-                    </tr>
-                    <!-- Detailed Entries -->
-                    <tr class="account-details" id="details-{{ account.account_code }}">
-                        <td colspan="6">
-                            <div class="p-3">
-                                <h6 class="mb-3">Transaction Details for {{ account.account_code }} - {{ account.account_name }}</h6>
-                                <div class="table-responsive">
-                                    <table class="table table-sm table-bordered">
-                                        <thead class="table-light">
-                                            <tr>
-                                                <th>Date</th>
-                                                <th>Entry #</th>
-                                                <th>Description</th>
-                                                <th>Reference</th>
-                                                <th class="text-end">Debit</th>
-                                                <th class="text-end">Credit</th>
-                                                <th>Source</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {% if account.entries %}
-                                            {% for entry in account.entries %}
-                                            <tr>
-                                                <td>{{ entry.date|date:"M d, Y" }}</td>
-                                                <td><small class="text-muted">{{ entry.entry_number }}</small></td>
-                                                <td>{{ entry.description|truncatechars:50 }}</td>
-                                                <td>
-                                                    {% if entry.reference_number %}
-                                                        <small>{{ entry.reference_number }}</small>
-                                                    {% else %}
-                                                        <span class="text-muted">-</span>
-                                                    {% endif %}
-                                                </td>
-                                                <td class="text-end">
-                                                    {% if entry.debit > 0 %}
-                                                        <strong>GHS {{ entry.debit|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <span class="text-muted">-</span>
-                                                    {% endif %}
-                                                </td>
-                                                <td class="text-end">
-                                                    {% if entry.credit > 0 %}
-                                                        <strong>GHS {{ entry.credit|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <span class="text-muted">-</span>
-                                                    {% endif %}
-                                                </td>
-                                                <td>
-                                                    <span class="entry-source">{{ entry.source }}</span>
-                                                </td>
-                                            </tr>
-                                            {% empty %}
-                                            <tr>
-                                                <td colspan="7" class="text-center text-muted">No entries found</td>
-                                            </tr>
-                                            {% endfor %}
-                                            {% else %}
-                                            <tr>
-                                                <td colspan="7" class="text-center text-muted">No entries found</td>
-                                            </tr>
-                                            {% endif %}
-                                        </tbody>
-                                        <tfoot class="table-light">
-                                            <tr>
-                                                <td colspan="4" class="text-end"><strong>Totals:</strong></td>
-                                                <td class="text-end">
-                                                    {% if account.total_debits is not None %}
-                                                        <strong>GHS {{ account.total_debits|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <strong>GHS 0.00</strong>
-                                                    {% endif %}
-                                                </td>
-                                                <td class="text-end">
-                                                    {% if account.total_credits is not None %}
-                                                        <strong>GHS {{ account.total_credits|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <strong>GHS 0.00</strong>
-                                                    {% endif %}
-                                                </td>
-                                                <td></td>
-                                            </tr>
-                                        </tfoot>
-                                    </table>
-                                </div>
-                            </div>
-                        </td>
-                    </tr>
-                    {% endif %}
-                {% endfor %}
-                
-                <!-- Liabilities -->
-                <tr class="account-type-header">
-                    <td colspan="6">LIABILITIES</td>
+                        </a>
+                    </td>
+                    <td>
+                        <a href="{% url 'hospital:accountant_account_detail' account.id %}?end_date={{ as_of_date|date:'Y-m-d' }}"
+                           onclick="event.stopPropagation();">
+                            <strong>{{ account.account_name }}</strong>
+                        </a>
+                    </td>
+                    <td><span class="badge bg-{{ section.badge }}">{{ account.account_type|title }}</span></td>
+                    <td class="text-end">
+                        {% if account.tb_debit > 0 %}
+                            <strong>GHS {{ account.tb_debit|floatformat:2|intcomma }}</strong>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td class="text-end">
+                        {% if account.tb_credit > 0 %}
+                            <strong>GHS {{ account.tb_credit|floatformat:2|intcomma }}</strong>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td class="text-muted small" onclick="event.stopPropagation();">
+                        <a href="{% url 'hospital:accountant_account_detail' account.id %}?end_date={{ as_of_date|date:'Y-m-d' }}"
+                           class="btn btn-sm btn-outline-secondary py-0 px-1 me-1" title="View account">
+                            <i class="bi bi-eye"></i>
+                        </a>
+                        <a href="{% url 'hospital:journal_entry_create' %}?account_id={{ account.id }}"
+                           class="btn btn-sm btn-outline-primary py-0 px-1 me-1" title="Add entry">
+                            <i class="bi bi-plus"></i>
+                        </a>
+                        {{ account.entry_count }} entries
+                    </td>
                 </tr>
-                {% for account in accounts %}
-                    {% if account.account_type == 'liability' %}
-                    <tr class="account-row" onclick="toggleDetails('{{ account.account_code }}')">
-                        <td>
-                            <span class="expand-icon">▶</span>
-                            {{ account.account_code }}
-                        </td>
-                        <td><strong>{{ account.account_name }}</strong></td>
-                        <td><span class="badge bg-danger">{{ account.account_type|title }}</span></td>
-                        <td class="text-end">
-                            {% if account.balance < 0 %}
-                                <strong>GHS {{ account.balance|floatformat:2|intcomma|slice:"1:" }}</strong>
-                            {% else %}
-                                -
-                            {% endif %}
-                        </td>
-                        <td class="text-end">
-                            {% if account.balance >= 0 %}
-                                <strong>GHS {{ account.balance|floatformat:2|intcomma }}</strong>
-                            {% else %}
-                                -
-                            {% endif %}
-                        </td>
-                        <td class="text-muted small">
-                            {% if account.entry_count is not None %}
-                                {{ account.entry_count }} entries
-                            {% else %}
-                                0 entries
-                            {% endif %}
-                        </td>
-                    </tr>
-                    <!-- Detailed Entries -->
-                    <tr class="account-details" id="details-{{ account.account_code }}">
-                        <td colspan="6">
-                            <div class="p-3">
-                                <h6 class="mb-3">Transaction Details for {{ account.account_code }} - {{ account.account_name }}</h6>
-                                <div class="table-responsive">
-                                    <table class="table table-sm table-bordered">
-                                        <thead class="table-light">
-                                            <tr>
-                                                <th>Date</th>
-                                                <th>Entry #</th>
-                                                <th>Description</th>
-                                                <th>Reference</th>
-                                                <th class="text-end">Debit</th>
-                                                <th class="text-end">Credit</th>
-                                                <th>Source</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {% if account.entries %}
-                                            {% for entry in account.entries %}
-                                            <tr>
-                                                <td>{{ entry.date|date:"M d, Y" }}</td>
-                                                <td><small class="text-muted">{{ entry.entry_number }}</small></td>
-                                                <td>{{ entry.description|truncatechars:50 }}</td>
-                                                <td>
-                                                    {% if entry.reference_number %}
-                                                        <small>{{ entry.reference_number }}</small>
-                                                    {% else %}
-                                                        <span class="text-muted">-</span>
-                                                    {% endif %}
-                                                </td>
-                                                <td class="text-end">
-                                                    {% if entry.debit > 0 %}
-                                                        <strong>GHS {{ entry.debit|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <span class="text-muted">-</span>
-                                                    {% endif %}
-                                                </td>
-                                                <td class="text-end">
-                                                    {% if entry.credit > 0 %}
-                                                        <strong>GHS {{ entry.credit|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <span class="text-muted">-</span>
-                                                    {% endif %}
-                                                </td>
-                                                <td>
-                                                    <span class="entry-source">{{ entry.source }}</span>
-                                                </td>
-                                            </tr>
-                                            {% empty %}
-                                            <tr>
-                                                <td colspan="7" class="text-center text-muted">No entries found</td>
-                                            </tr>
-                                            {% endfor %}
-                                            {% else %}
-                                            <tr>
-                                                <td colspan="7" class="text-center text-muted">No entries found</td>
-                                            </tr>
-                                            {% endif %}
-                                        </tbody>
-                                        <tfoot class="table-light">
-                                            <tr>
-                                                <td colspan="4" class="text-end"><strong>Totals:</strong></td>
-                                                <td class="text-end">
-                                                    {% if account.total_debits is not None %}
-                                                        <strong>GHS {{ account.total_debits|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <strong>GHS 0.00</strong>
-                                                    {% endif %}
-                                                </td>
-                                                <td class="text-end">
-                                                    {% if account.total_credits is not None %}
-                                                        <strong>GHS {{ account.total_credits|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <strong>GHS 0.00</strong>
-                                                    {% endif %}
-                                                </td>
-                                                <td></td>
-                                            </tr>
-                                        </tfoot>
-                                    </table>
-                                </div>
+                <tr class="account-details" id="details-{{ account.account_code }}">
+                    <td colspan="6">
+                        <div class="p-3">
+                            <h6 class="mb-3">Transactions — {{ account.account_code }} {{ account.account_name }}</h6>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-bordered">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Date</th>
+                                            <th>Entry #</th>
+                                            <th>Description</th>
+                                            <th>Reference</th>
+                                            <th class="text-end">Debit</th>
+                                            <th class="text-end">Credit</th>
+                                            <th>Source</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for entry in account.entries %}
+                                        <tr>
+                                            <td>{{ entry.date|date:"M d, Y" }}</td>
+                                            <td>
+                                                {% if entry.journal_entry_id %}
+                                                <a href="{% url 'hospital:journal_entry_detail' entry.journal_entry_id %}">
+                                                    <small>{{ entry.entry_number }}</small>
+                                                </a>
+                                                {% else %}
+                                                <small class="text-muted">{{ entry.entry_number }}</small>
+                                                {% endif %}
+                                            </td>
+                                            <td>{{ entry.description|truncatechars:50 }}</td>
+                                            <td>
+                                                {% if entry.reference_number %}
+                                                    <small>{{ entry.reference_number }}</small>
+                                                {% else %}<span class="text-muted">—</span>{% endif %}
+                                            </td>
+                                            <td class="text-end">
+                                                {% if entry.debit > 0 %}
+                                                    <strong>GHS {{ entry.debit|floatformat:2|intcomma }}</strong>
+                                                {% else %}<span class="text-muted">—</span>{% endif %}
+                                            </td>
+                                            <td class="text-end">
+                                                {% if entry.credit > 0 %}
+                                                    <strong>GHS {{ entry.credit|floatformat:2|intcomma }}</strong>
+                                                {% else %}<span class="text-muted">—</span>{% endif %}
+                                            </td>
+                                            <td><span class="entry-source">{{ entry.source }}</span></td>
+                                        </tr>
+                                        {% empty %}
+                                        <tr><td colspan="7" class="text-center text-muted">No entries found</td></tr>
+                                        {% endfor %}
+                                    </tbody>
+                                    <tfoot class="table-light">
+                                        <tr>
+                                            <td colspan="4" class="text-end"><strong>Totals:</strong></td>
+                                            <td class="text-end"><strong>GHS {{ account.total_debits|floatformat:2|intcomma }}</strong></td>
+                                            <td class="text-end"><strong>GHS {{ account.total_credits|floatformat:2|intcomma }}</strong></td>
+                                            <td></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
                             </div>
-                        </td>
-                    </tr>
-                    {% endif %}
-                {% endfor %}
-                
-                <!-- Equity -->
-                <tr class="account-type-header">
-                    <td colspan="6">EQUITY</td>
+                        </div>
+                    </td>
                 </tr>
-                {% for account in accounts %}
-                    {% if account.account_type == 'equity' %}
-                    <tr class="account-row" onclick="toggleDetails('{{ account.account_code }}')">
-                        <td>
-                            <span class="expand-icon">▶</span>
-                            {{ account.account_code }}
-                        </td>
-                        <td><strong>{{ account.account_name }}</strong></td>
-                        <td><span class="badge bg-success">{{ account.account_type|title }}</span></td>
-                        <td class="text-end">
-                            {% if account.balance < 0 %}
-                                <strong>GHS {{ account.balance|floatformat:2|intcomma|slice:"1:" }}</strong>
-                            {% else %}
-                                -
-                            {% endif %}
-                        </td>
-                        <td class="text-end">
-                            {% if account.balance >= 0 %}
-                                <strong>GHS {{ account.balance|floatformat:2|intcomma }}</strong>
-                            {% else %}
-                                -
-                            {% endif %}
-                        </td>
-                        <td class="text-muted small">
-                            {% if account.entry_count is not None %}
-                                {{ account.entry_count }} entries
-                            {% else %}
-                                0 entries
-                            {% endif %}
-                        </td>
-                    </tr>
-                    <!-- Detailed Entries -->
-                    <tr class="account-details" id="details-{{ account.account_code }}">
-                        <td colspan="6">
-                            <div class="p-3">
-                                <h6 class="mb-3">Transaction Details for {{ account.account_code }} - {{ account.account_name }}</h6>
-                                <div class="table-responsive">
-                                    <table class="table table-sm table-bordered">
-                                        <thead class="table-light">
-                                            <tr>
-                                                <th>Date</th>
-                                                <th>Entry #</th>
-                                                <th>Description</th>
-                                                <th>Reference</th>
-                                                <th class="text-end">Debit</th>
-                                                <th class="text-end">Credit</th>
-                                                <th>Source</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {% if account.entries %}
-                                            {% for entry in account.entries %}
-                                            <tr>
-                                                <td>{{ entry.date|date:"M d, Y" }}</td>
-                                                <td><small class="text-muted">{{ entry.entry_number }}</small></td>
-                                                <td>{{ entry.description|truncatechars:50 }}</td>
-                                                <td>
-                                                    {% if entry.reference_number %}
-                                                        <small>{{ entry.reference_number }}</small>
-                                                    {% else %}
-                                                        <span class="text-muted">-</span>
-                                                    {% endif %}
-                                                </td>
-                                                <td class="text-end">
-                                                    {% if entry.debit > 0 %}
-                                                        <strong>GHS {{ entry.debit|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <span class="text-muted">-</span>
-                                                    {% endif %}
-                                                </td>
-                                                <td class="text-end">
-                                                    {% if entry.credit > 0 %}
-                                                        <strong>GHS {{ entry.credit|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <span class="text-muted">-</span>
-                                                    {% endif %}
-                                                </td>
-                                                <td>
-                                                    <span class="entry-source">{{ entry.source }}</span>
-                                                </td>
-                                            </tr>
-                                            {% empty %}
-                                            <tr>
-                                                <td colspan="7" class="text-center text-muted">No entries found</td>
-                                            </tr>
-                                            {% endfor %}
-                                            {% else %}
-                                            <tr>
-                                                <td colspan="7" class="text-center text-muted">No entries found</td>
-                                            </tr>
-                                            {% endif %}
-                                        </tbody>
-                                        <tfoot class="table-light">
-                                            <tr>
-                                                <td colspan="4" class="text-end"><strong>Totals:</strong></td>
-                                                <td class="text-end">
-                                                    {% if account.total_debits is not None %}
-                                                        <strong>GHS {{ account.total_debits|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <strong>GHS 0.00</strong>
-                                                    {% endif %}
-                                                </td>
-                                                <td class="text-end">
-                                                    {% if account.total_credits is not None %}
-                                                        <strong>GHS {{ account.total_credits|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <strong>GHS 0.00</strong>
-                                                    {% endif %}
-                                                </td>
-                                                <td></td>
-                                            </tr>
-                                        </tfoot>
-                                    </table>
-                                </div>
-                            </div>
-                        </td>
-                    </tr>
-                    {% endif %}
-                {% endfor %}
-                
-                <!-- Revenue -->
-                <tr class="account-type-header">
-                    <td colspan="6">REVENUE</td>
+                {% empty %}
+                {% if section.type == 'asset' %}
+                <tr>
+                    <td colspan="6" class="text-muted small py-3 ps-4">
+                        No asset activity yet. Cash receipts (1010–1040) appear after payment posting.
+                        <a href="{% url 'hospital:accountant_chart_of_accounts' %}?type=asset">Browse asset accounts</a>
+                        or <a href="{% url 'hospital:journal_entry_create' %}?account_type=asset">add an asset entry</a>.
+                        Sync closing stock above to post inventory to account 1400.
+                    </td>
                 </tr>
-                {% for account in accounts %}
-                    {% if account.account_type == 'revenue' %}
-                    <tr class="account-row" onclick="toggleDetails('{{ account.account_code }}')">
-                        <td>
-                            <span class="expand-icon">▶</span>
-                            {{ account.account_code }}
-                        </td>
-                        <td><strong>{{ account.account_name }}</strong></td>
-                        <td><span class="badge bg-info">{{ account.account_type|title }}</span></td>
-                        <td class="text-end">
-                            {% if account.balance < 0 %}
-                                <strong>GHS {{ account.balance|floatformat:2|intcomma|slice:"1:" }}</strong>
-                            {% else %}
-                                -
-                            {% endif %}
-                        </td>
-                        <td class="text-end">
-                            {% if account.balance >= 0 %}
-                                <strong>GHS {{ account.balance|floatformat:2|intcomma }}</strong>
-                            {% else %}
-                                -
-                            {% endif %}
-                        </td>
-                        <td class="text-muted small">
-                            {% if account.entry_count is not None %}
-                                {{ account.entry_count }} entries
-                            {% else %}
-                                0 entries
-                            {% endif %}
-                        </td>
-                    </tr>
-                    <!-- Detailed Entries -->
-                    <tr class="account-details" id="details-{{ account.account_code }}">
-                        <td colspan="6">
-                            <div class="p-3">
-                                <h6 class="mb-3">Transaction Details for {{ account.account_code }} - {{ account.account_name }}</h6>
-                                <div class="table-responsive">
-                                    <table class="table table-sm table-bordered">
-                                        <thead class="table-light">
-                                            <tr>
-                                                <th>Date</th>
-                                                <th>Entry #</th>
-                                                <th>Description</th>
-                                                <th>Reference</th>
-                                                <th class="text-end">Debit</th>
-                                                <th class="text-end">Credit</th>
-                                                <th>Source</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {% if account.entries %}
-                                            {% for entry in account.entries %}
-                                            <tr>
-                                                <td>{{ entry.date|date:"M d, Y" }}</td>
-                                                <td><small class="text-muted">{{ entry.entry_number }}</small></td>
-                                                <td>{{ entry.description|truncatechars:50 }}</td>
-                                                <td>
-                                                    {% if entry.reference_number %}
-                                                        <small>{{ entry.reference_number }}</small>
-                                                    {% else %}
-                                                        <span class="text-muted">-</span>
-                                                    {% endif %}
-                                                </td>
-                                                <td class="text-end">
-                                                    {% if entry.debit > 0 %}
-                                                        <strong>GHS {{ entry.debit|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <span class="text-muted">-</span>
-                                                    {% endif %}
-                                                </td>
-                                                <td class="text-end">
-                                                    {% if entry.credit > 0 %}
-                                                        <strong>GHS {{ entry.credit|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <span class="text-muted">-</span>
-                                                    {% endif %}
-                                                </td>
-                                                <td>
-                                                    <span class="entry-source">{{ entry.source }}</span>
-                                                </td>
-                                            </tr>
-                                            {% empty %}
-                                            <tr>
-                                                <td colspan="7" class="text-center text-muted">No entries found</td>
-                                            </tr>
-                                            {% endfor %}
-                                            {% else %}
-                                            <tr>
-                                                <td colspan="7" class="text-center text-muted">No entries found</td>
-                                            </tr>
-                                            {% endif %}
-                                        </tbody>
-                                        <tfoot class="table-light">
-                                            <tr>
-                                                <td colspan="4" class="text-end"><strong>Totals:</strong></td>
-                                                <td class="text-end">
-                                                    {% if account.total_debits is not None %}
-                                                        <strong>GHS {{ account.total_debits|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <strong>GHS 0.00</strong>
-                                                    {% endif %}
-                                                </td>
-                                                <td class="text-end">
-                                                    {% if account.total_credits is not None %}
-                                                        <strong>GHS {{ account.total_credits|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <strong>GHS 0.00</strong>
-                                                    {% endif %}
-                                                </td>
-                                                <td></td>
-                                            </tr>
-                                        </tfoot>
-                                    </table>
-                                </div>
-                            </div>
-                        </td>
-                    </tr>
-                    {% endif %}
+                {% endif %}
                 {% endfor %}
-                
-                <!-- Expenses -->
-                <tr class="account-type-header">
-                    <td colspan="6">EXPENSES</td>
+                {% if section.accounts %}
+                <tr class="section-subtotal">
+                    <td colspan="3" class="text-end">{{ section.label }} subtotal</td>
+                    <td class="text-end">GHS {{ section.totals.debit|floatformat:2|intcomma }}</td>
+                    <td class="text-end">GHS {{ section.totals.credit|floatformat:2|intcomma }}</td>
+                    <td></td>
                 </tr>
-                {% for account in accounts %}
-                    {% if account.account_type == 'expense' %}
-                    <tr class="account-row" onclick="toggleDetails('{{ account.account_code }}')">
-                        <td>
-                            <span class="expand-icon">▶</span>
-                            {{ account.account_code }}
-                        </td>
-                        <td><strong>{{ account.account_name }}</strong></td>
-                        <td><span class="badge bg-warning">{{ account.account_type|title }}</span></td>
-                        <td class="text-end">
-                            {% if account.balance >= 0 %}
-                                <strong>GHS {{ account.balance|floatformat:2|intcomma }}</strong>
-                            {% else %}
-                                -
-                            {% endif %}
-                        </td>
-                        <td class="text-end">
-                            {% if account.balance < 0 %}
-                                <strong>GHS {{ account.balance|floatformat:2|intcomma|slice:"1:" }}</strong>
-                            {% else %}
-                                -
-                            {% endif %}
-                        </td>
-                        <td class="text-muted small">
-                            {% if account.entry_count is not None %}
-                                {{ account.entry_count }} entries
-                            {% else %}
-                                0 entries
-                            {% endif %}
-                        </td>
-                    </tr>
-                    <!-- Detailed Entries -->
-                    <tr class="account-details" id="details-{{ account.account_code }}">
-                        <td colspan="6">
-                            <div class="p-3">
-                                <h6 class="mb-3">Transaction Details for {{ account.account_code }} - {{ account.account_name }}</h6>
-                                <div class="table-responsive">
-                                    <table class="table table-sm table-bordered">
-                                        <thead class="table-light">
-                                            <tr>
-                                                <th>Date</th>
-                                                <th>Entry #</th>
-                                                <th>Description</th>
-                                                <th>Reference</th>
-                                                <th class="text-end">Debit</th>
-                                                <th class="text-end">Credit</th>
-                                                <th>Source</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {% if account.entries %}
-                                            {% for entry in account.entries %}
-                                            <tr>
-                                                <td>{{ entry.date|date:"M d, Y" }}</td>
-                                                <td><small class="text-muted">{{ entry.entry_number }}</small></td>
-                                                <td>{{ entry.description|truncatechars:50 }}</td>
-                                                <td>
-                                                    {% if entry.reference_number %}
-                                                        <small>{{ entry.reference_number }}</small>
-                                                    {% else %}
-                                                        <span class="text-muted">-</span>
-                                                    {% endif %}
-                                                </td>
-                                                <td class="text-end">
-                                                    {% if entry.debit > 0 %}
-                                                        <strong>GHS {{ entry.debit|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <span class="text-muted">-</span>
-                                                    {% endif %}
-                                                </td>
-                                                <td class="text-end">
-                                                    {% if entry.credit > 0 %}
-                                                        <strong>GHS {{ entry.credit|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <span class="text-muted">-</span>
-                                                    {% endif %}
-                                                </td>
-                                                <td>
-                                                    <span class="entry-source">{{ entry.source }}</span>
-                                                </td>
-                                            </tr>
-                                            {% empty %}
-                                            <tr>
-                                                <td colspan="7" class="text-center text-muted">No entries found</td>
-                                            </tr>
-                                            {% endfor %}
-                                            {% else %}
-                                            <tr>
-                                                <td colspan="7" class="text-center text-muted">No entries found</td>
-                                            </tr>
-                                            {% endif %}
-                                        </tbody>
-                                        <tfoot class="table-light">
-                                            <tr>
-                                                <td colspan="4" class="text-end"><strong>Totals:</strong></td>
-                                                <td class="text-end">
-                                                    {% if account.total_debits is not None %}
-                                                        <strong>GHS {{ account.total_debits|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <strong>GHS 0.00</strong>
-                                                    {% endif %}
-                                                </td>
-                                                <td class="text-end">
-                                                    {% if account.total_credits is not None %}
-                                                        <strong>GHS {{ account.total_credits|floatformat:2|intcomma }}</strong>
-                                                    {% else %}
-                                                        <strong>GHS 0.00</strong>
-                                                    {% endif %}
-                                                </td>
-                                                <td></td>
-                                            </tr>
-                                        </tfoot>
-                                    </table>
-                                </div>
-                            </div>
-                        </td>
-                    </tr>
-                    {% endif %}
+                {% endif %}
                 {% endfor %}
-                
+
                 {% if not accounts %}
                 <tr>
-                    <td colspan="6" class="text-center py-5 text-muted">
-                        No accounts found.
-                    </td>
+                    <td colspan="6" class="text-center py-5 text-muted">No accounts with activity found.</td>
                 </tr>
                 {% endif %}
             </tbody>
@@ -769,53 +316,36 @@
             </tfoot>
         </table>
     </div>
-    
-    <!-- Balance Check -->
+
     <div class="balance-check">
         <div class="row">
-            <div class="col-md-4">
-                <div class="text-center">
-                    <h6 class="text-muted">Total Debits</h6>
-                    <h3 class="text-primary">GHS {{ total_debits|floatformat:2|intcomma }}</h3>
-                </div>
+            <div class="col-md-4 text-center">
+                <h6 class="text-muted">Total Debits</h6>
+                <h3 class="text-primary">GHS {{ total_debits|floatformat:2|intcomma }}</h3>
             </div>
-            <div class="col-md-4">
-                <div class="text-center">
-                    <h6 class="text-muted">Total Credits</h6>
-                    <h3 class="text-success">GHS {{ total_credits|floatformat:2|intcomma }}</h3>
-                </div>
+            <div class="col-md-4 text-center">
+                <h6 class="text-muted">Total Credits</h6>
+                <h3 class="text-success">GHS {{ total_credits|floatformat:2|intcomma }}</h3>
             </div>
-            <div class="col-md-4">
-                <div class="text-center">
-                    <h6 class="text-muted">Difference</h6>
-                    <h3 class="{% if balance_difference == 0 %}text-success{% else %}text-danger{% endif %}">
-                        {% if balance_difference >= 0 %}
-                            GHS {{ balance_difference|floatformat:2|intcomma }}
-                        {% else %}
-                            GHS {{ balance_difference|floatformat:2|intcomma|slice:"1:" }}
-                        {% endif %}
-                    </h3>
-                    {% if balance_difference == 0 %}
-                    <p class="text-success mb-0">
-                        <i class="bi bi-check-circle"></i> Books are balanced!
-                    </p>
-                    {% else %}
-                    <p class="text-danger mb-0">
-                        <i class="bi bi-exclamation-triangle"></i> Out of balance
-                    </p>
-                    {% endif %}
-                </div>
+            <div class="col-md-4 text-center">
+                <h6 class="text-muted">Difference</h6>
+                <h3 class="{% if is_balanced %}text-success{% else %}text-danger{% endif %}">
+                    GHS {{ balance_difference|floatformat:2|intcomma }}
+                </h3>
+                {% if is_balanced %}
+                <p class="text-success mb-0"><i class="bi bi-check-circle"></i> Books are balanced!</p>
+                {% else %}
+                <p class="text-danger mb-0"><i class="bi bi-exclamation-triangle"></i> Out of balance</p>
+                {% endif %}
             </div>
         </div>
     </div>
-    
 </div>
 
 <script>
 function toggleDetails(accountCode) {
     const detailsRow = document.getElementById('details-' + accountCode);
     const accountRow = detailsRow.previousElementSibling;
-    
     if (detailsRow.classList.contains('show')) {
         detailsRow.classList.remove('show');
         accountRow.classList.remove('expanded');

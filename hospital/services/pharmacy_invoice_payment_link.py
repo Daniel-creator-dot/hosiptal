@@ -343,7 +343,7 @@ def waive_invoice_lines_for_prescribe_sale(sale, waived_by_user=None, reason='Pr
     When pharmacy/cashier waives a prescribe sale, waive matching invoice lines
     (description contains ``(Sale <sale_number>)``) so the invoice total drops.
     """
-    from ..models import Invoice, InvoiceLine
+    from ..models import InvoiceLine
 
     if not sale or not getattr(sale, 'sale_number', None):
         return 0
@@ -359,14 +359,73 @@ def waive_invoice_lines_for_prescribe_sale(sale, waived_by_user=None, reason='Pr
     if getattr(sale, 'patient_id', None):
         qs = qs.filter(invoice__patient_id=sale.patient_id)
 
+    return _waive_invoice_lines_matching(
+        qs,
+        lambda line: needle_lower in (line.description or '').lower(),
+        waived_by_user,
+        reason,
+    )
+
+
+def _invoice_line_matches_prescribe_sale_item(line, item):
+    """True when line description matches a specific prescribe sale item."""
+    sale = getattr(item, 'sale', None)
+    if not sale or not getattr(sale, 'sale_number', None):
+        return False
+    sn = str(sale.sale_number).strip()
+    if not sn:
+        return False
+    desc_l = (line.description or '').lower()
+    if f'(sale {sn.lower()})' not in desc_l:
+        return False
+    drug = getattr(item, 'drug', None)
+    if drug and getattr(drug, 'name', None):
+        name_l = drug.name.lower()
+        if name_l not in desc_l:
+            strength = (getattr(drug, 'strength', None) or '').strip().lower()
+            if strength and f'{name_l} {strength}' in desc_l:
+                return True
+            return False
+    return True
+
+
+def waive_invoice_lines_for_prescribe_sale_item(item, waived_by_user=None, reason='Prescribe sale line waived'):
+    """
+    Waive invoice line(s) matching one WalkInPharmacySaleItem (sale number + drug in description).
+    """
+    from ..models import InvoiceLine
+
+    sale = getattr(item, 'sale', None)
+    if not item or not sale or not getattr(sale, 'sale_number', None):
+        return 0
+    sn = str(sale.sale_number).strip()
+    if not sn:
+        return 0
+    qs = InvoiceLine.objects.filter(
+        description__icontains=sn,
+        is_deleted=False,
+        waived_at__isnull=True,
+    ).select_related('invoice')
+    if getattr(sale, 'patient_id', None):
+        qs = qs.filter(invoice__patient_id=sale.patient_id)
+
+    return _waive_invoice_lines_matching(
+        qs,
+        lambda line: _invoice_line_matches_prescribe_sale_item(line, item),
+        waived_by_user,
+        reason,
+    )
+
+
+def _waive_invoice_lines_matching(qs, match_fn, waived_by_user, reason):
+    from ..models import Invoice
+
     invoice_ids = set()
     updated = 0
     now = timezone.now()
     reason_text = (reason or '')[:255]
     for line in qs:
-        desc = (line.description or '')
-        desc_l = desc.lower()
-        if needle_lower not in desc_l:
+        if not match_fn(line):
             continue
         line.waived_at = now
         line.waived_by = waived_by_user

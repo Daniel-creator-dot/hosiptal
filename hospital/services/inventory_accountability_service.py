@@ -83,6 +83,20 @@ class InventoryAccountabilityService:
             f"✅ Received {quantity} units of {inventory_item.item_name} "
             f"from supplier. Transaction: {inv_transaction.transaction_number}"
         )
+
+        try:
+            from hospital.services.inventory_account_mapping import resolve_inventory_category_from_item
+            from hospital.services.inventory_gl_service import post_inventory_receipt_gl
+            category_key = resolve_inventory_category_from_item(inventory_item)
+            post_inventory_receipt_gl(
+                category_key=category_key,
+                amount=quantity * unit_cost,
+                reference=f'STOCK-RCV-ITEM-{inv_transaction.pk}',
+                description=f'Store receipt: {inventory_item.item_name} qty {quantity}',
+                user=getattr(staff, 'user', None),
+            )
+        except Exception as gl_exc:
+            logger.warning('Inventory receipt GL (store item): %s', gl_exc)
         
         return inv_transaction
     
@@ -146,6 +160,20 @@ class InventoryAccountabilityService:
             f"✅ Issued {quantity} units of {inventory_item.item_name} "
             f"to {department_name}. Transaction: {inv_transaction.transaction_number}"
         )
+
+        try:
+            from hospital.services.inventory_account_mapping import resolve_inventory_category_from_item
+            from hospital.services.inventory_gl_service import post_inventory_cogs_gl
+            category_key = resolve_inventory_category_from_item(inventory_item)
+            post_inventory_cogs_gl(
+                category_key=category_key,
+                amount=total_value,
+                reference=f'COGS-ISSUE-{inv_transaction.pk}',
+                description=f'Store issue COGS: {inventory_item.item_name} ×{quantity}',
+                user=getattr(staff, 'user', None),
+            )
+        except Exception as gl_exc:
+            logger.warning('Inventory COGS GL (store issue): %s', gl_exc)
         
         return inv_transaction
     

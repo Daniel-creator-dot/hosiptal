@@ -4,6 +4,20 @@
 
 {% block title %}Insurance Claim Items{% endblock %}
 
+{% block extra_css %}
+<style>
+    .claim-patient-header {
+        cursor: pointer;
+        background: linear-gradient(90deg, #eef2ff 0%, #f8fafc 100%);
+        border-left: 4px solid #667eea;
+    }
+    .claim-patient-header:hover { background: #e0e7ff; }
+    .claim-visit-header { cursor: pointer; background: #f8fafc; border-left: 4px solid #cbd5e1; }
+    .claim-visit-header:hover { background: #f1f5f9; }
+    .claim-line-row td { font-size: 0.875rem; }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
@@ -12,39 +26,45 @@
             <i class="bi bi-arrow-left me-2"></i>Back to Dashboard
         </a>
     </div>
-    
-    <!-- Filters -->
+
     <div class="card mb-4">
         <div class="card-body">
-            <form method="get" class="row g-3">
+            <form method="get" class="row g-3 align-items-end">
                 <div class="col-md-3">
-                    <input type="text" name="q" class="form-control" placeholder="Search..." value="{{ query }}" title="Enter text" placeholder="Enter text">
+                    <label class="form-label small fw-semibold">Search</label>
+                    <input type="text" name="q" class="form-control" placeholder="Patient name, MRN, insurance ID…" value="{{ query }}">
+                    <div class="form-text">Shows all bills for a matching patient under one row — expand for each invoice.</div>
                 </div>
                 <div class="col-md-2">
-                    <select name="status" class="form-select" title="Select option" aria-label="Select option">
+                    <label class="form-label small fw-semibold">Status</label>
+                    <select name="status" class="form-select">
                         <option value="">All Statuses</option>
-                        <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
+                        <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending submission</option>
                         <option value="submitted" {% if status_filter == 'submitted' %}selected{% endif %}>Submitted</option>
+                        <option value="processing" {% if status_filter == 'processing' %}selected{% endif %}>Processing</option>
                         <option value="approved" {% if status_filter == 'approved' %}selected{% endif %}>Approved</option>
-                        <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid</option>
+                        <option value="partially_paid" {% if status_filter == 'partially_paid' %}selected{% endif %}>Partially paid</option>
+                        <option value="paid" {% if status_filter == 'paid' %}selected{% endif %}>Paid in full</option>
                         <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rejected</option>
+                        <option value="reversed" {% if status_filter == 'reversed' %}selected{% endif %}>Reversed</option>
                     </select>
                 </div>
                 <div class="col-md-2">
-                    <select name="payer" class="form-select" title="Select option" aria-label="Select option">
+                    <label class="form-label small fw-semibold">Payer</label>
+                    <select name="payer" class="form-select">
                         <option value="">All Payers</option>
                         {% for payer in payers %}
-                        <option value="{{ payer.id }}" {% if payer_filter == payer.id|stringformat:"s" %}selected{% endif %}>
-                            {{ payer.name }}
-                        </option>
+                        <option value="{{ payer.id }}" {% if payer_filter == payer.id|stringformat:"s" %}selected{% endif %}>{{ payer.name }}</option>
                         {% endfor %}
                     </select>
                 </div>
                 <div class="col-md-2">
-                    <input type="date" name="date_from" class="form-control" value="{{ date_from }}" placeholder="From Date">
+                    <label class="form-label small fw-semibold">From</label>
+                    <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
                 </div>
                 <div class="col-md-2">
-                    <input type="date" name="date_to" class="form-control" value="{{ date_to }}" placeholder="To Date">
+                    <label class="form-label small fw-semibold">To</label>
+                    <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
                 </div>
                 <div class="col-md-1">
                     <button type="submit" class="btn btn-primary w-100"><i class="bi bi-search"></i></button>
@@ -52,109 +72,41 @@
             </form>
         </div>
     </div>
-    
-    <!-- Statistics -->
+
     {% if stats %}
     <div class="row mb-4">
         <div class="col-md-3">
-            <div class="card">
-                <div class="card-body text-center">
-                    <h5 class="text-muted">Total Items</h5>
-                    <h3>{{ stats.total_items|intcomma }}</h3>
-                </div>
-            </div>
+            <div class="card"><div class="card-body text-center"><h5 class="text-muted">Total Items</h5><h3>{{ stats.total_items|intcomma }}</h3></div></div>
         </div>
         <div class="col-md-3">
-            <div class="card">
-                <div class="card-body text-center">
-                    <h5 class="text-muted">Total Billed</h5>
-                    <h3>GH₵ {{ stats.total_billed|floatformat:2|intcomma }}</h3>
-                </div>
-            </div>
+            <div class="card"><div class="card-body text-center"><h5 class="text-muted">Total Billed</h5><h3>GH₵ {{ stats.total_billed|floatformat:2|intcomma }}</h3></div></div>
         </div>
         <div class="col-md-3">
-            <div class="card">
-                <div class="card-body text-center">
-                    <h5 class="text-muted">Total Paid</h5>
-                    <h3>GH₵ {{ stats.total_paid|floatformat:2|intcomma }}</h3>
-                </div>
-            </div>
+            <div class="card"><div class="card-body text-center"><h5 class="text-muted">Total Paid</h5><h3>GH₵ {{ stats.total_paid|floatformat:2|intcomma }}</h3></div></div>
         </div>
         <div class="col-md-3">
-            <div class="card">
-                <div class="card-body text-center">
-                    <h5 class="text-muted">Outstanding</h5>
-                    <h3>GH₵ {{ stats.total_outstanding|floatformat:2|intcomma }}</h3>
-                </div>
-            </div>
+            <div class="card"><div class="card-body text-center"><h5 class="text-muted">Outstanding</h5><h3>GH₵ {{ stats.total_outstanding|floatformat:2|intcomma }}</h3></div></div>
         </div>
     </div>
     {% endif %}
-    
-    <!-- Claims Table -->
+
     <div class="card">
         <div class="card-body">
             {% if claim_items %}
-            <div class="table-responsive">
-                <table class="table table-hover">
-                    <thead>
-                        <tr>
-                            <th>Date</th>
-                            <th>Patient</th>
-                            <th>Service</th>
-                            <th>Payer</th>
-                            <th>Billed</th>
-                            <th>Paid</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for claim in claim_items %}
-                        <tr>
-                            <td>{{ claim.service_date }}</td>
-                            <td>
-                                <strong>{{ claim.patient.full_name }}</strong><br>
-                                <small class="text-muted">{{ claim.patient.mrn }}</small>
-                            </td>
-                            <td>{{ claim.service_description|truncatewords:5 }}</td>
-                            <td>{{ claim.payer.name }}</td>
-                            <td>GH₵ {{ claim.billed_amount|floatformat:2 }}</td>
-                            <td>GH₵ {{ claim.paid_amount|floatformat:2 }}</td>
-                            <td>
-                                <span class="badge bg-{{ claim.claim_status }}">
-                                    {{ claim.get_claim_status_display }}
-                                </span>
-                            </td>
-                            <td>
-                                <a href="{% url 'hospital:insurance_claim_item_detail' claim.pk %}" class="btn btn-sm btn-outline-primary">
-                                    View
-                                </a>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            
-            <!-- Pagination -->
+            {% if claims_groups_truncated %}
+            <div class="alert alert-warning small py-2">Narrow filters to see all patients — grouping limited to 3,000 claim lines.</div>
+            {% endif %}
+            {% include 'hospital/insurance/_claims_patient_grouped_table.html' with claims_page=claim_items %}
+
             {% if claim_items.has_other_pages %}
-            <nav>
+            <nav class="mt-3">
                 <ul class="pagination justify-content-center">
                     {% if claim_items.has_previous %}
-                    <li class="page-item">
-                        <a class="page-link" href="?page={{ claim_items.previous_page_number }}{% if query %}&q={{ query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}">Previous</a>
-                    </li>
+                    <li class="page-item"><a class="page-link" href="?page={{ claim_items.previous_page_number }}{% if query %}&q={{ query|urlencode }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if payer_filter %}&payer={{ payer_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Previous</a></li>
                     {% endif %}
-                    
-                    <li class="page-item disabled">
-                        <span class="page-link">Page {{ claim_items.number }} of {{ claim_items.paginator.num_pages }}</span>
-                    </li>
-                    
+                    <li class="page-item disabled"><span class="page-link">Page {{ claim_items.number }} of {{ claim_items.paginator.num_pages }} ({{ claim_items.paginator.count }} patients)</span></li>
                     {% if claim_items.has_next %}
-                    <li class="page-item">
-                        <a class="page-link" href="?page={{ claim_items.next_page_number }}{% if query %}&q={{ query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}">Next</a>
-                    </li>
+                    <li class="page-item"><a class="page-link" href="?page={{ claim_items.next_page_number }}{% if query %}&q={{ query|urlencode }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if payer_filter %}&payer={{ payer_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">Next</a></li>
                     {% endif %}
                 </ul>
             </nav>
@@ -170,21 +122,47 @@
 </div>
 {% endblock %}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+{% block extra_js %}
+<script>
+(function () {
+    var patientTable = document.getElementById('claimsPatientTable');
+    if (!patientTable) return;
+    function setChevron(icon, open) {
+        if (!icon) return;
+        icon.classList.toggle('bi-chevron-right', !open);
+        icon.classList.toggle('bi-chevron-down', open);
+    }
+    function togglePatientGroup(pidx, header) {
+        var visits = patientTable.querySelectorAll('.claim-pv-' + pidx);
+        var open = header.getAttribute('aria-expanded') === 'true';
+        visits.forEach(function (row) { row.classList.toggle('d-none', open); });
+        header.setAttribute('aria-expanded', open ? 'false' : 'true');
+        setChevron(header.querySelector('.expand-icon'), !open);
+    }
+    function toggleVisitGroup(key, header) {
+        var lines = patientTable.querySelectorAll('.claim-gc-' + key);
+        var open = header.getAttribute('aria-expanded') === 'true';
+        lines.forEach(function (row) { row.classList.toggle('d-none', open); });
+        header.setAttribute('aria-expanded', open ? 'false' : 'true');
+        setChevron(header.querySelector('.visit-icon'), !open);
+    }
+    patientTable.querySelectorAll('.claim-patient-header').forEach(function (header) {
+        var pidx = header.getAttribute('data-patient-group');
+        header.addEventListener('click', function () { togglePatientGroup(pidx, header); });
+        header.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePatientGroup(pidx, header); }
+        });
+    });
+    patientTable.querySelectorAll('.claim-visit-header').forEach(function (header) {
+        var key = header.getAttribute('data-visit-group');
+        header.addEventListener('click', function (e) {
+            e.stopPropagation();
+            toggleVisitGroup(key, header);
+        });
+        header.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggleVisitGroup(key, header); }
+        });
+    });
+})();
+</script>
+{% endblock %}

@@ -5,12 +5,9 @@ import sys
 
 # Compatibility shim for libraries still using pkgutil.find_loader (removed in Python 3.14)
 try:
-    import pkgutil
-    import importlib.util
-    if not hasattr(pkgutil, "find_loader"):
-        pkgutil.find_loader = importlib.util.find_spec  # type: ignore[attr-defined]
+    from hms.py314_compat import apply_pkgutil_find_loader_shim
+    apply_pkgutil_find_loader_shim()
 except Exception:
-    # Do not block startup if shim fails
     pass
 
 # Fix for Windows colorama OSError: [Errno 22] Invalid argument

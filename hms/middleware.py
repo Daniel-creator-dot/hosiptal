@@ -15,16 +15,15 @@ class PermissiveHostMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        # Only apply in DEBUG mode
+        # Only apply in DEBUG mode. Read HTTP_HOST directly — get_host() validates
+        # ALLOWED_HOSTS and raises DisallowedHost before we can whitelist private IPs.
         if settings.DEBUG:
-            host = request.get_host().split(':')[0]  # Remove port if present
-            
-            # Check if it's a private IP address
-            if self._is_private_ip(host):
-                # Temporarily add to ALLOWED_HOSTS if not already there
-                if host not in settings.ALLOWED_HOSTS:
-                    settings.ALLOWED_HOSTS.append(host)
-        
+            raw_host = request.META.get('HTTP_HOST', '')
+            host = raw_host.split(':')[0] if raw_host else ''
+
+            if self._is_private_ip(host) and host not in settings.ALLOWED_HOSTS:
+                settings.ALLOWED_HOSTS.append(host)
+
         response = self.get_response(request)
         return response
 

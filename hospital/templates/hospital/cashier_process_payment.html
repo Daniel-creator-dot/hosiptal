@@ -65,7 +65,7 @@
                                 <input type="hidden" name="lab_quantity" value="1">
                                 <span class="form-control form-control-sm d-inline-block" style="max-width: 80px; background: #e9ecef;">1</span>
                             </div>
-                            <div class="col-auto"><small class="text-muted">× GHS {{ unit_price|floatformat:2 }} = GHS <span id="labTotal">{{ service_price|floatformat:2 }}</span>{% if patient_deposit_balance > 0 and amount_due_after_deposit != service_price %} → <strong class="text-success">After deposit: GHS {{ amount_due_after_deposit|floatformat:2 }}</strong>{% endif %} <em class="text-muted">(Lab tests always billed as 1)</em></small></div>
+                            <div class="col-auto"><small class="text-muted">× GHS {{ unit_price|floatformat:2 }} = GHS <span id="labTotal">{{ service_price|floatformat:2 }}</span>{% if patient_deposit_balance > 0 %} <em class="text-muted">(deposit on account — apply on Total Bill before collecting if you want it used)</em>{% endif %} <em class="text-muted">(Lab tests always billed as 1)</em></small></div>
                         </div>
                         {% elif pharmacy_items %}
                         <p class="mb-1"><strong>Items:</strong></p>
@@ -74,15 +74,16 @@
                             <li>{{ rx.drug.name }} × {{ rx.quantity }} — GHS {{ rx.line_total|floatformat:2 }}</li>
                             {% endfor %}
                         </ul>
-                        <p class="mb-0"><strong>Total:</strong> GHS {{ service_price|floatformat:2 }}{% if patient_deposit_balance > 0 and amount_due_after_deposit != service_price %} → <strong class="text-success">After deposit: GHS {{ amount_due_after_deposit|floatformat:2 }}</strong>{% endif %}</p>
+                        <p class="mb-0"><strong>Total:</strong> GHS {{ service_price|floatformat:2 }}{% if patient_deposit_balance > 0 %} <span class="text-muted small">(patient has deposit on account — not auto-applied)</span>{% endif %}</p>
                         {% else %}
-                        <p class="mb-0"><strong>Price:</strong> GHS {{ service_price|floatformat:2 }}{% if patient_deposit_balance > 0 and amount_due_after_deposit != service_price %} → <strong class="text-success">After deposit: GHS {{ amount_due_after_deposit|floatformat:2 }}</strong>{% endif %}</p>
+                        <p class="mb-0"><strong>Price:</strong> GHS {{ service_price|floatformat:2 }}{% if patient_deposit_balance > 0 %} <span class="text-muted small">(deposit on account — not auto-applied)</span>{% endif %}</p>
                         {% endif %}
                     </div>
                     
                     <!-- Payment Form -->
                     <form method="POST" id="paymentForm">
                         {% csrf_token %}
+                        <input type="hidden" name="payment_idempotency_token" value="{{ payment_idempotency_token }}" id="paymentIdempotencyToken">
                         
                         <div class="row">
                             <div class="col-md-6 mb-3">
@@ -210,6 +211,17 @@ document.addEventListener('DOMContentLoaded', function() {
     
     paymentMethodSelect.addEventListener('change', updatePaymentMethodDisplay);
     updatePaymentMethodDisplay(); // Initialize
+
+    var payForm = document.getElementById('paymentForm');
+    if (payForm) {
+        payForm.addEventListener('submit', function () {
+            var btn = payForm.querySelector('button[type="submit"]');
+            if (btn && !btn.disabled) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Processing…';
+            }
+        });
+    }
 });
 </script>
 {% endblock %}

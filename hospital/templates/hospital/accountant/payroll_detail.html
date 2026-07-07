@@ -1,4 +1,4 @@
-{# Mirror of hms/templates/hospital/accountant/payroll_detail.html when both exist. #}
+{# Sync with hms/templates/hospital/accountant/payroll_detail.html (canonical via TEMPLATES DIRS) #}
 {% extends 'hospital/base.html' %}
 {% load static %}
 {% load humanize %}
@@ -76,6 +76,10 @@
       </div>
       <h4 class="mb-1 fw-bold">{{ payroll_heading }}</h4>
       <div class="small opacity-90">{{ payroll.payroll_period_start|date:"M j, Y" }} → {{ payroll.payroll_period_end|date:"M j, Y" }} · Pay date {{ payroll.pay_date|date:"M j, Y" }}</div>
+      <div class="d-flex flex-wrap gap-2 mt-2 no-print-payroll">
+        <a href="{% url 'accountant_payroll_analytics' %}?year={{ payroll.payroll_period_start.year }}" class="btn btn-light btn-sm py-0 px-2"><i class="bi bi-graph-up-arrow me-1"></i>Analytics</a>
+        <a href="{% url 'accountant_payroll_analytics_month' payroll.payroll_period_start.year payroll.payroll_period_start.month %}" class="btn btn-light btn-sm py-0 px-2"><i class="bi bi-calendar3 me-1"></i>This month</a>
+      </div>
     </div>
     <div class="col-lg-5">
       <div class="row g-2">
@@ -219,15 +223,27 @@
           <a href="{% url 'accountant_payroll_export_lines' payroll.pk %}" class="btn btn-outline-success btn-sm"><i class="bi bi-file-earmark-spreadsheet"></i> Staff lines (.xlsx)</a>
           <a href="{% url 'accountant_payroll_template' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-download"></i> Template</a>
           <a href="{% url 'admin:hospital_accountingpayroll_change' payroll.id %}" class="btn btn-outline-primary btn-sm"><i class="bi bi-gear"></i> Admin</a>
-          <a href="{% url 'accountant_payroll_list' %}" class="btn btn-outline-dark btn-sm">All runs</a>
+          <a href="{% url 'accountant_payroll_list' %}?year={{ payroll.payroll_period_start.year }}" class="btn btn-outline-dark btn-sm">All runs</a>
         </div>
       </div>
     </div>
     <div class="col-lg-8 no-print-payroll">
-      <div class="card border-0 shadow-sm h-100">
-        <div class="card-body">
-          <h6 class="card-title fw-bold text-secondary">Net pay by department <span class="text-muted fw-normal small">(from import)</span></h6>
-          <canvas id="deptChart" height="120"></canvas>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+              <h6 class="card-title fw-bold text-secondary">Net pay by department <span class="text-muted fw-normal small">(from import)</span></h6>
+              <canvas id="deptChart" height="120"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+              <h6 class="card-title fw-bold text-secondary">Deductions <span class="text-muted fw-normal small">(rolled up)</span></h6>
+              <canvas id="deductionChart" height="140"></canvas>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -235,15 +251,19 @@
 
   <div class="card border-0 shadow-sm">
     <div class="card-header bg-white py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
-      <span class="fw-semibold"><i class="bi bi-people me-2 text-secondary"></i>{{ entries|length }} staff line(s)</span>
-      <div class="d-flex flex-wrap gap-2 no-print-payroll">
+      <div class="d-flex flex-wrap align-items-center gap-3">
+        <span class="fw-semibold"><i class="bi bi-people me-2 text-secondary"></i><span id="payrollLineVisibleCount">{{ entry_line_count }}</span> / {{ entry_line_count }} line(s)</span>
+        <span class="small text-muted border-start ps-3 d-none d-md-inline">Avg net GHS {{ entry_avg_net|floatformat:2|intcomma }}</span>
+      </div>
+      <div class="d-flex flex-wrap align-items-center gap-2 no-print-payroll">
+        <input type="search" id="payrollLineFilter" class="form-control form-control-sm" style="width: 12rem; max-width: 100%;" placeholder="Filter name or code…" autocomplete="off" aria-label="Filter staff lines">
         <a href="{% url 'accountant_payroll_export_lines' payroll.pk %}" class="btn btn-sm btn-outline-success"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Download Excel</a>
         <button type="button" class="btn btn-sm btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer me-1"></i>Print</button>
       </div>
     </div>
     <div class="table-responsive">
       {% if entries %}
-      <table class="table table-sm table-hover mb-0 grid-lines align-middle">
+      <table class="table table-sm table-hover mb-0 grid-lines align-middle" id="payrollLinesTable">
         <thead class="table-light">
           <tr>
             {% if has_rmc_columns %}
@@ -272,7 +292,7 @@
         </thead>
         <tbody>
           {% for e in entries %}
-          <tr>
+          <tr class="payroll-line-row" data-payroll-filter="{{ e.staff.user.get_full_name|default:'' }} {{ e.staff.user.username }} {{ e.staff.employee_id|default:'' }}">
             {% if has_rmc_columns %}
             <td>{% if show_sheet_serial %}{{ e.sheet_serial|default:"—" }}{% else %}{{ forloop.counter }}{% endif %}</td>
             <td class="font-monospace">{{ e.staff.employee_id }}</td>
@@ -298,6 +318,32 @@
           </tr>
           {% endfor %}
         </tbody>
+        {% if entries %}
+        <tfoot class="table-light">
+          <tr class="fw-semibold">
+            {% if has_rmc_columns and payroll_footer_rmc %}
+            <td colspan="4" class="text-end">Totals ({{ entry_line_count }} lines)</td>
+            <td class="text-end font-monospace small">{{ payroll_footer_rmc.basic|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace small">{{ payroll_footer_rmc.other_allowances|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace small">{{ payroll_footer_rmc.medical_allowance|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace small">{{ payroll_footer_rmc.risk_emergency_allowance|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace">{{ payroll_footer_rmc.gross|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace small">{{ payroll_footer_rmc.ssnit|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace small">{{ payroll_footer_rmc.pension|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace small">{{ payroll_footer_rmc.paye|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace fw-bold text-success">{{ payroll_footer_rmc.net|floatformat:2|intcomma }}</td>
+            {% elif has_rmc_columns %}
+            <td colspan="4" class="text-end">Totals ({{ entry_line_count }} lines)</td>
+            <td colspan="9" class="text-end font-monospace">GHS {{ entry_sum_gross|floatformat:2|intcomma }} gross · {{ entry_sum_net|floatformat:2|intcomma }} net</td>
+            {% else %}
+            <td colspan="3" class="text-end">Totals ({{ entry_line_count }} lines)</td>
+            <td class="text-end font-monospace">{{ entry_sum_gross|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace">{{ entry_sum_deductions|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace fw-bold text-success">{{ entry_sum_net|floatformat:2|intcomma }}</td>
+            {% endif %}
+          </tr>
+        </tfoot>
+        {% endif %}
       </table>
       {% else %}
       <div class="p-5 text-center text-muted">
@@ -314,29 +360,69 @@
   const labels = {{ chart_labels_json|safe }};
   const values = {{ chart_values_json|safe }};
   const ctx = document.getElementById('deptChart');
-  if (!ctx || !labels.length) return;
-  new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: labels,
-      datasets: [{
-        label: 'Net pay (GHS)',
-        data: values,
-        backgroundColor: 'rgba(13, 148, 136, 0.55)',
-        borderColor: 'rgba(15, 118, 110, 1)',
-        borderWidth: 1,
-        borderRadius: 6,
-      }]
-    },
-    options: {
-      responsive: true,
-      plugins: { legend: { display: false } },
-      scales: {
-        y: { beginAtZero: true, ticks: { callback: v => 'GHS ' + v.toLocaleString() } },
-        x: { ticks: { maxRotation: 45, minRotation: 0 } }
+  if (ctx && labels.length) {
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Net pay (GHS)',
+          data: values,
+          backgroundColor: 'rgba(13, 148, 136, 0.55)',
+          borderColor: 'rgba(15, 118, 110, 1)',
+          borderWidth: 1,
+          borderRadius: 6,
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, ticks: { callback: v => 'GHS ' + v.toLocaleString() } },
+          x: { ticks: { maxRotation: 45, minRotation: 0 } }
+        }
       }
-    }
-  });
+    });
+  }
+  const dLabels = {{ deduction_chart_labels_json|safe }};
+  const dValues = {{ deduction_chart_values_json|safe }};
+  const dctx = document.getElementById('deductionChart');
+  if (dctx && dLabels.length) {
+    new Chart(dctx, {
+      type: 'bar',
+      data: {
+        labels: dLabels,
+        datasets: [{
+          label: 'GHS',
+          data: dValues,
+          backgroundColor: ['#f59e0b', '#64748b', '#0ea5e9', '#eab308', '#94a3b8', '#0d9488'],
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { beginAtZero: true, ticks: { callback: v => 'GHS ' + v.toLocaleString() } },
+        }
+      }
+    });
+  }
+  const filterInput = document.getElementById('payrollLineFilter');
+  const visibleCountEl = document.getElementById('payrollLineVisibleCount');
+  const rows = document.querySelectorAll('#payrollLinesTable tbody tr.payroll-line-row');
+  function applyPayrollFilter() {
+    const q = (filterInput && filterInput.value || '').trim().toLowerCase();
+    let n = 0;
+    rows.forEach(function(tr) {
+      const hay = (tr.getAttribute('data-payroll-filter') || '').toLowerCase();
+      const show = !q || hay.indexOf(q) !== -1;
+      tr.style.display = show ? '' : 'none';
+      if (show) n++;
+    });
+    if (visibleCountEl) visibleCountEl.textContent = String(n);
+  }
+  if (filterInput) filterInput.addEventListener('input', applyPayrollFilter);
 })();
 </script>
 {% endblock %}

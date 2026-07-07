@@ -13,9 +13,13 @@
                 <h5 class="mb-0 fw-semibold"><i class="bi bi-building-check me-2"></i>{% if request.resolver_match.url_name == 'corporate_bill_list' %}Corporate Bills{% else %}{{ title|default:"Company Bills" }}{% endif %}</h5>
                 <small class="opacity-90">Statements, receivables & open invoices — grouped by company</small>
             </div>
-            <a href="{% url 'hospital:claims_bills_hub' %}" class="btn btn-sm btn-light">
-                <i class="bi bi-arrow-left"></i> Claims Bills Hub
-            </a>
+            <div class="d-flex flex-wrap gap-2">
+                <a href="{% url 'hospital:receivables_hub' %}?category=corporate" class="btn btn-sm btn-light"><i class="bi bi-journal-text"></i> Receivables hub</a>
+                <a href="{% url 'hospital:receivables_analytics' %}?category=corporate" class="btn btn-sm btn-light"><i class="bi bi-graph-up-arrow"></i> AR analytics</a>
+                <a href="{% url 'hospital:claims_bills_hub' %}" class="btn btn-sm btn-outline-light">
+                    <i class="bi bi-arrow-left"></i> Claims Bills Hub
+                </a>
+            </div>
         </div>
         <div class="card-body bg-light bg-opacity-50">
             <!-- Filters -->
@@ -43,10 +47,18 @@
                         <label class="form-label small text-muted mb-1">To</label>
                         <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
                     </div>
-                    <div class="col-md-1">
-                        <button type="submit" class="btn btn-primary w-100"><i class="bi bi-funnel me-1"></i>Filter</button>
+                    <div class="col-md-2 d-flex flex-wrap align-items-end gap-2">
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-funnel me-1"></i>Filter</button>
+                        <a class="btn btn-success" href="{% url 'company_bills_list_export_excel' %}{% if company_bills_export_query %}?{{ company_bills_export_query }}{% endif %}" title="All companies matching current filters — one sheet per company + Summary (visit-charge sync like Detail)">
+                            <i class="bi bi-file-earmark-spreadsheet me-1"></i>Excel (all filtered)
+                        </a>
                     </div>
                 </div>
+                <p class="text-muted small mb-0 mt-2">
+                    <strong>Invoices</strong> use <strong>issue date</strong> for From/To; statements and receivables use their own dates.
+                    Group header GHS follows invoice packs (may not equal the sum of every expanded line).
+                    Excel export refreshes visit-linked charges like the Detail view.
+                </p>
             </form>
 
             {% if corporate_bills_analytics and corporate_bills_analytics.summary.lines %}
@@ -130,20 +142,20 @@
                             <thead class="table-light">
                                 <tr>
                                     <th>Company</th>
-                                    <th class="text-end">Charges</th>
-                                    <th class="text-end">Closing</th>
-                                    <th style="width:8rem;"></th>
+                                    <th class="text-center">Charges</th>
+                                    <th class="text-center">Closing</th>
+                                    <th class="text-end" style="width:8rem;"></th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {% for row in corporate_bills_analytics.top_table %}
                                 <tr>
                                     <td class="fw-medium">{{ row.name|truncatechars:64 }}</td>
-                                    <td class="text-end text-muted">GHS {{ row.charges|floatformat:2|intcomma }}</td>
-                                    <td class="text-end fw-semibold text-warning">GHS {{ row.closing|floatformat:2|intcomma }}</td>
+                                    <td class="text-center text-muted">GHS {{ row.charges|floatformat:2|intcomma }}</td>
+                                    <td class="text-center fw-semibold text-warning">GHS {{ row.closing|floatformat:2|intcomma }}</td>
                                     <td class="text-end">
                                         {% if row.payer_id %}
-                                        <a href="{% url 'hospital:corporate_bill_detail_by_payer' payer_id=row.payer_id %}" class="btn btn-sm btn-outline-primary">Detail view</a>
+                                        <a href="{% url 'hospital:corporate_bill_detail_by_payer' payer_id=row.payer_id %}{{ row.detail_pack_query }}" class="btn btn-sm btn-outline-primary">Detail view</a>
                                         {% else %}
                                         <span class="text-muted small">—</span>
                                         {% endif %}
@@ -165,7 +177,7 @@
                 Showing {{ statement_groups.start_index }}–{{ statement_groups.end_index }} of <strong>{{ total_corporate_bills_count }}</strong> compan{% if total_corporate_bills_count == 1 %}y{% else %}ies{% endif %}
                 (<strong>{{ total_corporate_line_count }}</strong> line{{ total_corporate_line_count|pluralize }} in view).
                 {% if statement_groups.has_other_pages %}Use pagination below to see more.{% endif %}
-                <span class="d-block mt-1"><i class="bi bi-chevron-expand me-1"></i>Click a company row to expand — each line shows type, patients & amounts.</span>
+                <span class="d-block mt-1"><i class="bi bi-chevron-expand me-1"></i>Click a company row to expand — pack lines, then each <strong>invoice</strong> under its open-invoice summary.</span>
             </p>
             <div class="table-responsive px-0">
                 <table class="table table-hover align-middle mb-0">
@@ -173,6 +185,7 @@
                         <tr>
                             <th style="width:2.5rem;"></th>
                             <th>Statement #</th>
+                            <th>Company / payer ID</th>
                             <th>Type</th>
                             <th>Company</th>
                             <th>Patient(s)</th>
@@ -189,26 +202,64 @@
                         <tr class="table-secondary bill-group-header" style="cursor: pointer;" data-bill-group="{{ forloop.counter0 }}" aria-expanded="false" role="button" tabindex="0">
                             <td class="text-center"><i class="bi bi-chevron-right expand-icon" aria-hidden="true"></i></td>
                             <td><span class="badge bg-dark">{{ group.row_count }} item{{ group.row_count|pluralize }}</span></td>
+                            <td class="small font-monospace text-nowrap">
+                                {% if group.reference_label %}<code title="Company code / accounting account">{{ group.reference_label }}</code>{% elif group.company_code %}<code>{{ group.company_code }}</code>{% else %}<span class="text-muted">—</span>{% endif %}
+                            </td>
                             <td><span class="badge bg-secondary">Group</span></td>
-                            <td><strong>{{ group.company_name }}</strong></td>
+                            <td>
+                                <strong>{{ group.company_name }}</strong>
+                                <div class="small text-muted fw-normal mt-1 lh-sm">
+                                    {{ group.count_open_invoice_rollup|default:0 }} open invoice pack{{ group.count_open_invoice_rollup|pluralize }},
+                                    {{ group.count_monthly_statement|default:0 }} monthly statement{{ group.count_monthly_statement|pluralize }},
+                                    {{ group.count_receivable|default:0 }} receivable{{ group.count_receivable|pluralize }}{% if group.count_other %}, {{ group.count_other }} other{% endif %}
+                                    <span class="d-none d-md-inline"> — </span><span class="d-md-none"><br></span>
+                                    <span title="Same rule for every company on this list">header GHS uses packs where present, plus lines not double-counted for the same payer.</span>
+                                    {% if group.suppressed_row_count %}
+                                    <span class="d-block text-warning-emphasis mt-1"><i class="bi bi-info-circle me-1"></i>{{ group.suppressed_row_count }} line{{ group.suppressed_row_count|pluralize }} listed below <strong>not</strong> in header (same payer as an invoice pack). Expand for detail.</span>
+                                    {% endif %}
+                                </div>
+                            </td>
                             <td class="text-muted small">Expand rows</td>
                             <td class="text-muted small">—</td>
-                            <td><strong>GHS {{ group.total_charges|floatformat:2|intcomma }}</strong></td>
-                            <td>GHS {{ group.total_payments|floatformat:2|intcomma }}</td>
-                            <td><strong>GHS {{ group.closing_balance|floatformat:2|intcomma }}</strong></td>
+                            <td title="Totals follow the open-invoice pack when present (same as Detail). They are not the sum of every expanded row, so they stay aligned with the payer bill pack."><strong>GHS {{ group.total_charges|floatformat:2|intcomma }}</strong></td>
+                            <td title="Payments recorded against those invoice-pack totals (when an open-invoice roll-up exists).">GHS {{ group.total_payments|floatformat:2|intcomma }}</td>
+                            <td title="Outstanding balance for the invoice pack when an open-invoice roll-up exists."><strong>GHS {{ group.closing_balance|floatformat:2|intcomma }}</strong></td>
                             <td><span class="text-muted small">Expand</span></td>
                             <td>
                                 {% if group.primary_payer_id %}
-                                <a href="{% url 'hospital:corporate_bill_detail_by_payer' payer_id=group.primary_payer_id %}" class="btn btn-sm btn-primary" onclick="event.stopPropagation();" title="Full invoice & line-item detail">
+                                <a href="{% url 'hospital:corporate_bill_detail_by_payer' payer_id=group.primary_payer_id %}{{ group.detail_pack_query }}" class="btn btn-sm btn-primary" onclick="event.stopPropagation();" title="Full invoice & line-item detail (all merged payers)">
                                     <i class="bi bi-box-arrow-up-right"></i> Detail
                                 </a>
                                 {% endif %}
                             </td>
                         </tr>
+                        <tr class="bill-group-meta bill-gm-{{ forloop.counter0 }} d-none">
+                            <td></td>
+                            <td colspan="11" class="small py-2 bg-body-secondary bg-opacity-25 border-bottom">
+                                <div class="text-body">
+                                    <strong>{{ group.row_count }} item{{ group.row_count|pluralize }}:</strong>
+                                    {{ group.count_open_invoice_rollup|default:0 }} open invoice roll-up{{ group.count_open_invoice_rollup|pluralize }},
+                                    {{ group.count_monthly_statement|default:0 }} monthly statement{{ group.count_monthly_statement|pluralize }},
+                                    {{ group.count_receivable|default:0 }} receivable{{ group.count_receivable|pluralize }}{% if group.count_other %}, {{ group.count_other }} other{% endif %}.
+                                    <span class="text-muted">Header GHS totals use open-invoice packs where present, plus statements/receivables that are not double-counted for the same payer.</span>
+                                </div>
+                                {% if group.suppressed_row_count %}
+                                <div class="alert alert-warning py-2 px-3 mb-0 mt-2 small">
+                                    <i class="bi bi-exclamation-triangle me-1"></i>
+                                    The group header <strong>does not include</strong> {{ group.suppressed_row_count }} statement/receivable line{{ group.suppressed_row_count|pluralize }} for payer{{ group.suppressed_row_count|pluralize }} already covered by an open-invoice roll-up (avoids double-counting).
+                                    Listed closing on those lines totals about <strong>GHS {{ group.suppressed_closing_balance|floatformat:2|intcomma }}</strong> for reference only.
+                                    Use <strong>Detail</strong> for every underlying invoice and line item.
+                                </div>
+                                {% endif %}
+                            </td>
+                        </tr>
                         {% for statement in group.children %}
-                        <tr class="bill-group-child bill-gc-{{ forloop.parentloop.counter0 }} d-none">
+                        <tr class="bill-group-child bill-gc-{{ forloop.parentloop.counter0 }} d-none{% if not statement.is_invoice_summary and statement.payer_id and group.group_has_invoice_rollup and statement.payer_id in group.rollup_payer_ids %} table-light text-muted{% endif %}">
                             <td></td>
                             <td><strong>{{ statement.statement_number }}</strong></td>
+                            <td class="small font-monospace text-nowrap">
+                                {% if statement.reference_label %}<code>{{ statement.reference_label }}</code>{% elif statement.company_code %}<code>{{ statement.company_code }}</code>{% else %}<span class="text-muted">—</span>{% endif %}
+                            </td>
                             <td>
                                 {% if statement.row_kind == 'statement' %}
                                 <span class="badge rounded-pill text-bg-primary small">{{ statement.row_kind_label }}</span>
@@ -218,6 +269,9 @@
                                 <span class="badge rounded-pill text-bg-warning text-dark small">{{ statement.row_kind_label }}</span>
                                 {% else %}
                                 <span class="badge rounded-pill bg-secondary small">{{ statement.row_kind_label|default:"—" }}</span>
+                                {% endif %}
+                                {% if not statement.is_invoice_summary and statement.payer_id and group.group_has_invoice_rollup and statement.payer_id in group.rollup_payer_ids %}
+                                <span class="badge rounded-pill bg-light text-secondary border small ms-1" title="Listed for reference; amounts are not added again in the group header because this payer is in the open-invoice roll-up.">Not in group total</span>
                                 {% endif %}
                             </td>
                             <td>{% if statement.corporate_account %}{{ statement.corporate_account.company_name|default:"N/A" }}{% else %}N/A{% endif %}</td>
@@ -248,7 +302,7 @@
                             <td>
                                 {% if statement.is_invoice_summary %}
                                     <div class="btn-group">
-                                        <a href="{% url 'hospital:corporate_bill_detail_by_payer' payer_id=statement.payer_id %}" class="btn btn-sm btn-outline-primary" title="Labs, scans, drugs by invoice" onclick="event.stopPropagation();">
+                                        <a href="{% if group.primary_payer_id %}{% url 'hospital:corporate_bill_detail_by_payer' payer_id=group.primary_payer_id %}{{ group.detail_pack_query }}{% else %}{% url 'hospital:corporate_bill_detail_by_payer' payer_id=statement.payer_id %}{% endif %}" class="btn btn-sm btn-outline-primary" title="Full pack (all merged corporate payers when grouped)" onclick="event.stopPropagation();">
                                             <i class="bi bi-file-earmark-text"></i> View bill
                                         </a>
                                         <a href="{% url 'hospital:invoice_list' %}?payer_type=corporate{% if statement.corporate_account.company_name %}&q={{ statement.corporate_account.company_name|urlencode }}{% endif %}" class="btn btn-sm btn-outline-secondary" title="Invoice list" onclick="event.stopPropagation();">
@@ -256,7 +310,7 @@
                                         </a>
                                     </div>
                                 {% elif statement.is_receivable %}
-                                    <a href="{% url 'receivable_entry_detail' entry_id=statement.id %}" class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation();">
+                                    <a href="{% url 'billing_receivable_entry_detail' entry_id=statement.id %}" class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation();">
                                         <i class="bi bi-eye"></i> View
                                     </a>
                                 {% else %}
@@ -270,6 +324,32 @@
                                 {% endif %}
                             </td>
                         </tr>
+                        {% if statement.is_invoice_summary %}
+                            {% for inv in group.invoices_for_group %}
+                                {% if inv.payer_id == statement.payer_id %}
+                        <tr class="bill-group-child bill-gc-{{ forloop.parentloop.parentloop.counter0 }} d-none table-light">
+                            <td></td>
+                            <td class="ps-4 small font-monospace">{{ inv.invoice_number }}</td>
+                            <td class="small text-muted">—</td>
+                            <td><span class="badge rounded-pill bg-white text-secondary border small">Invoice</span></td>
+                            <td class="small">{{ inv.payer.name|default:"—" }}</td>
+                            <td class="small text-break" style="max-width: 14rem;">{% if inv.patient %}{{ inv.patient.full_name }}{% else %}—{% endif %}</td>
+                            <td class="small">{% if inv.issued_at %}{{ inv.issued_at|date:"Y-m-d" }}{% else %}—{% endif %}</td>
+                            <td class="small"><strong>GHS {{ inv.total_amount|floatformat:2|intcomma }}</strong></td>
+                            <td class="small">GHS {{ inv.amount_paid|floatformat:2|intcomma }}</td>
+                            <td class="small"><strong>GHS {{ inv.balance|floatformat:2|intcomma }}</strong></td>
+                            <td>
+                                <span class="badge bg-{% if inv.status == 'paid' %}success{% elif inv.status == 'partially_paid' %}warning text-dark{% elif inv.status == 'overdue' %}danger{% else %}secondary{% endif %} small">{{ inv.get_status_display }}</span>
+                            </td>
+                            <td>
+                                {% if group.primary_payer_id %}
+                                <a href="{% url 'hospital:corporate_bill_detail_by_payer' payer_id=group.primary_payer_id %}{{ group.detail_pack_query }}" class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation();" title="Pack detail">Pack</a>
+                                {% endif %}
+                            </td>
+                        </tr>
+                                {% endif %}
+                            {% endfor %}
+                        {% endif %}
                         {% endfor %}
                         {% endfor %}
                     </tbody>
@@ -315,7 +395,7 @@
     if (id === null) return;
     var expanded = row.getAttribute('aria-expanded') === 'true';
     row.setAttribute('aria-expanded', expanded ? 'false' : 'true');
-    document.querySelectorAll('.bill-gc-' + id).forEach(function (r) {
+    document.querySelectorAll('.bill-gc-' + id + ', .bill-gm-' + id).forEach(function (r) {
       r.classList.toggle('d-none', expanded);
     });
     var ic = row.querySelector('.expand-icon');

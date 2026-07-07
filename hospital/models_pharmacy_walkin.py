@@ -116,15 +116,19 @@ class WalkInPharmacySale(BaseModel):
             self.sale_number = self.generate_sale_number()
         
         # Calculate amount due
-        self.amount_due = self.total_amount - self.amount_paid
-        
-        # Update payment status based on amounts
-        if self.amount_paid >= self.total_amount:
-            self.payment_status = 'paid'
-        elif self.amount_paid > 0:
-            self.payment_status = 'partial'
+        if self.waived_at:
+            self.payment_status = 'cancelled'
+            self.amount_due = Decimal('0.00')
         else:
-            self.payment_status = 'pending'
+            self.amount_due = self.total_amount - self.amount_paid
+
+            # Update payment status based on amounts
+            if self.amount_paid >= self.total_amount:
+                self.payment_status = 'paid'
+            elif self.amount_paid > 0:
+                self.payment_status = 'partial'
+            else:
+                self.payment_status = 'pending'
         
         super().save(*args, **kwargs)
 
@@ -237,7 +241,7 @@ class WalkInPharmacySaleItem(BaseModel):
 
         if not self.pk:
             return
-        reduce_pharmacy_stock_once(
+        _, _ = reduce_pharmacy_stock_once(
             self.drug,
             self.quantity,
             PharmacyStockDeductionLog.SOURCE_WALKIN_SALE_ITEM,

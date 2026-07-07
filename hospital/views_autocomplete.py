@@ -5,10 +5,9 @@ Provides search-as-you-type functionality for patients, items, and other entitie
 from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q
-from django.db.models.functions import Concat
-from django.db.models import Value, CharField
 
 from .models import Patient
+from .patient_search import legacy_patient_filter_q, patient_filter_q
 from .models_procurement import InventoryItem, Store
 
 
@@ -39,30 +38,8 @@ def api_autocomplete_patients(request):
         LegacyPatient = None
         legacy_table_exists = False
     
-    # Enhanced search: search by full name combination
-    query_parts = query.split()
-    search_query = Q(
-        Q(first_name__icontains=query) |
-        Q(last_name__icontains=query) |
-        Q(middle_name__icontains=query) |
-        Q(mrn__icontains=query) |
-        Q(phone_number__icontains=query) |
-        Q(email__icontains=query)
-    )
-    
-    # If query has multiple words, search for full name combinations
-    if len(query_parts) >= 2:
-        first_part = query_parts[0]
-        last_parts = ' '.join(query_parts[1:])
-        search_query |= Q(
-            Q(first_name__icontains=first_part) &
-            Q(last_name__icontains=last_parts)
-        )
-        search_query |= Q(
-            Q(first_name__icontains=last_parts) &
-            Q(last_name__icontains=first_part)
-        )
-    
+    search_query = patient_filter_q(query, include_email=True)
+
     results = []
     # New system patients
     if source in ('new', 'all'):
@@ -88,15 +65,7 @@ def api_autocomplete_patients(request):
     # Legacy patients (optional)
     if source in ('legacy', 'all') and LegacyPatient and legacy_table_exists:
         try:
-            legacy_search = Q(
-                Q(fname__icontains=query) |
-                Q(lname__icontains=query) |
-                Q(mname__icontains=query) |
-                Q(pid__icontains=query) |
-                Q(phone_cell__icontains=query) |
-                Q(pmc_mrn__icontains=query)
-            )
-            legacy_qs = LegacyPatient.objects.filter(legacy_search).only(
+            legacy_qs = LegacyPatient.objects.filter(legacy_patient_filter_q(query)).only(
                 'id', 'pid', 'fname', 'lname', 'mname', 'phone_cell', 'pmc_mrn'
             )[:20]
 
@@ -189,24 +158,39 @@ def api_autocomplete_drugs(request):
     """
     Autocomplete API for drug search.
     Selling prices use get_drug_price_for_prescription (same as prescribe sales and billing).
-    Optional encounter_id applies the encounter patient's payer for markup.
+    Optional order_id (medication order) or encounter_id resolves payer via get_patient_payer_info
+    so pharmacy substitute search matches dispense pricing. Prefer order_id when both are sent.
     """
     from .models import Drug, Staff
-    from .utils_billing import get_drug_price_for_prescription
+    from .utils_billing import get_drug_price_for_prescription, get_patient_payer_info
 
     query = request.GET.get('q', '').strip()
+    order_id = request.GET.get('order_id', '').strip()
     encounter_id = request.GET.get('encounter_id', '').strip()
     pricing_payer = None
-    if encounter_id:
+    resolved_encounter = None
+    if order_id:
+        try:
+            from .models import Order
+            med_order = Order.objects.filter(
+                pk=order_id, order_type='medication', is_deleted=False
+            ).select_related('encounter', 'encounter__patient').first()
+            if med_order and getattr(med_order, 'encounter_id', None):
+                resolved_encounter = med_order.encounter
+        except Exception:
+            resolved_encounter = None
+    if resolved_encounter is None and encounter_id:
         try:
             from .models import Encounter
-            enc = Encounter.objects.filter(
+            resolved_encounter = Encounter.objects.filter(
                 pk=encounter_id, is_deleted=False
-            ).select_related('patient__primary_insurance').first()
-            if enc and enc.patient_id:
-                pricing_payer = enc.patient.primary_insurance
+            ).select_related('patient').first()
         except Exception:
-            pricing_payer = None
+            resolved_encounter = None
+    if resolved_encounter and resolved_encounter.patient_id:
+        pricing_payer = get_patient_payer_info(resolved_encounter.patient, resolved_encounter).get(
+            'payer'
+        )
     
     if len(query) < 2:
         return JsonResponse({'results': []})
@@ -339,6 +323,17 @@ def api_autocomplete_drugs(request):
             display_with_stock = f"{display_with_stock} · Expires: {expiry_fmt}"
 
         cost_price = float(getattr(drug, 'cost_price', 0) or 0)
+        exclusion = {}
+        try:
+            from .services.insurance_exclusion_service import catalog_exclusion_info
+            exclusion = catalog_exclusion_info(item=drug, payer=pricing_payer)
+        except Exception:
+            pass
+        if exclusion.get('is_insurance_excluded'):
+            subtext += ' | <strong style="color:#b45309;">Insurance excluded — patient pays cash</strong>'
+            if exclusion.get('insurance_exclusion_reason'):
+                subtext += f' ({exclusion["insurance_exclusion_reason"][:80]})'
+            display_with_stock = f'{display_with_stock} · ⚠ Not on insurance'
         results.append({
             'id': str(drug.id),
             'name': drug.name,
@@ -350,7 +345,8 @@ def api_autocomplete_drugs(request):
             'cost_price': str(round(cost_price, 2)),
             'stock_qty': int(stock_qty) if stock_qty is not None else 0,
             'display': display_with_stock,
-            'subtext': subtext
+            'subtext': subtext,
+            **exclusion,
         })
     
     return JsonResponse({'results': results})
@@ -362,30 +358,23 @@ def api_autocomplete_lab_tests(request):
     Autocomplete API for lab test search
     Returns JSON with lab test suggestions as user types
     """
-    from .models import LabTest
-    
+    from .utils_cache import lab_test_catalog_search_queryset
+
     query = request.GET.get('q', '').strip()
-    
-    if len(query) < 2:
-        return JsonResponse({'results': []})
-    
-    # Build search query
-    search_query = Q(
-        Q(name__icontains=query) |
-        Q(code__icontains=query) |
-        Q(specimen_type__icontains=query)
-    )
-    
-    lab_tests = LabTest.objects.filter(
-        search_query,
-        is_active=True,
-        is_deleted=False
-    ).exclude(
-        name__iexact=''
-    ).exclude(
-        name__icontains='INVALID'
-    )[:20]
-    
+    encounter_id = request.GET.get('encounter_id', '').strip()
+    pricing_payer = None
+    if encounter_id:
+        try:
+            from .models import Encounter
+            from .utils_billing import get_patient_payer_info
+            enc = Encounter.objects.filter(pk=encounter_id, is_deleted=False).select_related('patient').first()
+            if enc and enc.patient_id:
+                pricing_payer = get_patient_payer_info(enc.patient, enc).get('payer')
+        except Exception:
+            pricing_payer = None
+
+    lab_tests = list(lab_test_catalog_search_queryset(query, limit=50))
+
     # Check if user is a doctor or nurse (they shouldn't see prices)
     is_doctor = False
     is_nurse = False
@@ -404,247 +393,33 @@ def api_autocomplete_lab_tests(request):
     
     results = []
     for test in lab_tests:
-        # Build subtext - exclude price for doctors and nurses
-        if can_see_prices:
-            subtext = f"Specimen: {test.specimen_type or 'N/A'} | <strong>Price: GHS {(float(test.price) if test.price else 0.00):.2f}</strong>"
-        else:
-            subtext = f"Specimen: {test.specimen_type or 'N/A'}"
-        
-        results.append({
-            'id': str(test.id),
-            'name': test.name,
-            'code': test.code or 'N/A',
-            'specimen_type': test.specimen_type or 'N/A',
-            'price': str(float(test.price) if test.price else 0.00),
-            'display': f"{test.name} ({test.code or 'No Code'})",
-            'subtext': subtext
-        })
-    
-    return JsonResponse({'results': results})
-
-
-@login_required
-def api_autocomplete_imaging_studies(request):
-    """
-    Autocomplete API for imaging study search
-    Returns JSON with imaging study suggestions as user types
-    """
-    from .models import Staff
-    
-    # Check if user is a doctor or nurse (they shouldn't see prices)
-    is_doctor = False
-    is_nurse = False
-    try:
-        staff = Staff.objects.filter(user=request.user, is_deleted=False).first()
-        if staff and staff.profession:
-            profession_lower = staff.profession.lower()
-            if profession_lower == 'doctor':
-                is_doctor = True
-            elif profession_lower == 'nurse':
-                is_nurse = True
-    except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.debug(f"Error checking staff status: {e}")
-        pass
-    
-    can_see_prices = not is_doctor and not is_nurse
-    
-    # Try to find ImagingCatalog model (prefer models_advanced for consistency with consultation/orders)
-    try:
-        from .models_advanced import ImagingCatalog
-        use_catalog = True
-    except ImportError:
+        exclusion = {}
         try:
-            from .models_service_pricing import ImagingCatalog
-            use_catalog = True
-        except ImportError:
-            use_catalog = False
-    
-    query = request.GET.get('q', '').strip()
-    
-    if len(query) < 2:
-        return JsonResponse({'results': []})
-    
-    results = []
-    
-    if use_catalog:
-        # Search in ImagingCatalog
-        search_query = Q(
-            Q(name__icontains=query) |
-            Q(code__icontains=query) |
-            Q(body_part__icontains=query) |
-            Q(modality__icontains=query)
-        )
-        
-        studies = ImagingCatalog.objects.filter(
-            search_query,
-            is_active=True,
-            is_deleted=False
-        )[:20]
-        
-        for study in studies:
-            # Build subtext - exclude price for doctors
-            if is_doctor:
-                subtext = f"Modality: {study.modality or 'N/A'} | Body Part: {study.body_part or 'N/A'}"
-            else:
-                subtext = f"Modality: {study.modality or 'N/A'} | Body Part: {study.body_part or 'N/A'} | <strong>Price: GHS {(float(study.price) if study.price else 0.00):.2f}</strong>"
-            
-            results.append({
-                'id': str(study.id),
-                'name': study.name or study.description or 'N/A',
-                'code': study.code or 'N/A',
-                'modality': study.modality or 'N/A',
-                'body_part': study.body_part or 'N/A',
-                'price': str(float(study.price) if study.price else 0.00),
-                'display': f"{study.name or study.description} ({study.code or 'No Code'})",
-                'subtext': subtext
-            })
-    else:
-        # Fallback: Search in ImagingPrice or return empty
-        try:
-            from .models_service_pricing import ImagingPrice
-            search_query = Q(
-                Q(body_part__icontains=query) |
-                Q(description__icontains=query) |
-                Q(imaging_type__icontains=query)
-            )
-            
-            imaging_prices = ImagingPrice.objects.filter(search_query)[:20]
-            
-            for img in imaging_prices:
-                # Build subtext - exclude price for doctors and nurses
-                if can_see_prices:
-                    subtext = f"Type: {img.get_imaging_type_display()} | Body Part: {img.body_part} | Price: GHS {img.price}"
-                else:
-                    subtext = f"Type: {img.get_imaging_type_display()} | Body Part: {img.body_part}"
-                
-                results.append({
-                    'id': str(img.id),
-                    'name': img.description,
-                    'code': img.get_imaging_type_display(),
-                    'modality': img.get_imaging_type_display(),
-                    'body_part': img.body_part,
-                    'price': str(img.price),
-                    'display': f"{img.description} ({img.body_part})",
-                    'subtext': subtext
-                })
-        except ImportError:
+            from .services.insurance_exclusion_service import catalog_exclusion_info
+            exclusion = catalog_exclusion_info(item=test, payer=pricing_payer)
+        except Exception:
             pass
-    
-    return JsonResponse({'results': results})
-
-
-@login_required
-def api_autocomplete_consumables(request):
-    """
-    Autocomplete API for consumables search
-    Returns JSON with consumable suggestions as user types
-    """
-    query = request.GET.get('q', '').strip()
-    
-    if len(query) < 2:
-        return JsonResponse({'results': []})
-    
-    # Search in InventoryItem for consumables
-    # Consumables are typically items that are not drugs
-    search_query = Q(
-        Q(item_name__icontains=query) |
-        Q(item_code__icontains=query) |
-        Q(description__icontains=query)
-    )
-    
-    # Filter for consumables (items without drug reference or in consumables category)
-    consumables_qs = InventoryItem.objects.filter(
-        search_query,
-        is_deleted=False,
-        is_active=True
-    ).filter(
-        Q(drug__isnull=True) | Q(category__name__icontains='consumable')
-    )[:20]
-    
-    results = []
-    for item in consumables_qs:
-        category_name = item.category.name if item.category else 'Consumable'
-        store_name = item.store.name if item.store else 'Unknown Store'
-        
-        results.append({
-            'id': str(item.id),
-            'name': item.item_name,
-            'code': item.item_code or 'N/A',
-            'quantity': item.quantity_on_hand,
-            'unit_cost': str(item.unit_cost),
-            'category': category_name,
-            'store': store_name,
-            'display': f"{item.item_name} ({item.item_code or 'No Code'})",
-            'subtext': f"Store: {store_name} | Qty: {item.quantity_on_hand} | Price: GHS {item.unit_cost or 0}"
-        })
-    
-    return JsonResponse({'results': results})
-
-
-@login_required
-def api_autocomplete_lab_tests(request):
-    """
-    Autocomplete API for lab test search
-    Returns JSON with lab test suggestions as user types
-    """
-    from .models import LabTest
-    
-    query = request.GET.get('q', '').strip()
-    
-    if len(query) < 2:
-        return JsonResponse({'results': []})
-    
-    # Build search query
-    search_query = Q(
-        Q(name__icontains=query) |
-        Q(code__icontains=query) |
-        Q(specimen_type__icontains=query)
-    )
-    
-    lab_tests = LabTest.objects.filter(
-        search_query,
-        is_active=True,
-        is_deleted=False
-    ).exclude(
-        name__iexact=''
-    ).exclude(
-        name__icontains='INVALID'
-    )[:20]
-    
-    # Check if user is a doctor or nurse (they shouldn't see prices)
-    is_doctor = False
-    is_nurse = False
-    try:
-        from .models import Staff
-        staff = Staff.objects.filter(user=request.user, is_deleted=False).first()
-        if staff and staff.profession:
-            if staff.profession == 'doctor':
-                is_doctor = True
-            elif staff.profession == 'nurse':
-                is_nurse = True
-    except Exception:
-        pass
-    
-    can_see_prices = not is_doctor and not is_nurse
-    
-    results = []
-    for test in lab_tests:
         # Build subtext - exclude price for doctors and nurses
         if can_see_prices:
             subtext = f"Specimen: {test.specimen_type or 'N/A'} | <strong>Price: GHS {(float(test.price) if test.price else 0.00):.2f}</strong>"
         else:
             subtext = f"Specimen: {test.specimen_type or 'N/A'}"
-        
+        if exclusion.get('is_insurance_excluded'):
+            subtext += ' | <strong style="color:#b45309;">Insurance excluded — patient pays cash</strong>'
+            if exclusion.get('insurance_exclusion_reason'):
+                subtext += f' ({exclusion["insurance_exclusion_reason"][:80]})'
+        display = f"{test.name} ({test.code or 'No Code'})"
+        if exclusion.get('is_insurance_excluded'):
+            display = f'{display} · ⚠ Not on insurance'
         results.append({
             'id': str(test.id),
             'name': test.name,
             'code': test.code or 'N/A',
             'specimen_type': test.specimen_type or 'N/A',
             'price': str(float(test.price) if test.price else 0.00),
-            'display': f"{test.name} ({test.code or 'No Code'})",
-            'subtext': subtext
+            'display': display,
+            'subtext': subtext,
+            **exclusion,
         })
     
     return JsonResponse({'results': results})

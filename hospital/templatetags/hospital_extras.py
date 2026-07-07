@@ -10,6 +10,20 @@ register = template.Library()
 
 
 @register.simple_tag
+def lab_order_diagnosis(order):
+    """Diagnosis / clinical indication for a lab order (for lab dashboard and result entry)."""
+    from ..lab_order_diagnosis import order_lab_diagnosis_display
+    return order_lab_diagnosis_display(order)
+
+
+@register.simple_tag
+def get_drug_form_choices():
+    """Dosage/presentation forms for Drug model (HMS drug form + admin). Always use in drug_form.html so the select is never empty if a view skips context."""
+    from ..models import Drug
+    return Drug.FORM_CHOICES
+
+
+@register.simple_tag
 def safe_url(view_name, *args, **kwargs):
     """Resolve a URL by name; returns empty string if not found (e.g. during deployment)."""
     try:
@@ -36,6 +50,32 @@ def lab_unit_select(param_name, default_unit, details, options=None):
         sel = ' selected' if str(saved) == str(opt) else ''
         opts_html += f'<option value="{opt}"{sel}>{opt}</option>'
     return mark_safe(f'<select name="{param_name}_unit" class="form-select form-select-sm unit-select" title="Unit">{opts_html}</select>')
+
+
+@register.simple_tag
+def lab_flag_select(details, param_key):
+    """
+    Optional manual flag per parameter (saved as param_key_flag). Empty = automatic from ranges.
+    Usage: {% lab_flag_select details 'urine_protein' %}
+    """
+    d = details or {}
+    name = f'{param_key}_flag'
+    cur = str(d.get(name, '') or '').strip().upper()
+    opts = [
+        ('', 'Auto'),
+        ('NORMAL', 'NORMAL'),
+        ('ABNORMAL', 'ABNORMAL'),
+        ('H', 'H (high)'),
+        ('L', 'L (low)'),
+    ]
+    opts_html = ''
+    for val, label in opts:
+        sel = ' selected' if cur == val else ''
+        opts_html += f'<option value="{escape(val)}"{sel}>{escape(label)}</option>'
+    return mark_safe(
+        f'<select name="{escape(name)}" class="form-select form-select-sm" title="Optional flag override">'
+        f'{opts_html}</select>'
+    )
 
 
 @register.simple_tag
@@ -70,12 +110,14 @@ def split(value, arg):
 
 @register.filter
 def get_item(dictionary, key):
-    """Get item from dictionary by key"""
-    if dictionary and isinstance(dictionary, dict):
-        # Convert UUID keys to string for lookup
-        if hasattr(key, '__str__'):
-            key = str(key)
-        return dictionary.get(key, None)
+    """Get item from dictionary by key (UUID instances vs string keys both work)."""
+    if dictionary is None or not isinstance(dictionary, dict):
+        return None
+    if key in dictionary:
+        return dictionary[key]
+    sk = str(key) if key is not None else None
+    if sk is not None and sk in dictionary:
+        return dictionary[sk]
     return None
 
 
@@ -187,6 +229,47 @@ def humanize_label(value):
     return text.replace('_', ' ').strip()
 
 
+@register.filter
+def lab_list_summary(result):
+    """
+    Summarize a LabResult for list displays (Result/Unit/Reference) using details when available.
+    Returns a dict: {result_text, unit_text, ref_text, is_pending}.
+    """
+    from ..utils_lab_templates import lab_result_list_summary
+
+    if not result:
+        return {'result_text': '—', 'unit_text': '—', 'ref_text': '—', 'is_pending': True}
+    patient_gender = None
+    try:
+        if getattr(result, 'order', None) and getattr(result.order, 'encounter', None) and getattr(result.order.encounter, 'patient', None):
+            patient_gender = getattr(result.order.encounter.patient, 'gender', None)
+    except Exception:
+        patient_gender = None
+    try:
+        return lab_result_list_summary(result, patient_gender=patient_gender)
+    except Exception:
+        # Fail safe: never break the page because of a lab display helper.
+        return {'result_text': '—', 'unit_text': '—', 'ref_text': '—', 'is_pending': True}
+
+
+@register.filter
+def imaging_status_badge(status):
+    from ..diagnostics_status import imaging_status_badge_class
+    return imaging_status_badge_class(status or '')
+
+
+@register.filter
+def imaging_status_sheet(status):
+    from ..diagnostics_status import imaging_status_sheet_class
+    return imaging_status_sheet_class(status or '')
+
+
+@register.filter
+def drug_is_tablet(drug):
+    from ..pharmacy_stock_utils import drug_is_sold_per_tablet
+    return drug_is_sold_per_tablet(drug)
+
+
 # ---------- Pagination helpers (up to 25 page numbers + Next/Last) ----------
 
 @register.simple_tag(takes_context=True)
@@ -257,7 +340,7 @@ def patient_payer_badges(patient, encounter=None):
            {% patient_payer_badges patient %}
            {% patient_payer_badges encounter.patient encounter %}
     """
-    from hospital.utils_billing import patient_payer_display_labels
+    from hospital.utils_billing import patient_payer_display_labels, patient_payer_billing_ref_parts
 
     if not patient:
         return ''
@@ -265,7 +348,11 @@ def patient_payer_badges(patient, encounter=None):
         labels = patient_payer_display_labels(patient, encounter)
     except Exception:
         labels = []
-    if not labels:
+    try:
+        ref_parts = patient_payer_billing_ref_parts(patient, encounter)
+    except Exception:
+        ref_parts = []
+    if not labels and not ref_parts:
         return ''
     badge_classes = ('bg-info', 'bg-primary', 'bg-secondary')
     parts = []
@@ -277,4 +364,66 @@ def patient_payer_badges(patient, encounter=None):
             f'style="font-size: 0.75rem; font-weight: 600; max-width: 12rem;" '
             f'title="Insurance or corporate billing">{text}</span>'
         )
+    for rp in ref_parts:
+        text = escape(str(rp))
+        parts.append(
+            f'<span class="badge bg-dark text-wrap ms-1 align-middle" '
+            f'style="font-size: 0.7rem; font-weight: 600; max-width: 14rem;" '
+            f'title="Policy / member / employee billing reference">{text}</span>'
+        )
     return mark_safe(''.join(parts))
+
+
+@register.simple_tag
+def corporate_pack_service_display(line, category, patient):
+    """
+    Corporate bill pack: imaging lines show code/qty, catalog name below, staff/policy when present.
+    """
+    from hospital.utils_invoice_line import corporate_pack_imaging_service_display_text
+
+    text = corporate_pack_imaging_service_display_text(line, patient=patient, category=category)
+    blocks = [escape(p) for p in text.split('\n') if p.strip()]
+    if not blocks:
+        return mark_safe('')
+    inner = ''.join(f'<span style="display:block;">{b}</span>' for b in blocks)
+    return mark_safe(inner)
+
+
+@register.simple_tag
+def invoice_print_line_description(line, category, patient):
+    """
+    Payer-facing invoice print: imaging rows use catalog name + member/policy lines; others match legacy layout.
+    """
+    from hospital.utils_invoice_line import corporate_pack_line_is_imaging, corporate_pack_imaging_service_display_text
+
+    if corporate_pack_line_is_imaging(line, category=category):
+        text = corporate_pack_imaging_service_display_text(line, patient=patient, category=category)
+        return mark_safe(
+            f'<div class="service-description" style="white-space:pre-line;">{escape(text)}</div>'
+        )
+    parts = []
+    d = (getattr(line, 'description', None) or '').strip()
+    if d:
+        parts.append(f'<div class="service-description">{escape(d)}</div>')
+    sc = getattr(line, 'service_code', None)
+    if sc:
+        sd = (getattr(sc, 'description', None) or '').strip()
+        if sd and sd != d:
+            parts.append(f'<div class="service-details">{escape(sd)}</div>')
+    if not parts:
+        parts.append('<div class="service-description">—</div>')
+    return mark_safe(''.join(parts))
+
+
+@register.simple_tag
+def invoice_line_summary_one_line(line, patient):
+    """Single-line text for invoice summaries (e.g. cash items list); imaging includes catalog + refs."""
+    from hospital.utils_billing import invoice_line_display_category
+    from hospital.utils_invoice_line import corporate_pack_line_is_imaging, corporate_pack_imaging_service_display_text
+
+    cat = invoice_line_display_category(line)
+    if corporate_pack_line_is_imaging(line, category=cat):
+        return corporate_pack_imaging_service_display_text(line, patient=patient, category=cat).replace(
+            '\n', ' · '
+        )
+    return (getattr(line, 'description', None) or '').strip() or '—'

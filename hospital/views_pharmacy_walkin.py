@@ -22,6 +22,7 @@ from .models_accounting import PaymentReceipt
 from .services.pharmacy_walkin_service import WalkInPharmacyService
 from .utils_roles import user_has_cashier_access, is_pharmacy_user, get_user_role
 from .decorators import role_required
+from .patient_search import patient_filter_q
 
 logger = logging.getLogger(__name__)
 
@@ -209,10 +210,10 @@ def pharmacy_walkin_sale_create(request):
         try:
             # Get customer info
             customer_type = request.POST.get('customer_type', 'walkin')
-            customer_name = request.POST.get('customer_name', '')
-            customer_phone = request.POST.get('customer_phone', '')
-            customer_address = request.POST.get('customer_address', '')
-            patient_id = request.POST.get('patient_id', '')
+            customer_name = (request.POST.get('customer_name') or '').strip()
+            customer_phone = (request.POST.get('customer_phone') or '').strip()
+            customer_address = (request.POST.get('customer_address') or '').strip()
+            patient_id = (request.POST.get('patient_id') or '').strip()
             payer_id = request.POST.get('payer_id', '')
             
             # Get staff
@@ -223,17 +224,27 @@ def pharmacy_walkin_sale_create(request):
             
             payer = resolve_walk_in_payer_id(payer_id)
 
-            # Keep customer details populated for registered patients so list views never show blanks.
-            if patient_id and customer_type == 'registered':
+            selected_patient = None
+            if patient_id:
                 try:
                     selected_patient = Patient.objects.filter(id=patient_id, is_deleted=False).first()
                 except Exception:
                     selected_patient = None
-                if selected_patient:
-                    if not customer_name:
-                        customer_name = selected_patient.full_name or customer_name
-                    if not customer_phone:
-                        customer_phone = selected_patient.phone_number or customer_phone
+
+            if customer_type == 'registered' and not patient_id:
+                messages.error(request, 'Please select a PrimeCare patient.')
+                return redirect('hospital:pharmacy_walkin_sale_create')
+
+            # Copy from linked / selected patient when POST name/phone are missing (any customer type).
+            if selected_patient:
+                if not customer_name:
+                    customer_name = (selected_patient.full_name or '').strip()
+                if not customer_phone:
+                    customer_phone = (selected_patient.phone_number or '').strip()
+
+            if customer_type == 'walkin' and not patient_id and not customer_name:
+                messages.error(request, 'Please enter the customer name (or link / select a PrimeCare patient).')
+                return redirect('hospital:pharmacy_walkin_sale_create')
 
             # Create sale
             sale = WalkInPharmacySale.objects.create(
@@ -563,7 +574,7 @@ def pharmacy_walkin_dispense(request, sale_id):
     Dispense medication for a paid walk-in sale
     """
     sale = get_object_or_404(
-        WalkInPharmacySale.objects.select_related('payer'),
+        WalkInPharmacySale.objects.select_related('payer', 'patient'),
         id=sale_id,
         is_deleted=False
     )
@@ -626,6 +637,12 @@ def pharmacy_walkin_dispense(request, sale_id):
                 sale.dispensed_by = staff
                 sale.counselling_notes = request.POST.get('counselling_notes', '')
                 sale.save()
+
+            try:
+                from .services.pharmacy_otc_clinical_record import sync_otc_medical_record_for_sale
+                sync_otc_medical_record_for_sale(sale)
+            except Exception as otc_rec_exc:
+                logger.warning("Could not sync OTC medical record for sale %s: %s", sale.sale_number, otc_rec_exc)
 
             # Send customer service review SMS when medicine is dispensed
             if sale.customer_phone:
@@ -733,60 +750,71 @@ def api_search_drugs(request):
 
     from .utils_billing import get_drug_price_for_prescription
 
-    search_payer = payer_for_pharmacy_drug_search(request)
-    
-    drugs = Drug.objects.filter(
-        Q(name__icontains=query) | Q(generic_name__icontains=query) | Q(atc_code__icontains=query) | Q(strength__icontains=query),
-        is_active=True,
-        is_deleted=False
-    )[:25]
-    
-    # Get pharmacy store for InventoryItem (procurement/inventory system)
-    pharmacy_store = None
     try:
-        from .models_procurement import Store, InventoryItem
-        pharmacy_store = Store.get_main_pharmacy_store()
-    except Exception:
-        pass
-    
-    results = []
-    for drug in drugs:
-        # Stock from PharmacyStock (tally, admin)
-        stock_ps = PharmacyStock.objects.filter(
-            drug=drug,
-            quantity_on_hand__gt=0,
+        search_payer = payer_for_pharmacy_drug_search(request)
+        
+        drugs = Drug.objects.filter(
+            Q(name__icontains=query) | Q(generic_name__icontains=query) | Q(atc_code__icontains=query) | Q(strength__icontains=query),
+            is_active=True,
             is_deleted=False
-        ).aggregate(total=Sum('quantity_on_hand'))['total'] or 0
+        )[:25]
         
-        # Stock from InventoryItem - pharmacy store (procurement, store transfers)
-        stock_inv = 0
-        if pharmacy_store:
+        # Get pharmacy store for InventoryItem (procurement/inventory system)
+        pharmacy_store = None
+        try:
+            from .models_procurement import Store
+            pharmacy_store = Store.get_main_pharmacy_store()
+        except Exception:
+            pharmacy_store = None
+        
+        results = []
+        for drug in drugs:
             try:
-                inv = InventoryItem.objects.filter(
-                    store=pharmacy_store,
+                # Stock from PharmacyStock (tally, admin)
+                stock_ps = PharmacyStock.objects.filter(
                     drug=drug,
-                    is_deleted=False,
-                    is_active=True
+                    quantity_on_hand__gt=0,
+                    is_deleted=False
                 ).aggregate(total=Sum('quantity_on_hand'))['total'] or 0
-                stock_inv = inv
-            except Exception:
-                pass
-        
-        # Use the higher - inventory may be updated in store, PharmacyStock in tally/admin
-        stock_qty = max(stock_ps, stock_inv)
+                
+                # Stock from InventoryItem - pharmacy store (procurement, store transfers)
+                stock_inv = 0
+                if pharmacy_store:
+                    try:
+                        from .models_procurement import InventoryItem as InvModel
+                        inv = InvModel.objects.filter(
+                            store=pharmacy_store,
+                            drug=drug,
+                            is_deleted=False,
+                            is_active=True
+                        ).aggregate(total=Sum('quantity_on_hand'))['total'] or 0
+                        stock_inv = inv
+                    except Exception:
+                        pass
+                
+                # Use the higher - inventory may be updated in store, PharmacyStock in tally/admin
+                stock_qty = max(stock_ps, stock_inv)
 
-        unit_price = get_drug_price_for_prescription(drug, payer=search_payer)
-        results.append({
-            'id': drug.id,
-            'name': drug.name,
-            'generic_name': drug.generic_name,
-            'strength': drug.strength,
-            'form': drug.form,
-            'unit_price': str(unit_price.quantize(Decimal('0.01'))),
-            'stock_available': stock_qty,
-        })
-    
-    return JsonResponse({'drugs': results})
+                unit_price = get_drug_price_for_prescription(drug, payer=search_payer)
+                results.append({
+                    'id': str(drug.id),
+                    'name': drug.name,
+                    'generic_name': drug.generic_name,
+                    'strength': drug.strength,
+                    'form': drug.form,
+                    'unit_price': str(unit_price.quantize(Decimal('0.01'))),
+                    'stock_available': stock_qty,
+                })
+            except Exception as item_err:
+                logger.warning('api_search_drugs skip drug %s: %s', getattr(drug, 'id', '?'), item_err)
+        
+        return JsonResponse({'drugs': results})
+    except Exception as e:
+        logger.exception('api_search_drugs failed: %s', e)
+        return JsonResponse(
+            {'drugs': [], 'error': 'Drug search is temporarily unavailable. Please try again.'},
+            status=200,
+        )
 
 
 @login_required
@@ -802,29 +830,8 @@ def api_patient_search(request):
     if len(query) < 2:
         return JsonResponse({'patients': []})
     
-    # Enhanced search: also search by full name combination
-    query_parts = query.split()
-    search_query = Q(
-        Q(first_name__icontains=query) |
-        Q(last_name__icontains=query) |
-        Q(middle_name__icontains=query) |
-        Q(mrn__icontains=query) |
-        Q(phone_number__icontains=query)
-    )
-    
-    # If query has multiple words, search for full name combinations
-    if len(query_parts) >= 2:
-        first_part = query_parts[0]
-        last_parts = ' '.join(query_parts[1:])
-        search_query |= Q(
-            Q(first_name__icontains=first_part) &
-            Q(last_name__icontains=last_parts)
-        )
-        search_query |= Q(
-            Q(first_name__icontains=last_parts) &
-            Q(last_name__icontains=first_part)
-        )
-    
+    search_query = patient_filter_q(query, include_email=False)
+
     base_qs = Patient.objects.filter(
         search_query,
         is_deleted=False
@@ -853,7 +860,8 @@ def api_patient_search(request):
     from hospital.models_patient_deposits import PatientDeposit
     from hospital.models import Encounter
     from django.db.models import Count, Sum
-    
+    from .utils_billing import get_patient_payer_info
+
     results = []
     for p in patients:
         # Validate patient ID - skip if invalid
@@ -886,11 +894,28 @@ def api_patient_search(request):
         except Exception:
             pass
         
-        # Get payer type
-        payer_type = 'cash'
-        if p.primary_insurance:
-            payer_type = p.primary_insurance.payer_type or 'cash'
-        
+        # Match pharmacy/cashier UIs: corporate often comes from CorporateEmployee, not primary_insurance alone
+        info = get_patient_payer_info(p)
+        payer_type = (info.get('type') or 'cash').strip().lower() or 'cash'
+        payer_obj = info.get('payer')
+        payer_id = ''
+        if payer_obj and not getattr(payer_obj, 'is_deleted', False):
+            payer_id = str(payer_obj.pk)
+        elif payer_type == 'corporate':
+            try:
+                from .models_enterprise_billing import CorporateEmployee
+
+                emp = (
+                    CorporateEmployee.objects.filter(patient=p, is_deleted=False)
+                    .select_related('corporate_account')
+                    .order_by('-is_active', '-enrollment_date')
+                    .first()
+                )
+                if emp and getattr(emp, 'corporate_account_id', None):
+                    payer_id = f'ca-{emp.corporate_account_id}'
+            except Exception:
+                pass
+
         results.append({
             'id': str(p.id),
             'name': p.full_name,
@@ -900,6 +925,7 @@ def api_patient_search(request):
             'deposit_balance': float(deposit_balance),
             'recent_encounters': recent_encounters,
             'payer_type': payer_type,
+            'payer_id': payer_id,
         })
     
     return JsonResponse({'patients': results})

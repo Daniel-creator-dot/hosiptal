@@ -179,6 +179,7 @@
                 <input type="hidden" name="encounter_id" id="form-encounter-id">
                 <input type="hidden" name="procedure_id" id="form-procedure-id">
                 <input type="hidden" name="consumables" id="consumables-data">
+                <input type="hidden" name="bill_to" id="form-bill-to" value="auto">
                 
                 <!-- Selected items (from search) -->
                 <div id="selected-consumables-area" class="mb-4" style="display: none;">
@@ -204,6 +205,19 @@
                     <label class="form-label fw-bold"><i class="bi bi-journal-text me-2"></i>Nurse's Notes <span class="text-danger">*</span></label>
                     <textarea name="nurses_notes" id="nurses-notes" class="form-control" rows="3" placeholder="Enter notes (optional - procedure and/or consumables used)"></textarea>
                     <div class="form-text">Optional notes added to the patient's encounter record</div>
+                </div>
+
+                <!-- Send to payer -->
+                <div class="mt-4">
+                    <label class="form-label fw-bold"><i class="bi bi-cash-coin me-2"></i>Send to payer <span class="text-danger">*</span></label>
+                    <select name="bill_to_select" id="bill-to-select" class="form-select" onchange="setBillTo(this.value)">
+                        <option value="auto" selected>Auto (consumables → cashier)</option>
+                        <option value="cashier">Cashier (cash payment)</option>
+                        <option value="insurance">Insurance / Corporate (bill to payer)</option>
+                    </select>
+                    <div class="form-text">
+                        Consumables are sent to cashier by default. Override only for insurance/corporate procedure billing.
+                    </div>
                 </div>
                 
                 <!-- Selected Items Summary -->
@@ -364,6 +378,14 @@ function selectPatient(patientId, name, mrn, phone, payerType) {
     document.getElementById('patient-mrn').textContent = mrn;
     const payerLabel = (payerType || 'cash').toUpperCase();
     document.getElementById('patient-details').textContent = `Phone: ${phone} • Bill to: ${payerLabel}`;
+    // Default send-to based on payer type (but allow override)
+    const pt = (payerType || 'cash').toLowerCase();
+    const inferred = (pt === 'corporate' || pt === 'insurance' || pt === 'nhis' || pt === 'private') ? 'insurance' : 'cashier';
+    const billToSelect = document.getElementById('bill-to-select');
+    if (billToSelect) {
+        billToSelect.value = 'auto';
+    }
+    setBillTo('auto', inferred);
     document.getElementById('selected-patient').style.display = 'block';
     document.getElementById('patient-search-results').style.display = 'none';
     document.getElementById('patient-search').value = '';
@@ -372,6 +394,19 @@ function selectPatient(patientId, name, mrn, phone, payerType) {
     document.getElementById('procedure-section').style.display = 'block';
     document.getElementById('consumables-section').style.display = 'block';
     updateFormState();
+}
+
+function setBillTo(val, inferredFallback) {
+    const v = (val || 'auto').toLowerCase();
+    const hidden = document.getElementById('form-bill-to');
+    if (!hidden) return;
+    if (v === 'auto') {
+        hidden.value = inferredFallback || 'auto';
+        hidden.dataset.auto = '1';
+        return;
+    }
+    hidden.value = v;
+    hidden.dataset.auto = '';
 }
 
 function clearPatientSearch() {

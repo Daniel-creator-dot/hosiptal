@@ -135,7 +135,16 @@ class PaymentRequestAdmin(admin.ModelAdmin):
 
 @admin.register(CashierSession)
 class CashierSessionAdmin(admin.ModelAdmin):
-    list_display = ['session_number', 'cashier_link', 'status_badge', 'opened_at', 'closed_at', 'total_payments', 'expected_cash']
+    list_display = [
+        'session_number',
+        'cashier_link',
+        'status_badge',
+        'opened_at',
+        'closed_at',
+        'total_payments',
+        'deposit_received_total',
+        'expected_cash',
+    ]
     list_filter = ['status', 'opened_at']
     search_fields = ['session_number', 'cashier__username']
     ordering = ['-opened_at']

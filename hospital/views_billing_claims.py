@@ -958,6 +958,152 @@ def bills_list(request):
     return render(request, 'hospital/billing/bills_list.html', context)
 
 
+def _bills_list_filter_caption(status_filter, bill_type_filter, payer_filter, date_from, date_to, search):
+    parts = []
+    if search:
+        parts.append(f'search="{search}"')
+    if status_filter:
+        parts.append(f'status={status_filter}')
+    if bill_type_filter:
+        parts.append(f'type={bill_type_filter}')
+    if payer_filter:
+        parts.append(f'payer={payer_filter}')
+    if date_from:
+        parts.append(f'from {date_from}')
+    if date_to:
+        parts.append(f'to {date_to}')
+    return ' · '.join(parts) if parts else 'All bills (no filters)'
+
+
+def _bills_list_print_rows_from_invoices(invoices_qs, limit=500):
+    rows = []
+    inv_list = list(invoices_qs[:limit])
+    patient_ids = {inv.patient_id for inv in inv_list if inv.patient_id}
+    dep_map = _batch_patient_deposit_available(list(patient_ids))
+    ch_map = _batch_payment_channel_labels_by_invoice([inv.id for inv in inv_list])
+    for inv in inv_list:
+        adapted = _invoice_as_bill_adapter(inv, dep_map.get(inv.patient_id), ch_map)
+        patient = inv.patient
+        rows.append({
+            'bill_number': adapted.get('bill_number') or getattr(inv, 'invoice_number', '') or str(inv.pk)[:8],
+            'patient_name': patient.full_name if patient else '—',
+            'mrn': getattr(patient, 'mrn', '') or '—',
+            'member_id': getattr(patient, 'insurance_id', '') or '',
+            'type_label': adapted.get('bill_type_display') or _invoice_bill_type_display(inv),
+            'payer': adapted.get('payer_display') or (inv.payer.name if inv.payer else '—'),
+            'total': adapted.get('total_amount') or inv.total_amount or Decimal('0'),
+            'insurance': adapted.get('insurance_amount') or Decimal('0'),
+            'paid': adapted.get('amount_paid'),
+            'deposit': adapted.get('deposit_available'),
+            'credit': adapted.get('credit_overpay') or Decimal('0'),
+            'balance': adapted.get('balance') or inv.balance or Decimal('0'),
+            'status': adapted.get('status_display') or inv.get_status_display(),
+            'issued': adapted.get('issued_at') or inv.issued_at,
+        })
+    return rows
+
+
+def _bills_list_filtered_invoices(request):
+    """Shared invoice queryset for bills list print/export (matches bills_list fallback mode)."""
+    status_filter = _normalize_filter_value(request.GET.get('status', ''))
+    bill_type_filter = _normalize_filter_value(request.GET.get('bill_type', ''))
+    payer_filter = _normalize_filter_value(request.GET.get('payer', ''))
+    date_from = _normalize_filter_value(request.GET.get('date_from', ''))
+    date_to = _normalize_filter_value(request.GET.get('date_to', ''))
+    search = _normalize_filter_value(request.GET.get('search', ''))
+
+    has_unwaived_line = Exists(
+        InvoiceLine.objects.filter(
+            invoice_id=OuterRef('pk'),
+            is_deleted=False,
+            waived_at__isnull=True,
+        )
+    )
+    invoices = Invoice.objects.filter(
+        is_deleted=False,
+        status__in=['draft', 'issued', 'partially_paid', 'overdue', 'paid'],
+    ).filter(Q(total_amount__gt=0) | has_unwaived_line).select_related('patient', 'payer').order_by('-issued_at')
+
+    if status_filter:
+        invoices = invoices.filter(status=status_filter)
+    if bill_type_filter:
+        invoices = invoices.filter(_invoice_bill_type_q(bill_type_filter))
+    if payer_filter:
+        invoices = invoices.filter(payer_id=payer_filter)
+    if date_from:
+        invoices = invoices.filter(issued_at__date__gte=date_from)
+    if date_to:
+        invoices = invoices.filter(issued_at__date__lte=date_to)
+    if search:
+        invoices = invoices.filter(Q(invoice_number__icontains=search) | _patient_search_q(search) | _invoice_search_q(search))
+    return invoices, {
+        'status_filter': status_filter,
+        'bill_type_filter': bill_type_filter,
+        'payer_filter': payer_filter,
+        'date_from': date_from,
+        'date_to': date_to,
+        'search': search,
+    }
+
+
+@login_required
+@role_required('accountant', 'senior_account_officer')
+def bills_list_print(request):
+    invoices, filters = _bills_list_filtered_invoices(request)
+    rows = _bills_list_print_rows_from_invoices(invoices)
+    return render(request, 'hospital/billing/bills_list_print.html', {
+        'rows': rows,
+        'row_count': len(rows),
+        'filter_caption': _bills_list_filter_caption(**filters),
+        'source_label': 'Invoices',
+    })
+
+
+@login_required
+@role_required('accountant', 'senior_account_officer')
+def bills_list_export_excel(request):
+    try:
+        import openpyxl
+        from openpyxl.styles import Font
+    except ImportError:
+        messages.error(request, 'Excel export requires openpyxl.')
+        return redirect('hospital:bills_list')
+
+    invoices, filters = _bills_list_filtered_invoices(request)
+    rows = _bills_list_print_rows_from_invoices(invoices, limit=2000)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Bills'
+    ws.append(['Bill / Invoice #', 'Patient', 'MRN', 'Type', 'Payer', 'Total', 'Paid', 'Balance', 'Status', 'Issued'])
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    for row in rows:
+        ws.append([
+            row['bill_number'],
+            row['patient_name'],
+            row['mrn'],
+            row['type_label'],
+            row['payer'],
+            float(row['total'] or 0),
+            float(row['paid'] or 0) if row['paid'] is not None else None,
+            float(row['balance'] or 0),
+            row['status'],
+            row['issued'].strftime('%Y-%m-%d %H:%M') if row['issued'] else '',
+        ])
+    from io import BytesIO
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"bills_export_{timezone.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    response = HttpResponse(
+        buf.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response['Content-Disposition'] = f'attachment; filename="{fname}"'
+    return response
+
+
 @login_required
 @role_required('accountant', 'senior_account_officer')
 def bills_by_normal_invoice(request):
@@ -2052,6 +2198,18 @@ def company_bill_list(request):
         'status_filter': status_filter,
         'date_from': date_from,
         'date_to': date_to,
+        'company_bills_export_query': urlencode(
+            {
+                k: v
+                for k, v in (
+                    ('company', company_filter),
+                    ('status', status_filter),
+                    ('date_from', date_from),
+                    ('date_to', date_to),
+                )
+                if v
+            }
+        ),
     }
 
     return render(request, 'hospital/billing/company_bill_list.html', context)
@@ -2116,7 +2274,7 @@ def _group_invoice_lines_by_category(lines):
     return [(cat, list(grp)) for cat, grp in groupby(sorted_lines, key=invoice_line_display_category)]
 
 
-def _corporate_bill_pack_invoices_with_lines(payer):
+def _corporate_bill_pack_invoices_with_lines(payer, *, date_from=None, date_to=None):
     """
     Invoices and line items for a corporate payer (detail page and Excel/CSV exports).
     Returns (invoices_with_lines, total_charges, total_balance).
@@ -2128,6 +2286,10 @@ def _corporate_bill_pack_invoices_with_lines(payer):
         .select_related('patient', 'encounter')
         .order_by('-issued_at')
     )
+    if date_from:
+        invoices = invoices.filter(issued_at__date__gte=date_from)
+    if date_to:
+        invoices = invoices.filter(issued_at__date__lte=date_to)
     invoices_with_lines = []
     for inv in invoices:
         inv.update_totals()
@@ -2303,26 +2465,9 @@ def corporate_bill_detail_by_payer(request, payer_id):
     return render(request, 'hospital/billing/corporate_bill_detail_by_payer.html', context)
 
 
-@login_required
-@role_required('accountant', 'senior_account_officer')
-def corporate_bill_pack_export_excel(request, payer_id):
-    """Download corporate bill pack as .xlsx (one section per invoice, lines by category)."""
-    try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, Alignment, PatternFill
-    except ImportError:
-        return HttpResponse(
-            'Excel export requires openpyxl. Install with: pip install openpyxl',
-            content_type='text/plain',
-            status=500,
-        )
-
-    payer = get_object_or_404(Payer, pk=payer_id, payer_type='corporate', is_deleted=False)
-    invoices_with_lines, total_charges, total_balance = _corporate_bill_pack_invoices_with_lines(payer)
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = 'Corporate bill pack'
+def _write_corporate_bill_pack_worksheet(ws, payer, invoices_with_lines, total_charges, total_balance):
+    """Write one corporate bill pack (invoices + line items) onto an openpyxl worksheet."""
+    from openpyxl.styles import Font, Alignment, PatternFill
 
     title_font = Font(bold=True, size=14)
     header_font = Font(bold=True, color='FFFFFF')
@@ -2336,7 +2481,14 @@ def corporate_bill_pack_export_excel(request, payer_id):
     row += 1
     ws.cell(row=row, column=1, value=f'Generated: {timezone.now().strftime("%Y-%m-%d %H:%M")}')
     row += 1
-    ws.cell(row=row, column=1, value=f'Invoices: {len(invoices_with_lines)}  |  Total charges (GHS): {total_charges}  |  Balance due (GHS): {total_balance}')
+    ws.cell(
+        row=row,
+        column=1,
+        value=(
+            f'Invoices: {len(invoices_with_lines)}  |  '
+            f'Total charges (GHS): {total_charges}  |  Balance due (GHS): {total_balance}'
+        ),
+    )
     row += 2
 
     if not invoices_with_lines:
@@ -2350,7 +2502,11 @@ def corporate_bill_pack_export_excel(request, payer_id):
             issued = inv.issued_at.strftime('%Y-%m-%d') if inv.issued_at else '—'
 
             ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
-            c = ws.cell(row=row, column=1, value=f"Invoice {inv.invoice_number}  |  {pname}  |  {issued}  |  MRN {mrn}")
+            c = ws.cell(
+                row=row,
+                column=1,
+                value=f'Invoice {inv.invoice_number}  |  {pname}  |  {issued}  |  MRN {mrn}',
+            )
             c.font = Font(bold=True, color='FFFFFF')
             c.fill = inv_header_fill
             c.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
@@ -2388,11 +2544,128 @@ def corporate_bill_pack_export_excel(request, payer_id):
     for col_letter, width in [('A', 22), ('B', 48), ('C', 10), ('D', 14), ('E', 16)]:
         ws.column_dimensions[col_letter].width = width
 
+
+@login_required
+@role_required('accountant', 'senior_account_officer')
+def corporate_bill_pack_export_excel(request, payer_id):
+    """Download corporate bill pack as .xlsx (one section per invoice, lines by category)."""
+    try:
+        from openpyxl import Workbook
+    except ImportError:
+        return HttpResponse(
+            'Excel export requires openpyxl. Install with: pip install openpyxl',
+            content_type='text/plain',
+            status=500,
+        )
+
+    payer = get_object_or_404(Payer, pk=payer_id, payer_type='corporate', is_deleted=False)
+    invoices_with_lines, total_charges, total_balance = _corporate_bill_pack_invoices_with_lines(payer)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Corporate bill pack'
+    _write_corporate_bill_pack_worksheet(ws, payer, invoices_with_lines, total_charges, total_balance)
+
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
     base = slugify(payer.name)[:80] or 'corporate_bill_pack'
     fname = f'{base}_{timezone.now().strftime("%Y%m%d")}.xlsx'
+    response = HttpResponse(
+        buf.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response['Content-Disposition'] = f'attachment; filename="{fname}"'
+    return response
+
+
+@login_required
+@role_required('accountant', 'senior_account_officer')
+def company_bills_list_export_excel(request):
+    """Export all filtered corporate payers — one sheet per company plus a Summary sheet."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+    except ImportError:
+        return HttpResponse(
+            'Excel export requires openpyxl. Install with: pip install openpyxl',
+            content_type='text/plain',
+            status=500,
+        )
+
+    company_filter = request.GET.get('company', '')
+    date_from = request.GET.get('date_from', '') or None
+    date_to = request.GET.get('date_to', '') or None
+
+    payers = Payer.objects.filter(payer_type='corporate', is_deleted=False)
+    if company_filter:
+        payers = payers.filter(name__icontains=company_filter)
+    payers = payers.order_by('name')
+
+    wb = Workbook()
+    summary_ws = wb.active
+    summary_ws.title = 'Summary'
+    header_font = Font(bold=True, color='FFFFFF')
+    header_fill = PatternFill(start_color='4F46E5', end_color='4F46E5', fill_type='solid')
+    summary_ws.cell(row=1, column=1, value='Company bills export (filtered)').font = Font(bold=True, size=14)
+    summary_ws.cell(row=2, column=1, value=f'Generated: {timezone.now().strftime("%Y-%m-%d %H:%M")}')
+    if date_from or date_to:
+        summary_ws.cell(row=3, column=1, value=f'Invoice date range: {date_from or "…"} to {date_to or "…"}')
+    row = 5
+    for col, h in enumerate(['Company', 'Invoices', 'Total charges (GHS)', 'Balance due (GHS)'], start=1):
+        cell = summary_ws.cell(row=row, column=col, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='left', vertical='center')
+    row += 1
+
+    grand_charges = Decimal('0')
+    grand_balance = Decimal('0')
+    grand_invoices = 0
+    used_titles = set()
+
+    for payer in payers:
+        invoices_with_lines, total_charges, total_balance = _corporate_bill_pack_invoices_with_lines(
+            payer, date_from=date_from, date_to=date_to
+        )
+        if not invoices_with_lines:
+            continue
+        grand_charges += total_charges
+        grand_balance += total_balance
+        grand_invoices += len(invoices_with_lines)
+
+        summary_ws.cell(row=row, column=1, value=payer.name)
+        summary_ws.cell(row=row, column=2, value=len(invoices_with_lines))
+        summary_ws.cell(row=row, column=3, value=float(total_charges))
+        summary_ws.cell(row=row, column=4, value=float(total_balance))
+        row += 1
+
+        base_title = (slugify(payer.name)[:28] or 'company').replace('-', ' ').title()[:31]
+        sheet_title = base_title
+        n = 2
+        while sheet_title in used_titles:
+            suffix = f' {n}'
+            sheet_title = f'{base_title[:31 - len(suffix)]}{suffix}'
+            n += 1
+        used_titles.add(sheet_title)
+        ws = wb.create_sheet(title=sheet_title)
+        _write_corporate_bill_pack_worksheet(ws, payer, invoices_with_lines, total_charges, total_balance)
+
+    row += 1
+    summary_ws.cell(row=row, column=1, value='TOTAL').font = Font(bold=True)
+    summary_ws.cell(row=row, column=2, value=grand_invoices).font = Font(bold=True)
+    summary_ws.cell(row=row, column=3, value=float(grand_charges)).font = Font(bold=True)
+    summary_ws.cell(row=row, column=4, value=float(grand_balance)).font = Font(bold=True)
+    for col_letter, width in [('A', 40), ('B', 12), ('C', 18), ('D', 18)]:
+        summary_ws.column_dimensions[col_letter].width = width
+
+    if grand_invoices == 0:
+        summary_ws.cell(row=7, column=1, value='No invoices matched the current filters.')
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f'company_bills_{timezone.now().strftime("%Y%m%d_%H%M")}.xlsx'
     response = HttpResponse(
         buf.getvalue(),
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

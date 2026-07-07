@@ -50,7 +50,8 @@ def pharmacy_patients_list(request):
         pending_dispensing = PharmacyDispensing.objects.filter(
             patient=patient,
             dispensing_status__in=['pending_payment', 'ready_to_dispense'],
-            is_deleted=False
+            is_deleted=False,
+            prescription__is_deleted=False,
         ).select_related('prescription__drug').order_by('-created')[:5]
         
         # Get recent orders

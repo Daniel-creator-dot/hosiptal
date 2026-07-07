@@ -9,7 +9,7 @@
     <style>
         @page {
             size: A4 portrait;
-            margin: 12mm 14mm;
+            margin: 8mm 10mm;
         }
         * { box-sizing: border-box; }
         html { font-size: 11pt; }
@@ -29,7 +29,8 @@
             min-height: 100vh;
         }
         @media print {
-            body { background: #fff !important; }
+            body { background: #fff !important; line-height: 1.3; }
+            html { font-size: 8.5pt; }
             .print-shell {
                 max-width: none;
                 margin: 0;
@@ -39,9 +40,42 @@
             }
             .no-print { display: none !important; }
             a[href]:after { content: none !important; }
-            .table { font-size: 9.5pt; }
-            .page-break-before { page-break-before: always; }
-            tr, .card, .summary-box { page-break-inside: avoid; }
+            .table { font-size: 8pt; }
+            .table td { vertical-align: top; word-break: break-word; }
+            .table > :not(caption) > * > * {
+                padding-top: 0.2rem !important;
+                padding-bottom: 0.2rem !important;
+                padding-left: 0.25rem !important;
+                padding-right: 0.25rem !important;
+            }
+            .table thead th { font-size: 7pt !important; }
+            .doc-header {
+                padding-bottom: 0.35rem;
+                margin-bottom: 0.4rem;
+                border-bottom-width: 2px;
+            }
+            .doc-header h1 { font-size: 1.05rem; }
+            .doc-meta { font-size: 0.75rem; margin-top: 0.25rem; }
+            .summary-box {
+                padding: 0.35rem 0.5rem;
+                margin-bottom: 0.45rem;
+            }
+            .summary-box table { font-size: 8pt; }
+            .amt-due { font-size: 1rem; }
+            .section-title {
+                margin: 0.5rem 0 0.25rem;
+                font-size: 0.7rem;
+            }
+            .table-responsive { margin-bottom: 0.35rem !important; }
+            .card { margin-bottom: 0.35rem !important; }
+            .card-header { padding-top: 0.2rem !important; padding-bottom: 0.2rem !important; }
+            .doc-footer { margin-top: 0.75rem; padding-top: 0.35rem; font-size: 7pt; }
+            /* Let long tables flow across pages instead of forcing blank space */
+            .summary-box { page-break-inside: avoid; }
+            thead { display: table-header-group; }
+            tfoot { display: table-footer-group; }
+            tr { page-break-inside: auto; }
+            .card { page-break-inside: auto; }
         }
         .doc-header {
             border-bottom: 3px solid #1e3a5f;
@@ -132,6 +166,11 @@
     <div class="no-print toolbar">
         <button type="button" class="btn btn-light btn-sm" onclick="window.print();"><strong>Print</strong> or Save as PDF</button>
         <a class="btn btn-outline-light btn-sm" href="{% url 'hospital:cashier_patient_invoices' patient.pk %}">← Back to invoices</a>
+        {% if print_payable_only %}
+        <a class="btn btn-outline-light btn-sm" href="{% url 'hospital:cashier_patient_invoices_print' patient.pk %}?full=1{% if auto_print %}&amp;auto_print=1{% endif %}">Full bill (includes paid)</a>
+        {% else %}
+        <a class="btn btn-outline-light btn-sm" href="{% url 'hospital:cashier_patient_invoices_print' patient.pk %}{% if auto_print %}?auto_print=1{% endif %}">Open balances only</a>
+        {% endif %}
         <span class="hint d-none d-md-inline">Tip: In the print dialog, turn <strong>off</strong> “Headers and footers” to hide the browser URL and date.</span>
     </div>
 
@@ -140,7 +179,7 @@
         {% if hospital_settings and hospital_settings.hospital_tagline %}
         <p class="mb-0 text-muted small">{{ hospital_settings.hospital_tagline }}</p>
         {% endif %}
-        <div class="doc-subtitle">Detailed invoice summary</div>
+        <div class="doc-subtitle">{% if print_payable_only %}Open balances only — amount due{% else %}Detailed invoice summary{% endif %}</div>
         <div class="doc-meta">
             <strong>{{ patient.full_name }}</strong>
             &nbsp;·&nbsp; MRN: {{ patient.mrn }}
@@ -148,6 +187,13 @@
             {% if patient.primary_insurance %}&nbsp;·&nbsp; Payer: {{ patient.primary_insurance.name }}{% endif %}
         </div>
         <div class="doc-meta small text-muted mt-1">Printed: {% now "M j, Y g:i A" %}</div>
+        {% if print_payable_only %}
+        <p class="small text-muted mb-0 mt-2" style="max-width: 42rem;">
+            This print lists only invoices that still have a <strong>balance due</strong> and line items shown match what is payable on those invoices (waived lines and legacy pre–go-live registration scrape lines are omitted). Fully paid invoices are not included.
+        </p>
+        {% elif combined_lines %}
+        <p class="small text-muted mb-0 mt-2">Compact layout: one combined line table only (no duplicate per-invoice pages).</p>
+        {% endif %}
     </header>
 
     <div class="summary-box">
@@ -162,7 +208,7 @@
             {% if deposit_balance > 0 %}
             <tr>
                 <th>Deposit / credit balance</th>
-                <td class="text-success fw-semibold">GHS {{ deposit_balance|floatformat:2|intcomma }} <span class="text-muted fw-normal small">(reduces amount due)</span></td>
+                <td class="text-success fw-semibold">GHS {{ deposit_balance|floatformat:2|intcomma }} <span class="text-muted fw-normal small">(on account — not deducted from net due until cashier applies it to invoices)</span></td>
             </tr>
             {% endif %}
             <tr>
@@ -174,13 +220,13 @@
                 </td>
             </tr>
             <tr>
-                <th>Gross invoice total (lines)</th>
+                <th>{% if print_payable_only %}Itemized total (open invoices only){% else %}Gross invoice total (lines){% endif %}</th>
                 <td>GHS {{ combined_total|floatformat:2|intcomma }} &nbsp;·&nbsp; <span class="text-muted">{{ total_invoices }} invoice{{ total_invoices|pluralize }}</span></td>
             </tr>
         </table>
     </div>
 
-    <h2 class="section-title">Invoices</h2>
+    <h2 class="section-title">{% if print_payable_only %}Invoices with balance due{% else %}Invoices{% endif %}</h2>
     <div class="table-responsive mb-3">
         <table class="table table-bordered table-sm align-middle">
             <thead>
@@ -204,7 +250,7 @@
                     <td>{{ invoice.get_status_display }}</td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="6" class="text-center text-muted py-3">No invoices on file.</td></tr>
+                <tr><td colspan="6" class="text-center text-muted py-3">{% if print_payable_only %}No open invoice balances — nothing due on file for this print.{% else %}No invoices on file.{% endif %}</td></tr>
                 {% endfor %}
             </tbody>
         </table>
@@ -258,8 +304,8 @@
     </div>
     {% endif %}
 
-    {% if invoices %}
-    <h2 class="section-title page-break-before">Detail by invoice</h2>
+    {% if invoices and print_payable_only %}
+    <h2 class="section-title">Detail by invoice</h2>
     {% for invoice in invoices %}
     <div class="card border mb-3">
         <div class="card-header py-2 bg-light">

@@ -247,9 +247,9 @@ class Command(BaseCommand):
                                 created_count += 1
                                 existing_codes.add(code)  # Track new codes
                             
-                             processed_count += 1
-                             if processed_count % 10 == 0:
-                                 self.stdout.write(f'Processed {processed_count} records...')
+                            processed_count += 1
+                            if processed_count % 10 == 0:
+                                self.stdout.write(f'Processed {processed_count} records...')
                 
                 except Exception as e:
                     error_count += 1

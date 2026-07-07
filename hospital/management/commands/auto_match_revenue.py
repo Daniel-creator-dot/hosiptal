@@ -18,9 +18,15 @@ class Command(BaseCommand):
             action='store_true',
             help='Show what would be matched without actually matching',
         )
+        parser.add_argument(
+            '--backfill-all',
+            action='store_true',
+            help='Match all eligible pending/partially_paid entries regardless of age',
+        )
 
     def handle(self, *args, **options):
         dry_run = options['dry_run']
+        backfill_all = options['backfill_all']
         now = timezone.now()
         
         self.stdout.write('=' * 70)
@@ -62,27 +68,29 @@ class Command(BaseCommand):
                         matched_cash += 1
                         self.stdout.write(
                             self.style.SUCCESS(
-                                f'  ✅ Matched: {entry.entry_number} - GHS {entry.total_amount}'
+                                f'  Matched: {entry.entry_number} - GHS {entry.total_amount}'
                             )
                         )
                 except Exception as e:
                     self.stdout.write(
                         self.style.ERROR(
-                            f'  ❌ Error matching {entry.entry_number}: {e}'
+                            f'  Error matching {entry.entry_number}: {e}'
                         )
                     )
         
         self.stdout.write()
         
-        # Match credit revenue (48-hour hold)
-        self.stdout.write('Matching Credit Revenue (48-hour hold)...')
-        cutoff_time = now - timedelta(hours=48)
-        
-        pending_credit = InsuranceReceivableEntry.objects.filter(
-            status='pending',
-            entry_date__lte=cutoff_time.date(),
-            is_deleted=False
-        )
+        # Match credit revenue (48-hour hold, or all when --backfill-all)
+        label = 'Matching Credit Revenue'
+        if backfill_all:
+            label += ' (backfill all eligible)'
+        else:
+            label += ' (48-hour hold)'
+        self.stdout.write(label + '...')
+
+        from hospital.services.credit_revenue_service import credit_revenue_eligible_queryset
+
+        pending_credit = credit_revenue_eligible_queryset(backfill_all=backfill_all)
         
         self.stdout.write(f'Found {pending_credit.count()} credit entries ready for matching')
         
@@ -104,13 +112,13 @@ class Command(BaseCommand):
                         matched_credit += 1
                         self.stdout.write(
                             self.style.SUCCESS(
-                                f'  ✅ Matched: {entry.entry_number} - {entry.payer.name} - GHS {entry.total_amount}'
+                                f'  Matched: {entry.entry_number} - {entry.payer.name} - GHS {entry.total_amount}'
                             )
                         )
                 except Exception as e:
                     self.stdout.write(
                         self.style.ERROR(
-                            f'  ❌ Error matching {entry.entry_number}: {e}'
+                            f'  Error matching {entry.entry_number}: {e}'
                         )
                     )
         
@@ -121,7 +129,7 @@ class Command(BaseCommand):
         else:
             self.stdout.write(
                 self.style.SUCCESS(
-                    f'✅ MATCHING COMPLETE! Matched {matched_cash} cash entries and {matched_credit} credit entries'
+                    f'MATCHING COMPLETE! Matched {matched_cash} cash entries and {matched_credit} credit entries'
                 )
             )
         self.stdout.write('=' * 70)

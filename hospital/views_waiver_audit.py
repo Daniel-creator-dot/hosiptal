@@ -20,7 +20,7 @@ from .views_audit_logs import is_admin
 
 
 def can_view_waiver_audit(user):
-    """Admins and IT can view; accountants retain read-only audit access (they cannot waive)."""
+    """Admins, IT, and accountants can view; anyone who can waive can also use this audit list."""
     if not user or not getattr(user, 'is_authenticated', False):
         return False
     if user.is_superuser:

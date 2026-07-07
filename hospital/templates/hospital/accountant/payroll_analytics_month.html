@@ -1,0 +1,135 @@
+{# Sync with hms/templates/hospital/accountant/payroll_analytics_month.html #}
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Payroll {{ month_label }} — HMS{% endblock %}
+{% block page_title %}{{ month_label }}{% endblock %}
+{% block page_subtitle %}Payroll runs with period start in this month, and staff paid across those runs.{% endblock %}
+
+{% block extra_css %}
+<style>
+  .an-month-hero {
+    background: linear-gradient(120deg, #134e4a 0%, #0d9488 50%, #2dd4bf 100%);
+    border-radius: 14px;
+    color: #fff;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.25rem;
+    box-shadow: 0 10px 36px rgba(13, 148, 136, 0.28);
+  }
+  .an-card {
+    background: #fff;
+    border-radius: 14px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06);
+    margin-bottom: 1.25rem;
+    overflow: hidden;
+  }
+  .an-card .hd {
+    padding: 0.85rem 1.15rem;
+    border-bottom: 1px solid #eef2f7;
+    font-weight: 600;
+    background: linear-gradient(180deg, #fafbfc 0%, #fff 100%);
+  }
+  .btn-teal { background: #0d9488; border-color: #0d9488; color: #fff; }
+  .btn-teal:hover { background: #0f766e; border-color: #0f766e; color: #fff; }
+  .badge-soft { font-weight: 600; padding: 0.35em 0.65em; border-radius: 6px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="an-month-hero d-flex flex-wrap align-items-center justify-content-between gap-3">
+    <div>
+      <div class="small opacity-90 mb-1">{{ bucket_start|date:"M j, Y" }} — {{ bucket_end|date:"M j, Y" }}</div>
+      <h2 class="h4 mb-0 fw-bold"><i class="bi bi-calendar3-event me-2"></i>Payroll detail: {{ month_label }}</h2>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a href="{% url 'accountant_payroll_analytics' %}?year={{ bucket_year }}" class="btn btn-light btn-sm">Analytics {{ bucket_year }}</a>
+      <a href="{% url 'accountant_payroll_list' %}?year={{ bucket_year }}" class="btn btn-warning btn-sm text-dark fw-semibold">All runs list</a>
+    </div>
+  </div>
+
+  <div class="an-card">
+    <div class="hd"><i class="bi bi-collection me-2 text-secondary"></i>Payroll runs ({{ payrolls|length }})</div>
+    <div class="table-responsive">
+      {% if payrolls %}
+      <table class="table table-sm table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Payroll #</th>
+            <th>Period</th>
+            <th>Pay date</th>
+            <th class="text-end">Lines</th>
+            <th class="text-end">Gross</th>
+            <th class="text-end">Net</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in payrolls %}
+          <tr>
+            <td class="font-monospace small fw-semibold">{{ p.payroll_number }}</td>
+            <td class="text-nowrap small">{{ p.payroll_period_start|date:"M j" }} — {{ p.payroll_period_end|date:"M j, Y" }}</td>
+            <td class="text-nowrap small">{{ p.pay_date|date:"M j, Y" }}</td>
+            <td class="text-end">{{ p.line_count|intcomma }}</td>
+            <td class="text-end font-monospace small">GHS {{ p.total_gross_pay|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace fw-semibold">GHS {{ p.total_net_pay|floatformat:2|intcomma }}</td>
+            <td class="small">
+              {% if p.status == 'paid' %}
+                <span class="badge-soft bg-success-subtle text-success">Paid</span>
+              {% elif p.status == 'approved' %}
+                <span class="badge-soft bg-info-subtle text-info">Approved</span>
+              {% elif p.status == 'pending_approval' %}
+                <span class="badge-soft bg-secondary-subtle text-secondary">Pending</span>
+              {% elif p.status == 'calculated' %}
+                <span class="badge-soft bg-primary-subtle text-primary">Calculated</span>
+              {% else %}
+                <span class="badge-soft bg-warning-subtle text-warning">Draft</span>
+              {% endif %}
+            </td>
+            <td class="text-end"><a href="{% url 'accountant_payroll_detail' p.pk %}" class="btn btn-sm btn-teal">Open</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="p-4 text-center text-muted">No payroll runs with period start in this month.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="an-card">
+    <div class="hd"><i class="bi bi-people me-2 text-secondary"></i>Staff paid this month <span class="text-muted fw-normal small">({{ staff_rows|length }} distinct)</span></div>
+    <div class="table-responsive">
+      {% if staff_rows %}
+      <table class="table table-sm table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Name</th>
+            <th>Emp. code</th>
+            <th class="text-end">Runs</th>
+            <th class="text-end">Gross (sum)</th>
+            <th class="text-end">Net (sum)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in staff_rows %}
+          <tr>
+            <td class="small">{{ s.name }}</td>
+            <td class="font-monospace small">{{ s.emp_code }}</td>
+            <td class="text-end">{{ s.run_count }}</td>
+            <td class="text-end font-monospace small">GHS {{ s.gross|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace fw-semibold">GHS {{ s.net|floatformat:2|intcomma }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="small text-muted mb-0 px-3 py-2 border-top">If someone appears on multiple runs in the same month, <strong>Net (sum)</strong> adds their pays for each run.</p>
+      {% else %}
+      <div class="p-4 text-center text-muted">No staff lines for runs in this month.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -2,9 +2,14 @@
 Central mapping of lab tests to result entry templates.
 Used by tabular_lab_report and edit_lab_result so lab techs always get the correct form
 for the ordered test (FBC, LFT, RFT, Lipid, TFT, Glucose, Electrolytes, Urine, Stool, or Single value).
+
+Invariant: each test code appears at most once in CODE_TO_TEMPLATE (dict mapping would otherwise
+silently drop or override entries — same class of bug as duplicate UEC).
 """
+import json
 import re
-from typing import Optional
+from collections import Counter
+from typing import List, Optional
 
 # Template types matching TabularLabReportForm and lab_report_tabular.html
 TEMPLATE_FBC = 'fbc'
@@ -13,6 +18,7 @@ TEMPLATE_RFT = 'rft'
 TEMPLATE_LIPID = 'lipid'
 TEMPLATE_TFT = 'tft'
 TEMPLATE_GLUCOSE = 'glucose'
+TEMPLATE_BUE = 'bue'  # Blood Urea & Electrolytes (no creatinine/eGFR/uric acid)
 TEMPLATE_ELECTROLYTES = 'electrolytes'
 TEMPLATE_URINE = 'urine'
 TEMPLATE_STOOL = 'stool'
@@ -46,6 +52,8 @@ CODE_TO_TEMPLATE = [
     ('UREA', TEMPLATE_RFT),
     ('CREAT', TEMPLATE_RFT),
     ('BUN', TEMPLATE_RFT),
+    # BUE / U&E: urea + electrolytes only (distinct from Uric Acid and from full RFT/UEC)
+    ('BUE', TEMPLATE_BUE),
     ('UEC', TEMPLATE_RFT),  # Urea, Electrolytes & Creatinine
     # Lipid
     ('LIPID', TEMPLATE_LIPID),
@@ -67,7 +75,6 @@ CODE_TO_TEMPLATE = [
     ('HBA1C', TEMPLATE_GLUCOSE),
     # Electrolytes — panel and individual (use electrolytes form)
     ('ELECT', TEMPLATE_ELECTROLYTES),
-    ('UEC', TEMPLATE_ELECTROLYTES),  # already mapped to RFT; RFT takes precedence above
     ('NA', TEMPLATE_ELECTROLYTES),
     ('K', TEMPLATE_ELECTROLYTES),
     ('CL', TEMPLATE_ELECTROLYTES),
@@ -118,21 +125,54 @@ CODE_TO_TEMPLATE = [
     ('TB-GENE', TEMPLATE_AFB),
     # Synovial fluid / crystal (qualitative: Seen / Not seen)
     ('KNEE-UA', TEMPLATE_SINGLE),
+    # High vaginal swab C&S (culture narrative / sensitivities)
+    ('HV-CS', TEMPLATE_SINGLE),
+    # Single analyte — never use RFT panel (shared uric_acid field caused BUE/RFT mix-ups)
+    ('URIC', TEMPLATE_SINGLE),
 ]
-# Build lookup by code (uppercase)
-CODE_MAP = {code: tpl for code, tpl in CODE_TO_TEMPLATE}
 
-# UEC maps to both RFT and ELECT; we use RFT (first in list). For ELECT we have ELECT, NA, K, CL, HCO3.
-# Re-add UEC only for ELECT if we want; currently UEC → RFT is correct (urea, electrolytes, creatinine panel).
+_code_counts = Counter(c for c, _ in CODE_TO_TEMPLATE)
+_dup_lab_codes = sorted(c for c, v in _code_counts.items() if v > 1)
+if _dup_lab_codes:
+    raise ValueError(
+        f'Duplicate lab test code(s) in CODE_TO_TEMPLATE (would break CODE_MAP): {_dup_lab_codes}'
+    )
+CODE_MAP = dict(CODE_TO_TEMPLATE)
+
+# Phrases: if test is coded LFT but name clearly indicates glucose, use glucose template (common miscoding).
+_LFT_TO_GLUCOSE_NAME_PHRASES = (
+    'fasting blood sugar',
+    'fasting glucose',
+    'fasting plasma glucose',
+    'random blood sugar',
+    'blood sugar',
+    'fbs',
+    'rbs',
+    'hba1c',
+    'glycated hemoglobin',
+    'glycated',
+    'ogtt',
+    'post prandial',
+    'post-prandial',
+    'ppbs',
+)
 
 # Keyword fallback: substrings in test name or code → template
 # Used only when code is not in CODE_MAP. Order: urine/stool before single so they get proper templates.
 KEYWORDS_URINE = ['urine routine', 'urinalysis', 'urine microscopy', 'urine exam', 'urine re']
 KEYWORDS_STOOL = ['stool routine', 'stool r/e', 'stool examination', 'stool o&p', 'stool ova', 'stool parasites']
 KEYWORDS_MALARIA = ['malaria', 'mp-', 'parasite', 'rdt', 'blood smear', 'blood film', 'bf for mp']
-KEYWORDS_BLOOD_GROUP = ['blood group', 'rhesus', 'bg', 'rh']
-KEYWORDS_SICKLE = ['sickle', 'hb-s', 'electrophoresis', 'solubility']
-KEYWORDS_COAGULATION = ['pt', 'aptt', 'inr', 'coagulation', 'prothrombin']
+# Do not use bare 'bg' / 'rh' as substrings (e.g. "subgroup"); see _keyword_match_blood_group
+KEYWORDS_BLOOD_GROUP_PHRASES = ['blood group', 'rhesus', 'abo typing', 'abo group']
+# Avoid bare 'electrophoresis' (serum/protein electrophoresis is not sickle cell)
+KEYWORDS_SICKLE = [
+    'sickle', 'hb-s', 'hb electrophoresis', 'hemoglobin electrophoresis', 'haemoglobin electrophoresis',
+    'solubility',
+]
+KEYWORDS_COAGULATION = [
+    'pt', 'aptt', 'inr', 'coagulation', 'prothrombin',
+    'clotting', 'clotting profile', 'bleeding profile',
+]
 KEYWORDS_SEROLOGY = ['hiv', 'hbsag', 'vdrl', 'tpha', 'typhoid', 'widal', 'h. pylori', 'hcv']
 KEYWORDS_SEMEN = ['semen', 'sperm']
 KEYWORDS_AFB = ['afb', 'acid fast', 'sputum', 'tb gene', 'gene xpert']
@@ -144,23 +184,102 @@ KEYWORDS_SINGLE = [
     'esr', 'crp', 'pregnancy', 'qualitative',
     # Urine/stool tests that are single-value (culture, pregnancy, occult blood)
     'urine culture', 'urine c&s', 'urine pregn', 'stool occult', 'stool mcs',
-    # Uric acid should behave as a single-analyte test (no full RFT panel)
-    'uric acid', 'uric',
+    'high vaginal', 'vaginal swab culture',
 ]
 KEYWORDS_FBC = ['fbc', 'cbc', 'complete blood count', 'full blood count', 'full blood', 'complete blood']
-KEYWORDS_LFT = ['lft', 'liver function', 'hepatic', 'bilirubin', 'alt', 'ast', 'alp', 'ggt', 'albumin', 'total protein']
-KEYWORDS_RFT = ['rft', 'renal', 'kidney function', 'urea', 'creatinine', 'kft', 'bun', 'egfr']
+# LFT short tokens use word boundaries — 'alt'/'ast' match inside "salt"/"fast" if substring-only
+_LFT_SUBSTRING_PHRASES = (
+    'lft', 'liver function', 'hepatic', 'bilirubin', 'albumin', 'total protein',
+)
+_LFT_BOUNDARY_TOKENS = ('alt', 'ast', 'alp', 'ggt')
+KEYWORDS_RFT = ['rft', 'renal', 'kidney function', 'creatinine', 'kft', 'bun', 'egfr']
+# Note: bare 'urea' is not here — use BUE matcher or code UREA/RFT so "Uric Acid" is never classified as RFT
+KEYWORDS_BUE = ['u&e', 'u & e', 'u and e', 'blood urea and electrolyte', 'blood urea & electrolyte']
 KEYWORDS_LIPID = ['lipid', 'cholesterol', 'triglyceride', 'hdl', 'ldl', 'vldl']
-KEYWORDS_TFT = ['tft', 'thyroid', 'tsh', 't3', 't4', 'thyroxine', 'triiodothyronine']
-KEYWORDS_GLUCOSE = ['glucose', 'blood sugar', 'fbs', 'rbs', 'hba1c', 'glycated', 'ogtt', 'fasting']
-KEYWORDS_ELECTROLYTES = ['electrolyte', 'elect', 'sodium', 'potassium', 'chloride', 'bicarbonate']
+_TFT_SUBSTRING_PHRASES = ('tft', 'thyroid', 'thyroxine', 'triiodothyronine')
+_TFT_BOUNDARY_TOKENS = ('tsh', 't3', 't4')
+# No bare 'fasting' — would match "Fasting Lipid Panel" and force glucose template before code/lipid checks.
+KEYWORDS_GLUCOSE = [
+    'glucose', 'blood sugar', 'fbs', 'rbs', 'hba1c', 'glycated', 'ogtt',
+    'fasting blood sugar', 'fasting glucose', 'fasting plasma glucose',
+    'random blood sugar', 'glycated hemoglobin',
+    'post prandial', 'post-prandial', 'ppbs',
+]
+# No 'elect' — matches unrelated words (e.g. "select", "electrophoresis" context)
+KEYWORDS_ELECTROLYTES = ['electrolyte', 'sodium', 'potassium', 'chloride', 'bicarbonate']
+
+
+def _is_bue_panel(name: str, code: str) -> bool:
+    """Blood urea + electrolytes without creatinine / full renal panel / uric acid test."""
+    n = (name or '').strip().lower()
+    if not n:
+        return False
+    if 'uric' in n:
+        return False
+    if 'creatinine' in n or 'egfr' in n or 'gfr' in n:
+        return False
+    if 'renal function' in n or 'kidney function' in n:
+        return False
+    if any(k in n for k in KEYWORDS_BUE):
+        return True
+    if 'blood urea' in n and 'electrolyte' in n:
+        return True
+    if 'urea' in n and 'electrolyte' in n:
+        return True
+    return False
+
+
+def _name_overrides_lft_to_glucose(name: str) -> bool:
+    n = (name or '').strip().lower()
+    if not n:
+        return False
+    return any(p in n for p in _LFT_TO_GLUCOSE_NAME_PHRASES)
+
+
+def _keyword_match_blood_group(name: str, code_lower: str) -> bool:
+    n = (name or '').strip().lower()
+    if any(p in n for p in KEYWORDS_BLOOD_GROUP_PHRASES):
+        return True
+    if re.search(r'\bbg\b', n) or re.search(r'\brh\b', n):
+        return True
+    if code_lower in ('bg', 'rh', 'bg-rh'):
+        return True
+    return False
+
+
+def _name_suggests_uric_acid_single(name: str) -> bool:
+    n = (name or '').strip().lower()
+    if 'uric acid' in n:
+        return True
+    return bool(re.search(r'\buric\b', n))
+
+
+def _keyword_match_lft(name: str, code_lower: str) -> bool:
+    n = (name or '').strip().lower()
+    if any(p in n for p in _LFT_SUBSTRING_PHRASES):
+        return True
+    for tok in _LFT_BOUNDARY_TOKENS:
+        if re.search(rf'(?<![a-z0-9]){re.escape(tok)}(?![a-z0-9])', n):
+            return True
+    return False
+
+
+def _keyword_match_tft(name: str, code_lower: str) -> bool:
+    n = (name or '').strip().lower()
+    if any(p in n for p in _TFT_SUBSTRING_PHRASES):
+        return True
+    for tok in _TFT_BOUNDARY_TOKENS:
+        if re.search(rf'(?<![a-z0-9]){re.escape(tok)}(?![a-z0-9])', n):
+            return True
+    return False
 
 
 def get_lab_result_template_type(test) -> str:
     """
-    Return the template type for a LabTest instance: fbc, lft, rft, lipid, tft, glucose,
+    Return the template type for a LabTest instance: fbc, lft, rft, bue, lipid, tft, glucose,
     electrolytes, urine, stool, or single.
-    Uses exact code first, then keyword matching on name/code. Never returns FBC for non-FBC tests.
+    Uses exact code first (prevents lipid/TFT panels from being overridden by loose name keywords),
+    then keyword matching. Never returns FBC for non-FBC tests.
     """
     if test is None:
         return TEMPLATE_SINGLE
@@ -168,14 +287,16 @@ def get_lab_result_template_type(test) -> str:
     name = (getattr(test, 'name', None) or '').strip().lower()
     code_lower = code.lower()
 
-    # 1) Name-based override: if the test name clearly indicates glucose/FBS, use glucose template first.
-    #    (ensures "Fasting Blood Sugar" never gets LFT even when test is mis-coded as LFT)
-    if any(k in name or k in code_lower for k in KEYWORDS_GLUCOSE):
-        return TEMPLATE_GLUCOSE
-
-    # 2) Exact code match
+    # 1) Exact code match (canonical)
     if code and code in CODE_MAP:
-        return CODE_MAP[code]
+        mapped = CODE_MAP[code]
+        if mapped == TEMPLATE_LFT and _name_overrides_lft_to_glucose(name):
+            return TEMPLATE_GLUCOSE
+        return mapped
+
+    # 2) BUE by name (uncoded urea + electrolyte panels)
+    if _is_bue_panel(name, code):
+        return TEMPLATE_BUE
 
     # 3) Keyword matching — structured templates before single
     if any(k in name or k in code_lower for k in KEYWORDS_URINE):
@@ -184,7 +305,7 @@ def get_lab_result_template_type(test) -> str:
         return TEMPLATE_STOOL
     if any(k in name or k in code_lower for k in KEYWORDS_MALARIA):
         return TEMPLATE_MALARIA
-    if any(k in name or k in code_lower for k in KEYWORDS_BLOOD_GROUP):
+    if _keyword_match_blood_group(name, code_lower):
         return TEMPLATE_BLOOD_GROUP
     if any(k in name or k in code_lower for k in KEYWORDS_SICKLE):
         return TEMPLATE_SICKLE
@@ -199,24 +320,30 @@ def get_lab_result_template_type(test) -> str:
         return TEMPLATE_SEMEN
     if any(k in name or k in code_lower for k in KEYWORDS_AFB):
         return TEMPLATE_AFB
+    # Uric acid: single analyte only (word boundary — avoid substring false positives vs "urea")
+    if _name_suggests_uric_acid_single(name):
+        return TEMPLATE_SINGLE
     if any(k in name or k in code_lower for k in KEYWORDS_SINGLE):
         return TEMPLATE_SINGLE
     if any(k in name or k in code_lower for k in KEYWORDS_FBC):
         return TEMPLATE_FBC
-    if any(k in name or k in code_lower for k in KEYWORDS_LFT):
+    if _keyword_match_lft(name, code_lower):
         return TEMPLATE_LFT
     if any(k in name or k in code_lower for k in KEYWORDS_RFT):
         return TEMPLATE_RFT
+    # Standalone "urea" analyte / serum urea (not BUE — already handled; not uric acid — handled as single)
+    if 'urea' in name or 'urea' in code_lower:
+        return TEMPLATE_RFT
     if any(k in name or k in code_lower for k in KEYWORDS_LIPID):
         return TEMPLATE_LIPID
-    if any(k in name or k in code_lower for k in KEYWORDS_TFT):
+    if _keyword_match_tft(name, code_lower):
         return TEMPLATE_TFT
     if any(k in name or k in code_lower for k in KEYWORDS_GLUCOSE):
         return TEMPLATE_GLUCOSE
     if any(k in name or k in code_lower for k in KEYWORDS_ELECTROLYTES):
         return TEMPLATE_ELECTROLYTES
 
-    # 3) Default: single value (never FBC)
+    # Default: single value (never FBC)
     return TEMPLATE_SINGLE
 
 
@@ -363,7 +490,7 @@ PARAM_REF_RANGES = {
     'tsh': '0.3 - 4.2', 'free_t4': '0.8 - 1.8', 'total_t4': '66 - 181',
     'free_t3': '2.3 - 4.2', 'total_t3': '1.23 - 3.07',
     # Glucose (mmol/L)
-    'fbs': '3.6 - 6.4', 'rbs': '< 7.8', 'hba1c': '4.0 - 5.6', 'ppbs': '< 7.8',
+    'fbs': '3.6 - 6.4', 'rbs': '3.6 - 10.3', 'hba1c': '4.0 - 5.6', 'ppbs': '< 7.8',
     # Urine
     'urine_appearance': 'Clear / Hazy / Turbid', 'urine_colour': 'Straw / Yellow / Dark',
     'urine_ph': '4.5 - 8.0', 'urine_sgravity': '1.005 - 1.030',
@@ -462,7 +589,8 @@ PARAM_UNITS = {
 def get_param_units(key: str, details: Optional[dict] = None) -> str:
     """Return units for a parameter key. If details has key_unit, use that override."""
     if details is not None:
-        override = details.get(f'{key}_unit', '').strip()
+        raw = details.get(f'{key}_unit', '')
+        override = str(raw).strip() if raw is not None else ''
         if override:
             return override
     u = PARAM_UNITS.get(key.lower(), '')
@@ -569,6 +697,35 @@ def _parse_ref_range(ref_str: str, patient_gender=None) -> tuple:
     return (None, None)
 
 
+def resolve_lab_row_flag(
+    key: str,
+    value,
+    details: Optional[dict],
+    ref_range_str: str,
+    is_abnormal_model: bool,
+    patient_gender=None,
+) -> tuple:
+    """
+    Returns (flag_display, value_flag) for printed lab rows.
+    If details[key+'_flag'] is set to NORMAL, ABNORMAL, H, or L, that choice is used (manual).
+    Empty or missing _flag falls back to automatic rules (reference range + qualitative heuristics).
+    """
+    d = details or {}
+    manual = d.get(f'{key}_flag')
+    if manual is not None:
+        m = str(manual).strip().upper()
+        if m in ('', 'AUTO'):
+            m = ''
+        if m in ('NORMAL', 'ABNORMAL', 'H', 'L'):
+            vf = m if m in ('H', 'L') else None
+            return m, vf
+    value_flag = compute_value_flag(str(value), ref_range_str, patient_gender)
+    if value_flag:
+        return value_flag, value_flag
+    flag_val = get_qualitative_flag(str(value), is_abnormal_model)
+    return flag_val, None
+
+
 def compute_value_flag(value_str: str, ref_range_str: str, patient_gender=None) -> Optional[str]:
     """
     Determine if a numeric lab value is High (H), Low (L), or Normal.
@@ -659,9 +816,14 @@ SEROLOGY_ORDERED_KEYS = ['serology_result', 'serology_titer']
 SEMEN_ORDERED_KEYS = ['semen_volume', 'semen_liquefaction', 'semen_ph', 'semen_count', 'semen_motility', 'semen_morphology', 'semen_wbc', 'semen_vitality']
 AFB_ORDERED_KEYS = ['afb_result', 'afb_grade', 'afb_organism']
 
-# RFT and LFT so we only save/display params for the correct test (prevents uric acid mixing with FBC)
+# RFT: renal panel + electrolytes (uric acid is a separate test — TEMPLATE_SINGLE / result_value)
 RFT_ORDERED_KEYS = [
-    'urea', 'bun', 'creatinine', 'egfr', 'uric_acid',
+    'urea', 'bun', 'creatinine', 'egfr',
+    'sodium', 'potassium', 'chloride', 'bicarbonate', 'calcium', 'magnesium', 'phosphorus',
+]
+# BUE / U&E: urea + electrolytes only (no creatinine, eGFR, uric acid)
+BUE_ORDERED_KEYS = [
+    'urea', 'bun',
     'sodium', 'potassium', 'chloride', 'bicarbonate', 'calcium', 'magnesium', 'phosphorus',
 ]
 LFT_ORDERED_KEYS = [
@@ -683,6 +845,7 @@ ORDERED_KEYS_BY_TEMPLATE = {
     TEMPLATE_FBC: FBC_ORDERED_KEYS,
     TEMPLATE_LFT: LFT_ORDERED_KEYS,
     TEMPLATE_RFT: RFT_ORDERED_KEYS,
+    TEMPLATE_BUE: BUE_ORDERED_KEYS,
     TEMPLATE_LIPID: LIPID_ORDERED_KEYS,
     TEMPLATE_TFT: TFT_ORDERED_KEYS,
     TEMPLATE_GLUCOSE: GLUCOSE_ORDERED_KEYS,
@@ -699,6 +862,13 @@ ORDERED_KEYS_BY_TEMPLATE = {
 }
 
 
+def get_ordered_keys_for_result_display(test_type: Optional[str]) -> Optional[List[str]]:
+    """Stable row order for printed/panel reports; None → caller may fall back to details.keys()."""
+    if not test_type or test_type == TEMPLATE_SINGLE:
+        return None
+    return ORDERED_KEYS_BY_TEMPLATE.get(test_type)
+
+
 def get_allowed_detail_keys_for_save(test_type: str):
     """
     Return set of allowed detail keys (and their _unit variants) for the given template.
@@ -710,6 +880,211 @@ def get_allowed_detail_keys_for_save(test_type: str):
         for k in keys_list:
             allowed.add(k)
             allowed.add(f'{k}_unit')
+            allowed.add(f'{k}_flag')
     if test_type == TEMPLATE_SINGLE:
-        allowed.update(['result_value', 'result_unit', 'RESULT_VALUE', 'RESULT_UNIT'])
+        allowed.update(['result_value', 'result_unit', 'RESULT_VALUE', 'RESULT_UNIT', 'result_value_flag'])
     return allowed
+
+
+def build_lab_result_display_rows(result, patient_gender: Optional[str] = None) -> List[dict]:
+    """
+    Build display rows from a LabResult, matching the shape used by print views:
+    {parameter, result, units, ref_range, flag, value_flag}.
+    """
+    result_rows: List[dict] = []
+    raw_details = getattr(result, 'details', None) or {}
+    details: dict = {}
+    if isinstance(raw_details, dict):
+        details = raw_details
+    elif isinstance(raw_details, str) and raw_details.strip():
+        try:
+            parsed = json.loads(raw_details)
+            if isinstance(parsed, dict):
+                details = parsed
+        except (json.JSONDecodeError, TypeError, ValueError):
+            details = {}
+
+    if isinstance(details, dict):
+        test = getattr(result, 'test', None)
+        test_type = get_lab_result_template_type(test) if test else None
+        result_value = details.get('result_value') or details.get('RESULT_VALUE')
+
+        # Panel tests must use the panel branch even if a stray result_value key exists.
+        if test_type and test_type != TEMPLATE_SINGLE:
+            ordered_keys = get_ordered_keys_for_result_display(test_type)
+            keys_to_iterate = ordered_keys if ordered_keys else list(details.keys())
+            for key in keys_to_iterate:
+                if key.lower() in ('result_value', 'result_unit'):
+                    continue
+                if key.endswith('_unit') or key.endswith('_flag'):
+                    continue
+                value = details.get(key)
+                if value is None or str(value).strip() == '':
+                    continue
+                param_label = get_param_display_name(key)
+                ref_range = get_param_ref_range(key)
+                units_val = get_param_units(key, details)
+                flag_val, value_flag = resolve_lab_row_flag(
+                    key, value, details, ref_range, getattr(result, 'is_abnormal', False), patient_gender
+                )
+                result_rows.append({
+                    'parameter': param_label,
+                    'result': value,
+                    'units': units_val,
+                    'ref_range': ref_range,
+                    'flag': flag_val,
+                    'value_flag': value_flag,
+                })
+        elif result_value:
+            ref = '-'
+            if getattr(result, 'range_low', None) and getattr(result, 'range_high', None):
+                ref = f'{result.range_low} - {result.range_high}'
+            elif getattr(result, 'range_low', None):
+                ref = result.range_low
+            elif getattr(result, 'range_high', None):
+                ref = result.range_high
+            units_val = (
+                details.get('result_unit') or details.get('RESULT_UNIT') or getattr(result, 'units', None) or
+                infer_units_from_result(result_value) or 'N/A'
+            )
+            flag_val, value_flag = resolve_lab_row_flag(
+                'result_value', result_value, details, ref, getattr(result, 'is_abnormal', False), patient_gender
+            )
+            result_rows.append({
+                'parameter': getattr(test, 'name', None) or 'Result',
+                'result': result_value,
+                'units': units_val,
+                'ref_range': ref,
+                'flag': flag_val,
+                'value_flag': value_flag,
+            })
+
+        # Misclassified templates (often default SINGLE) and legacy rows: tabular save still stores
+        # keys like serology_result / bg_group without result_value — iterate all detail keys.
+        if not result_rows and details:
+            for key in sorted(details.keys()):
+                if key.lower() in ('result_value', 'result_unit'):
+                    continue
+                if key.endswith('_unit') or key.endswith('_flag'):
+                    continue
+                value = details.get(key)
+                if value is None or str(value).strip() == '':
+                    continue
+                param_label = get_param_display_name(key)
+                ref_range = get_param_ref_range(key)
+                units_val = get_param_units(key, details)
+                flag_val, value_flag = resolve_lab_row_flag(
+                    key, value, details, ref_range, getattr(result, 'is_abnormal', False), patient_gender
+                )
+                result_rows.append({
+                    'parameter': param_label,
+                    'result': value,
+                    'units': units_val,
+                    'ref_range': ref_range,
+                    'flag': flag_val,
+                    'value_flag': value_flag,
+                })
+
+    if not result_rows and getattr(result, 'value', None):
+        ref = '-'
+        if getattr(result, 'range_low', None) and getattr(result, 'range_high', None):
+            ref = f'{result.range_low} - {result.range_high}'
+        elif getattr(result, 'range_low', None) or getattr(result, 'range_high', None):
+            low = getattr(result, 'range_low', '') or ''
+            high = getattr(result, 'range_high', '') or ''
+            ref = (low + (' - ' if low and high else '') + high) or '-'
+        units_val = getattr(result, 'units', None) or 'N/A'
+        flag_val, value_flag = resolve_lab_row_flag(
+            'result_value', result.value, details if isinstance(details, dict) else {}, ref,
+            getattr(result, 'is_abnormal', False), patient_gender
+        )
+        result_rows.append({
+            'parameter': getattr(getattr(result, 'test', None), 'name', None) or 'Result',
+            'result': result.value,
+            'units': units_val,
+            'ref_range': ref,
+            'flag': flag_val,
+            'value_flag': value_flag,
+        })
+
+    if not result_rows and getattr(result, 'qualitative_result', None):
+        qual = getattr(result, 'qualitative_result', None)
+        flag_val = get_qualitative_flag(qual, getattr(result, 'is_abnormal', False))
+        units_val = infer_units_from_result(qual) or 'Qualitative'
+        result_rows.append({
+            'parameter': getattr(getattr(result, 'test', None), 'name', None) or 'Result',
+            'result': qual,
+            'units': units_val,
+            'ref_range': 'Reactive / Non-Reactive / Equivocal',
+            'flag': flag_val,
+            'value_flag': None,
+        })
+
+    return result_rows
+
+
+def lab_result_list_summary(result, patient_gender: Optional[str] = None) -> dict:
+    """
+    Summary for list tables where only one cell exists for Result/Unit/Reference.
+    Returns: {result_text, unit_text, ref_text, is_pending}.
+    """
+    rows = build_lab_result_display_rows(result, patient_gender=patient_gender)
+    if rows:
+        max_items = 2
+        parts: List[str] = []
+        for r in rows[:max_items]:
+            label = str(r.get('parameter') or '').strip()
+            val = str(r.get('result') or '').strip()
+            if label and val:
+                parts.append(f'{label}: {val}')
+            elif val:
+                parts.append(val)
+        more = len(rows) - len(parts)
+        result_text = '; '.join(parts)
+        if more > 0:
+            result_text = f'{result_text} (+{more} more)' if result_text else f'(+{more} more)'
+
+        unit_text = next(
+            (str(r.get('units') or '').strip() for r in rows if str(r.get('units') or '').strip() not in ('', '-', 'N/A', 'Qualitative')),
+            str(rows[0].get('units') or '').strip()
+        )
+        unit_text = unit_text or '—'
+
+        refs = [str(r.get('ref_range') or '').strip() for r in rows if str(r.get('ref_range') or '').strip() and str(r.get('ref_range') or '').strip() != '-']
+        ref_text = refs[0] if refs else '—'
+        if len(set(refs)) > 1:
+            ref_text = 'Multiple (see report)'
+
+        return {'result_text': result_text or '—', 'unit_text': unit_text, 'ref_text': ref_text, 'is_pending': False}
+
+    # Fallback to legacy scalar fields
+    value = (getattr(result, 'value', None) or '').strip() if hasattr(getattr(result, 'value', ''), 'strip') else getattr(result, 'value', None)
+    qualitative = (getattr(result, 'qualitative_result', None) or '').strip() if hasattr(getattr(result, 'qualitative_result', ''), 'strip') else getattr(result, 'qualitative_result', None)
+    units = (getattr(result, 'units', None) or '').strip() if hasattr(getattr(result, 'units', ''), 'strip') else getattr(result, 'units', None)
+    low = (getattr(result, 'range_low', None) or '').strip() if hasattr(getattr(result, 'range_low', ''), 'strip') else getattr(result, 'range_low', None)
+    high = (getattr(result, 'range_high', None) or '').strip() if hasattr(getattr(result, 'range_high', ''), 'strip') else getattr(result, 'range_high', None)
+
+    result_text = value or qualitative or ''
+    if low and high:
+        ref_text = f'{low} – {high}'
+    elif low:
+        ref_text = f'≥ {low}'
+    elif high:
+        ref_text = f'≤ {high}'
+    else:
+        ref_text = '—'
+
+    if not (result_text and str(result_text).strip()) and getattr(result, 'attachment', None):
+        return {
+            'result_text': 'See attached report',
+            'unit_text': '—',
+            'ref_text': '—',
+            'is_pending': False,
+        }
+
+    return {
+        'result_text': result_text or '—',
+        'unit_text': units or '—',
+        'ref_text': ref_text,
+        'is_pending': not bool(result_text),
+    }

@@ -10,17 +10,28 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        # Restore indexes that were accidentally removed
-        migrations.AddIndex(
-            model_name='drug',
-            index=models.Index(fields=['is_active', 'is_deleted', 'category'], name='hospital_dr_is_act_del_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='pharmacystock',
-            index=models.Index(fields=['drug_id', 'is_deleted'], name='hospital_ph_drug_id_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='pharmacystock',
-            index=models.Index(fields=['is_deleted', 'quantity_on_hand'], name='hospital_ph_is_del_idx'),
+        # Same indexes as 1069_add_pharmacy_stock_indexes; keep state only to avoid duplicate CREATE INDEX.
+        migrations.SeparateDatabaseAndState(
+            state_operations=[
+                migrations.AddIndex(
+                    model_name='drug',
+                    index=models.Index(
+                        fields=['is_active', 'is_deleted', 'category'],
+                        name='hospital_dr_is_act_del_idx',
+                    ),
+                ),
+                migrations.AddIndex(
+                    model_name='pharmacystock',
+                    index=models.Index(fields=['drug_id', 'is_deleted'], name='hospital_ph_drug_id_idx'),
+                ),
+                migrations.AddIndex(
+                    model_name='pharmacystock',
+                    index=models.Index(
+                        fields=['is_deleted', 'quantity_on_hand'],
+                        name='hospital_ph_is_del_idx',
+                    ),
+                ),
+            ],
+            database_operations=[],
         ),
     ]

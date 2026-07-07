@@ -511,8 +511,8 @@ def _send_procurement_approval_sms_to_accountants(procurement_request):
     and ready for accounts approval.
     """
     try:
-        # Get all accountant staff (accountants, account officers, senior account officers)
-        accountant_professions = ['accountant', 'account_officer', 'account_personnel', 'senior_account_officer']
+        # Accountants only — account officers handle claims, not procurement approval
+        accountant_professions = ['accountant', 'account_personnel', 'senior_account_officer']
         accountant_staff = Staff.objects.filter(
             profession__in=accountant_professions,
             is_active=True,

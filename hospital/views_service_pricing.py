@@ -166,7 +166,7 @@ def lab_pricing_list(request):
                     s = (val or '').strip()
                     if s == '':
                         return None
-                    v = int(s)
+                    v = int(float(s))
                     return v if v >= 0 else default
                 except Exception:
                     return default
@@ -183,11 +183,14 @@ def lab_pricing_list(request):
                         fields_to_update.append('price')
                     # Only update TAT when a value is explicitly provided in the form;
                     # leave existing value untouched when field is left blank.
-                    if tat_val is not None and lab.tat_minutes != tat_val:
-                        lab.tat_minutes = tat_val
-                        fields_to_update.append('tat_minutes')
+                    if tat_val is not None:
+                        current_tat = lab.tat_minutes
+                        if current_tat is None or int(current_tat) != int(tat_val):
+                            lab.tat_minutes = tat_val
+                            fields_to_update.append('tat_minutes')
 
                     if fields_to_update:
+                        fields_to_update.append('modified')
                         lab.save(update_fields=fields_to_update)
                         messages.success(
                             request,

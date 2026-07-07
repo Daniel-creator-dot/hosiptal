@@ -331,12 +331,24 @@
         <!-- Financial Summary -->
         <div class="report-section">
             <h3><i class="bi bi-cash-stack"></i> Financial Summary</h3>
+            <p style="color: #666; margin: -8px 0 12px 0; font-size: 0.92em;">
+                <strong>Total payments</strong> includes bill/service receipts plus <strong>patient deposit intake</strong> (money taken in before it is applied to invoices).
+                Deposit-to-bill postings are excluded from totals so cash is not double-counted.
+            </p>
             <div class="info-row">
                 <span class="info-label">Opening Cash:</span>
                 <span class="info-value">GHS {{ session.opening_cash|floatformat:2|intcomma }}</span>
             </div>
             <div class="info-row">
-                <span class="info-label">Total Payments Received:</span>
+                <span class="info-label">Bill &amp; service payments:</span>
+                <span class="info-value">GHS {{ session.bill_payments_total|floatformat:2|intcomma }}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Deposit received (intake):</span>
+                <span class="info-value text-info"><strong>GHS {{ session.deposit_received_total|floatformat:2|intcomma }}</strong></span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Total payments received:</span>
                 <span class="info-value text-success"><strong>GHS {{ session.total_payments|floatformat:2|intcomma }}</strong></span>
             </div>
             <div class="info-row">
@@ -361,6 +373,9 @@
                     {% endif %}
                 </span>
             </div>
+            <p style="color: #555; margin: 12px 0 0 0; font-size: 0.88em; font-style: italic;">
+                Expected cash = opening cash + cash bill payments + <strong>cash deposit intake</strong> − cash refunds.
+            </p>
         </div>
         
         <!-- Payment Method Breakdown -->
@@ -415,7 +430,7 @@
                         <tr style="background: #f8f9fa; font-weight: bold; border-top: 2px solid #0d6efd;">
                             <td style="padding: 12px; border: 1px solid #dee2e6; font-size: 1.05em;">TOTAL</td>
                             <td style="padding: 12px; text-align: center; border: 1px solid #dee2e6; font-size: 1.05em;">
-                                {{ session.total_transactions|intcomma }}
+                                {{ payment_method_row_count|intcomma }}
                             </td>
                             <td style="padding: 12px; text-align: right; border: 1px solid #dee2e6; font-size: 1.15em; color: #0d6efd;">
                                 GHS {{ session.total_payments|floatformat:2|intcomma }}
@@ -458,7 +473,7 @@
                             <thead>
                                 <tr style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;">
                                     <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">Date/Time</th>
-                                    <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">Transaction #</th>
+                                    <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">Txn / Deposit #</th>
                                     <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">Patient Name</th>
                                     <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">MRN</th>
                                     <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">Services</th>
@@ -473,7 +488,10 @@
                                         {{ txn.transaction_date|date:"M d, Y H:i" }}
                                     </td>
                                     <td style="padding: 8px; border: 1px solid #dee2e6; font-family: monospace; font-size: 0.85em;">
-                                        {{ txn.transaction_number|truncatechars:12 }}
+                                        {% if txn.row_kind == 'deposit_intake' %}
+                                            <span class="badge bg-info text-dark" style="font-size: 0.7rem;">DEP</span>
+                                        {% endif %}
+                                        {{ txn.transaction_number|truncatechars:18 }}
                                     </td>
                                     <td style="padding: 8px; border: 1px solid #dee2e6; font-weight: 600;">
                                         {{ txn.patient_name }}
@@ -529,6 +547,52 @@
                     </div>
                 </div>
                 {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if session_deposits_detail %}
+        <div class="report-section">
+            <h3><i class="bi bi-piggy-bank"></i> Patient deposit register (detailed intake)</h3>
+            <p style="color: #666; margin-bottom: 15px; font-size: 0.95em;">
+                Every patient deposit recorded during this session (by this cashier). These amounts are included in <strong>Total payments received</strong> and in <strong>Expected cash</strong> when the deposit was taken in cash.
+            </p>
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                    <thead>
+                        <tr style="background: #0d6efd; color: white;">
+                            <th style="padding: 10px; text-align: left; border: 1px solid #0a58ca;">Date/Time</th>
+                            <th style="padding: 10px; text-align: left; border: 1px solid #0a58ca;">Deposit #</th>
+                            <th style="padding: 10px; text-align: left; border: 1px solid #0a58ca;">Patient</th>
+                            <th style="padding: 10px; text-align: left; border: 1px solid #0a58ca;">MRN</th>
+                            <th style="padding: 10px; text-align: left; border: 1px solid #0a58ca;">Method</th>
+                            <th style="padding: 10px; text-align: right; border: 1px solid #0a58ca;">Amount</th>
+                            <th style="padding: 10px; text-align: left; border: 1px solid #0a58ca;">Reference</th>
+                            <th style="padding: 10px; text-align: left; border: 1px solid #0a58ca;">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for d in session_deposits_detail %}
+                        <tr style="border-bottom: 1px solid #dee2e6;">
+                            <td style="padding: 8px; border: 1px solid #dee2e6;">{{ d.deposit_date|date:"M d, Y H:i" }}</td>
+                            <td style="padding: 8px; border: 1px solid #dee2e6; font-family: monospace;">{{ d.deposit_number }}</td>
+                            <td style="padding: 8px; border: 1px solid #dee2e6; font-weight: 600;">{{ d.patient.full_name|default:d.patient }}</td>
+                            <td style="padding: 8px; border: 1px solid #dee2e6;">{{ d.patient.mrn|default:"—" }}</td>
+                            <td style="padding: 8px; border: 1px solid #dee2e6;">{{ d.get_payment_method_display }}</td>
+                            <td style="padding: 8px; border: 1px solid #dee2e6; text-align: right; font-weight: 600; color: #198754;">GHS {{ d.deposit_amount|floatformat:2|intcomma }}</td>
+                            <td style="padding: 8px; border: 1px solid #dee2e6; font-size: 0.85em;">{{ d.reference_number|default:"—"|truncatechars:24 }}</td>
+                            <td style="padding: 8px; border: 1px solid #dee2e6;">{{ d.get_status_display }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr style="background: #f8f9fa; font-weight: bold;">
+                            <td colspan="5" style="padding: 10px; border: 1px solid #dee2e6; text-align: right;">Session deposit intake total</td>
+                            <td style="padding: 10px; border: 1px solid #dee2e6; text-align: right; color: #0d6efd;">GHS {{ session.deposit_received_total|floatformat:2|intcomma }}</td>
+                            <td colspan="2" style="padding: 10px; border: 1px solid #dee2e6;"></td>
+                        </tr>
+                    </tfoot>
+                </table>
             </div>
         </div>
         {% endif %}

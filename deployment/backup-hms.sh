@@ -4,7 +4,7 @@
 
 BACKUP_DIR="/var/backups/hms"
 DATE=$(date +%Y%m%d_%H%M%S)
-KEEP_DAYS=30
+KEEP_DAYS=14
 
 # Create backup directory
 mkdir -p $BACKUP_DIR

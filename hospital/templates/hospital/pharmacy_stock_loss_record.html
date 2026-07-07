@@ -1,0 +1,79 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'hospital/css/pharmacy_ui.css' %}">
+{% endblock %}
+
+{% block title %}Record stock loss - HMS{% endblock %}
+{% block page_title %}Record stock removal{% endblock %}
+{% block page_subtitle %}{{ stock.drug.name }} — batch {{ stock.batch_number }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid pharmacy-ui rx-form-page pb-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8 col-xl-7 rx-form-shell">
+            <div class="rx-form-section">
+                {% if available_qty < 1 %}
+                <div class="alert alert-warning">
+                    This batch has no sellable quantity on hand. You cannot record a further loss here.
+                    <a href="{% url 'hospital:pharmacy_stock_list' %}" class="alert-link">Return to stock</a>.
+                </div>
+                {% else %}
+                <div class="mb-3 p-3 bg-light rounded-3 border">
+                    <div><strong>Drug:</strong> {{ stock.drug.name }} <span class="text-muted">{{ stock.drug.strength }} {{ stock.drug.form }}</span></div>
+                    <div><strong>Batch:</strong> <code>{{ stock.batch_number }}</code></div>
+                    <div><strong>Expiry:</strong> {{ stock.expiry_date|date:"d/m/Y" }}</div>
+                    <div><strong>Location:</strong> {{ stock.location }}</div>
+                    <div><strong>Available to write off:</strong> <span class="badge text-bg-secondary">{{ available_qty }}</span> unit(s)</div>
+                </div>
+
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Reason for removal <span class="text-danger">*</span></label>
+                            <select name="loss_type" class="form-select form-control-modern" required>
+                                <option value="">— Select —</option>
+                                {% for code, label in loss_type_choices %}
+                                <option value="{{ code }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Quantity (units) <span class="text-danger">*</span></label>
+                            <input type="number" name="quantity" class="form-control form-control-modern" min="1" max="{{ available_qty }}" required>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Disposal / segregation <span class="text-danger">*</span></label>
+                        <select name="disposal_method" class="form-select form-control-modern" required>
+                            <option value="">— Select —</option>
+                            {% for code, label in disposal_choices %}
+                            <option value="{{ code }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        <small class="form-text text-muted">Match your facility SOP (waste stream, returns, or witnessed destruction).</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Witness (optional)</label>
+                        <input type="text" name="witness_name" class="form-control form-control-modern" maxlength="200" placeholder="Name of second staff member, if applicable">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Notes <span class="text-danger">*</span></label>
+                        <textarea name="notes" class="form-control form-control-modern" rows="3" required placeholder="What happened, date observed, how segregated…"></textarea>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2">
+                        <button type="submit" class="btn btn-danger fw-semibold">
+                            <i class="bi bi-check2-circle"></i> Submit &amp; reduce stock
+                        </button>
+                        <a href="{% url 'hospital:pharmacy_stock_list' %}" class="btn btn-outline-secondary">Cancel</a>
+                        <a href="{% url 'hospital:pharmacy_stock_loss_log' %}" class="btn btn-outline-primary">View register</a>
+                    </div>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

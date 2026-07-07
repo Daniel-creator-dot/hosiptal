@@ -30,8 +30,8 @@ class Command(BaseCommand):
         parser.add_argument(
             '--keep-days',
             type=int,
-            default=30,
-            help='Keep backups for N days (default: 30)',
+            default=14,
+            help='Keep backups for N days (default: 14)',
         )
         parser.add_argument(
             '--cleanup',

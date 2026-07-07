@@ -3,6 +3,26 @@
 
 {% block title %}Add Services - {{ patient.full_name }} - Cashier - HMS{% endblock %}
 
+{% block extra_css %}
+<style>
+    /*
+     * Dark theme (base.html) sets body.theme-dark span { color: #e2e8f0 !important }, which overrides
+     * Bootstrap .text-success on prices — amounts look “missing”. Use a dedicated class with higher specificity.
+     */
+    .cashier-bill-price {
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        color: #0a5c36 !important;
+    }
+    body.theme-dark .cashier-bill-price {
+        color: #6ee7b7 !important;
+    }
+    #search_results .cashier-bill-price {
+        font-size: 1.05rem;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid">
     <div class="row">
@@ -17,7 +37,7 @@
                 <div class="card-body">
                     <div class="alert alert-info mb-4">
                         <strong>{{ patient.full_name }}</strong> (MRN: {{ patient.mrn }})<br>
-                        <small>Payer: {{ patient.primary_insurance.name|default:"Cash" }} — Pricing: {{ payer_type|title }}</small>
+                        <small>Payer: {{ patient.primary_insurance.name|default:"Cash" }} — Pricing: {{ payer_pricing_label }}</small>
                     </div>
 
                     <div class="alert alert-success mb-4 py-2">
@@ -38,6 +58,61 @@
                                 <small class="text-muted">Selecting an item auto-fills price from system.</small>
                             </div>
                         </div>
+
+                        <details class="card border-secondary mb-3" open>
+                            <summary class="card-header py-2" style="cursor: pointer;">
+                                <strong><i class="bi bi-list-ul me-1"></i>Browse manual services</strong>
+                                <span class="text-muted fw-normal ms-1">(e.g. Dressing, Dressing (large), labs use search)</span>
+                            </summary>
+                            <div class="card-body p-0 border-top">
+                                <div class="table-responsive" style="max-height: 22rem; overflow-y: auto;">
+                                    <table class="table table-sm table-hover align-middle mb-0">
+                                        <thead class="table-light sticky-top">
+                                            <tr>
+                                                <th class="ps-3">Service</th>
+                                                <th style="width: 9rem;">Price</th>
+                                                <th style="width: 5rem;"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for svc in services %}
+                                                {% if svc.code == 'physio' %}
+                                                    <tr>
+                                                        <td class="ps-3">Physiotherapy (First Session)</td>
+                                                        <td><span class="cashier-bill-price">GHS 250.00</span></td>
+                                                        <td class="pe-2">
+                                                            <button type="button" class="btn btn-sm btn-outline-success js-add-catalog"
+                                                                    data-item-type="manual" data-item-key="physio_first"
+                                                                    data-display-name="Physiotherapy (First Session)" data-unit-price="250.00">Add</button>
+                                                        </td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td class="ps-3">Physiotherapy (Subsequent Session)</td>
+                                                        <td><span class="cashier-bill-price">GHS 150.00</span></td>
+                                                        <td class="pe-2">
+                                                            <button type="button" class="btn btn-sm btn-outline-success js-add-catalog"
+                                                                    data-item-type="manual" data-item-key="physio_subsequent"
+                                                                    data-display-name="Physiotherapy (Subsequent Session)" data-unit-price="150.00">Add</button>
+                                                        </td>
+                                                    </tr>
+                                                {% else %}
+                                                    <tr>
+                                                        <td class="ps-3">{{ svc.label }}{% if svc.code == 'psychiatric' %} <small class="text-muted">({{ svc.price_display }})</small>{% endif %}</td>
+                                                        <td><span class="cashier-bill-price">{% if svc.code == 'psychiatric' %}GHS {{ svc.price|stringformat:'.2f' }}{% else %}{{ svc.price_display }}{% endif %}</span></td>
+                                                        <td class="pe-2">
+                                                            <button type="button" class="btn btn-sm btn-outline-success js-add-catalog"
+                                                                    data-item-type="manual" data-item-key="{{ svc.code|escape }}"
+                                                                    data-display-name="{{ svc.label|escape }}"
+                                                                    data-unit-price="{{ svc.price|stringformat:'.2f' }}">Add</button>
+                                                        </td>
+                                                    </tr>
+                                                {% endif %}
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </details>
 
                         <div class="card border-secondary mb-3">
                             <div class="card-header py-2">
@@ -155,6 +230,18 @@
                 .replace(/'/g, '&#039;');
         }
 
+        /** Normalize API/template prices so the Unit column never shows blank/undefined */
+        function formatGhsUnitPrice(raw) {
+            if (raw === null || raw === undefined || raw === '') {
+                return '0.00';
+            }
+            const n = Number(String(raw).replace(/,/g, ''));
+            if (!Number.isFinite(n)) {
+                return '0.00';
+            }
+            return n.toFixed(2);
+        }
+
         function syncHiddenJson() {
             selectedJson.value = JSON.stringify(selectedItems);
         }
@@ -168,9 +255,10 @@
 
             selectedBody.innerHTML = selectedItems.map((item, idx) => {
                 const sourceLabel = item.source ? ` <span class="badge bg-light text-dark">${escapeHtml(item.source)}</span>` : '';
+                const up = formatGhsUnitPrice(item.unit_price);
                 const priceCell = canEditInvoiceAmounts
-                    ? `<input type="number" min="0" step="0.01" class="form-control form-control-sm js-price" value="${escapeHtml(item.unit_price)}">`
-                    : `<span class="text-success fw-semibold">GHS ${escapeHtml(item.unit_price)}</span>`;
+                    ? `<input type="number" min="0" step="0.01" class="form-control form-control-sm js-price" value="${escapeHtml(up)}" aria-label="Unit price GHS">`
+                    : `<span class="cashier-bill-price">GHS ${escapeHtml(up)}</span>`;
                 return `
                     <tr data-index="${idx}">
                         <td>${escapeHtml(item.display_name)}${sourceLabel}</td>
@@ -192,11 +280,28 @@
             return selectedItems.some(item => item.item_type === candidate.item_type && item.item_key === candidate.item_key);
         }
 
+        function pushSelectedFromChoice(choice, unitPriceStr) {
+            if (!choice || itemAlreadySelected(choice)) {
+                return false;
+            }
+            selectedItems.push({
+                item_type: choice.item_type,
+                item_key: choice.item_key,
+                display_name: choice.display_name,
+                service_code: choice.service_code || '',
+                source: choice.source || 'service',
+                quantity: 1,
+                unit_price: formatGhsUnitPrice(unitPriceStr),
+            });
+            renderSelectedItems();
+            return true;
+        }
+
         function getLocalManualResults(query) {
             const q = (query || '').toLowerCase();
             return manualItems.filter(item => {
                 return item.display_name.toLowerCase().includes(q) || item.item_key.toLowerCase().includes(q);
-            }).slice(0, 20);
+            }).slice(0, 80);
         }
 
         async function fetchSearchResults(query) {
@@ -219,37 +324,31 @@
             }
 
             resultsBox.classList.remove('d-none');
-            resultsBox.innerHTML = items.map((item, idx) => `
+            resultsBox.innerHTML = items.map((item, idx) => {
+                const up = formatGhsUnitPrice(item.unit_price);
+                return `
                 <button type="button" class="list-group-item list-group-item-action js-result"
                         data-index="${idx}">
-                    <div class="d-flex justify-content-between align-items-center">
+                    <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap">
                         <span><strong>${escapeHtml(item.display_name)}</strong></span>
-                        <span class="text-success">GHS ${escapeHtml(item.unit_price)}</span>
+                        <span class="cashier-bill-price text-nowrap">GHS ${escapeHtml(up)}</span>
                     </div>
                     <small class="text-muted text-uppercase">${escapeHtml(item.source)}</small>
                 </button>
-            `).join('');
+            `;
+            }).join('');
 
             const actionEls = resultsBox.querySelectorAll('.js-result');
             actionEls.forEach(el => {
                 el.addEventListener('click', function () {
                     const idx = Number(this.getAttribute('data-index'));
                     const choice = items[idx];
-                    if (!choice || itemAlreadySelected(choice)) {
+                    if (!choice) {
                         hideResults();
                         searchInput.value = '';
                         return;
                     }
-                    selectedItems.push({
-                        item_type: choice.item_type,
-                        item_key: choice.item_key,
-                        display_name: choice.display_name,
-                        service_code: choice.service_code,
-                        source: choice.source,
-                        quantity: 1,
-                        unit_price: choice.unit_price
-                    });
-                    renderSelectedItems();
+                    pushSelectedFromChoice(choice, choice.unit_price);
                     hideResults();
                     searchInput.value = '';
                 });
@@ -312,6 +411,20 @@
             const idx = Number(row.getAttribute('data-index'));
             selectedItems = selectedItems.filter((_, i) => i !== idx);
             renderSelectedItems();
+        });
+
+        document.querySelectorAll('.js-add-catalog').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                const choice = {
+                    item_type: btn.getAttribute('data-item-type') || 'manual',
+                    item_key: btn.getAttribute('data-item-key') || '',
+                    display_name: btn.getAttribute('data-display-name') || '',
+                    service_code: btn.getAttribute('data-service-code') || '',
+                    source: 'service',
+                };
+                const up = btn.getAttribute('data-unit-price') || '0';
+                pushSelectedFromChoice(choice, up);
+            });
         });
 
         renderSelectedItems();

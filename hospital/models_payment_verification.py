@@ -414,11 +414,13 @@ class PharmacyStockDeductionLog(BaseModel):
     SOURCE_DISPENSE_HISTORY = 'dispense_history'
     SOURCE_PHARMACY_DISPENSING = 'pharmacy_dispensing'
     SOURCE_WALKIN_SALE_ITEM = 'walkin_sale_item'
+    SOURCE_VITAL_POC_GLUCOSE = 'vital_poc_glucose'
 
     SOURCE_CHOICES = [
         (SOURCE_DISPENSE_HISTORY, 'Dispense history row'),
         (SOURCE_PHARMACY_DISPENSING, 'Pharmacy dispensing record (API / no history)'),
         (SOURCE_WALKIN_SALE_ITEM, 'Walk-in prescribe sale line'),
+        (SOURCE_VITAL_POC_GLUCOSE, 'Nurse vitals POC glucose strip'),
     ]
 
     source_type = models.CharField(max_length=32, choices=SOURCE_CHOICES, db_index=True)
@@ -431,6 +433,21 @@ class PharmacyStockDeductionLog(BaseModel):
         related_name='stock_deduction_logs',
     )
     quantity = models.PositiveIntegerField(default=0)
+    cogs_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='FIFO cost of units deducted (for GL COGS posting)',
+    )
+    gl_journal_entry = models.ForeignKey(
+        'hospital.AdvancedJournalEntry',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pharmacy_stock_deduction_logs',
+    )
+    cogs_posted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ['-created']
@@ -465,15 +482,25 @@ class ReceiptQRCode(BaseModel):
         return f"QR Code for Receipt {self.receipt.receipt_number}"
     
     def generate_qr_code(self):
-        """Generate QR code image"""
+        """Generate QR code image (compact payload; auto-select QR version)."""
+        payload = (self.qr_code_data or '').strip()
+        if not payload:
+            payload = self.receipt.receipt_number
+
         qr = qrcode.QRCode(
-            version=1,
+            version=None,
             error_correction=qrcode.constants.ERROR_CORRECT_L,
             box_size=10,
             border=4,
         )
-        qr.add_data(self.qr_code_data)
-        qr.make(fit=True)
+        try:
+            qr.add_data(payload)
+            qr.make(fit=True)
+        except ValueError:
+            # Last resort: receipt number alone always fits
+            qr.clear()
+            qr.add_data(self.receipt.receipt_number)
+            qr.make(fit=True)
         
         img = qr.make_image(fill_color="black", back_color="white")
         buffer = BytesIO()

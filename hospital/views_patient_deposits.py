@@ -23,7 +23,7 @@ from .utils_roles import get_user_role
 
 
 @login_required
-@role_required('cashier', 'accountant', 'senior_account_officer', 'receptionist', 'admin')
+@role_required('cashier', 'accountant', 'senior_account_officer', 'account_officer', 'receptionist', 'admin')
 def record_patient_deposit(request, patient_id=None):
     """
     Record a new patient deposit
@@ -128,7 +128,7 @@ def record_patient_deposit(request, patient_id=None):
 
 
 @login_required
-@role_required('cashier', 'accountant', 'senior_account_officer', 'receptionist', 'admin')
+@role_required('cashier', 'accountant', 'senior_account_officer', 'account_officer', 'receptionist', 'admin')
 def patient_deposit_list(request, patient_id=None):
     """
     List all patient deposits, optionally filtered by patient
@@ -185,7 +185,7 @@ def patient_deposit_list(request, patient_id=None):
 
 
 @login_required
-@role_required('cashier', 'accountant', 'senior_account_officer', 'receptionist', 'admin')
+@role_required('cashier', 'accountant', 'senior_account_officer', 'account_officer', 'receptionist', 'admin')
 def patient_deposit_detail(request, deposit_id):
     """
     View deposit details and applications
@@ -237,7 +237,7 @@ def patient_deposit_detail(request, deposit_id):
 
 
 @login_required
-@role_required('cashier', 'accountant', 'senior_account_officer', 'admin')
+@role_required('cashier', 'accountant', 'senior_account_officer', 'account_officer', 'admin')
 def apply_deposit_manually(request, deposit_id):
     """
     Manually apply a deposit to an invoice
@@ -325,7 +325,7 @@ def apply_deposit_manually(request, deposit_id):
 
 
 @login_required
-@role_required('cashier', 'accountant', 'senior_account_officer', 'admin')
+@role_required('cashier', 'accountant', 'senior_account_officer', 'account_officer', 'admin')
 def patient_deposit_history(request, patient_id):
     """
     View deposit history for a specific patient.
@@ -363,7 +363,11 @@ def patient_deposit_history(request, patient_id):
     outstanding_data = get_patient_outstanding(patient)
     deposit_balance = outstanding_data['deposit_balance']
     total_outstanding = outstanding_data['total_outstanding']
-    amount_to_collect = outstanding_data['amount_due_after_deposit']
+    # Full amount owed until cashier explicitly applies deposit to invoices (no hypothetical subtraction).
+    amount_to_collect = total_outstanding
+    remaining_if_all_deposit_applied = max(
+        Decimal('0.00'), (total_outstanding or Decimal('0.00')) - (deposit_balance or Decimal('0.00'))
+    )
     stats['total_available'] = deposit_balance
     # Build list of outstanding invoices for "collect payment" (cash/self-pay only)
     outstanding_invoices = []
@@ -398,6 +402,7 @@ def patient_deposit_history(request, patient_id):
         'total_outstanding': total_outstanding,
         'deposit_balance': deposit_balance,
         'amount_to_collect': amount_to_collect,
+        'remaining_if_all_deposit_applied': remaining_if_all_deposit_applied,
         'title': f'Deposit History - {patient.full_name}',
     }
     
@@ -405,7 +410,7 @@ def patient_deposit_history(request, patient_id):
 
 
 @login_required
-@role_required('cashier', 'accountant', 'senior_account_officer', 'admin')
+@role_required('cashier', 'accountant', 'senior_account_officer', 'account_officer', 'admin')
 def refund_deposit(request, deposit_id):
     """
     Refund a patient deposit
@@ -464,7 +469,7 @@ def refund_deposit(request, deposit_id):
 
 
 @login_required
-@role_required('cashier', 'accountant', 'senior_account_officer', 'receptionist', 'admin')
+@role_required('cashier', 'accountant', 'senior_account_officer', 'account_officer', 'receptionist', 'admin')
 def patient_deposit_print(request, deposit_id):
     """
     Print-friendly deposit receipt view

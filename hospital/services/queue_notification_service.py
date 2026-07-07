@@ -21,14 +21,14 @@ class QueueNotificationService:
         'check_in': """🏥 {hospital_name}
 
 Your visit ticket: {queue_number}
-(Use this code on the queue screen and when called.)
+(Show this ticket at reception if asked.)
 
 📍 {department}
-👥 You are #{position} in line
+👥 Your place in line: #{position}
 ⏱️ Est. wait: ~{wait_time} min
 📅 {date}
 
-Please wait in the reception area — you will receive SMS when it is your turn.""",
+Stay in the waiting area. Do not go to the consultation room until you get a text that names you and the doctor calling you.""",
 
         'progress_update': """🏥 Queue update
 
@@ -38,12 +38,15 @@ You're now #{position} in line
 
 Thanks for waiting — we're moving as fast as we can.""",
 
-        'ready': """🏥 It's your turn — {queue_number}
+        'ready': """🏥 {hospital_name}
 
-📍 Please go to:
-   {room_info}
+{call_line}
 
-Please arrive within 5 minutes. Show this ticket if asked.""",
+{room_line}
+
+Ticket: {queue_number}
+
+Please arrive within 5 minutes.""",
 
         'no_show': """🏥 Please come to the desk
 
@@ -154,8 +157,8 @@ Visit us: {hospital_name}"""
             payment_info = ""
             if consultation_amount:
                 payment_info = (
-                    "\n\nPlease proceed to the Cashier to make payment before consultation.\n"
-                    "Your correct bill is available at the desk."
+                    "\n\nIf you need to pay before being seen, visit the Cashier first, "
+                    "then return to the waiting area — not the consultation room."
                 )
             
             message = base_message + payment_info
@@ -294,44 +297,46 @@ Visit us: {hospital_name}"""
             
             self.logger.info(f"📱 Phone number found for {queue_entry.patient.full_name}: {phone}")
             
-            # Format room info with doctor name
-            room_info = queue_entry.room_number or 'Main Consultation Area'
-            doctor_name = ''
-            if queue_entry.assigned_doctor:
-                doctor_name = queue_entry.assigned_doctor.get_full_name() or queue_entry.assigned_doctor.username
-                # Format: "Room 5 - Dr. John Doe" or "Dr. John Doe - Room 5"
-                if room_info and room_info != 'Main Consultation Area':
-                    room_info = f"{room_info} - Dr. {doctor_name}"
-                elif doctor_name:
-                    room_info = f"Dr. {doctor_name} - Main Consultation Area"
-            
-            # Enhanced message with more details
             ticket = self._ticket_label(queue_entry)
-            if doctor_name and room_info and room_info != 'Main Consultation Area':
-                message = (
-                    f"🏥 It's your turn\n\n"
-                    f"Ticket {ticket}\n\n"
-                    f"👨‍⚕️ Dr. {doctor_name}\n"
-                    f"🚪 Room {queue_entry.room_number}\n\n"
-                    f"Please go to that room now.\n\n"
-                    f"⚠️ Please arrive within 5 minutes.\n\n"
-                    f"— {self.hospital_name}"
-                )
-            elif doctor_name:
-                message = (
-                    f"🏥 It's your turn\n\n"
-                    f"Ticket {ticket}\n\n"
-                    f"👨‍⚕️ Dr. {doctor_name}\n\n"
-                    f"Please go to the consultation area now.\n\n"
-                    f"⚠️ Within 5 minutes please.\n\n"
-                    f"— {self.hospital_name}"
-                )
+            patient_name = (queue_entry.patient.full_name or '').strip() or 'Patient'
+
+            doctor_display = ''
+            doc_user = queue_entry.assigned_doctor
+            if not doc_user and getattr(queue_entry, 'encounter_id', None):
+                try:
+                    enc = queue_entry.encounter
+                    prov = getattr(enc, 'provider', None) if enc else None
+                    if prov and getattr(prov, 'user', None):
+                        doc_user = prov.user
+                except Exception:
+                    doc_user = None
+
+            if doc_user:
+                raw = (doc_user.get_full_name() or doc_user.username or '').strip()
+                if raw:
+                    low = raw.lower()
+                    if low.startswith('dr.') or low.startswith('dr '):
+                        doctor_display = raw
+                    else:
+                        doctor_display = f'Dr. {raw}'
+
+            room = (queue_entry.room_number or '').strip()
+            if room:
+                room_line = f'Please come to room {room}.'
             else:
-                # Fallback to template format
-                message = self.TEMPLATES['ready'].format(
-                    queue_number=ticket,
-                    room_info=room_info
-                )
+                room_line = 'Please proceed to the consultation area as directed by staff.'
+
+            if doctor_display:
+                call_line = f'{doctor_display} is calling {patient_name}.'
+            else:
+                call_line = f'{patient_name}, you are being called to consult.'
+
+            message = self.TEMPLATES['ready'].format(
+                hospital_name=self.hospital_name,
+                call_line=call_line,
+                room_line=room_line,
+                queue_number=ticket,
+            )
             
             # Send SMS
             self.logger.info(f"📱 Sending SMS to {phone} for patient {queue_entry.patient.full_name} (Queue: {queue_entry.queue_number})")

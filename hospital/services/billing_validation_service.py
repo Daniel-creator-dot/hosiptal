@@ -38,14 +38,14 @@ class BillingValidationService:
         warnings = []
         details = {
             'invoice_number': invoice.invoice_number,
-            'patient': str(invoice.patient),
+            'patient': str(invoice.patient) if invoice.patient_id else (invoice.counterparty_name or 'Non-patient'),
             'payer_type': invoice.payer.payer_type if invoice.payer else None,
             'status': invoice.status,
         }
         
         # 1. Basic validations
-        if not invoice.patient:
-            errors.append("Invoice must have a patient")
+        if not invoice.patient_id and not (invoice.counterparty_name or '').strip():
+            errors.append("Invoice must have a patient or a counterparty name (non-patient payer).")
         
         if not invoice.payer:
             errors.append("Invoice must have a payer")
@@ -378,10 +378,14 @@ class BillingValidationService:
         """
         errors = []
         warnings = []
-        
+
+        if not invoice.patient_id:
+            errors.append('Corporate billing requires a patient.')
+            return {'valid': False, 'errors': errors, 'warnings': warnings}
+
         try:
             from hospital.models_enterprise_billing import CorporateEmployee
-            
+
             # Check if patient is enrolled in corporate account
             enrollment = CorporateEmployee.objects.filter(
                 patient=invoice.patient,
@@ -469,6 +473,10 @@ class BillingValidationService:
         """
         errors = []
         warnings = []
+
+        if not invoice.patient_id:
+            errors.append('Insurance billing requires a patient.')
+            return {'valid': False, 'errors': errors, 'warnings': warnings}
         
         # Check patient has insurance
         if not invoice.patient.primary_insurance:

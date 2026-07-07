@@ -13,6 +13,16 @@ from ..models_insurance_companies import (
 )
 
 
+INSURANCE_PAYER_TYPES = frozenset({'nhis', 'private', 'insurance'})
+
+
+def is_insurance_billing_payer(payer) -> bool:
+    """True for NHIS/private insurance payers; corporate and cash are excluded."""
+    if not payer:
+        return False
+    return (getattr(payer, 'payer_type', 'cash') or 'cash').strip().lower() in INSURANCE_PAYER_TYPES
+
+
 @dataclass
 class InsuranceExclusionResult:
     is_excluded: bool = False
@@ -35,28 +45,57 @@ class InsuranceExclusionService:
     Helper that finds applicable exclusion rules for a given patient/payer context.
     """
 
-    def __init__(self, *, patient, payer, service_code=None, drug=None, reference_date=None):
+    def __init__(self, *, patient, payer, service_code=None, drug=None, lab_test=None, reference_date=None):
         self.patient = patient
         self.payer = payer
         self.service_code = service_code
         self.drug = drug
+        self.lab_test = lab_test
         self.reference_date = reference_date or timezone.now().date()
 
     def evaluate(self) -> InsuranceExclusionResult:
-        # CRITICAL: Exclusions only apply to insurance patients, NOT cash or corporate
-        # Cash patients should never have exclusions applied
+        # Exclusions apply to insurance patients only — not cash or corporate
         if not self.payer:
             return InsuranceExclusionResult()
-        
-        # Skip exclusions for cash payers
-        if self.payer.payer_type == 'cash':
+
+        payer_type = (getattr(self.payer, 'payer_type', 'cash') or 'cash').strip().lower()
+        if payer_type in ('cash', 'corporate'):
             return InsuranceExclusionResult()
-        
-        # Corporate patients may have different rules, but for now we'll apply insurance-style exclusions
-        # If you want corporate to also skip exclusions, uncomment the next line:
-        # if self.payer.payer_type == 'corporate':
-        #     return InsuranceExclusionResult()
-        
+
+        lab_test = self.lab_test
+        if not lab_test and self.service_code:
+            try:
+                from ..utils_invoice_line import resolve_lab_test_for_service_code
+                lab_test = resolve_lab_test_for_service_code(self.service_code)
+            except Exception:
+                lab_test = None
+
+        # Formulary-level exclusion — drugs (all insurers or selected companies)
+        if self.drug:
+            from .drug_formulary_insurance_exclusion import drug_excluded_for_payer
+            excluded, reason = drug_excluded_for_payer(drug=self.drug, payer=self.payer)
+            if excluded:
+                return InsuranceExclusionResult(
+                    is_excluded=True,
+                    enforcement='patient_pay',
+                    reason=reason,
+                    rule=None,
+                )
+
+        # Formulary-level exclusion — lab tests (global flag only)
+        if lab_test and getattr(lab_test, 'exclude_from_insurance', False):
+            reason = (lab_test.insurance_exclusion_reason or '').strip()
+            if not reason:
+                reason = f'{lab_test.name} is not covered by insurance — patient must pay cash.'
+            return InsuranceExclusionResult(
+                is_excluded=True,
+                enforcement='patient_pay',
+                reason=reason,
+                rule=None,
+            )
+
+        # Corporate patients are not subject to insurance exclusions (handled above).
+
         enrollment = self._find_active_enrollment()
         if not enrollment:
             return InsuranceExclusionResult()
@@ -115,6 +154,52 @@ class InsuranceExclusionService:
             )
 
         return qs.select_related('insurance_company', 'insurance_plan', 'service_code', 'drug')
+
+
+def catalog_exclusion_info(*, item, payer=None) -> dict:
+    """
+    Exclusion metadata for Drug or LabTest rows (autocomplete / consultation UI).
+    is_insurance_excluded is True when the item is excluded for this payer (insurance only).
+    """
+    from ..models import Drug
+
+    reason = (getattr(item, 'insurance_exclusion_reason', '') or '').strip()
+    payer_is_insurance = is_insurance_billing_payer(payer)
+
+    if isinstance(item, Drug):
+        from .drug_formulary_insurance_exclusion import (
+            drug_excluded_for_payer,
+            drug_has_any_insurance_exclusion,
+        )
+        has_config = drug_has_any_insurance_exclusion(drug=item)
+        if payer_is_insurance:
+            excluded, payer_reason = drug_excluded_for_payer(drug=item, payer=payer)
+            return {
+                'exclude_from_insurance': has_config,
+                'is_insurance_excluded': excluded,
+                'insurance_exclusion_reason': payer_reason if excluded else '',
+            }
+        return {
+            'exclude_from_insurance': has_config,
+            'is_insurance_excluded': False,
+            'insurance_exclusion_reason': reason if has_config else '',
+        }
+
+    excluded = bool(getattr(item, 'exclude_from_insurance', False))
+    if not excluded:
+        return {
+            'exclude_from_insurance': False,
+            'is_insurance_excluded': False,
+            'insurance_exclusion_reason': '',
+        }
+    if not reason:
+        name = getattr(item, 'name', 'This item')
+        reason = f'{name} is not covered by insurance — patient must pay cash.'
+    return {
+        'exclude_from_insurance': True,
+        'is_insurance_excluded': payer_is_insurance,
+        'insurance_exclusion_reason': reason,
+    }
 
 
 

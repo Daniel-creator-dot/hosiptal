@@ -233,8 +233,15 @@ def upcoming_birthday_reminders():
 def automated_database_backup():
     """Automated daily database backup"""
     try:
-        logger.info("Starting automated database backup...")
-        call_command('backup_database', '--output-dir=backups/automated')
+        from hospital.backup_retention import get_retention_days
+
+        keep_days = get_retention_days(default=14)
+        logger.info("Starting automated database backup (keep_days=%s)...", keep_days)
+        call_command(
+            'backup_database',
+            '--output-dir=backups/automated',
+            f'--keep-days={keep_days}',
+        )
         logger.info("Automated database backup completed successfully")
         return "Database backup completed"
     except Exception as e:

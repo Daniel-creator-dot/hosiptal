@@ -5,11 +5,22 @@ Allows negative stock when insufficient - for accountability until restocked.
 """
 import logging
 from datetime import date, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.db import transaction
 from django.db.models import F
 
 logger = logging.getLogger(__name__)
+
+_ZERO = Decimal('0.00')
+
+
+def _quantize_money(value):
+    return Decimal(str(value or 0)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+
+def _empty_reduction():
+    return {'shortfall': 0, 'cogs_amount': _ZERO, 'batch_lines': []}
 
 
 def reduce_pharmacy_stock(drug, quantity):
@@ -18,18 +29,14 @@ def reduce_pharmacy_stock(drug, quantity):
     Syncs linked pharmacy InventoryItem rows. When insufficient positive batches,
     records a SHORTFALL batch (negative qty) for accountability.
 
-    Uses QuerySet.update(F(...)) so deductions persist reliably (avoids broken
-    instance.save() + F-expression combinations on some DBs).
-
-    Args:
-        drug: Drug model instance to reduce stock for
-        quantity: Integer quantity to deduct
-
     Returns:
-        int: Units that could not be covered by positive batches (shortfall); 0 if fully covered.
+        dict with keys:
+            shortfall (int): units not covered by positive batches
+            cogs_amount (Decimal): FIFO cost of units taken from positive batches
+            batch_lines (list): per-batch cost breakdown
     """
     if not drug or quantity <= 0:
-        return 0
+        return _empty_reduction()
 
     qty_to_dispense = int(quantity)
 
@@ -38,6 +45,9 @@ def reduce_pharmacy_stock(drug, quantity):
         from django.db import OperationalError
 
         shortfall = 0
+        cogs_amount = _ZERO
+        batch_lines = []
+
         with transaction.atomic():
             base_qs = PharmacyStock.objects.filter(
                 drug=drug,
@@ -59,11 +69,22 @@ def reduce_pharmacy_stock(drug, quantity):
                 if on_hand <= 0:
                     continue
                 take = min(on_hand, remaining)
+                unit_cost = _quantize_money(stock.unit_cost)
+                line_cost = _quantize_money(Decimal(take) * unit_cost)
+
                 updated = PharmacyStock.objects.filter(
                     pk=stock.pk,
                     quantity_on_hand__gte=take,
                 ).update(quantity_on_hand=F('quantity_on_hand') - take)
                 if updated:
+                    cogs_amount += line_cost
+                    batch_lines.append({
+                        'batch_id': str(stock.pk),
+                        'batch_number': stock.batch_number,
+                        'qty': take,
+                        'unit_cost': unit_cost,
+                        'line_cost': line_cost,
+                    })
                     remaining -= take
                     continue
                 stock.refresh_from_db()
@@ -71,11 +92,21 @@ def reduce_pharmacy_stock(drug, quantity):
                 if on_hand <= 0:
                     continue
                 take = min(on_hand, remaining)
+                unit_cost = _quantize_money(stock.unit_cost)
+                line_cost = _quantize_money(Decimal(take) * unit_cost)
                 updated = PharmacyStock.objects.filter(
                     pk=stock.pk,
                     quantity_on_hand__gte=take,
                 ).update(quantity_on_hand=F('quantity_on_hand') - take)
                 if updated:
+                    cogs_amount += line_cost
+                    batch_lines.append({
+                        'batch_id': str(stock.pk),
+                        'batch_number': stock.batch_number,
+                        'qty': take,
+                        'unit_cost': unit_cost,
+                        'line_cost': line_cost,
+                    })
                     remaining -= take
 
             shortfall = remaining
@@ -111,7 +142,11 @@ def reduce_pharmacy_stock(drug, quantity):
 
             _reduce_inventory_items_for_pharmacy(drug, qty_to_dispense)
 
-        return shortfall
+        return {
+            'shortfall': shortfall,
+            'cogs_amount': _quantize_money(cogs_amount),
+            'batch_lines': batch_lines,
+        }
     except Exception as e:
         logger.error(
             "Error reducing pharmacy stock for %s: %s",
@@ -198,13 +233,35 @@ def _reduce_inventory_items_for_pharmacy(drug, quantity):
         return quantity
 
 
-def reduce_pharmacy_stock_once(drug, quantity, source_type, source_id):
+def _post_pharmacy_cogs_if_enabled(deduction_log, cogs_amount, user=None):
+    if not cogs_amount or cogs_amount <= 0:
+        return None
+    try:
+        from hospital.services.inventory_gl_service import post_inventory_cogs_gl
+        return post_inventory_cogs_gl(
+            category_key='pharmacy',
+            amount=cogs_amount,
+            reference=f'COGS-PHARM-{deduction_log.pk}',
+            description=(
+                f'Pharmacy COGS — {getattr(deduction_log.drug, "name", "drug")} '
+                f'×{deduction_log.quantity} ({deduction_log.source_type})'
+            ),
+            user=user,
+            deduction_log=deduction_log,
+        )
+    except Exception as exc:
+        logger.warning('Pharmacy COGS GL posting failed: %s', exc, exc_info=True)
+        return None
+
+
+def reduce_pharmacy_stock_once(drug, quantity, source_type, source_id, user=None):
     """
     Apply reduce_pharmacy_stock at most once per (source_type, source_id).
     Use the PK of PharmacyDispenseHistory, PharmacyDispensing, or WalkInPharmacySaleItem.
 
     Returns:
-        int: shortfall from reduce_pharmacy_stock, or 0 if this source was already applied.
+        tuple: (shortfall, applied) where ``applied`` is True only when a new deduction log
+        row was created and ``reduce_pharmacy_stock`` completed.
     """
     from django.db import IntegrityError
 
@@ -218,9 +275,10 @@ def reduce_pharmacy_stock_once(drug, quantity, source_type, source_id):
             source_type,
             source_id,
         )
-        return 0
+        return 0, False
     if source_id is None:
-        return reduce_pharmacy_stock(drug, int(quantity))
+        result = reduce_pharmacy_stock(drug, int(quantity))
+        return result['shortfall'], True
 
     qty = int(quantity)
 
@@ -237,20 +295,30 @@ def reduce_pharmacy_stock_once(drug, quantity, source_type, source_id):
                     source_type,
                     source_id,
                 )
-                return 0
+                return 0, False
             try:
-                shortfall = reduce_pharmacy_stock(drug, qty)
+                result = reduce_pharmacy_stock(drug, qty)
             except Exception:
                 log.delete()
                 raise
             log.quantity = qty
             log.drug = drug
-            log.save(update_fields=['quantity', 'drug', 'modified'])
-            return shortfall
+            log.cogs_amount = result['cogs_amount']
+            log.save(update_fields=['quantity', 'drug', 'cogs_amount', 'modified'])
+
+            _post_pharmacy_cogs_if_enabled(log, result['cogs_amount'], user=user)
+
+            return result['shortfall'], True
     except IntegrityError:
         logger.warning(
             "Concurrent stock deduction log create for %s %s — treating as already done",
             source_type,
             source_id,
         )
-        return 0
+        return 0, False
+
+
+def drug_is_sold_per_tablet(drug) -> bool:
+    """True when drug dosage form indicates individual tablet unit-of-sale."""
+    form = (getattr(drug, 'form', None) or '').strip().lower()
+    return form.startswith('tab') or 'tablet' in form

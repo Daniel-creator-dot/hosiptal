@@ -456,7 +456,7 @@ class QueueService:
             doctor: Doctor user object (optional, for auto-detecting room)
         
         Returns:
-            QueueEntry object (updated)
+            tuple: (QueueEntry updated, SMS outcome: True/False if sent was attempted, None if disabled)
         """
         try:
             # Auto-detect room if not provided but doctor is
@@ -490,17 +490,35 @@ class QueueService:
             
             self.logger.info(f"📢 Called patient: {queue_entry.queue_number} (Room: {room_number or 'N/A'})")
             
-            # Send ready notification with room and doctor info
+            # SMS only when doctor/staff calls — respects per-department toggle
+            sms_sent = None
             try:
+                from hospital.models_queue import QueueConfiguration
                 from .queue_notification_service import queue_notification_service
-                sms_sent = queue_notification_service.send_ready_notification(queue_entry)
-                if sms_sent:
-                    self.logger.info(f"✅ SMS notification sent successfully to patient {queue_entry.patient.full_name}")
+
+                send_ready = True
+                if queue_entry.department_id:
+                    try:
+                        cfg = QueueConfiguration.objects.get(department_id=queue_entry.department_id)
+                        send_ready = cfg.send_ready_notification
+                    except QueueConfiguration.DoesNotExist:
+                        pass
+
+                if send_ready:
+                    sms_sent = queue_notification_service.send_ready_notification(queue_entry)
+                    if sms_sent:
+                        self.logger.info(
+                            f"✅ SMS notification sent successfully to patient {queue_entry.patient.full_name}"
+                        )
+                    else:
+                        self.logger.warning(
+                            f"⚠️ SMS notification failed for patient {queue_entry.patient.full_name} "
+                            f"(Queue: {queue_entry.queue_number}). "
+                            f"Phone: {getattr(queue_entry.patient, 'phone_number', 'Not set')}"
+                        )
                 else:
-                    self.logger.warning(
-                        f"⚠️ SMS notification failed for patient {queue_entry.patient.full_name} "
-                        f"(Queue: {queue_entry.queue_number}). "
-                        f"Phone: {getattr(queue_entry.patient, 'phone_number', 'Not set')}"
+                    self.logger.info(
+                        f"Ready SMS skipped (send_ready_notification off) for {queue_entry.queue_number}"
                     )
             except Exception as sms_error:
                 self.logger.error(
@@ -509,7 +527,7 @@ class QueueService:
                 )
                 # Don't fail the queue action if SMS fails
             
-            return queue_entry
+            return queue_entry, sms_sent
             
         except Exception as e:
             self.logger.error(f"Error calling patient: {str(e)}", exc_info=True)

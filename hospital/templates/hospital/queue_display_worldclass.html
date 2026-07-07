@@ -1116,14 +1116,14 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
     </header>
 
-    <section class="qms-spotlight" id="qms-spotlight" aria-live="polite" aria-atomic="true" aria-label="Please head towards your consultation room and clinician">
+    <section class="qms-spotlight" id="qms-spotlight" aria-live="polite" aria-atomic="true" aria-label="Live queue now serving display">
         <div class="qms-spotlight-deco" aria-hidden="true">
             <span class="qms-deco-blob qms-deco-blob--a"></span>
             <span class="qms-deco-blob qms-deco-blob--b"></span>
             <span class="qms-deco-grid"></span>
         </div>
         <div class="qms-spotlight-inner">
-            <p class="qms-eyebrow"><span class="qms-eyebrow-dot"></span> Please head towards</p>
+            <p class="qms-eyebrow" id="qms-head-eyebrow"><span class="qms-eyebrow-dot"></span> {% if now_serving %}{% if use_queue_entry %}{% if now_serving.status == 'called' or now_serving.status == 'in_progress' %}Please head towards{% else %}Now serving{% endif %}{% elif now_serving.status == 'in_progress' or now_serving.called_at %}Please head towards{% else %}Now serving{% endif %}{% else %}Please wait{% endif %}</p>
             <div class="qms-ticket-hero" id="qms-head-ticket" data-ticket="{% if now_serving %}{% if use_queue_entry %}{{ now_serving.display_ticket_number }}{% else %}{{ now_serving.queue_number }}{% endif %}{% endif %}">
                 {% if now_serving %}{% if use_queue_entry %}{{ now_serving.display_ticket_number }}{% else %}{{ now_serving.queue_number }}{% endif %}{% else %}—{% endif %}
             </div>
@@ -1141,10 +1141,30 @@ document.addEventListener('DOMContentLoaded', function() {
                 {% endif %}
             </p>
             <p class="qms-room-line" id="qms-head-room">
-                {% if now_serving and now_serving.room_number %}
-                    Head towards consultation room {{ now_serving.room_number }}
+                {% if now_serving %}
+                    {% if use_queue_entry %}
+                        {% if now_serving.status == 'called' or now_serving.status == 'in_progress' %}
+                            {% if now_serving.room_number %}
+                                Head towards consultation room {{ now_serving.room_number }}
+                            {% else %}
+                                Please proceed when staff direct you — room will be confirmed when you are called
+                            {% endif %}
+                        {% else %}
+                            Please wait — stay in the waiting area until a clinician calls you
+                        {% endif %}
+                    {% else %}
+                        {% if now_serving.status == 'in_progress' or now_serving.called_at %}
+                            {% if now_serving.room_number %}
+                                Head towards consultation room {{ now_serving.room_number }}
+                            {% else %}
+                                Please proceed when staff direct you
+                            {% endif %}
+                        {% else %}
+                            Please wait — stay in the waiting area until a clinician calls you
+                        {% endif %}
+                    {% endif %}
                 {% else %}
-                    Please wait — you will be called to your consultation room
+                    Please wait — you will be shown here when your ticket is served
                 {% endif %}
             </p>
             <p class="qms-clinician-label" id="qms-head-clinician-label">Clinician</p>
@@ -1161,7 +1181,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     —
                 {% endif %}
             </p>
-            <p class="qms-hint">This screen updates automatically. When you are called, your ticket and room appear here. Staff can call you from the board — <strong>then</strong> the voice announces your <strong>name</strong> and ticket together. Until then, automatic announcements use your ticket number only.</p>
+            <p class="qms-hint">This screen updates automatically. The live voice only uses your ticket number until a clinician calls you from the doctor console — <strong>then</strong> it may say your <strong>name</strong> and direct you to the consulting room. Watch this screen for your ticket and clinician.</p>
         </div>
     </section>
 
@@ -1470,6 +1490,8 @@ document.addEventListener('DOMContentLoaded', function() {
     let lastVoicePlayingKey = '';
     /** After staff “call” with name, suppress automatic ticket-only TTS for the same serving. */
     let lastNamedCallIdentity = '';
+    /** Allow re-calling the same ticket to speak again when called_time changes. */
+    let lastCallEventKey = '';
 
     let autoCallNextPendingTimer = null;
     let autoCallNextInFlight = false;
@@ -1580,10 +1602,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 const anyChip = document.querySelector('.qms-chip.is-highlight');
                 const serving = hero && hero.classList.contains('is-match');
                 if (serving) {
-                    ticketStatus.textContent = 'That ticket is called — please head towards the room and clinician shown above.';
+                    ticketStatus.textContent = 'That ticket is being served — watch the display above for instructions.';
                     ticketStatus.classList.add('is-ok');
                 } else if (anyChip) {
-                    ticketStatus.textContent = 'You are still in line — watch the “Please head towards” display.';
+                    ticketStatus.textContent = 'You are still in line — watch this screen for your ticket.';
                     ticketStatus.classList.remove('is-ok');
                 } else {
                     ticketStatus.textContent = 'No match on screen — check the number on your SMS.';
@@ -1641,8 +1663,9 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             if (speechSynthesisSupported && audioEnabled && lastNowServingEntry) {
                 lastAnnounceSig = '';
-                var sig0 = announceContentKey(lastNowServingEntry, false);
-                if (announce(lastNowServingEntry, false, false)) {
+                var named0 = entryShowsConsultingDirection(lastNowServingEntry);
+                var sig0 = announceContentKey(lastNowServingEntry, named0);
+                if (announce(lastNowServingEntry, false, named0)) {
                     lastAnnounceSig = sig0;
                 }
             }
@@ -1689,10 +1712,11 @@ document.addEventListener('DOMContentLoaded', function() {
         } catch (e) { /* ignore */ }
         function syncServingSpeech() {
             if (!lastNowServingEntry || !audioEnabled) return;
-            var sig = announceContentKey(lastNowServingEntry, false);
+            var namedS = entryShowsConsultingDirection(lastNowServingEntry);
+            var sig = announceContentKey(lastNowServingEntry, namedS);
             if (!sig || sig === lastAnnounceSig) return;
             lastAnnounceSig = '';
-            if (announce(lastNowServingEntry, false, false)) {
+            if (announce(lastNowServingEntry, false, namedS)) {
                 lastAnnounceSig = sig;
             }
         }
@@ -1739,8 +1763,9 @@ document.addEventListener('DOMContentLoaded', function() {
         if (audioEnabled && turningOn) {
             if (lastNowServingEntry) {
                 lastAnnounceSig = '';
-                var sig = announceContentKey(lastNowServingEntry, false);
-                if (announce(lastNowServingEntry, false, false)) {
+                var namedT = entryShowsConsultingDirection(lastNowServingEntry);
+                var sig = announceContentKey(lastNowServingEntry, namedT);
+                if (announce(lastNowServingEntry, false, namedT)) {
                     lastAnnounceSig = sig;
                 }
             } else {
@@ -1772,6 +1797,30 @@ document.addEventListener('DOMContentLoaded', function() {
         var room = (entry.room_number != null && entry.room_number !== '') ? String(entry.room_number).trim() : '';
         var doc = (entry.assigned_doctor || '').trim();
         return [qn, room, doc].join('|');
+    }
+
+    /** Show “head to consulting room” on the board / in TTS only after an actual call (feed), not while merely checked in. */
+    function entryShowsConsultingDirection(entry) {
+        if (!entry) return false;
+        var st = (entry.status || '').toLowerCase();
+        if (st === 'called' || st === 'in_progress') return true;
+        if (entry.called_time) return true;
+        return false;
+    }
+
+    function setQueueEyebrow(text) {
+        var eyebrowEl = document.getElementById('qms-head-eyebrow');
+        if (!eyebrowEl) return;
+        var dot = eyebrowEl.querySelector('.qms-eyebrow-dot');
+        eyebrowEl.textContent = '';
+        if (dot) {
+            eyebrowEl.appendChild(dot);
+        } else {
+            var sp = document.createElement('span');
+            sp.className = 'qms-eyebrow-dot';
+            eyebrowEl.appendChild(sp);
+        }
+        eyebrowEl.appendChild(document.createTextNode(' ' + text));
     }
 
     /** Row template may append payer badges to .qms-row-name — keep spoken name short. */
@@ -1884,7 +1933,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     /**
      * @param {boolean} force - bypass mute / unlock audio (staff call or board action)
-     * @param {boolean} includePatientName - only true when staff explicitly calls (Call / Call next); live feed uses ticket only
+     * @param {boolean} includePatientName - full call-out (name, room, doctor); false = ticket-only “wait quietly” for not-yet-called board state
      */
     function announce(entry, force, includePatientName) {
         if (includePatientName === undefined) includePatientName = false;
@@ -1900,7 +1949,6 @@ document.addEventListener('DOMContentLoaded', function() {
             return true;
         }
         const queueNum = (entry.queue_number || '').toString().replace(/-/g, ' ');
-        const roomInfo = entry.room_number ? ('consultation room ' + entry.room_number) : 'the consultation room';
         const who = (entry.assigned_doctor || '').trim();
         var patientName = (entry.patient || '').trim();
         if (includePatientName && !patientName) {
@@ -1913,14 +1961,19 @@ document.addEventListener('DOMContentLoaded', function() {
             patientName = stripDisplayPatientName(patientName);
         }
         let msg = '';
-        if (includePatientName && patientName) {
-            msg = patientName + ', ticket number ' + queueNum + ', please head towards ' + roomInfo + '.';
+        if (includePatientName) {
+            const roomInfo = entry.room_number ? ('consultation room ' + entry.room_number) : 'the consultation room';
+            if (patientName) {
+                msg = patientName + ', ticket number ' + queueNum + ', please head towards ' + roomInfo + '.';
+            } else {
+                msg = 'Ticket number ' + queueNum + ', please head towards ' + roomInfo + '.';
+            }
+            if (who) {
+                const doctorPrefix = /^dr\.?\s+/i.test(who) ? '' : 'Doctor ';
+                msg += ' ' + doctorPrefix + who + ' will see you now.';
+            }
         } else {
-            msg = 'Ticket number ' + queueNum + ', please head towards ' + roomInfo + '.';
-        }
-        if (who) {
-            const doctorPrefix = /^dr\.?\s+/i.test(who) ? '' : 'Doctor ';
-            msg += ' ' + doctorPrefix + who + ' will see you now.';
+            msg = 'Ticket number ' + queueNum + '. Please wait quietly for further instructions.';
         }
         const utterance = new SpeechSynthesisUtterance(msg);
         utterance.rate = 0.88;
@@ -1965,13 +2018,15 @@ document.addEventListener('DOMContentLoaded', function() {
             numberEl.textContent = '—';
             numberEl.setAttribute('data-ticket', '');
             if (patientEl) patientEl.textContent = '—';
-            roomEl.textContent = 'Please wait — you will be called to your consultation room';
+            setQueueEyebrow('Please wait');
+            roomEl.textContent = 'Please wait — you will be shown here when your ticket is served';
             doctorEl.textContent = '—';
             lastServingNumber = '—';
             lastNowServingEntry = null;
             lastAnnounceSig = '';
             lastVoicePlayingKey = '';
             lastNamedCallIdentity = '';
+            lastCallEventKey = '';
             applyTicketHighlight();
             return;
         }
@@ -1981,7 +2036,9 @@ document.addEventListener('DOMContentLoaded', function() {
             queue_number: entry.queue_number,
             room_number: entry.room_number,
             assigned_doctor: entry.assigned_doctor,
-            patient: entry.patient
+            patient: entry.patient,
+            status: entry.status,
+            called_time: entry.called_time
         };
 
         const prev = lastServingNumber;
@@ -1991,21 +2048,44 @@ document.addEventListener('DOMContentLoaded', function() {
         numberEl.setAttribute('data-ticket', num);
         const pname = ((entry.patient || '').trim() || '—');
         if (patientEl) patientEl.textContent = pname;
-        roomEl.textContent = entry.room_number ? ('Head towards consultation room ' + entry.room_number) : 'Please wait — you will be called to your consultation room';
+        var showConsultDir = entryShowsConsultingDirection(entry);
+        setQueueEyebrow(showConsultDir ? 'Please head towards' : 'Now serving');
+        if (showConsultDir && entry.room_number) {
+            roomEl.textContent = 'Head towards consultation room ' + entry.room_number;
+        } else if (showConsultDir && !entry.room_number) {
+            roomEl.textContent = 'Please proceed when staff direct you — room will be confirmed when you are called';
+        } else {
+            roomEl.textContent = 'Please wait — stay in the waiting area until a clinician calls you';
+        }
         doctorEl.textContent = ((entry.assigned_doctor || '').trim() || '—');
 
         var contentKeyTicketOnly = announceContentKey(entry, false);
         var contentKeyNamed = announceContentKey(entry, true);
+        var callEventKey = entryVoiceIdentity(entry) + '|' + (entry.called_time || '');
         /* Debounce: rapid polls or flickering feed was starting a second utterance that cancel()'d the first mid-sentence */
         if (forceVoice) {
             clearTimeout(announceDebounceTimer);
             announceDebounceTimer = null;
-            if (contentKeyNamed && contentKeyNamed !== lastAnnounceSig) {
+            if (contentKeyNamed && (contentKeyNamed !== lastAnnounceSig || (callEventKey && callEventKey !== lastCallEventKey))) {
                 if (announce(entry, true, true)) {
                     lastAnnounceSig = contentKeyNamed;
+                    lastCallEventKey = callEventKey || lastCallEventKey;
                 }
             }
-        } else if (contentKeyTicketOnly && contentKeyTicketOnly !== lastAnnounceSig) {
+        } else if (showConsultDir && contentKeyNamed && (contentKeyNamed !== lastAnnounceSig || (callEventKey && callEventKey !== lastCallEventKey))) {
+            /* Doctor called from My Consultations / another device: feed poll must play the same named call-out as the board */
+            clearTimeout(announceDebounceTimer);
+            var debounceEntryNamed = entry;
+            var debounceKeyNamed = contentKeyNamed;
+            var debounceCallEventKey = callEventKey;
+            announceDebounceTimer = setTimeout(function() {
+                announceDebounceTimer = null;
+                if (announce(debounceEntryNamed, false, true)) {
+                    lastAnnounceSig = debounceKeyNamed;
+                    if (debounceCallEventKey) lastCallEventKey = debounceCallEventKey;
+                }
+            }, 1000);
+        } else if (!showConsultDir && contentKeyTicketOnly && contentKeyTicketOnly !== lastAnnounceSig) {
             if (entryVoiceIdentity(entry) === lastNamedCallIdentity) {
                 lastAnnounceSig = contentKeyTicketOnly;
             } else {

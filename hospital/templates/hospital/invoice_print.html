@@ -823,10 +823,7 @@
                             <span class="service-code">{{ line.service_code.code|default:"—" }}</span>
                         </td>
                         <td>
-                            <div class="service-description">{{ line.description }}</div>
-                            {% if line.service_code.description and line.service_code.description != line.description %}
-                            <div class="service-details">{{ line.service_code.description }}</div>
-                            {% endif %}
+                            {% invoice_print_line_description line category invoice.patient %}
                             {% if line.patient_pay_cash %}
                             <span class="cash-payment-badge">💰 Cash Payment Required</span>
                             {% endif %}
@@ -864,14 +861,21 @@
             <div style="padding: 10px; color: var(--gray-500); font-size: 8px;">No charges on this invoice</div>
             {% endfor %}
             
-            <!-- Totals (items add up to subtotal) -->
+            <!-- Totals: itemized rows match visible_lines_subtotal; balance due is always invoice.balance -->
             <div class="totals-wrapper">
                 <div class="totals-card">
                     <table class="totals-table">
                         <tr>
-                            <td>Total from items above</td>
-                            <td>GHS {{ invoice.total_amount|floatformat:2 }}</td>
+                            <td>Itemized charges (this print)</td>
+                            <td>GHS {{ visible_lines_subtotal|floatformat:2 }}</td>
                         </tr>
+                        {% if pre_go_live_registration_hidden_count %}
+                        <tr>
+                            <td colspan="2" style="font-size: 7px; font-weight: 600; color: var(--gray-600); text-align: left; padding-top: 4px;">
+                                {{ pre_go_live_registration_hidden_count }} legacy registration line(s) before {{ bills_go_live_date }} are omitted from the list above. <strong>Balance due</strong> below is the full amount still owed on this invoice (including any such lines on file).
+                            </td>
+                        </tr>
+                        {% endif %}
                         {% if invoice.total_amount != invoice.balance %}
                         <tr>
                             <td class="payment-received">Less: Payments received</td>
@@ -935,7 +939,7 @@
                             </div>
                             <ul class="cash-items-list">
                                 {% for line in group.list %}
-                                    <li><strong>{{ line.description }}</strong> - GHS {{ line.display_line_total|floatformat:2 }}</li>
+                                    <li><strong>{% invoice_line_summary_one_line line invoice.patient %}</strong> - GHS {{ line.display_line_total|floatformat:2 }}</li>
                                 {% endfor %}
                             </ul>
                             <div style="margin-top: 4px; font-size: 6px; color: var(--gray-600); font-style: italic;">

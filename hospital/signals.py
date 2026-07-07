@@ -2,7 +2,7 @@
 Django signals for Hospital Management System
 Handles automated tasks and notifications
 """
-from django.db.models.signals import post_save, pre_save
+from django.db.models.signals import post_save, pre_save, post_delete
 from django.db.models import Sum, F, Q
 from django.dispatch import receiver
 from django.utils import timezone
@@ -11,7 +11,8 @@ from .models import (
     Admission, InvoiceLine, Appointment, LabResult, Invoice, Prescription, Encounter, VitalSign, Order,
     PharmacyStock, UserSession, Patient, PatientQRCode, LabTest, Drug, ServiceCode
 )
-from .models_advanced import SMSLog
+from .models_advanced import SMSLog, ImagingCatalog, ProcedureCatalog
+from .models_flexible_pricing import ServicePrice
 from .services.sms_service import sms_service
 import json
 from decimal import Decimal
@@ -23,9 +24,8 @@ logger = logging.getLogger(__name__)
 def _invalidate_pricing_catalog_cache():
     """Ensure UI picks latest catalog prices immediately after updates."""
     try:
-        from django.core.cache import cache
-        cache.delete('hms:active_lab_tests')
-        cache.delete('hms:active_drugs')
+        from .utils_cache import clear_all_caches
+        clear_all_caches()
     except Exception:
         pass
 
@@ -144,6 +144,25 @@ def sync_drug_price_to_pricing_engine(sender, instance, **kwargs):
     _invalidate_pricing_catalog_cache()
 
 
+@receiver(post_save, sender=ServicePrice)
+@receiver(post_delete, sender=ServicePrice)
+def invalidate_catalog_cache_on_service_price_change(sender, instance, **kwargs):
+    """Flexible pricing edits must clear Redis-backed catalog lists (same keys as Drug/Lab signals)."""
+    _invalidate_pricing_catalog_cache()
+
+
+@receiver(post_save, sender=ImagingCatalog)
+@receiver(post_delete, sender=ImagingCatalog)
+def invalidate_catalog_cache_on_imaging_catalog_change(sender, instance, **kwargs):
+    _invalidate_pricing_catalog_cache()
+
+
+@receiver(post_save, sender=ProcedureCatalog)
+@receiver(post_delete, sender=ProcedureCatalog)
+def invalidate_catalog_cache_on_procedure_catalog_change(sender, instance, **kwargs):
+    _invalidate_pricing_catalog_cache()
+
+
 @receiver(post_save, sender=Admission)
 def handle_admission_save(sender, instance, created, **kwargs):
     """Handle bed occupancy when admission is created/updated"""
@@ -160,9 +179,10 @@ def handle_admission_save(sender, instance, created, **kwargs):
 @receiver(post_save, sender=InvoiceLine)
 def handle_invoice_line_save(sender, instance, created, **kwargs):
     """Recalculate invoice totals when line items are added/updated"""
-    if instance.invoice:
-        instance.invoice.calculate_totals()
-        instance.invoice.save()
+    if instance.invoice_id:
+        inv = Invoice.all_objects.filter(pk=instance.invoice_id).first()
+        if inv:
+            inv.update_totals()
 
 
 @receiver(post_save, sender=Appointment)
@@ -203,12 +223,42 @@ def handle_lab_result_ready(sender, instance, created, **kwargs):
     test_name = instance.test.name if instance.test else 'Lab test'
     patient_name = patient.full_name if patient else 'Unknown'
 
-    # SMS to patient when status is verified (legacy) or completed
-    if patient and getattr(patient, 'phone_number', None):
-        try:
-            sms_service.send_lab_result_ready(instance)
-        except Exception as e:
-            logger.warning(f"Failed to send lab result SMS: {e}")
+    # SMS to patient: send exactly once per encounter, only when ALL labs for this encounter are done.
+    # Done = completed OR cancelled. Cancelled does not block the final message.
+    try:
+        encounter = instance.order.encounter
+        from .models_advanced import SMSLog
+
+        qs = LabResult.objects.filter(order__encounter=encounter, is_deleted=False)
+        actionable_total = qs.exclude(status='cancelled').count()
+        completed_count = qs.filter(status='completed').count()
+
+        if actionable_total > 0 and completed_count >= actionable_total:
+            already_sent = SMSLog.objects.filter(
+                message_type='encounter_lab_results_ready',
+                related_object_type='Encounter',
+                related_object_id=encounter.id,
+                status__in=('sent', 'delivered'),
+                is_deleted=False,
+            ).exists()
+            if not already_sent and patient and getattr(patient, 'phone_number', None):
+                sms_service.send_encounter_lab_results_ready(encounter)
+        elif (
+            actionable_total > 0
+            and completed_count > 0
+            and completed_count < actionable_total
+        ):
+            partial_sent = SMSLog.objects.filter(
+                message_type='encounter_lab_results_partial',
+                related_object_type='Encounter',
+                related_object_id=encounter.id,
+                status__in=('sent', 'delivered'),
+                is_deleted=False,
+            ).exists()
+            if not partial_sent and patient and getattr(patient, 'phone_number', None):
+                sms_service.send_encounter_lab_results_partial_ready(encounter)
+    except Exception as e:
+        logger.warning(f"Failed to send encounter lab results SMS: {e}")
 
     # In-app notification to: ordering doctor, all nurses, and front desk (receptionists)
     try:
@@ -301,18 +351,41 @@ except ImportError:
     pass
 
 
+@receiver(pre_save, sender=Invoice)
+def _track_invoice_status_before_save(sender, instance, **kwargs):
+    """Remember prior status so overdue SMS fires only on transition to overdue."""
+    if instance.pk:
+        instance._previous_status = (
+            Invoice.objects.filter(pk=instance.pk).values_list('status', flat=True).first()
+        )
+    else:
+        instance._previous_status = None
+
+
 @receiver(post_save, sender=Invoice)
 def handle_invoice_overdue(sender, instance, **kwargs):
-    """Send payment reminder when invoice becomes overdue"""
-    from django.utils import timezone
-    
-    if instance.status == 'overdue' and instance.balance > 0:
-        patient = instance.patient
-        if patient and patient.phone_number:
-            try:
-                sms_service.send_payment_reminder(instance)
-            except Exception as e:
-                print(f"Failed to send payment reminder SMS: {e}")
+    """Send payment reminder when invoice becomes overdue (cash patients only)."""
+    if instance.status != 'overdue' or instance.balance <= 0:
+        return
+
+    prev_status = getattr(instance, '_previous_status', None)
+    if prev_status == 'overdue':
+        return
+
+    patient = instance.patient
+    if not patient or not patient.phone_number:
+        return
+
+    try:
+        from hospital.services.pending_payment_notification_service import (
+            should_send_payment_notification_sms,
+        )
+
+        if not should_send_payment_notification_sms(patient=patient, invoice=instance):
+            return
+        sms_service.send_payment_reminder(instance)
+    except Exception as e:
+        print(f"Failed to send payment reminder SMS: {e}")
 
 
 @receiver(post_save, sender=Patient)
@@ -820,7 +893,35 @@ def create_lab_reagent_on_procurement_received(sender, instance, **kwargs):
                 except ValueError:
                     reagent_data['expiry_date'] = None
             
-            LabReagent.objects.create(**reagent_data)
+            reagent = LabReagent.objects.create(**reagent_data)
+            gl_user = None
+            try:
+                if instance.requested_by and getattr(instance.requested_by, 'user', None):
+                    gl_user = instance.requested_by.user
+            except Exception:
+                gl_user = None
+            if item.preferred_supplier_id:
+                try:
+                    from .models_supplier_payables import post_lab_reagent_supplier_payable
+
+                    sup = item.preferred_supplier
+                    if sup and not sup.is_deleted:
+                        post_lab_reagent_supplier_payable(
+                            reagent=reagent, supplier=sup, user=gl_user
+                        )
+                except Exception:
+                    logger.exception(
+                        'Lab reagent supplier payable failed for reagent pk=%s',
+                        getattr(reagent, 'pk', None),
+                    )
+            try:
+                from .models_supplier_payables import post_lab_reagent_receipt_gl
+                post_lab_reagent_receipt_gl(reagent, user=gl_user)
+            except Exception:
+                logger.exception(
+                    'Lab reagent receipt GL failed for reagent pk=%s',
+                    getattr(reagent, 'pk', None),
+                )
             
     except Exception as e:
         # Log error but don't fail the procurement process

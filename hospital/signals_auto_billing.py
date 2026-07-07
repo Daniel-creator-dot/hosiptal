@@ -91,9 +91,17 @@ def auto_bill_prescription(sender, instance, created, **kwargs):
     """
     Queue prescription for pharmacy only. Do NOT create InvoiceLine or send to cashier here.
 
-    Flow: doctor → PharmacyDispensing (this signal) → pharmacy verifies → Send to Cashier/Insurance
-    → AutoBillingService.create_pharmacy_bill (InvoiceLine). create_pharmacy_bill refuses to run
-    until a PharmacyDispensing row exists so nothing reaches the payer before pharmacy.
+    Flow:
+      OPD: doctor prescribes → prescription stays HIDDEN from pharmacy →
+           doctor clicks "Complete Consultation" → PharmacyDispensing rows are
+           released for every prescription on that encounter (see
+           AutoBillingService.release_encounter_prescriptions_to_pharmacy).
+      IPD: doctor prescribes → PharmacyDispensing is created immediately
+           (admitted patients receive ongoing meds throughout their stay).
+
+    pharmacy verifies → Send to Cashier/Insurance → AutoBillingService.create_pharmacy_bill
+    (InvoiceLine). create_pharmacy_bill refuses to run until a PharmacyDispensing row
+    exists so nothing reaches the payer before pharmacy.
     """
     if created:
         try:
@@ -106,6 +114,15 @@ def auto_bill_prescription(sender, instance, created, **kwargs):
                 logger.info(
                     f"✅ Prescription queued for pharmacy (not sent to cashier): {instance.drug.name} x{instance.quantity} "
                     f"- {instance.order.encounter.patient.full_name}"
+                )
+            elif result.get('gated'):
+                logger.info(
+                    "⏸️ Prescription %s held from pharmacy until consultation is completed "
+                    "(drug=%s qty=%s patient=%s)",
+                    instance.id,
+                    instance.drug.name,
+                    instance.quantity,
+                    instance.order.encounter.patient.full_name,
                 )
         except Exception as e:
             import traceback

@@ -5,18 +5,42 @@ World-class insurance tracking and monthly claims generation
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.core.exceptions import ObjectDoesNotExist
+import json
+from urllib.parse import urlencode
+
 from django.db.models import Q, Sum, Count, Avg
+from django.db.models.functions import TruncMonth
 from django.utils import timezone
 from django.core.paginator import Paginator
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.http import require_POST
 from decimal import Decimal
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import calendar
 
 from .models import Patient, Invoice, InvoiceLine, Payer, ServiceCode
 from .models_insurance import InsuranceClaimItem, MonthlyInsuranceClaim
-from .insurance_claim_query import insurance_claim_item_deduped_q
+from .insurance_claim_query import (
+    apply_insurance_claim_item_filters,
+    batch_insurance_plan_names_for_patients,
+    insurance_claim_item_deduped_q,
+    paginate_claim_patient_groups,
+)
+
+
+def _apply_insurance_claim_item_filters(qs, get_params):
+    """Backward-compatible alias."""
+    return apply_insurance_claim_item_filters(qs, get_params)
+
+
+def _parse_dashboard_date(s):
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s.strip(), '%Y-%m-%d').date()
+    except ValueError:
+        return None
 
 
 @login_required
@@ -73,33 +97,157 @@ def insurance_claims_dashboard(request):
     ).select_related('payer').annotate(
         item_count=Count('claim_items')
     )
-    
-    # Recent claim items
-    recent_claims = (
-        InsuranceClaimItem.objects.filter(is_deleted=False)
-        .filter(insurance_claim_item_deduped_q())
-        .select_related('patient', 'payer')
-        .order_by('-created')[:10]
+
+    query = (request.GET.get('q') or '').strip()
+    status_filter = (request.GET.get('status') or '').strip()
+    payer_filter = (request.GET.get('payer') or '').strip()
+    date_from = (request.GET.get('date_from') or '').strip()
+    date_to = (request.GET.get('date_to') or '').strip()
+
+    try:
+        per_page = int(request.GET.get('per_page', '25'))
+    except (TypeError, ValueError):
+        per_page = 25
+    per_page = max(10, min(per_page, 100))
+
+    filtered_qs = _apply_insurance_claim_item_filters(_claim_base, request.GET)
+    filtered_ordered = filtered_qs.order_by('-service_date', '-created')
+
+    filtered_summary = filtered_ordered.aggregate(
+        total_items=Count('id'),
+        total_billed=Sum('billed_amount'),
+        total_paid=Sum('paid_amount'),
     )
-    
-    # Claims by status
+    tb = filtered_summary.get('total_billed') or Decimal('0.00')
+    tp = filtered_summary.get('total_paid') or Decimal('0.00')
+    filtered_summary['total_outstanding'] = tb - tp
+
+    encounter_filter = (request.GET.get('encounter') or '').strip()
+    recent_claims_page, groups_truncated = paginate_claim_patient_groups(
+        filtered_qs,
+        per_page=per_page,
+        page_number=request.GET.get('page'),
+    )
+
     claims_by_status = (
-        InsuranceClaimItem.objects.filter(is_deleted=False)
-        .filter(insurance_claim_item_deduped_q())
-        .values('claim_status')
+        filtered_ordered.values('claim_status')
         .annotate(count=Count('id'), total_amount=Sum('billed_amount'))
         .order_by('claim_status')
     )
-    
+
+    df = _parse_dashboard_date(date_from)
+    dt = _parse_dashboard_date(date_to)
+    if df and dt and df > dt:
+        df, dt = dt, df
+    if df and not dt:
+        chart_to = today
+        chart_from = df
+    elif dt and not df:
+        chart_to = dt
+        chart_from = dt - timedelta(days=365)
+    elif df and dt:
+        chart_from, chart_to = df, dt
+    else:
+        chart_to = today
+        chart_from = today - timedelta(days=395)
+    if (chart_to - chart_from).days > 800:
+        chart_from = chart_to - timedelta(days=800)
+
+    trend_qs = (
+        _claim_base.filter(service_date__gte=chart_from, service_date__lte=chart_to)
+        .annotate(month=TruncMonth('service_date'))
+        .values('month')
+        .annotate(item_count=Count('id'), total_billed=Sum('billed_amount'))
+        .order_by('month')
+    )
+    chart_monthly_trend = []
+    for row in trend_qs:
+        m = row['month']
+        if m is None:
+            continue
+        if isinstance(m, datetime):
+            label = timezone.localtime(m).strftime('%b %Y') if timezone.is_aware(m) else m.strftime('%b %Y')
+        elif isinstance(m, date):
+            label = m.strftime('%b %Y')
+        else:
+            label = str(m)[:7]
+        chart_monthly_trend.append(
+            {
+                'label': label,
+                'count': row['item_count'],
+                'billed': float(row['total_billed'] or 0),
+            }
+        )
+
+    payer_qs = (
+        _claim_base.filter(service_date__gte=chart_from, service_date__lte=chart_to)
+        .values('payer__name')
+        .annotate(item_count=Count('id'), total_billed=Sum('billed_amount'))
+        .order_by('-total_billed')[:12]
+    )
+    chart_top_payers = [
+        {
+            'name': (row['payer__name'] or 'Unknown')[:80],
+            'count': row['item_count'],
+            'billed': float(row['total_billed'] or 0),
+        }
+        for row in payer_qs
+    ]
+
+    payers = Payer.objects.filter(
+        is_active=True, is_deleted=False, payer_type__in=['nhis', 'private', 'corporate']
+    ).order_by('name')
+
+    qd = request.GET.copy()
+    qd.pop('page', None)
+    pagination_base = qd.urlencode()
+
+    filters_active = bool(
+        query or status_filter or payer_filter or date_from or date_to or encounter_filter
+    )
+    has_any_claims = _claim_base.exists()
+    filtered_empty = not filtered_ordered.exists()
+
+    _list_filters = {}
+    for k in ('q', 'status', 'payer', 'date_from', 'date_to', 'encounter'):
+        v = (request.GET.get(k) or '').strip()
+        if v:
+            _list_filters[k] = v
+    claim_items_list_query = urlencode(_list_filters) if _list_filters else ''
+
     context = {
         'stats': stats,
         'monthly_claims': monthly_claims,
-        'recent_claims': recent_claims,
+        'recent_claims': recent_claims_page,
+        'claims_grouped_by_patient': True,
+        'claims_groups_truncated': groups_truncated,
+        'encounter_filter': encounter_filter,
         'claims_by_status': claims_by_status,
         'current_month': calendar.month_name[current_month],
         'current_year': current_year,
+        'query': query,
+        'status_filter': status_filter,
+        'payer_filter': payer_filter,
+        'date_from': date_from,
+        'date_to': date_to,
+        'per_page': per_page,
+        'payers': payers,
+        'claim_status_choices': InsuranceClaimItem.CLAIM_STATUS_CHOICES,
+        'filtered_summary': filtered_summary,
+        'filters_active': filters_active,
+        'pagination_base': pagination_base,
+        'chart_monthly_trend_json': json.dumps(chart_monthly_trend),
+        'chart_top_payers_json': json.dumps(chart_top_payers),
+        'chart_range_label': f'{chart_from.isoformat()} → {chart_to.isoformat()}',
+        'today_iso': today.isoformat(),
+        'preset_7_from': (today - timedelta(days=7)).isoformat(),
+        'preset_30_from': (today - timedelta(days=30)).isoformat(),
+        'month_start_iso': today.replace(day=1).isoformat(),
+        'has_any_claims': has_any_claims,
+        'filtered_empty': filtered_empty,
+        'claim_items_list_query': claim_items_list_query,
     }
-    
+
     return render(request, 'hospital/insurance/claims_dashboard.html', context)
 
 
@@ -117,55 +265,31 @@ def insurance_claim_items_list(request):
         .filter(insurance_claim_item_deduped_q())
         .select_related('patient', 'payer', 'invoice', 'service_code')
     )
-    
-    if query:
-        claim_items = claim_items.filter(
-            Q(patient__first_name__icontains=query) |
-            Q(patient__last_name__icontains=query) |
-            Q(patient__mrn__icontains=query) |
-            Q(patient_insurance_id__icontains=query) |
-            Q(service_description__icontains=query) |
-            Q(claim_reference__icontains=query)
-        )
-    
-    if status_filter:
-        claim_items = claim_items.filter(claim_status=status_filter)
-    
-    if payer_filter:
-        claim_items = claim_items.filter(payer_id=payer_filter)
-    
-    if date_from:
-        try:
-            date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
-            claim_items = claim_items.filter(service_date__gte=date_from_obj)
-        except ValueError:
-            pass
-    
-    if date_to:
-        try:
-            date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
-            claim_items = claim_items.filter(service_date__lte=date_to_obj)
-        except ValueError:
-            pass
-    
-    claim_items = claim_items.order_by('-service_date', '-created')
-    
+    claim_items = _apply_insurance_claim_item_filters(claim_items, request.GET)
+    claim_items_ordered = claim_items.order_by('-service_date', '-created')
+
     # Statistics
-    stats = claim_items.aggregate(
+    stats = claim_items_ordered.aggregate(
         total_items=Count('id'),
         total_billed=Sum('billed_amount'),
         total_paid=Sum('paid_amount'),
         total_outstanding=Sum('billed_amount') - Sum('paid_amount') if Sum('billed_amount') else Decimal('0.00')
     )
-    
-    paginator = Paginator(claim_items, 50)
-    page = request.GET.get('page')
-    claim_items_page = paginator.get_page(page)
+
+    claim_items_page, groups_truncated = paginate_claim_patient_groups(
+        claim_items,
+        per_page=50,
+        page_number=request.GET.get('page'),
+    )
     
     payers = Payer.objects.filter(is_active=True, is_deleted=False, payer_type__in=['nhis', 'private', 'corporate'])
     
+    encounter_filter = (request.GET.get('encounter') or '').strip()
+
     context = {
         'claim_items': claim_items_page,
+        'claims_grouped_by_patient': True,
+        'claims_groups_truncated': groups_truncated,
         'stats': stats,
         'payers': payers,
         'query': query,
@@ -173,20 +297,39 @@ def insurance_claim_items_list(request):
         'payer_filter': payer_filter,
         'date_from': date_from,
         'date_to': date_to,
+        'encounter_filter': encounter_filter,
     }
-    
+
     return render(request, 'hospital/insurance/claim_items_list.html', context)
 
 
 @login_required
 def insurance_claim_item_detail(request, pk):
     """View detailed information about a specific claim item"""
-    claim_item = get_object_or_404(InsuranceClaimItem, pk=pk, is_deleted=False)
-    
+    claim_item = get_object_or_404(
+        InsuranceClaimItem.objects.select_related(
+            'patient', 'payer', 'invoice', 'service_code', 'encounter', 'encounter__provider__user'
+        ),
+        pk=pk,
+        is_deleted=False,
+    )
+    admission_icd10 = ''
+    enc = claim_item.encounter
+    if enc:
+        try:
+            admission_icd10 = (enc.admission.diagnosis_icd10 or '').strip()
+        except ObjectDoesNotExist:
+            pass
+
+    plan_map = batch_insurance_plan_names_for_patients([claim_item.patient_id])
+    insurance_plan_name = plan_map.get(claim_item.patient_id, '')
+
     context = {
         'claim_item': claim_item,
+        'admission_icd10': admission_icd10,
+        'insurance_plan_name': insurance_plan_name,
     }
-    
+
     return render(request, 'hospital/insurance/claim_item_detail.html', context)
 
 

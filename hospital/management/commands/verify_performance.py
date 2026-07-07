@@ -4,6 +4,9 @@ Run after deploy or in CI to ensure query count and latency stay within targets.
 
 For per-URL profiling (query count + latency), use:
   python manage.py measure_url_performance <path> [--user USERNAME_OR_EMAIL]
+
+For dashboard + patient list + bills list with duplicate-SQL fingerprints:
+  python manage.py profile_hot_paths --user USERNAME_OR_EMAIL
 """
 import time
 from django.core.management.base import BaseCommand

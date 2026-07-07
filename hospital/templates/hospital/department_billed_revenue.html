@@ -1,0 +1,137 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Billed revenue ({{ dept_label }}) — HMS{% endblock %}
+{% block page_title %}Billed revenue — {{ dept_label }}{% endblock %}
+{% block page_subtitle %}Invoice lines by payer (cash, corporate, insurance) · uses invoice <strong>issued date</strong>, not payment date · export for your records{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <p class="text-muted small">
+        <strong>Billed</strong> = non-waived <code>InvoiceLine</code> amounts on invoices issued in the range.
+        This is the right view for <strong>insurance and corporate</strong> mix; cashier receipts are a separate (cash collection) view.
+    </p>
+
+    <form method="get" class="card card-body shadow-sm mb-4">
+        <div class="row g-2 align-items-end">
+            <div class="col-6 col-md-2">
+                <label class="form-label small text-muted mb-0">Department</label>
+                <select name="dept" class="form-select form-select-sm">
+                    {% for d in department_keys %}
+                    <option value="{{ d }}" {% if dept == d %}selected{% endif %}>{{ d|title }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label small text-muted mb-0">From</label>
+                <input type="date" name="date_from" class="form-control form-control-sm" value="{{ date_from|date:'Y-m-d' }}">
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label small text-muted mb-0">To</label>
+                <input type="date" name="date_to" class="form-control form-control-sm" value="{{ date_to|date:'Y-m-d' }}">
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label small text-muted mb-0">Payer type</label>
+                <select name="payer_type" class="form-select form-select-sm">
+                    <option value="all" {% if payer_type == 'all' %}selected{% endif %}>All</option>
+                    <option value="cash" {% if payer_type == 'cash' %}selected{% endif %}>Cash</option>
+                    <option value="corporate" {% if payer_type == 'corporate' %}selected{% endif %}>Corporate</option>
+                    <option value="nhis" {% if payer_type == 'nhis' %}selected{% endif %}>NHIS</option>
+                    <option value="private" {% if payer_type == 'private' %}selected{% endif %}>Private insurance</option>
+                    <option value="insurance" {% if payer_type == 'insurance' %}selected{% endif %}>All insurance types</option>
+                </select>
+            </div>
+            <div class="col-12 col-md-4">
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" name="include_writeoff" value="1" id="iw" {% if include_writeoff %}checked{% endif %}>
+                    <label class="form-check-label small" for="iw">Include write-off window invoices</label>
+                </div>
+            </div>
+            <div class="col-12 d-flex flex-wrap gap-2">
+                <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-funnel"></i> Apply</button>
+                <a class="btn btn-sm btn-outline-success" href="{% url 'hospital:department_billed_revenue_report' %}?dept={{ dept }}&date_from={{ date_from|date:'Y-m-d' }}&date_to={{ date_to|date:'Y-m-d' }}&payer_type={{ payer_type }}{% if include_writeoff %}&include_writeoff=1{% endif %}&export=csv"><i class="bi bi-filetype-csv"></i> CSV</a>
+                <a class="btn btn-sm btn-outline-success" href="{% url 'hospital:department_billed_revenue_report' %}?dept={{ dept }}&date_from={{ date_from|date:'Y-m-d' }}&date_to={{ date_to|date:'Y-m-d' }}&payer_type={{ payer_type }}{% if include_writeoff %}&include_writeoff=1{% endif %}&export=xlsx"><i class="bi bi-file-earmark-excel"></i> Excel</a>
+            </div>
+        </div>
+    </form>
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase">Total billed (filtered)</div>
+                    <div class="fs-4 fw-bold text-primary">GHS {{ payer_summary.total_billed|floatformat:2|intcomma }}</div>
+                    <div class="small text-muted">{{ payer_summary.total_lines|intcomma }} lines</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase">All insurance (billed)</div>
+                    <div class="fs-4 fw-bold text-success">GHS {{ payer_summary.insurance_all|floatformat:2|intcomma }}</div>
+                    <div class="small text-muted">NHIS + private + other insurer</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase">Cash (billed)</div>
+                    <div class="fs-5 fw-semibold">GHS {{ payer_summary.by_bucket.cash|floatformat:2|intcomma }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase">Corporate (billed)</div>
+                    <div class="fs-5 fw-semibold">GHS {{ payer_summary.by_bucket.corporate|floatformat:2|intcomma }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+        <div class="card-header fw-semibold">By payer type</div>
+        <div class="table-responsive">
+            <table class="table table-sm mb-0">
+                <thead><tr><th>Payer type</th><th class="text-end">Lines</th><th class="text-end">Billed (GHS)</th></tr></thead>
+                <tbody>
+                    {% for r in payer_summary.rows %}
+                    <tr>
+                        <td>{{ r.payer_type }}</td>
+                        <td class="text-end">{{ r.line_count|intcomma }}</td>
+                        <td class="text-end">{{ r.billed|floatformat:2|intcomma }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="3" class="text-muted">No lines in this period.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-header fw-semibold">Top services (by billed amount)</div>
+        <div class="table-responsive">
+            <table class="table table-sm mb-0">
+                <thead><tr><th>Code</th><th>Description</th><th>Category</th><th class="text-end">Lines</th><th class="text-end">Billed</th></tr></thead>
+                <tbody>
+                    {% for r in top_services %}
+                    <tr>
+                        <td><code>{{ r.service_code__code }}</code></td>
+                        <td>{{ r.service_code__description|truncatechars:60 }}</td>
+                        <td>{{ r.service_code__category|default:"—" }}</td>
+                        <td class="text-end">{{ r.line_count|intcomma }}</td>
+                        <td class="text-end">{{ r.billed|floatformat:2|intcomma }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="5" class="text-muted">No lines.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

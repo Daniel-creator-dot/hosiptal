@@ -17,8 +17,13 @@
                     </a>
                 </div>
                 <div class="card-body">
+                    <div class="alert alert-light border mb-4">
+                        <strong>Patient not involved?</strong> For supplier registration and other fees not tied to a patient chart, use
+                        <a href="{% url 'hospital:cashier_non_patient_charge' %}" class="alert-link">Non-patient / supplier charge</a>.
+                    </div>
                     <form method="post" id="manualPaymentForm">
                         {% csrf_token %}
+                        <input type="hidden" name="payment_idempotency_token" value="{{ payment_idempotency_token }}" id="paymentIdempotencyToken">
                         
                         <!-- Patient Selection -->
                         <div class="mb-4">
@@ -58,6 +63,12 @@
                                         </label>
                                     </div>
                                     <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_telemedicine_consult" value="telemedicine_consult" data-amount="{{ telemedicine_consult_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_telemedicine_consult">
+                                            Telemedicine Consultation — GHS {{ telemedicine_consult_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
                                         <input class="form-check-input service-preset" type="radio" name="service_type" id="service_admission" value="admission" data-amount="{{ admission_price }}">
                                         <label class="form-check-label fw-semibold" for="service_admission">
                                             Admission — GHS {{ admission_price|floatformat:0 }}
@@ -91,6 +102,18 @@
                                         <input class="form-check-input service-preset" type="radio" name="service_type" id="service_dressing" value="dressing" data-amount="{{ dressing_price }}">
                                         <label class="form-check-label fw-semibold" for="service_dressing">
                                             Dressing — GHS {{ dressing_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_dressing_large" value="dressing_large" data-amount="{{ dressing_large_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_dressing_large">
+                                            Dressing (large) — GHS {{ dressing_large_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_ear_wash" value="ear_wash" data-amount="{{ ear_wash_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_ear_wash">
+                                            Ear wash — GHS {{ ear_wash_price|floatformat:0 }}
                                         </label>
                                     </div>
                                     <div class="form-check mb-2">
@@ -129,10 +152,22 @@
                                             Delivery Fee — GHS {{ delivery_fee_price|floatformat:0 }}
                                         </label>
                                     </div>
-                                    <div class="form-check">
+                                    <div class="form-check mb-2">
                                         <input class="form-check-input service-preset" type="radio" name="service_type" id="service_midwife_care" value="midwife_care" data-amount="{{ midwife_care_price }}">
                                         <label class="form-check-label fw-semibold" for="service_midwife_care">
                                             Midwife Care — GHS {{ midwife_care_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_home_care" value="home_care" data-amount="{{ home_care_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_home_care">
+                                            Home Care (per person) — GHS {{ home_care_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_domiciliary_service" value="domiciliary_service" data-amount="{{ domiciliary_service_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_domiciliary_service">
+                                            Domiciliary Service Charge — GHS {{ domiciliary_service_price|floatformat:0 }}
                                         </label>
                                     </div>
                                 </div>
@@ -254,12 +289,15 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     serviceGp.addEventListener('change', updateServiceFields);
+    document.getElementById('service_telemedicine_consult').addEventListener('change', updateServiceFields);
     document.getElementById('service_admission').addEventListener('change', updateServiceFields);
     document.getElementById('service_bed').addEventListener('change', updateServiceFields);
     document.getElementById('service_detainment').addEventListener('change', updateServiceFields);
     document.getElementById('service_doctor_care').addEventListener('change', updateServiceFields);
     document.getElementById('service_nursing_care').addEventListener('change', updateServiceFields);
     document.getElementById('service_dressing').addEventListener('change', updateServiceFields);
+    document.getElementById('service_dressing_large').addEventListener('change', updateServiceFields);
+    document.getElementById('service_ear_wash').addEventListener('change', updateServiceFields);
     document.getElementById('service_injection').addEventListener('change', updateServiceFields);
     document.getElementById('service_ecg').addEventListener('change', updateServiceFields);
     document.getElementById('service_urinalysis').addEventListener('change', updateServiceFields);
@@ -267,6 +305,8 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('service_wound_care').addEventListener('change', updateServiceFields);
     document.getElementById('service_delivery_fee').addEventListener('change', updateServiceFields);
     document.getElementById('service_midwife_care').addEventListener('change', updateServiceFields);
+    document.getElementById('service_home_care').addEventListener('change', updateServiceFields);
+    document.getElementById('service_domiciliary_service').addEventListener('change', updateServiceFields);
     serviceCustom.addEventListener('change', updateServiceFields);
     
     // Patient search

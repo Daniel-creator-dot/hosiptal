@@ -1,0 +1,573 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Pharmacy utilization analytics - HMS{% endblock %}
+{% block page_title %}Utilization analytics{% endblock %}
+{% block page_subtitle %}Consumption, channel mix, cover, and restock signals{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'hospital/css/pharmacy_ui.css' %}">
+<style>
+    .util-kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+        gap: 0.75rem;
+    }
+    .util-kpi {
+        background: rgba(255,255,255,0.08);
+        border-radius: 12px;
+        padding: 0.85rem 1rem;
+        border: 1px solid rgba(255,255,255,0.12);
+    }
+    .util-kpi span { display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.88; }
+    .util-kpi strong { font-size: 1.25rem; font-weight: 800; }
+    .util-chart-wrap { position: relative; height: 260px; max-width: 100%; }
+    .util-chart-wrap.util-chart-tall { height: 300px; }
+    @media print {
+        .no-print { display: none !important; }
+        .util-chart-wrap { break-inside: avoid; height: 220px; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid pharmacy-ui rx-stock-page">
+    <header class="rx-stock-hero mb-3">
+        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+            <div>
+                <h1>Pharmacy utilization analytics</h1>
+                <p class="mb-2 small" style="opacity:0.92;">{{ window_label }}. Totals = <strong>Rx dispensing</strong> + <strong>walk-in OTC (dispensed)</strong> + <strong>recorded losses</strong>.</p>
+                <div class="util-kpi-grid mt-2">
+                    <div class="util-kpi">
+                        <span>Units out (period)</span>
+                        <strong>{{ total_units_consumed|intcomma }}</strong>
+                    </div>
+                    <div class="util-kpi">
+                        <span>Drugs with use</span>
+                        <strong>{{ drugs_with_consumption|intcomma }}</strong>
+                    </div>
+                    <div class="util-kpi">
+                        <span>Table rows</span>
+                        <strong>{{ sku_count|intcomma }}</strong>
+                    </div>
+                    <div class="util-kpi">
+                        <span>Channel: Rx</span>
+                        <strong>{{ pct_rx_global|floatformat:1 }}%</strong>
+                    </div>
+                    <div class="util-kpi">
+                        <span>Walk-in</span>
+                        <strong>{{ pct_walk_in_global|floatformat:1 }}%</strong>
+                    </div>
+                    <div class="util-kpi">
+                        <span>Losses</span>
+                        <strong>{{ pct_loss_global|floatformat:1 }}%</strong>
+                    </div>
+                    <div class="util-kpi">
+                        <span>Run-out risk SKUs</span>
+                        <strong>{{ risk_sku_count|intcomma }}</strong>
+                    </div>
+                    <div class="util-kpi">
+                        <span>Suggested restock (at-risk sum)</span>
+                        <strong>{{ risk_suggest_total|intcomma }}</strong>
+                    </div>
+                </div>
+            </div>
+            <div class="d-flex flex-wrap gap-2 no-print">
+                <a href="{% url 'hospital:pharmacy_stock_utilization_excel' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-success btn-sm fw-semibold" title="Download Excel workbook with summary, top 40 lists, categories, and full detail">
+                    <i class="bi bi-file-earmark-spreadsheet me-1"></i>Excel
+                </a>
+                <a href="{% url 'hospital:pharmacy_stock_utilization_pdf' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-outline-light btn-sm fw-semibold" title="Download PDF report with top 40 expensive and fast-moving drugs">
+                    <i class="bi bi-file-earmark-pdf me-1"></i>PDF
+                </a>
+                <button type="button" class="btn btn-light btn-sm fw-semibold" onclick="window.print();">
+                    <i class="bi bi-printer me-1"></i>Print
+                </button>
+                <a href="{% url 'hospital:pharmacy_stock_list' %}?movement_days={{ effective_window_days }}" class="btn btn-light btn-sm fw-semibold">
+                    <i class="bi bi-box-seam me-1"></i>Batch stock
+                </a>
+                <a href="{% url 'hospital:pharmacy_dashboard' %}" class="btn btn-outline-light btn-sm fw-semibold">
+                    <i class="bi bi-arrow-left me-1"></i>Dashboard
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <div class="accordion mb-3 no-print" id="utilMethodology">
+        <div class="accordion-item border-0 shadow-sm rounded-3 overflow-hidden">
+            <h2 class="accordion-header">
+                <button class="accordion-button collapsed fw-semibold" type="button" data-bs-toggle="collapse" data-bs-target="#utilMethodologyBody" aria-expanded="false">
+                    How to read this report
+                </button>
+            </h2>
+            <div id="utilMethodologyBody" class="accordion-collapse collapse" data-bs-parent="#utilMethodology">
+                <div class="accordion-body small text-muted">
+                    <p class="mb-2"><strong>Consumption</strong> counts units recorded when medications are dispensed to patients (history log), when walk-in sales are marked dispensed, and when pharmacy staff record stock losses (breakage, expiry, etc.). It is a <em>usage</em> view, not sales revenue.</p>
+                    <p class="mb-2"><strong>Avg / day</strong> divides total out by the reporting length: <strong>{{ effective_window_days }}</strong> day(s) for averages and cover math in this view{% if period == 'calendar_month' %} (local calendar month to date){% else %} (rolling window){% endif %}.</p>
+                    <p class="mb-2"><strong>Cover</strong> divides total on-hand (all batches for that drug) by average daily out. It is indicative only — seasonal spikes or stock-outs distort the average.</p>
+                    <p class="mb-0"><strong>Suggest</strong> is a heuristic restock line (reorder point plus roughly four weeks at the observed average, capped). Always sanity-check before ordering.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-xl-6">
+            <div class="rx-table-card h-100">
+                <div class="rx-table-head">
+                    <h2>Top {{ top_drug_rank_limit|default:40 }} expensive drugs</h2>
+                    <span class="badge bg-secondary">By unit selling price</span>
+                </div>
+                <div class="table-responsive" style="max-height: 28rem; overflow-y: auto;">
+                    <table class="table rx-data-table table-sm align-middle mb-0">
+                        <thead class="table-light" style="position: sticky; top: 0; z-index: 1;">
+                            <tr>
+                                <th>#</th>
+                                <th>Drug</th>
+                                <th class="text-end">Unit price</th>
+                                <th class="text-end">Cost</th>
+                                <th class="text-end">On hand</th>
+                                <th class="text-end">Stock value</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in top_expensive_drugs %}
+                            {% with d=row.drug %}
+                            <tr>
+                                <td class="text-muted">{{ row.rank }}</td>
+                                <td>
+                                    <a href="{% url 'hospital:drug_detail' d.id %}" class="fw-semibold text-decoration-none">{{ d.name }}</a>
+                                    <div class="small text-muted">{{ d.strength }} {{ d.form }}</div>
+                                </td>
+                                <td class="text-end fw-semibold">GHS {{ row.unit_price|floatformat:2|intcomma }}</td>
+                                <td class="text-end text-muted">GHS {{ row.cost_price|floatformat:2|intcomma }}</td>
+                                <td class="text-end">{{ row.total_on_hand|intcomma }}</td>
+                                <td class="text-end">GHS {{ row.stock_value|floatformat:2|intcomma }}</td>
+                            </tr>
+                            {% endwith %}
+                            {% empty %}
+                            <tr><td colspan="6" class="text-muted text-center py-4">No priced drugs in the formulary.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        <div class="col-xl-6">
+            <div class="rx-table-card h-100">
+                <div class="rx-table-head">
+                    <h2>Top {{ top_drug_rank_limit|default:40 }} fast-moving drugs</h2>
+                    <span class="badge bg-success">{{ window_label }}</span>
+                </div>
+                <div class="table-responsive" style="max-height: 28rem; overflow-y: auto;">
+                    <table class="table rx-data-table table-sm align-middle mb-0">
+                        <thead class="table-light" style="position: sticky; top: 0; z-index: 1;">
+                            <tr>
+                                <th>#</th>
+                                <th>Drug</th>
+                                <th class="text-end">{{ effective_window_days }}d units</th>
+                                <th class="text-end">Avg/day</th>
+                                <th class="text-end">On hand</th>
+                                <th class="text-end">Cover</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in top_moving_drugs %}
+                            {% with d=row.drug m=row.m %}
+                            <tr>
+                                <td class="text-muted">{{ row.rank }}</td>
+                                <td>
+                                    <a href="{% url 'hospital:drug_detail' d.id %}" class="fw-semibold text-decoration-none">{{ d.name }}</a>
+                                    <div class="small text-muted">{{ d.strength }} {{ d.form }}</div>
+                                </td>
+                                <td class="text-end fw-semibold">{{ m.total_out_window|intcomma }}</td>
+                                <td class="text-end small font-monospace">{{ m.avg_daily_out_display }}</td>
+                                <td class="text-end">{{ m.total_on_hand|intcomma }}</td>
+                                <td class="text-end small">
+                                    {% if m.avg_daily_out %}
+                                    <span {% if m.is_runout_risk %}class="text-warning fw-semibold"{% endif %}>{{ m.days_cover_display }}</span>
+                                    {% else %}—{% endif %}
+                                </td>
+                            </tr>
+                            {% endwith %}
+                            {% empty %}
+                            <tr><td colspan="6" class="text-muted text-center py-4">No dispensing activity in this period.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3 no-print">
+        <div class="col-lg-3 col-md-6">
+            <div class="rx-table-card p-3 h-100">
+                <h3 class="h6 fw-bold text-secondary text-uppercase small mb-2">Channel mix</h3>
+                <div class="util-chart-wrap"><canvas id="utilChartChannel" aria-label="Channel mix chart"></canvas></div>
+            </div>
+        </div>
+        <div class="col-lg-5 col-md-6">
+            <div class="rx-table-card p-3 h-100">
+                <h3 class="h6 fw-bold text-secondary text-uppercase small mb-2">Daily outflow ({{ effective_window_days }}d)</h3>
+                <div class="util-chart-wrap util-chart-tall"><canvas id="utilChartDaily" aria-label="Daily outflow chart"></canvas></div>
+            </div>
+        </div>
+        <div class="col-lg-4 col-md-12">
+            <div class="rx-table-card p-3 h-100">
+                <h3 class="h6 fw-bold text-secondary text-uppercase small mb-2">Units by drug category</h3>
+                <div class="util-chart-wrap"><canvas id="utilChartCategory" aria-label="Category chart"></canvas></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="rx-table-card p-3 mb-3 no-print">
+        <h3 class="h6 fw-bold text-secondary text-uppercase small mb-2">Concentration — top movers (Pareto cumulative %)</h3>
+        <p class="small text-muted mb-2">Share of total units out in this period accounted for by the highest-consuming drugs (top {{ top_drug_rank_limit|default:40 }}).</p>
+        <div class="util-chart-wrap util-chart-tall"><canvas id="utilChartPareto" aria-label="Pareto chart"></canvas></div>
+    </div>
+
+    <div class="rx-filter-card mb-4 no-print">
+        <h2 class="h6 mb-3 fw-bold text-uppercase" style="letter-spacing:0.06em;color:#64748b;">Filters</h2>
+        <form method="get" class="row g-3">
+            <div class="col-lg-3 col-md-6">
+                <label class="form-label small fw-semibold">Period</label>
+                <select name="period" class="form-select">
+                    <option value="rolling" {% if period == 'rolling' %}selected{% endif %}>Rolling window</option>
+                    <option value="calendar_month" {% if period == 'calendar_month' %}selected{% endif %}>Calendar month to date</option>
+                </select>
+            </div>
+            <div class="col-lg-2 col-md-6">
+                <label class="form-label small fw-semibold">Window (days)</label>
+                <input type="number" name="movement_days" class="form-control" min="1" max="365" value="{{ movement_window_days }}" title="Used when period is rolling">
+            </div>
+            <div class="col-lg-2 col-md-6">
+                <label class="form-label small fw-semibold">Cover alert</label>
+                <input type="number" name="cover_alert_days" class="form-control" min="1" max="180" value="{{ cover_alert_days }}">
+            </div>
+            <div class="col-lg-4 col-md-6">
+                <label class="form-label small fw-semibold">Search drug</label>
+                <input type="text" name="q" value="{{ query }}" class="form-control" placeholder="Name or generic…">
+            </div>
+            <div class="col-lg-3 col-md-6">
+                <label class="form-label small fw-semibold">Category</label>
+                <select name="category" class="form-select">
+                    <option value="">All</option>
+                    {% for code, desc in drug_categories %}
+                    <option value="{{ code }}" {% if category_filter == code %}selected{% endif %}>{{ desc|truncatewords:8 }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-lg-3 col-md-6">
+                <label class="form-label small fw-semibold">Scope</label>
+                <select name="scope" class="form-select">
+                    <option value="consumed" {% if scope == 'consumed' %}selected{% endif %}>Drugs with consumption</option>
+                    <option value="with_stock" {% if scope == 'with_stock' %}selected{% endif %}>Include in-stock, zero movement</option>
+                </select>
+            </div>
+            <div class="col-lg-3 col-md-6">
+                <label class="form-label small fw-semibold">Sort table</label>
+                <select name="sort" class="form-select">
+                    <option value="consumed_desc" {% if sort == 'consumed_desc' %}selected{% endif %}>Highest consumption</option>
+                    <option value="consumed_asc" {% if sort == 'consumed_asc' %}selected{% endif %}>Lowest consumption</option>
+                    <option value="risk" {% if sort == 'risk' %}selected{% endif %}>Run-out risk first</option>
+                    <option value="suggest_desc" {% if sort == 'suggest_desc' %}selected{% endif %}>Largest suggest first</option>
+                    <option value="name" {% if sort == 'name' %}selected{% endif %}>Name A–Z</option>
+                </select>
+            </div>
+            <div class="col-12 d-flex flex-wrap gap-2">
+                <button type="submit" class="btn btn-success fw-semibold">Apply</button>
+                <a href="{% url 'hospital:pharmacy_stock_utilization' %}" class="btn btn-outline-secondary">Reset</a>
+            </div>
+        </form>
+    </div>
+
+    {% if category_rollup %}
+    <div class="rx-table-card mb-4">
+        <div class="rx-table-head">
+            <h2>Roll-up by drug category</h2>
+        </div>
+        <div class="table-responsive">
+            <table class="table rx-data-table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th class="text-end">Units out</th>
+                        <th class="text-end">SKUs in table</th>
+                        <th class="text-end">At risk</th>
+                        <th class="text-end">Sum of suggest</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in category_rollup %}
+                    <tr>
+                        <td class="fw-semibold">{{ c.label }}</td>
+                        <td class="text-end">{{ c.units|intcomma }}</td>
+                        <td class="text-end">{{ c.skus|intcomma }}</td>
+                        <td class="text-end">{% if c.at_risk %}<span class="text-warning fw-semibold">{{ c.at_risk|intcomma }}</span>{% else %}0{% endif %}</td>
+                        <td class="text-end">{{ c.suggest_sum|intcomma }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if pareto_rows %}
+    <div class="rx-table-card mb-4 no-print">
+        <div class="rx-table-head">
+            <h2>Pareto — top drugs by units</h2>
+        </div>
+        <div class="table-responsive">
+            <table class="table rx-data-table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Drug</th>
+                        <th class="text-end">Units</th>
+                        <th class="text-end">Cumulative % of total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in pareto_rows %}
+                    <tr>
+                        <td class="text-muted">{{ forloop.counter }}</td>
+                        <td>{{ p.label }}</td>
+                        <td class="text-end">{{ p.units|intcomma }}</td>
+                        <td class="text-end fw-semibold">{{ p.cumulative_pct|floatformat:1 }}%</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if risk_portfolio %}
+    <div class="rx-table-card mb-4">
+        <div class="rx-table-head">
+            <h2>At-risk portfolio</h2>
+            <span class="badge bg-warning text-dark">Up to 25 shown · {{ risk_sku_count }} total</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table rx-data-table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Drug</th>
+                        <th class="text-end">On hand</th>
+                        <th class="text-end">Cover</th>
+                        <th class="text-end">Suggest</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in risk_portfolio %}
+                    {% with d=row.drug m=row.m %}
+                    <tr>
+                        <td>
+                            <div class="fw-semibold">{{ d.name }}</div>
+                            <div class="small text-muted">{{ d.strength }} {{ d.form }}</div>
+                        </td>
+                        <td class="text-end">{{ m.total_on_hand|intcomma }}</td>
+                        <td class="text-end">{{ m.days_cover_display }}</td>
+                        <td class="text-end fw-semibold">{{ m.suggested_order_qty|intcomma }}</td>
+                        <td class="text-end">
+                            {% if is_pharmacy %}
+                            <a href="{% url 'hospital:procurement_request_create' %}?drug={{ d.id }}&amp;qty={{ m.suggested_order_qty }}" class="btn btn-sm btn-outline-warning">Request</a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endwith %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if utilization_rows %}
+    <div class="rx-table-card">
+        <div class="rx-table-head">
+            <h2>Drug utilization detail</h2>
+            <span class="badge bg-secondary">{{ utilization_rows|length }} drugs</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table rx-data-table table-hover align-middle mb-0">
+                <thead class="table-light" style="position:sticky;top:0;z-index:1;">
+                    <tr>
+                        <th>Drug</th>
+                        <th class="text-end">{{ effective_window_days }}d total</th>
+                        <th class="text-end small text-muted">Rx</th>
+                        <th class="text-end small text-muted">Walk-in</th>
+                        <th class="text-end small text-muted">Loss</th>
+                        <th class="text-end small text-muted">Avg/d</th>
+                        <th class="text-end small text-muted">OH</th>
+                        <th class="text-end small text-muted">Reorder</th>
+                        <th class="text-end small text-muted">Cover</th>
+                        <th class="text-end small text-muted">Suggest</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in utilization_rows %}
+                    {% with d=row.drug m=row.m %}
+                    <tr>
+                        <td>
+                            <div class="fw-semibold">{{ d.name }}</div>
+                            <div class="small text-muted">{{ d.strength }} {{ d.form }}</div>
+                            {% if d.category %}
+                            <span class="badge bg-info bg-opacity-10 text-info small">{{ d.get_category_display|truncatewords:4 }}</span>
+                            {% endif %}
+                            {% if m.is_runout_risk %}
+                            <span class="badge text-bg-warning small ms-1">Risk</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end fw-semibold">{{ m.total_out_window|intcomma }}</td>
+                        <td class="text-end small">{{ m.out_rx|intcomma }} <span class="text-muted">({{ m.pct_rx|floatformat:0 }}%)</span></td>
+                        <td class="text-end small">{{ m.out_walk_in|intcomma }} <span class="text-muted">({{ m.pct_walk_in|floatformat:0 }}%)</span></td>
+                        <td class="text-end small">{{ m.out_loss|intcomma }} <span class="text-muted">({{ m.pct_loss|floatformat:0 }}%)</span></td>
+                        <td class="text-end small font-monospace">{{ m.avg_daily_out_display }}</td>
+                        <td class="text-end small">{{ m.total_on_hand|intcomma }}</td>
+                        <td class="text-end small">{{ m.reorder_point|intcomma }}</td>
+                        <td class="text-end small">
+                            {% if m.avg_daily_out %}
+                            <span {% if m.is_runout_risk %}class="text-warning fw-semibold"{% endif %}>{{ m.days_cover_display }}</span>
+                            {% else %}—{% endif %}
+                        </td>
+                        <td class="text-end small">{{ m.suggested_order_qty|intcomma }}</td>
+                        <td class="text-end">
+                            {% if is_pharmacy %}
+                            <a href="{% url 'hospital:procurement_request_create' %}?drug={{ d.id }}&amp;qty={{ m.suggested_order_qty }}" class="btn btn-sm btn-outline-warning">Request</a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endwith %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="rx-table-card p-5 text-center text-muted">
+        <i class="bi bi-graph-down display-4 d-block mb-3 opacity-50"></i>
+        <p class="mb-1">No drugs match this view.</p>
+        <p class="small mb-0">Try <strong>Include in-stock</strong>, widen the window, switch period, or clear filters.</p>
+    </div>
+    {% endif %}
+</div>
+
+{{ utilization_chart_data|json_script:"pharmacy-utilization-chart-data" }}
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    const el = document.getElementById('pharmacy-utilization-chart-data');
+    if (!el || typeof Chart === 'undefined') return;
+    let D;
+    try { D = JSON.parse(el.textContent); } catch (e) { return; }
+
+    const colors = { rx: '#3b82f6', walk: '#10b981', loss: '#f59e0b', total: '#6366f1', bar: '#0d9488' };
+
+    const ch = D.channelDoughnut;
+    if (ch && ch.labels && ch.labels.length) {
+        const c = document.getElementById('utilChartChannel');
+        if (c) {
+            new Chart(c, {
+                type: 'doughnut',
+                data: {
+                    labels: ch.labels,
+                    datasets: [{ data: ch.values, backgroundColor: [colors.rx, colors.walk, colors.loss], borderWidth: 0 }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } }
+                }
+            });
+        }
+    }
+
+    const dt = D.dailyTrend;
+    if (dt && dt.labels && dt.labels.length) {
+        const c = document.getElementById('utilChartDaily');
+        if (c) {
+            new Chart(c, {
+                type: 'line',
+                data: {
+                    labels: dt.labels,
+                    datasets: [
+                        { label: 'Rx', stack: 'u', data: dt.rx, borderColor: colors.rx, backgroundColor: 'rgba(59,130,246,0.35)', fill: true, tension: 0.2, pointRadius: 0 },
+                        { label: 'Walk-in', stack: 'u', data: dt.walk_in, borderColor: colors.walk, backgroundColor: 'rgba(16,185,129,0.35)', fill: true, tension: 0.2, pointRadius: 0 },
+                        { label: 'Loss', stack: 'u', data: dt.loss, borderColor: colors.loss, backgroundColor: 'rgba(245,158,11,0.35)', fill: true, tension: 0.2, pointRadius: 0 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        x: { stacked: true, ticks: { maxRotation: 45, minRotation: 0, maxTicksLimit: 14 } },
+                        y: { beginAtZero: true, stacked: true }
+                    },
+                    plugins: { legend: { position: 'bottom' } }
+                }
+            });
+        }
+    }
+
+    const cat = D.categoryBars;
+    if (cat && cat.labels && cat.labels.length) {
+        const c = document.getElementById('utilChartCategory');
+        if (c) {
+            new Chart(c, {
+                type: 'bar',
+                data: {
+                    labels: cat.labels,
+                    datasets: [{ label: 'Units', data: cat.values, backgroundColor: colors.bar, borderRadius: 4 }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: { x: { beginAtZero: true } }
+                }
+            });
+        }
+    }
+
+    const pr = D.pareto;
+    if (pr && pr.labels && pr.labels.length) {
+        const c = document.getElementById('utilChartPareto');
+        if (c) {
+            new Chart(c, {
+                type: 'line',
+                data: {
+                    labels: pr.labels,
+                    datasets: [{
+                        label: 'Cumulative % of units',
+                        data: pr.cumulativePct,
+                        borderColor: colors.total,
+                        backgroundColor: 'rgba(99,102,241,0.12)',
+                        fill: true,
+                        tension: 0.15,
+                        pointRadius: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { ticks: { maxRotation: 60, minRotation: 45, font: { size: 9 } } },
+                        y: { beginAtZero: true, max: 100, title: { display: true, text: '% of total units' } }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+    }
+})();
+</script>
+{% endblock %}

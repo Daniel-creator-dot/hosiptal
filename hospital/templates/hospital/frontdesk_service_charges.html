@@ -1,0 +1,174 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}{{ title }} - HMS{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="mb-4" style="background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%); color: #fff; border-radius: 16px; padding: 28px 32px; box-shadow: 0 8px 24px rgba(13, 148, 136, 0.25);">
+        <h1 class="h3 mb-2"><i class="bi bi-currency-exchange me-2"></i>{{ title }}</h1>
+        <p class="mb-0" style="opacity: 0.95;">Typical listed rates for walk-in questions. Final amounts depend on payer type, doctor orders, and billing; send patients to cashier for quotes on their account.</p>
+    </div>
+
+    <form method="get" class="row g-2 align-items-end mb-4">
+        <div class="col-md-8 col-lg-6">
+            <label class="form-label text-muted small mb-1">Search across all tabs</label>
+            <input type="search" name="q" value="{{ search_q }}" class="form-control form-control-lg" placeholder="e.g. ultrasound, FBC, dressing…">
+        </div>
+        <div class="col-auto">
+            <button type="submit" class="btn btn-primary btn-lg"><i class="bi bi-search me-1"></i>Search</button>
+        </div>
+        {% if search_q %}
+        <div class="col-auto">
+            <a href="{% url 'hospital:frontdesk_service_charges' %}" class="btn btn-outline-secondary btn-lg">Clear</a>
+        </div>
+        {% endif %}
+    </form>
+
+    <ul class="nav nav-pills mb-3 flex-wrap gap-2" id="chargesTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="imaging-tab" data-bs-toggle="pill" data-bs-target="#pane-imaging" type="button" role="tab">
+                Imaging <span class="badge bg-secondary ms-1">{{ imaging_count }}</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="lab-tab" data-bs-toggle="pill" data-bs-target="#pane-lab" type="button" role="tab">
+                Laboratory <span class="badge bg-secondary ms-1">{{ lab_count }}</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="proc-tab" data-bs-toggle="pill" data-bs-target="#pane-proc" type="button" role="tab">
+                Procedures <span class="badge bg-secondary ms-1">{{ procedure_count }}</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="quick-tab" data-bs-toggle="pill" data-bs-target="#pane-quick" type="button" role="tab">
+                Other charges <span class="badge bg-secondary ms-1">{{ quick_count }}</span>
+            </button>
+        </li>
+    </ul>
+
+    <div class="tab-content card shadow-sm border-0" id="chargesTabContent">
+        <div class="tab-pane fade show active p-0" id="pane-imaging" role="tabpanel">
+            <div class="table-responsive">
+                <table class="table table-hover table-striped mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Modality</th>
+                            <th>Code</th>
+                            <th>Study</th>
+                            <th>Region / notes</th>
+                            <th class="text-end">Cash (GHS)</th>
+                            <th class="text-end">Corporate (GHS)</th>
+                            <th class="text-end">Insurance (GHS)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in imaging_rows %}
+                        <tr>
+                            <td>{{ row.get_modality_display }}</td>
+                            <td><code>{{ row.code }}</code></td>
+                            <td>{{ row.name }}</td>
+                            <td class="text-muted small">{{ row.body_part }}{% if row.study_type %} · {{ row.study_type }}{% endif %}</td>
+                            <td class="text-end fw-semibold">{{ row.price|floatformat:2|intcomma }}</td>
+                            <td class="text-end">{% if row.corporate_price %}{{ row.corporate_price|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+                            <td class="text-end">{% if row.insurance_price %}{{ row.insurance_price|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="7" class="text-center text-muted py-5">No imaging items match{% if search_q %} your search{% endif %}.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="tab-pane fade p-0" id="pane-lab" role="tabpanel">
+            <div class="table-responsive">
+                <table class="table table-hover table-striped mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Code</th>
+                            <th>Test</th>
+                            <th>Specimen</th>
+                            <th class="text-end">Price (GHS)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in lab_rows %}
+                        <tr>
+                            <td><code>{{ row.code }}</code></td>
+                            <td>{{ row.name }}</td>
+                            <td class="text-muted small">{{ row.specimen_type }}</td>
+                            <td class="text-end fw-semibold">{{ row.price|floatformat:2|intcomma }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="4" class="text-center text-muted py-5">No laboratory tests match{% if search_q %} your search{% endif %}.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="tab-pane fade p-0" id="pane-proc" role="tabpanel">
+            <div class="table-responsive">
+                <table class="table table-hover table-striped mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Category</th>
+                            <th>Code</th>
+                            <th>Procedure</th>
+                            <th class="text-end">Cash (GHS)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row, cash_amt in procedure_rows %}
+                        <tr>
+                            <td>{{ row.get_category_display }}</td>
+                            <td><code>{{ row.code }}</code></td>
+                            <td>{{ row.name }}</td>
+                            <td class="text-end fw-semibold">{{ cash_amt|floatformat:2|intcomma }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="4" class="text-center text-muted py-5">No procedures match{% if search_q %} your search{% endif %}.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="tab-pane fade p-0" id="pane-quick" role="tabpanel">
+            <div class="table-responsive">
+                <table class="table table-hover table-striped mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Code</th>
+                            <th>Service</th>
+                            <th class="text-end">Cash (GHS)</th>
+                            <th class="text-end">Insurance (GHS)</th>
+                            <th class="text-end">Corporate (GHS)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in quick_rows %}
+                        <tr>
+                            <td><code>{{ row.billing_code }}</code></td>
+                            <td>{{ row.label }}</td>
+                            <td class="text-end fw-semibold">{{ row.amount_cash|floatformat:2|intcomma }}</td>
+                            <td class="text-end">{% if row.amount_insurance %}{{ row.amount_insurance|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+                            <td class="text-end">{% if row.amount_corporate %}{{ row.amount_corporate|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="5" class="text-center text-muted py-5">No quick charges match{% if search_q %} your search{% endif %}.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <p class="text-muted small mt-3 mb-0">
+        <i class="bi bi-info-circle me-1"></i>
+        Amounts come from the hospital catalog. Insurance and corporate columns are listed when configured; otherwise cashier or billing can confirm.
+    </p>
+</div>
+{% endblock %}

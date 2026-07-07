@@ -11,10 +11,19 @@ from django.contrib import messages
 from django.db.models import Q, Count, F
 from django.utils import timezone
 from django.http import JsonResponse
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.utils import DataError
 
-from .models import Patient, Encounter, Bed, Ward, Admission, Staff, Department
+from .models import (
+    Patient,
+    Encounter,
+    Bed,
+    Ward,
+    Admission,
+    AdmissionWardStay,
+    Staff,
+    Department,
+)
 from .forms import AdmissionForm
 
 
@@ -361,6 +370,7 @@ def admission_create_enhanced(request):
                 existing_admission.status = 'admitted'
                 existing_admission.save()
                 admission = existing_admission
+                admission.ensure_open_ward_stay()
                 bed.occupy()
                 encounter.encounter_type = 'inpatient'
                 encounter.save()
@@ -402,6 +412,7 @@ def admission_create_enhanced(request):
                     notes=notes,
                     status='admitted'
                 )
+                admission.ensure_open_ward_stay()
             except IntegrityError as e:
                 if 'hospital_admission_encounter_id_key' in str(e) or 'encounter_id' in str(e):
                     existing_admission = Admission.objects.filter(encounter_id=encounter.pk).first()
@@ -421,6 +432,7 @@ def admission_create_enhanced(request):
                         existing_admission.status = 'admitted'
                         existing_admission.save()
                         admission = existing_admission
+                        admission.ensure_open_ward_stay()
                         bed.occupy()
                         encounter.encounter_type = 'inpatient'
                         encounter.save()
@@ -565,6 +577,120 @@ def admission_detail(request, pk):
 
 
 @login_required
+def admission_transfer(request, admission_id):
+    """Move an admitted patient to another ward/bed (e.g. ER → VIP). Updates encounter location and billing segments."""
+    admission = get_object_or_404(Admission, pk=admission_id, is_deleted=False)
+
+    if admission.status != 'admitted':
+        messages.error(request, 'Only active admissions can be transferred to another ward.')
+        return redirect('hospital:admission_detail', pk=admission.pk)
+
+    encounter = admission.encounter
+    if encounter and getattr(encounter, 'billing_closed_at', None):
+        messages.error(request, 'Billing is closed for this visit; ward transfer is not allowed.')
+        return redirect('hospital:admission_detail', pk=admission.pk)
+
+    cand = Bed.objects.filter(is_active=True, is_deleted=False).select_related(
+        'ward', 'ward__department'
+    )
+    if admission.bed_id:
+        cand = cand.exclude(pk=admission.bed_id)
+    candidate_beds = cand.order_by('ward__name', 'bed_number')
+    available_bed_count = candidate_beds.filter(status='available').count()
+
+    if request.method == 'POST':
+        bed_id = (request.POST.get('bed_id') or '').strip()
+        if not bed_id:
+            messages.error(request, 'Please select a bed.')
+            return redirect('hms_admission_transfer', admission_id=admission.pk)
+
+        try:
+            with transaction.atomic():
+                admission = Admission.objects.select_for_update().get(
+                    pk=admission_id, is_deleted=False
+                )
+                if admission.status != 'admitted':
+                    messages.error(request, 'This admission is no longer active.')
+                    return redirect('hospital:admission_detail', pk=admission.pk)
+
+                new_bed = Bed.objects.select_for_update().get(pk=bed_id, is_deleted=False)
+                if new_bed.status != 'available':
+                    messages.error(
+                        request,
+                        f'Bed {new_bed.bed_number} is not available. Choose another bed.',
+                    )
+                    return redirect('hms_admission_transfer', admission_id=admission.pk)
+
+                if admission.bed_id and str(new_bed.pk) == str(admission.bed_id):
+                    messages.info(request, 'The patient is already on this bed.')
+                    return redirect('hospital:admission_detail', pk=admission.pk)
+
+                now = timezone.now()
+                AdmissionWardStay.objects.filter(
+                    admission=admission, is_deleted=False, ended_at__isnull=True
+                ).update(ended_at=now)
+
+                old_bed = admission.bed
+                if old_bed:
+                    old_bed.vacate()
+
+                admission.ward = new_bed.ward
+                admission.bed = new_bed
+                admission.save(update_fields=['ward', 'bed', 'modified'])
+
+                new_bed.occupy()
+                AdmissionWardStay.objects.create(
+                    admission=admission,
+                    ward=new_bed.ward,
+                    bed=new_bed,
+                    started_at=now,
+                )
+
+                enc = admission.encounter
+                if enc:
+                    enc.location = new_bed.ward
+                    enc.save(update_fields=['location', 'modified'])
+
+                note = (request.POST.get('transfer_notes') or '').strip()
+                if note:
+                    stamp = now.strftime('%Y-%m-%d %H:%M')
+                    extra = f'\n\nTransfer ({stamp}): {note}'
+                    admission.notes = ((admission.notes or '') + extra)[:8000]
+                    admission.save(update_fields=['notes', 'modified'])
+
+            from .services.bed_billing_service import bed_billing_service
+
+            bed_billing_service.update_provisional_accommodation_description(admission)
+
+            patient_name = (
+                admission.encounter.patient.full_name if admission.encounter else 'Patient'
+            )
+            messages.success(
+                request,
+                f'Transferred {patient_name} to {new_bed.ward.name} — Bed {new_bed.bed_number}. '
+                f'Accommodation charges will use each ward’s rate for the time spent there.',
+            )
+            return redirect('hospital:admission_detail', pk=admission.pk)
+
+        except Bed.DoesNotExist:
+            messages.error(request, 'Selected bed was not found.')
+        except Exception as e:
+            logger.exception('Admission transfer failed')
+            messages.error(request, f'Transfer failed: {e!s}')
+
+        return redirect('hms_admission_transfer', admission_id=admission.pk)
+
+    context = {
+        'admission': admission,
+        'candidate_beds': candidate_beds,
+        'available_bed_count': available_bed_count,
+        'current_bed': admission.bed,
+        'current_ward': admission.ward,
+    }
+    return render(request, 'hospital/admission_transfer.html', context)
+
+
+@login_required
 def discharge_patient(request, admission_id):
     """Discharge patient and free bed"""
     admission = get_object_or_404(Admission, pk=admission_id, is_deleted=False)
@@ -663,19 +789,9 @@ def api_admission_patient_search(request):
     if len(query) < 2:
         return JsonResponse({'results': []})
 
-    from django.db.models import Q
-    query_parts = query.split()
-    search_q = Q(
-        Q(first_name__icontains=query) |
-        Q(last_name__icontains=query) |
-        Q(middle_name__icontains=query) |
-        Q(mrn__icontains=query) |
-        Q(phone_number__icontains=query)
-    )
-    if len(query_parts) >= 2:
-        fp, lp = query_parts[0], ' '.join(query_parts[1:])
-        search_q |= Q(first_name__icontains=fp, last_name__icontains=lp)
-        search_q |= Q(first_name__icontains=lp, last_name__icontains=fp)
+    from .patient_search import patient_filter_q
+
+    search_q = patient_filter_q(query, include_email=False)
 
     admitted_ids = set(Admission.objects.filter(is_deleted=False).values_list('encounter_id', flat=True))
     patients = Patient.objects.filter(search_q, is_deleted=False).distinct()[:30]

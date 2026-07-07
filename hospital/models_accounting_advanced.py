@@ -2398,9 +2398,14 @@ class AccountingPayrollEntry(BaseModel):
 
 
 class DoctorCommission(BaseModel):
-    """Doctor Commission Tracking - 30% to doctor, rest to hospital"""
+    """Doctor Commission Tracking - 30% to doctor, rest to hospital (typically specialist consultations)."""
     commission_number = models.CharField(max_length=50, unique=True)
-    doctor = models.ForeignKey('Staff', on_delete=models.CASCADE, related_name='commissions', limit_choices_to={'profession': 'doctor'})
+    doctor = models.ForeignKey(
+        'Staff',
+        on_delete=models.CASCADE,
+        related_name='commissions',
+        limit_choices_to={'profession': 'doctor'},
+    )
     
     service_type = models.CharField(max_length=50, choices=[
         ('consultation', 'Consultation'),

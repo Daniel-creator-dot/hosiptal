@@ -43,7 +43,8 @@ def pharmacy_flowboard(request):
     # Get prescriptions with pending dispensing
     pending_dispensing = PharmacyDispensing.objects.filter(
         dispensing_status__in=['pending_payment', 'ready_to_dispense'],
-        is_deleted=False
+        is_deleted=False,
+        prescription__is_deleted=False,
     ).select_related(
         'prescription__drug',
         'prescription__order__encounter__patient',

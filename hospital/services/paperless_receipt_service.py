@@ -113,8 +113,17 @@ class PaperlessReceiptService:
     def _send_sms_receipt(receipt):
         """Send receipt via SMS with download link"""
         try:
+            from hospital.services.pending_payment_notification_service import (
+                should_send_payment_notification_sms,
+            )
             from hospital.services.sms_service import sms_service
-            
+
+            if not should_send_payment_notification_sms(payment_receipt=receipt):
+                return {
+                    'sent': False,
+                    'message': 'SMS skipped (insurance/corporate billing)',
+                }
+
             patient = receipt.patient
             
             # Create SMS message with receipt link

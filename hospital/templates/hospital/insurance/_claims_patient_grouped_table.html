@@ -1,0 +1,96 @@
+{% load humanize %}
+<p class="small text-muted mb-2">
+    Grouped by patient, then by visit or invoice. Expand a patient to see all bills; expand a bill to see line items.
+</p>
+<div class="table-responsive">
+    <table class="table table-hover claims-table claims-patient-table mb-0" id="claimsPatientTable">
+        <thead>
+            <tr>
+                <th style="width:2rem;"></th>
+                <th>Date</th>
+                <th>Patient / visit</th>
+                <th>Insurance ID</th>
+                <th>Plan</th>
+                <th>Payer</th>
+                <th>Lines</th>
+                <th>Billed</th>
+                <th>Paid</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for patient_group in claims_page %}
+            {% with pidx=forloop.counter0 %}
+            <tr class="claim-patient-header" data-patient-group="{{ pidx }}" role="button" tabindex="0" aria-expanded="false">
+                <td class="text-center"><i class="bi bi-chevron-right expand-icon" aria-hidden="true"></i></td>
+                <td class="text-nowrap">{{ patient_group.latest_visit_date|date:"M j, Y" }}</td>
+                <td>
+                    <strong>{{ patient_group.patient.full_name }}</strong>
+                    <br><small class="text-muted">MRN {{ patient_group.patient.mrn }}</small>
+                    <span class="badge bg-primary ms-1">
+                        {{ patient_group.visit_count }} bill{{ patient_group.visit_count|pluralize }}
+                    </span>
+                </td>
+                <td><code class="small">{{ patient_group.insurance_id|default:"—" }}</code></td>
+                <td class="small">{{ patient_group.plan_name|default:"—" }}</td>
+                <td class="small">{{ patient_group.payer_label }}</td>
+                <td><span class="badge bg-secondary">{{ patient_group.item_count }} line{{ patient_group.item_count|pluralize }}</span></td>
+                <td><strong>GH₵ {{ patient_group.billed_total|floatformat:2|intcomma }}</strong></td>
+                <td>GH₵ {{ patient_group.paid_total|floatformat:2|intcomma }}</td>
+                <td><span class="badge-status badge-{{ patient_group.claim_status }}">{{ patient_group.claim_status_label }}</span></td>
+                <td>
+                    <a href="{% url 'hospital:patient_insurance_claims' patient_id=patient_group.patient.pk %}" class="btn btn-sm btn-outline-primary" title="All claims for this patient" onclick="event.stopPropagation();">
+                        <i class="bi bi-person-lines-fill"></i>
+                    </a>
+                </td>
+            </tr>
+            {% for visit in patient_group.visits %}
+            {% with vidx=forloop.counter0 %}
+            <tr class="claim-visit-header claim-pv-{{ pidx }} d-none" data-visit-group="{{ pidx }}-{{ vidx }}" role="button" tabindex="0" aria-expanded="false">
+                <td class="text-center ps-4"><i class="bi bi-chevron-right expand-icon visit-icon" aria-hidden="true"></i></td>
+                <td class="text-nowrap text-muted">
+                    {% if visit.encounter and visit.encounter.started_at %}{{ visit.encounter.started_at|date:"M j, Y" }}{% else %}{{ visit.service_date|date:"M j, Y" }}{% endif %}
+                </td>
+                <td class="ps-4">
+                    <span class="text-secondary"><i class="bi bi-receipt me-1"></i></span>
+                    {% if visit.invoice %}
+                    Invoice <code class="small">{{ visit.invoice.invoice_number|default:visit.invoice.pk }}</code>
+                    {% elif visit.encounter %}
+                    Visit {{ visit.encounter.pk|truncatechars:8 }}
+                    {% else %}
+                    Standalone claim
+                    {% endif %}
+                </td>
+                <td colspan="3" class="small text-muted"></td>
+                <td><span class="badge bg-light text-dark border">{{ visit.item_count }} line{{ visit.item_count|pluralize }}</span></td>
+                <td>GH₵ {{ visit.billed_total|floatformat:2|intcomma }}</td>
+                <td>GH₵ {{ visit.paid_total|floatformat:2|intcomma }}</td>
+                <td><span class="badge-status badge-{{ visit.claim_status }}">{{ visit.claim_status_label }}</span></td>
+                <td>
+                    {% if visit.encounter %}
+                    <a href="{% url 'hospital:encounter_full_record' encounter_id=visit.encounter.pk %}" class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation();" title="Encounter record"><i class="bi bi-journal-medical"></i></a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% for line in visit.items %}
+            <tr class="claim-line-row claim-gc-{{ pidx }}-{{ vidx }} d-none">
+                <td></td>
+                <td class="text-muted small ps-5">{{ line.service_date|date:"M j, Y" }}</td>
+                <td class="ps-5" colspan="4">{{ line.service_description|truncatewords:14 }}</td>
+                <td></td>
+                <td>GH₵ {{ line.billed_amount|floatformat:2|intcomma }}</td>
+                <td>GH₵ {{ line.paid_amount|floatformat:2|intcomma }}</td>
+                <td><span class="badge-status badge-{{ line.claim_status }}">{{ line.get_claim_status_display }}</span></td>
+                <td>
+                    <a href="{% url 'hospital:insurance_claim_item_detail' line.pk %}" class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation();" title="View line"><i class="bi bi-eye"></i></a>
+                </td>
+            </tr>
+            {% endfor %}
+            {% endwith %}
+            {% endfor %}
+            {% endwith %}
+            {% endfor %}
+        </tbody>
+    </table>
+</div>

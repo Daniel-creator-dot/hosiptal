@@ -846,9 +846,11 @@ def queue_call_next(request):
     # Find next patient in waiting queue - use QueueEntry model
     # Use QueueEntry if available, otherwise Queue
     if HAS_QUEUE_ENTRY and QueueEntry.objects.filter(is_deleted=False).exists():
+        today = timezone.now().date()
         queues = QueueEntry.objects.filter(
             is_deleted=False,
-            status__in=['checked_in', 'called']
+            queue_date=today,
+            status='checked_in',
         ).order_by('priority', 'sequence_number')
     else:
         queues = Queue.objects.filter(
@@ -865,55 +867,62 @@ def queue_call_next(request):
     next_queue = queues.first()
     
     if next_queue:
-        # Update status based on model type
+        import logging
+        logger = logging.getLogger(__name__)
+
+        sms_sent = False
+        doctor_user = None
+        try:
+            staff = getattr(request.user, 'staff', None)
+            if staff and getattr(staff, 'profession', None) == 'doctor':
+                doctor_user = request.user
+        except Exception:
+            pass
+
+        # QueueEntry: same as doctor console — status "called" + name/doctor SMS only here
         if HAS_QUEUE_ENTRY and isinstance(next_queue, QueueEntry):
-            next_queue.status = 'in_progress'
-            if hasattr(next_queue, 'called_time'):
-                next_queue.called_time = timezone.now()
-            if hasattr(next_queue, 'started_time'):
-                next_queue.started_time = timezone.now()
+            from .services.queue_service import queue_service
+
+            next_queue, sms_outcome = queue_service.call_next_patient(
+                next_queue, room_number='', doctor=doctor_user
+            )
+            sms_sent = sms_outcome is True
         else:
             next_queue.status = 'in_progress'
             if hasattr(next_queue, 'called_at'):
                 next_queue.called_at = timezone.now()
-        next_queue.save()
-        
-        # Send SMS notification to patient
-        sms_sent = False
-        sms_message = ''
-        try:
-            # Get patient - QueueEntry has patient directly, Queue has it through encounter
-            if hasattr(next_queue, 'patient'):
-                patient = next_queue.patient
-            else:
-                patient = next_queue.encounter.patient if next_queue.encounter else None
-            department_name = next_queue.department.name if next_queue.department else 'clinic'
-            location_display = 'clinic'  # Simplified - QueueEntry may not have location
-            
-            if patient and patient.phone_number:
-                from .services.sms_service import sms_service
-                
-                sms_message = (
-                    f"Dear {patient.first_name},\n\n"
-                    f"You are next in queue! Queue #{next_queue.queue_number}.\n"
-                    f"Please proceed to {department_name} - {location_display}.\n\n"
-                    f"Thank you.\nPrimeCare Medical"
-                )
-                
-                sms_log = sms_service.send_sms(
-                    phone_number=patient.phone_number,
-                    message=sms_message,
-                    message_type='queue_notification',
-                    recipient_name=patient.full_name,
-                    related_object_id=next_queue.id,
-                    related_object_type='Queue'
-                )
-                sms_sent = (sms_log.status == 'sent')
-        except Exception as e:
-            # Log error but don't fail the queue action
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Failed to send SMS for queue {next_queue.id}: {str(e)}")
+            next_queue.save()
+
+            try:
+                if hasattr(next_queue, 'patient'):
+                    patient = next_queue.patient
+                else:
+                    patient = next_queue.encounter.patient if next_queue.encounter else None
+                department_name = next_queue.department.name if next_queue.department else 'clinic'
+                location_display = 'clinic'
+
+                if patient and patient.phone_number:
+                    from .services.sms_service import sms_service
+
+                    pname = (patient.full_name or '').strip() or patient.first_name
+                    sms_message = (
+                        f"🏥 PrimeCare Medical\n\n"
+                        f"{pname}, you are being called.\n\n"
+                        f"Please go to {department_name} ({location_display}).\n\n"
+                        f"Ticket: {next_queue.queue_number}"
+                    )
+
+                    sms_log = sms_service.send_sms(
+                        phone_number=patient.phone_number,
+                        message=sms_message,
+                        message_type='queue_notification',
+                        recipient_name=patient.full_name,
+                        related_object_id=next_queue.id,
+                        related_object_type='Queue'
+                    )
+                    sms_sent = sms_log.status == 'sent'
+            except Exception as e:
+                logger.warning(f"Failed to send SMS for legacy queue {next_queue.id}: {str(e)}")
         
         # Check if this is an AJAX request (based on Accept header or content type)
         is_ajax = (
@@ -924,7 +933,18 @@ def queue_call_next(request):
         
         # For POST requests that are NOT AJAX (form submission), redirect
         if request.method == 'POST' and not is_ajax:
-            messages.success(request, f'✅ Called patient #{next_queue.queue_number} - {next_queue.encounter.patient.full_name if next_queue.encounter else "Unknown"}')
+            _pname = 'Unknown'
+            try:
+                if hasattr(next_queue, 'patient') and next_queue.patient:
+                    _pname = next_queue.patient.full_name
+                elif next_queue.encounter and next_queue.encounter.patient:
+                    _pname = next_queue.encounter.patient.full_name
+            except Exception:
+                pass
+            messages.success(
+                request,
+                f'✅ Called patient #{next_queue.queue_number} - {_pname}'
+            )
             return redirect('hospital:queue_display')
         
         # For AJAX/JSON requests, always return JSON

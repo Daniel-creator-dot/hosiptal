@@ -246,15 +246,45 @@ def specialist_patient_select(request):
     """Select a patient for specialist consultation"""
     specialty_filter = request.GET.get('specialty', '').lower()
     search_query = request.GET.get('q', '')
+    date_from_str = request.GET.get('date_from', '')
+    date_to_str = request.GET.get('date_to', '')
+    encounter_type_filter = request.GET.get('encounter_type', '')
     
     # Get active encounters with patients
     from .models import Encounter
     from django.core.paginator import Paginator
+    from datetime import datetime
+    from django.db.models import Count
     
-    encounters = Encounter.objects.filter(
+    base_encounters = Encounter.objects.filter(
         status='active',
         is_deleted=False
-    ).select_related('patient').order_by('-started_at')
+    ).select_related('patient')
+    
+    # Apply encounter-type filter if provided
+    if encounter_type_filter:
+        base_encounters = base_encounters.filter(encounter_type=encounter_type_filter)
+    
+    # Apply date filters (using HTML5 date inputs - YYYY-MM-DD)
+    if date_from_str:
+        try:
+            date_from = datetime.strptime(date_from_str, "%Y-%m-%d").date()
+            base_encounters = base_encounters.filter(started_at__date__gte=date_from)
+        except ValueError:
+            date_from = None
+    else:
+        date_from = None
+    
+    if date_to_str:
+        try:
+            date_to = datetime.strptime(date_to_str, "%Y-%m-%d").date()
+            base_encounters = base_encounters.filter(started_at__date__lte=date_to)
+        except ValueError:
+            date_to = None
+    else:
+        date_to = None
+    
+    encounters = base_encounters.order_by('-started_at')
     
     # Apply search if provided
     if search_query:
@@ -286,12 +316,33 @@ def specialist_patient_select(request):
     
     consultation_url = specialty_url_map.get(specialty_filter, 'hospital:encounter_detail')
     
+    # Simple analytics for header cards
+    today = timezone.now().date()
+    total_active_all = Encounter.objects.filter(status='active', is_deleted=False).count()
+    today_active_all = Encounter.objects.filter(
+        status='active',
+        is_deleted=False,
+        started_at__date=today,
+    ).count()
+    filtered_count = encounters.count()
+    encounters_by_type = base_encounters.values('encounter_type').annotate(count=Count('id'))
+    
     context = {
         'encounters': encounters_page,
         'specialty': specialty_filter,
         'search_query': search_query,
         'consultation_url': consultation_url,
         'specialty_display': specialty_filter.title() if specialty_filter else 'Specialist',
+        'date_from': date_from_str,
+        'date_to': date_to_str,
+        'encounter_type_filter': encounter_type_filter,
+        'analytics': {
+            'total_active_all': total_active_all,
+            'today_active_all': today_active_all,
+            'filtered_count': filtered_count,
+            'by_type': list(encounters_by_type),
+            'today': today,
+        },
     }
     return render(request, 'hospital/specialists/patient_select.html', context)
 

@@ -10,6 +10,22 @@ class Command(BaseCommand):
     help = 'Seed common laboratory tests used in Ghanaian healthcare facilities'
 
     def handle(self, *args, **options):
+        # One-time rename: older seed used HV-C&S (& breaks some searches/URLs); merge to HV-CS
+        try:
+            legacy = LabTest.objects.filter(code='HV-C&S', is_deleted=False).first()
+            canonical = LabTest.objects.filter(code='HV-CS', is_deleted=False).first()
+            if legacy and canonical and legacy.pk != canonical.pk:
+                legacy.is_deleted = True
+                legacy.is_active = False
+                legacy.save()
+                self.stdout.write(self.style.WARNING('Deactivated duplicate catalog row HV-C&S (canonical is HV-CS).'))
+            elif legacy and not canonical:
+                legacy.code = 'HV-CS'
+                legacy.save(update_fields=['code'])
+                self.stdout.write(self.style.WARNING('Renamed catalog code HV-C&S to HV-CS (search-friendly).'))
+        except Exception as e:
+            self.stdout.write(self.style.WARNING(f'Legacy lab code merge skipped: {e}'))
+
         # Common lab tests in Ghana with typical pricing in GHS
         lab_tests = [
             # Hematology
@@ -62,6 +78,7 @@ class Command(BaseCommand):
             {'code': 'CL', 'name': 'Chloride (Cl)', 'specimen_type': 'Serum', 'tat_minutes': 60, 'price': Decimal('30.00')},
             {'code': 'HCO3', 'name': 'Bicarbonate (HCO3)', 'specimen_type': 'Serum', 'tat_minutes': 60, 'price': Decimal('30.00')},
             {'code': 'UEC', 'name': 'Urea, Electrolytes & Creatinine (UEC)', 'specimen_type': 'Serum', 'tat_minutes': 60, 'price': Decimal('80.00')},
+            {'code': 'BUE', 'name': 'Blood Urea & Electrolytes (BUE / U&E)', 'specimen_type': 'Serum', 'tat_minutes': 60, 'price': Decimal('75.00')},
             {'code': 'ELECT', 'name': 'Electrolytes Panel', 'specimen_type': 'Serum', 'tat_minutes': 60, 'price': Decimal('100.00')},
             
             # Infectious Diseases
@@ -153,6 +170,7 @@ class Command(BaseCommand):
             {'code': 'CSF-C&S', 'name': 'CSF Culture & Sensitivity', 'specimen_type': 'CSF', 'tat_minutes': 4320, 'price': Decimal('150.00')},
             {'code': 'WOUND-C&S', 'name': 'Wound Swab Culture & Sensitivity', 'specimen_type': 'Swab', 'tat_minutes': 4320, 'price': Decimal('100.00')},
             {'code': 'THROAT-C&S', 'name': 'Throat Swab Culture & Sensitivity', 'specimen_type': 'Swab', 'tat_minutes': 4320, 'price': Decimal('80.00')},
+            {'code': 'HV-CS', 'name': 'High Vaginal Swab Culture & Sensitivity (HV CS)', 'specimen_type': 'High vaginal swab', 'tat_minutes': 4320, 'price': Decimal('190.00')},
             
             # Serology
             {'code': 'BRUCELL', 'name': 'Brucellosis Test', 'specimen_type': 'Serum', 'tat_minutes': 180, 'price': Decimal('80.00')},

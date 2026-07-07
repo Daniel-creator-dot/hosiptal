@@ -402,7 +402,7 @@ def hr_manager_dashboard(request):
     
     context = {
         'title': 'HR Manager Dashboard',
-        'role_info': get_role_display_info(request.user),
+        'role_info': get_role_display_info(request.user, request),
         'today': today,
         'this_month_start': this_month_start,
         

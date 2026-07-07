@@ -724,6 +724,7 @@ def pharmacy_dashboard(request):
         'is_hod': user_is_hod,
         'recent_medical_records': recent_medical_records,
         'pharmacy_payer_channels': pharmacy_payer_channels,
+        'pharmacy_page_loaded_at': timezone.now().isoformat(),
     }
     return render(request, 'hospital/pharmacy_dashboard_worldclass.html', context)
 
@@ -2608,6 +2609,213 @@ def pharmacy_stock_edit(request, pk):
         'drug_categories': Drug.CATEGORIES,
     }
     return render(request, 'hospital/pharmacy_stock_edit.html', context)
+
+
+@login_required
+def pharmacy_stock_utilization(request):
+    """30-day pharmacy utilization analytics (consumption, channels, cover, restock signals)."""
+    from .pharmacy_utilization_report import build_pharmacy_utilization_report_context
+
+    context = build_pharmacy_utilization_report_context(request)
+    return render(request, 'hospital/pharmacy_stock_utilization.html', context)
+
+
+@login_required
+def pharmacy_stock_utilization_pdf(request):
+    """PDF export for pharmacy utilization report."""
+    from .models_settings import HospitalSettings
+    from .pharmacy_utilization_report import (
+        build_pharmacy_utilization_report_context,
+        pharmacy_utilization_pdf_response,
+    )
+
+    ctx = build_pharmacy_utilization_report_context(request, include_chart_data=False)
+    settings = HospitalSettings.get_settings()
+    hospital_name = getattr(settings, 'hospital_name', '') or ''
+    return pharmacy_utilization_pdf_response(ctx, hospital_name=hospital_name)
+
+
+@login_required
+def pharmacy_stock_utilization_excel(request):
+    """Excel export for pharmacy utilization report."""
+    from .models_settings import HospitalSettings
+    from .pharmacy_utilization_report import (
+        build_pharmacy_utilization_report_context,
+        pharmacy_utilization_excel_response,
+    )
+
+    ctx = build_pharmacy_utilization_report_context(request, include_chart_data=False)
+    settings = HospitalSettings.get_settings()
+    hospital_name = getattr(settings, 'hospital_name', '') or ''
+    return pharmacy_utilization_excel_response(ctx, hospital_name=hospital_name)
+
+
+@login_required
+def pharmacy_stock_loss_log(request):
+    """Audited register of breakage, expiry, and other stock removals."""
+    from .models import PharmacyStockLoss
+
+    query = (request.GET.get('q') or '').strip()
+    loss_type_filter = (request.GET.get('loss_type') or '').strip()
+
+    entries_qs = PharmacyStockLoss.objects.filter(is_deleted=False).select_related(
+        'pharmacy_stock__drug',
+        'recorded_by',
+    )
+    if query:
+        entries_qs = entries_qs.filter(
+            Q(pharmacy_stock__drug__name__icontains=query)
+            | Q(pharmacy_stock__batch_number__icontains=query)
+            | Q(notes__icontains=query)
+            | Q(witness_name__icontains=query)
+        )
+    if loss_type_filter:
+        entries_qs = entries_qs.filter(loss_type=loss_type_filter)
+
+    context = {
+        'entries': entries_qs.order_by('-created')[:250],
+        'query': query,
+        'loss_type_filter': loss_type_filter,
+        'loss_type_choices': PharmacyStockLoss.LossType.choices,
+    }
+    return render(request, 'hospital/pharmacy_stock_loss_log.html', context)
+
+
+@login_required
+def pharmacy_stock_loss_record(request, pk):
+    """Record breakage / expiry / damage removal from a pharmacy stock batch."""
+    from .models import PharmacyStockLoss
+    from .views_procurement import can_record_pharmacy_stock_loss
+
+    if not can_record_pharmacy_stock_loss(request.user):
+        messages.error(request, 'You do not have permission to record stock losses.')
+        return redirect('hospital:pharmacy_stock_list')
+
+    stock = get_object_or_404(PharmacyStock, pk=pk, is_deleted=False)
+    available_qty = int(stock.quantity_on_hand or 0)
+
+    if request.method == 'POST':
+        if available_qty < 1:
+            messages.error(request, 'This batch has no sellable quantity on hand.')
+            return redirect('hospital:pharmacy_stock_list')
+
+        loss_type = (request.POST.get('loss_type') or '').strip()
+        disposal_method = (request.POST.get('disposal_method') or '').strip()
+        witness_name = (request.POST.get('witness_name') or '').strip()[:200]
+        notes = (request.POST.get('notes') or '').strip()
+        try:
+            quantity = int(request.POST.get('quantity') or 0)
+        except (TypeError, ValueError):
+            quantity = 0
+
+        valid_loss = {code for code, _ in PharmacyStockLoss.LossType.choices}
+        valid_disposal = {code for code, _ in PharmacyStockLoss.DisposalMethod.choices}
+        errors = []
+        if loss_type not in valid_loss:
+            errors.append('Select a valid reason for removal.')
+        if disposal_method not in valid_disposal:
+            errors.append('Select a valid disposal method.')
+        if quantity < 1 or quantity > available_qty:
+            errors.append(f'Quantity must be between 1 and {available_qty}.')
+        if not notes:
+            errors.append('Notes are required.')
+
+        if errors:
+            for err in errors:
+                messages.error(request, err)
+        else:
+            with transaction.atomic():
+                stock_locked = PharmacyStock.objects.select_for_update().get(pk=stock.pk)
+                on_hand = int(stock_locked.quantity_on_hand or 0)
+                if quantity > on_hand:
+                    messages.error(request, f'Only {on_hand} unit(s) available on this batch now.')
+                else:
+                    PharmacyStockLoss.objects.create(
+                        pharmacy_stock=stock_locked,
+                        loss_type=loss_type,
+                        quantity=quantity,
+                        disposal_method=disposal_method,
+                        witness_name=witness_name,
+                        notes=notes,
+                        recorded_by=request.user,
+                    )
+                    stock_locked.quantity_on_hand = on_hand - quantity
+                    stock_locked.save(update_fields=['quantity_on_hand', 'modified'])
+                    messages.success(
+                        request,
+                        f'Recorded removal of {quantity} unit(s) from batch {stock_locked.batch_number}.',
+                    )
+                    return redirect('hospital:pharmacy_stock_loss_log')
+
+    context = {
+        'stock': stock,
+        'available_qty': available_qty,
+        'loss_type_choices': PharmacyStockLoss.LossType.choices,
+        'disposal_choices': PharmacyStockLoss.DisposalMethod.choices,
+    }
+    return render(request, 'hospital/pharmacy_stock_loss_record.html', context)
+
+
+@login_required
+def pharmacy_served_prescription_detail(request, prescription_id):
+    """JSON detail for one served prescription (pharmacy dashboard modal)."""
+    from .models import Prescription
+    from .pharmacy_served_detail import build_served_prescription_detail_payload
+
+    try:
+        rx = get_object_or_404(
+            Prescription.objects.select_related(
+                'drug',
+                'prescribed_by__user',
+                'order__encounter__patient',
+            ),
+            pk=prescription_id,
+            is_deleted=False,
+        )
+        return JsonResponse(build_served_prescription_detail_payload(rx))
+    except Exception as exc:
+        return JsonResponse({'success': False, 'error': str(exc)}, status=500)
+
+
+@login_required
+def pharmacy_served_order_detail(request, order_id):
+    """JSON detail for all medications on a served order (pharmacy dashboard modal)."""
+    from .pharmacy_served_detail import build_served_order_detail_payload
+
+    try:
+        order = get_object_or_404(
+            Order.objects.select_related('encounter__patient'),
+            pk=order_id,
+            order_type='medication',
+            is_deleted=False,
+        )
+        return JsonResponse(build_served_order_detail_payload(order))
+    except Exception as exc:
+        return JsonResponse({'success': False, 'error': str(exc)}, status=500)
+
+
+@login_required
+def pharmacy_queue_pulse(request):
+    """Poll endpoint for new pharmacy prescriptions (alert banner on dashboard / dispensing queue)."""
+    from datetime import datetime
+
+    from hospital.services.pharmacy_queue_service import pending_pharmacy_alert_items
+
+    since = None
+    since_raw = (request.GET.get('since') or '').strip()
+    if since_raw:
+        try:
+            since = datetime.fromisoformat(since_raw.replace('Z', '+00:00'))
+            if timezone.is_naive(since):
+                since = timezone.make_aware(since)
+        except (ValueError, TypeError):
+            since = None
+
+    try:
+        items = pending_pharmacy_alert_items(since=since, limit=40)
+        return JsonResponse({'success': True, 'items': items})
+    except Exception as exc:
+        return JsonResponse({'success': False, 'error': str(exc), 'items': []}, status=500)
 
 
 @login_required

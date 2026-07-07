@@ -344,6 +344,10 @@ def _lock_next_entry(department, doctor):
     Atomically fetch the next waiting entry for a department.
     Tries the selected department first, then entries with no department set (common
     when check-in did not attach a department) so Call next still works.
+
+    IMPORTANT: Do not fall back to "any department" here. Doctors/staff expect Call Next
+    to only call from the currently selected department context; falling back to any
+    department can call the wrong patient (e.g., newest visit created elsewhere).
     """
     today = timezone.now().date()
     base = dict(
@@ -355,13 +359,12 @@ def _lock_next_entry(department, doctor):
     assign_doctor = bool(
         staff and getattr(staff, 'profession', None) == 'doctor'
     )
-    # Prefer this department, then rows with no department, then any department
-    # (patients often check in under Lab/OPD while the doctor has Medicine selected).
+    # Prefer this department, then rows with no department.
+    # NOTE: We intentionally do NOT fall back to any department.
     dept_filters = []
     if department is not None:
         dept_filters.append({'department': department})
     dept_filters.append({'department__isnull': True})
-    dept_filters.append({})  # any department, same day
 
     with transaction.atomic():
         for extra in dept_filters:

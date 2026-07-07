@@ -18,8 +18,11 @@ from hospital.models_advanced import ImagingCatalog
 from hospital.services.auto_billing_service import AutoBillingService
 from hospital.utils_billing import (
     CONSULTATION_LINE_SERVICE_CODES,
+    GENERAL_OPD_LINE_SERVICE_CODES,
     get_consultation_price_for_encounter_and_payer,
+    get_corrected_general_opd_line_unit_price,
     get_mat_anc_consultation_price,
+    is_review_visit,
 )
 
 
@@ -146,25 +149,37 @@ class Command(BaseCommand):
             return True
         return False
 
-    def _imaging_catalog_default_price(self, line, payer):
-        """Mirror AutoBillingService.create_imaging_bill tier selection."""
+    def _imaging_catalog_default_price_and_tier(self, line, payer):
+        """Return (amount, catalog_tier_applied) aligned with AutoBillingService imaging billing."""
         desc = (line.description or '').strip()
         catalog = None
         if desc:
             catalog = (
                 ImagingCatalog.objects.filter(is_active=True, is_deleted=False)
-                .filter(Q(code=desc) | Q(name__iexact=desc) | Q(study_type__iexact=desc))
+                .filter(Q(code__iexact=desc) | Q(name__iexact=desc) | Q(study_type__iexact=desc))
                 .first()
             )
         if not catalog and line.service_code:
             sc = line.service_code.code or ''
-            if sc.startswith('IMG-'):
-                rest = sc[4:]
-                parts = rest.split('-', 1)
-                if len(parts) == 2:
-                    modality, study_tail = parts[0], parts[1]
+            if sc.upper().startswith('IMG-'):
+                parts = sc.split('-', 2)
+                study_tail = parts[2].strip() if len(parts) >= 3 else ''
+                modality = parts[1].strip() if len(parts) >= 2 else ''
+                if study_tail:
                     catalog = (
-                        ImagingCatalog.objects.filter(modality=modality, is_active=True, is_deleted=False)
+                        ImagingCatalog.objects.filter(is_active=True, is_deleted=False)
+                        .filter(
+                            Q(code__iexact=study_tail)
+                            | Q(name__iexact=study_tail)
+                            | Q(study_type__iexact=study_tail)
+                        )
+                        .first()
+                    )
+                if not catalog and modality and study_tail:
+                    catalog = (
+                        ImagingCatalog.objects.filter(
+                            modality__iexact=modality, is_active=True, is_deleted=False
+                        )
                         .filter(
                             Q(code__iexact=study_tail)
                             | Q(name__iexact=study_tail)
@@ -173,28 +188,24 @@ class Command(BaseCommand):
                         .first()
                     )
         if not catalog:
-            return Decimal('0.00')
-
-        payer_type = (getattr(payer, 'payer_type', None) or 'cash')
-        if isinstance(payer_type, str):
-            payer_type = payer_type.lower()
-
-        if payer_type == 'corporate' and catalog.corporate_price is not None:
-            return Decimal(str(catalog.corporate_price))
-        if payer_type in ('nhis', 'private') and catalog.insurance_price is not None:
-            return Decimal(str(catalog.insurance_price))
-        if catalog.price is not None:
-            return Decimal(str(catalog.price))
-        return Decimal('0.00')
+            return Decimal('0.00'), False
+        payer_type = getattr(payer, 'payer_type', None) or 'cash'
+        return AutoBillingService._imaging_catalog_amount_and_tier_flag(catalog, payer_type)
 
     def _sync_imaging_line(self, line, invoice, dry_run, stats):
-        default_price = self._imaging_catalog_default_price(line, invoice.payer)
+        default_price, catalog_tier_applied = self._imaging_catalog_default_price_and_tier(
+            line, invoice.payer
+        )
         if default_price <= 0:
             stats['imaging_skipped_no_catalog'] += 1
             return False
 
         unit_price = AutoBillingService._resolve_price(
-            invoice.patient, invoice.payer, line.service_code, default_price
+            invoice.patient,
+            invoice.payer,
+            line.service_code,
+            default_price,
+            catalog_tier_applied=catalog_tier_applied,
         )
         if self._apply_price(line, invoice, unit_price, dry_run):
             stats['imaging_updated'] += 1
@@ -203,33 +214,46 @@ class Command(BaseCommand):
 
     def _sync_consultation_line(self, line, invoice, dry_run, stats):
         encounter = invoice.encounter
-        if not encounter:
+        patient = invoice.patient
+        payer = invoice.payer
+        code = (line.service_code.code or '').strip().upper()
+
+        if code in GENERAL_OPD_LINE_SERVICE_CODES:
+            enc_rw = invoice.encounter
+            if enc_rw and is_review_visit(enc_rw):
+                stats['consultation_skipped'] += 1
+                return False
+            unit_price = get_corrected_general_opd_line_unit_price(invoice, line)
+            if unit_price is None:
+                stats['consultation_skipped'] += 1
+                return False
+        elif code == 'MAT-ANC':
+            unit_price = get_mat_anc_consultation_price(patient, payer)
+        elif not encounter:
             stats['consultation_skipped'] += 1
             return False
-
-        patient = encounter.patient
-        payer = invoice.payer
-        encounter_type_lower = (encounter.encounter_type or '').lower()
-        doctor_staff = getattr(encounter, 'provider', None) or getattr(
-            encounter, 'assigned_doctor', None
-        )
-
-        if 'antenatal' in encounter_type_lower:
-            unit_price = get_mat_anc_consultation_price(patient, payer)
         else:
-            consultation_type = 'general'
-            if encounter_type_lower in ('specialist', 'gynae'):
-                consultation_type = 'specialist'
-            elif doctor_staff:
-                from hospital.utils_doctor_pricing import DoctorPricingService
-
-                info = DoctorPricingService.get_doctor_pricing_info(doctor_staff)
-                if info.get('is_specialist'):
-                    consultation_type = 'specialist'
-
-            unit_price = get_consultation_price_for_encounter_and_payer(
-                encounter, payer, consultation_type=consultation_type
+            encounter_type_lower = (encounter.encounter_type or '').lower()
+            doctor_staff = getattr(encounter, 'provider', None) or getattr(
+                encounter, 'assigned_doctor', None
             )
+
+            if 'antenatal' in encounter_type_lower:
+                unit_price = get_mat_anc_consultation_price(patient, payer)
+            else:
+                consultation_type = 'general'
+                if encounter_type_lower in ('specialist', 'gynae'):
+                    consultation_type = 'specialist'
+                elif doctor_staff:
+                    from hospital.utils_doctor_pricing import DoctorPricingService
+
+                    info = DoctorPricingService.get_doctor_pricing_info(doctor_staff)
+                    if info.get('is_specialist'):
+                        consultation_type = 'specialist'
+
+                unit_price = get_consultation_price_for_encounter_and_payer(
+                    encounter, payer, consultation_type=consultation_type
+                )
 
         if self._apply_price(line, invoice, unit_price, dry_run):
             stats['consultation_updated'] += 1

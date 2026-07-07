@@ -1,5 +1,5 @@
 {% extends 'hospital/base.html' %}
-{% load static humanize math_filters %}
+{% load static humanize math_filters hospital_extras %}
 
 {% block title %}{{ title }}{% endblock %}
 
@@ -146,8 +146,22 @@
                     
                     {% if encounter.diagnosis %}
                         <div class="mb-3">
-                            <h6>Diagnosis</h6>
-                            <p class="border-start border-3 border-success ps-3">{{ encounter.diagnosis }}</p>
+                            <h6>Diagnosis (summary)</h6>
+                            <p class="border-start border-3 border-success ps-3" style="white-space: pre-wrap;">{{ encounter.diagnosis }}</p>
+                        </div>
+                    {% endif %}
+                    {% if coded_diagnoses %}
+                        <div class="mb-3">
+                            <h6>Diagnoses (coded)</h6>
+                            <ul class="list-unstyled border-start border-3 border-success ps-3 mb-0">
+                                {% for d in coded_diagnoses %}
+                                <li class="mb-2">
+                                    <strong>{{ d.diagnosis }}</strong>
+                                    {% if d.icd10_code %}<span class="text-primary ms-1">({{ d.icd10_code }})</span>{% endif %}
+                                    {% if d.diagnosis_type %}<span class="badge bg-light text-dark ms-1">{{ d.diagnosis_type }}</span>{% endif %}
+                                </li>
+                                {% endfor %}
+                            </ul>
                         </div>
                     {% endif %}
                     
@@ -415,14 +429,15 @@
                             </thead>
                             <tbody>
                                 {% for result in lab_results %}
+                                {% with s=result|lab_list_summary %}
                                 <tr>
                                     <td><strong>{{ result.test.name }}</strong></td>
                                     <td class="{% if result.is_abnormal %}text-danger fw-bold{% endif %}" style="font-size: 1.05rem;">
-                                        {{ result.value|default:result.qualitative_result }}
+                                        {% if s.is_pending and result.status != 'completed' %}Pending{% else %}{{ s.result_text }}{% endif %}
                                         {% if result.is_abnormal %}<i class="bi bi-exclamation-triangle text-danger ms-1"></i>{% endif %}
                                     </td>
-                                    <td>{{ result.units|default:"-" }}</td>
-                                    <td class="text-muted">{% if result.range_low and result.range_high %}{{ result.range_low }}–{{ result.range_high }}{% else %}-{% endif %}</td>
+                                    <td>{{ s.unit_text }}</td>
+                                    <td class="text-muted">{{ s.ref_text }}</td>
                                     <td>
                                         <span class="badge 
                                             {% if result.status == 'completed' %}bg-success
@@ -439,6 +454,7 @@
                                         </a>
                                     </td>
                                 </tr>
+                                {% endwith %}
                                 {% endfor %}
                             </tbody>
                         </table>
@@ -591,7 +607,7 @@
                 <div class="card-body">
                     {% for problem in problems %}
                     <div class="{% if not forloop.last %}border-bottom pb-2 mb-2{% endif %}">
-                        <p class="mb-1"><strong>{{ problem.problem_name }}</strong></p>
+                        <p class="mb-1"><strong>{{ problem.problem }}</strong>{% if problem.icd10_code %} <span class="text-primary">({{ problem.icd10_code }})</span>{% endif %}</p>
                         <p class="mb-0">
                             <small class="badge 
                                 {% if problem.status == 'active' %}bg-danger

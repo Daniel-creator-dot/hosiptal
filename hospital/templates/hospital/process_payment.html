@@ -13,9 +13,12 @@
             
             <div class="row mb-3">
                 <div class="col-md-6">
-                    <strong>Patient:</strong><br>
+                    <strong>{% if patient %}Patient{% else %}Payer{% endif %}:</strong><br>
                     {% if patient %}
                     <a href="{% url 'hospital:patient_detail' patient.pk %}">{{ patient.full_name }}</a>
+                    {% elif invoice and invoice.counterparty_name %}
+                    <span class="fw-semibold">{{ invoice.counterparty_name }}</span>
+                    <br><small class="text-muted">Non-patient invoice</small>
                     {% else %}
                     N/A
                     {% endif %}
@@ -78,8 +81,9 @@
             {% endif %}
             {% endif %}
             
-            <form method="post">
+            <form method="post" id="paymentForm">
                 {% csrf_token %}
+                <input type="hidden" name="payment_idempotency_token" value="{{ payment_idempotency_token }}" id="paymentIdempotencyToken">
                 
                 <!-- Payment Method Selection - Prominent Display -->
                 <div class="mb-4">
@@ -356,6 +360,17 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initialize on page load
     updateTransactionIdField();
+
+    var payForm = document.getElementById('paymentForm');
+    if (payForm) {
+        payForm.addEventListener('submit', function () {
+            var btn = payForm.querySelector('button[type="submit"]');
+            if (btn && !btn.disabled) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Processing…';
+            }
+        });
+    }
 });
 </script>
 {% endblock %}

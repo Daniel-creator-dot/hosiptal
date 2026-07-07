@@ -205,4 +205,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(f'   - {MedicalEquipment.objects.count()} Equipment Items'))
             self.stdout.write(self.style.SUCCESS(f'   - {ConsumablesInventory.objects.count()} Consumables'))
             self.stdout.write(self.style.SUCCESS(f'   - {ProviderSchedule.objects.count()} Provider Schedules'))
+        except Exception as exc:
+            self.stdout.write(self.style.ERROR(f'Failed to seed advanced data: {exc}'))
+            raise
 

@@ -20,6 +20,9 @@
                             <strong>Phone:</strong> {{ patient.phone_number|default:"N/A" }}
                         </p>
                         <p class="mb-0 small text-muted mt-1"><i class="bi bi-check2-circle"></i> This outstanding total matches Total Bill and Record Deposit.</p>
+                        {% if patient_deposit_balance > 0 %}
+                        <p class="mb-0 small text-warning mt-2"><i class="bi bi-exclamation-triangle"></i> To use the patient’s deposit, go to <strong>Total Bill</strong> and click <strong>Apply deposit to total bill</strong> first. This screen only accepts cash, MoMo, card, etc. — not “Deposit” as a payment type.</p>
+                        {% endif %}
                     </div>
                     
                     <!-- Services Summary (cashier can edit quantity and amount before payment) -->
@@ -54,6 +57,10 @@
                                                 <span class="badge bg-warning text-dark">🛏️ Bed</span>
                                             {% elif service.type == 'invoice' %}
                                                 <span class="badge bg-secondary">📄 Invoice</span>
+                                            {% elif service.type == 'consumables' %}
+                                                <span class="badge" style="background-color: #0d9488; color: white;">🧴 Consumables</span>
+                                            {% elif service.type == 'invoice_line' %}
+                                                <span class="badge bg-secondary">📄 Line</span>
                                             {% else %}
                                                 <span class="badge bg-secondary">{{ service.type|title }}</span>
                                             {% endif %}
@@ -75,22 +82,74 @@
                                                    onchange="updateTotal()">
                                         </td>
                                     </tr>
+                                    {% if service.line_breakdown %}
+                                    <tr class="table-light">
+                                        <td colspan="4" class="py-2 small">
+                                            <div class="fw-semibold text-muted mb-1">Bill detail (per line — same as Total Bill)</div>
+                                            <table class="table table-sm table-bordered mb-0 bg-white">
+                                                <thead class="table-light">
+                                                    <tr>
+                                                        <th>Description</th>
+                                                        <th class="text-center" style="width:55px;">Qty</th>
+                                                        <th class="text-end" style="width:75px;">Unit (GHS)</th>
+                                                        <th class="text-end" style="width:85px;">Amount (GHS)</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {% for row in service.line_breakdown %}
+                                                    {% if not row.is_waived and not row.is_paid %}
+                                                    <tr>
+                                                        <td>{{ row.description|default:"—" }}</td>
+                                                        <td class="text-center">{{ row.quantity|default:1 }}</td>
+                                                        <td class="text-end">{{ row.unit_price|floatformat:2 }}</td>
+                                                        <td class="text-end"><strong>{{ row.amount|floatformat:2 }}</strong></td>
+                                                    </tr>
+                                                    {% elif not row.is_waived and row.is_paid %}
+                                                    <tr class="table-success">
+                                                        <td>{{ row.description|default:"—" }} <span class="badge bg-success">Paid</span></td>
+                                                        <td class="text-center">{{ row.quantity|default:1 }}</td>
+                                                        <td class="text-end">{{ row.unit_price|floatformat:2 }}</td>
+                                                        <td class="text-end"><strong>0.00</strong></td>
+                                                    </tr>
+                                                    {% endif %}
+                                                    {% endfor %}
+                                                </tbody>
+                                            </table>
+                                            {% if service.invoice_partially_paid %}
+                                            <div class="text-end small text-muted mt-1">
+                                                Balance due on this invoice: <strong>GHS {{ service.price|floatformat:2 }}</strong>
+                                            </div>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endif %}
                                     {% endfor %}
                                 </tbody>
                                 <tfoot>
                                     <tr>
-                                        <th colspan="2" class="text-end">TOTAL:</th>
+                                        <th colspan="2" class="text-end">Subtotal:</th>
+                                        <th></th>
+                                        <th class="text-end"><span id="subtotalDisplay">GHS {{ total_amount|floatformat:2 }}</span></th>
+                                    </tr>
+                                    <tr>
+                                        <td colspan="2" class="text-end align-middle">Bill discount (GHS)</td>
+                                        <td colspan="2" class="text-end">
+                                            <input type="number" name="bill_discount" id="billDiscount" class="form-control form-control-sm text-end"
+                                                   value="0" min="0" step="0.01" style="max-width: 130px; margin-left: auto;"
+                                                   title="Discount applied before payment (invoice-backed rows only)" aria-label="Bill discount amount">
+                                        </td>
+                                    </tr>
+                                    <tr class="small text-muted">
+                                        <td colspan="4">Bill discount reduces open <strong>invoice</strong> balances only. Labs or imaging not yet on an invoice must be invoiced first.</td>
+                                    </tr>
+                                    <tr>
+                                        <th colspan="2" class="text-end">Net to collect:</th>
                                         <th></th>
                                         <th class="text-end text-success"><span id="totalDisplay">GHS {{ total_amount|floatformat:2 }}</span></th>
                                     </tr>
                                     {% if patient_deposit_balance > 0 %}
-                                    <tr class="table-info">
-                                        <th colspan="2" class="text-end">Deposit available (GHS {{ patient_deposit_balance|floatformat:2 }}):</th>
-                                        <th></th>
-                                        <th class="text-end"><strong>After deposit (info): GHS {{ amount_due_after_deposit|floatformat:2 }}</strong></th>
-                                    </tr>
-                                    <tr class="table-info small text-muted">
-                                        <td colspan="4">Deposit is <strong>not</strong> applied automatically here. Use <strong>Apply deposit to total bill</strong> on the Total Bill page to consume deposit; this form collects cash/MoMo/card against the outstanding.</td>
+                                    <tr class="table-info small">
+                                        <td colspan="4">Deposit on account: <strong>GHS {{ patient_deposit_balance|floatformat:2 }}</strong>. It is <strong>not</strong> deducted from this total until you use <strong>Apply deposit to total bill</strong> on the Total Bill page. This form collects cash/MoMo/card against the amounts above.</td>
                                     </tr>
                                     {% endif %}
                                 </tfoot>
@@ -101,6 +160,7 @@
                     <!-- Payment Form -->
                     <form method="POST" id="paymentForm">
                         {% csrf_token %}
+                        <input type="hidden" name="payment_idempotency_token" value="{{ payment_idempotency_token }}" id="paymentIdempotencyToken">
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Amount to collect (full or part payment)</label>
@@ -114,7 +174,7 @@
                                        step="0.01" 
                                        min="0"
                                        required title="Enter amount to collect" placeholder="0.00">
-                                <small class="text-muted">You may enter a <strong>partial amount</strong>; the rest will remain outstanding. Updates when you change item amounts (set to 0 to waive).</small>
+                                <small class="text-muted">Net updates when you change line amounts or bill discount. You may enter a <strong>partial amount</strong> below net (the rest stays outstanding).</small>
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Payment Method</label>
@@ -160,16 +220,33 @@
     </div>
 </div>
 <script>
+function billDiscountValue() {
+    var el = document.getElementById('billDiscount');
+    if (!el) return 0;
+    var d = parseFloat(el.value);
+    if (isNaN(d) || d < 0) return 0;
+    return d;
+}
 function updateTotal() {
-    var total = 0;
+    var subtotal = 0;
     document.querySelectorAll('input[name^="service_"][name$="_amount"]').forEach(function(inp) {
         var v = parseFloat(inp.value) || 0;
         if (v < 0) v = 0;
-        total += v;
+        subtotal += v;
     });
+    var disc = billDiscountValue();
+    if (disc > subtotal) {
+        disc = subtotal;
+        var bd = document.getElementById('billDiscount');
+        if (bd) bd.value = subtotal.toFixed(2);
+    }
+    var net = Math.max(0, subtotal - disc);
     var amountEl = document.getElementById('amountToPay');
-    document.getElementById('totalDisplay').textContent = 'GHS ' + total.toFixed(2);
-    amountEl.value = total.toFixed(2);
+    var subEl = document.getElementById('subtotalDisplay');
+    if (subEl) subEl.textContent = 'GHS ' + subtotal.toFixed(2);
+    document.getElementById('totalDisplay').textContent = 'GHS ' + net.toFixed(2);
+    amountEl.value = net.toFixed(2);
+    amountEl.setAttribute('data-max-due', net.toFixed(2));
 }
 function recalcRow(qtyInput) {
     var row = qtyInput.closest('tr');
@@ -190,7 +267,22 @@ document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('input[name^="service_"][name$="_qty"]').forEach(function(inp) {
         inp.addEventListener('change', updateTotal);
     });
+    var bd = document.getElementById('billDiscount');
+    if (bd) {
+        bd.addEventListener('input', updateTotal);
+        bd.addEventListener('change', updateTotal);
+    }
     updateTotal();
+    var payForm = document.getElementById('paymentForm');
+    if (payForm) {
+        payForm.addEventListener('submit', function () {
+            var btn = payForm.querySelector('button[type="submit"]');
+            if (btn && !btn.disabled) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Processing…';
+            }
+        });
+    }
 });
 </script>
 {% endblock %}

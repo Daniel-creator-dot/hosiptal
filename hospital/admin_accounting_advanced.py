@@ -843,9 +843,9 @@ class InsuranceReceivableAdmin(admin.ModelAdmin):
 @admin.register(InsuranceReceivableEntry)
 class InsuranceReceivableEntryAdmin(admin.ModelAdmin):
     """Admin for Insurance Receivable Entry (PrimeCare Accounting) - INSURANCE ONLY, EXCLUDES CORPORATE"""
-    list_display = ['entry_number', 'payer', 'entry_date', 'total_amount', 'outstanding_amount', 'status', 'entry_date']
+    list_display = ['entry_number', 'payer', 'invoice', 'entry_date', 'total_amount', 'outstanding_amount', 'status']
     list_filter = ['status', 'entry_date', 'payer']
-    search_fields = ['entry_number', 'payer__name', 'notes']
+    search_fields = ['entry_number', 'payer__name', 'notes', 'invoice__invoice_number']
     readonly_fields = ['entry_number', 'outstanding_amount']
     date_hierarchy = 'entry_date'
     
@@ -862,7 +862,7 @@ class InsuranceReceivableEntryAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Entry Information', {
-            'fields': ('entry_number', 'payer', 'entry_date', 'status')
+            'fields': ('entry_number', 'payer', 'invoice', 'entry_date', 'status')
         }),
         ('Amounts', {
             'fields': ('total_amount', 'amount_received', 'amount_rejected', 'withholding_tax', 'outstanding_amount')
@@ -886,26 +886,26 @@ class InsuranceReceivableEntryAdmin(admin.ModelAdmin):
 @admin.register(CorporateReceivableEntry)
 class CorporateReceivableEntryAdmin(admin.ModelAdmin):
     """Admin for Corporate Receivable Entry - CORPORATE CLIENTS ONLY"""
-    list_display = ['entry_number', 'payer', 'entry_date', 'total_amount', 'outstanding_amount', 'status', 'entry_date']
+    list_display = ['entry_number', 'payer', 'invoice', 'entry_date', 'total_amount', 'outstanding_amount', 'status']
     list_filter = ['status', 'entry_date', 'payer']
-    search_fields = ['entry_number', 'payer__name', 'notes']
+    search_fields = ['entry_number', 'payer__name', 'notes', 'invoice__invoice_number']
     readonly_fields = ['entry_number', 'outstanding_amount']
     date_hierarchy = 'entry_date'
-    
+
     def get_queryset(self, request):
         """Only show corporate payers"""
         qs = super().get_queryset(request)
         return qs.filter(payer__payer_type='corporate')
-    
+
     def changelist_view(self, request, extra_context=None):
         """Add a note about this being corporate receivables only"""
         extra_context = extra_context or {}
         extra_context['title'] = 'Corporate Receivable Entries (Corporate Clients Only)'
         return super().changelist_view(request, extra_context)
-    
+
     fieldsets = (
         ('Entry Information', {
-            'fields': ('entry_number', 'payer', 'entry_date', 'status')
+            'fields': ('entry_number', 'payer', 'invoice', 'entry_date', 'status')
         }),
         ('Amounts', {
             'fields': ('total_amount', 'amount_received', 'amount_rejected', 'withholding_tax', 'outstanding_amount')

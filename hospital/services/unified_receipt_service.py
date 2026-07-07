@@ -5,14 +5,37 @@ Pharmacy | Lab | Imaging | Procedures | Consultation | All Services
 """
 import qrcode
 from io import BytesIO
+from datetime import date, datetime, time
+from decimal import Decimal
+from uuid import UUID
+
 from django.core.files import File
+from django.core.serializers.json import DjangoJSONEncoder
 from django.utils import timezone
 from django.db import transaction
-from decimal import Decimal
 import json
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _make_json_safe(value):
+    """Recursively convert values so json.dumps / JSONField never hit Decimal, UUID, etc."""
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, time):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _make_json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_make_json_safe(v) for v in value]
+    return value
 
 
 class UnifiedReceiptService:
@@ -20,6 +43,36 @@ class UnifiedReceiptService:
     Centralized service for receipt generation with QR codes
     Handles all payment types: Lab, Pharmacy, Imaging, Procedures, etc.
     """
+
+    @staticmethod
+    def _bundle_from_cached_receipt_pk(receipt_pk_str):
+        """Rebuild a successful create_receipt_with_qr response from a stored receipt id (idempotency cache hit)."""
+        from hospital.models_accounting import PaymentReceipt
+
+        try:
+            receipt = PaymentReceipt.objects.select_related('transaction').get(
+                pk=receipt_pk_str, is_deleted=False
+            )
+        except (PaymentReceipt.DoesNotExist, ValueError, TypeError):
+            return {
+                'success': False,
+                'message': 'Stored receipt reference is invalid. Refresh the payment page and try again.',
+            }
+        trans = receipt.transaction
+        try:
+            qr_code_obj = receipt.qr_code
+        except Exception:
+            qr_code_obj = None
+        return {
+            'success': True,
+            'receipt': receipt,
+            'qr_code': qr_code_obj,
+            'transaction': trans,
+            'digital_receipt': {},
+            'accounting_sync': {'success': False, 'message': 'skipped'},
+            'idempotent': True,
+            'message': f'Receipt {receipt.receipt_number} (same form — no duplicate charge)',
+        }
     
     @staticmethod
     def create_receipt_with_qr(
@@ -31,7 +84,8 @@ class UnifiedReceiptService:
         bill=None,
         service_type=None,
         service_details=None,
-        notes=''
+        notes='',
+        idempotency_token=None,
     ):
         """
         Create a payment receipt with automatic QR code generation
@@ -56,33 +110,117 @@ class UnifiedReceiptService:
         """
         from hospital.models_accounting import Transaction, PaymentReceipt
         from hospital.models_payment_verification import ReceiptQRCode
-        from hospital.models import Invoice
+        from hospital.models import Invoice, Patient
+
+        idem_user_id = None
+        idem_tok = None
+        if idempotency_token and received_by_user and getattr(received_by_user, 'is_authenticated', False):
+            idem_tok = str(idempotency_token).strip()[:96]
+            if idem_tok:
+                from hospital.services.payment_idempotency import PaymentIdempotency
+
+                uid = received_by_user.id
+                st, rid = PaymentIdempotency.begin(uid, idem_tok)
+                if st == 'CACHED':
+                    return UnifiedReceiptService._bundle_from_cached_receipt_pk(rid)
+                if st == 'BUSY':
+                    return {
+                        'success': False,
+                        'error': 'busy',
+                        'message': (
+                            'A payment with this form is still being finalized. '
+                            'Wait a few seconds and check the receipt list — do not pay again.'
+                        ),
+                    }
+                # LOCKED: remember token so complete()/abort() run correctly
+                idem_user_id = uid
         
         try:
             with transaction.atomic():
-                # Check for duplicate transaction before creating
                 from datetime import timedelta
-                recent_cutoff = timezone.now() - timedelta(minutes=1)
-                
-                existing_transaction = Transaction.objects.filter(
-                    transaction_type='payment_received',
-                    invoice=invoice,
-                    patient=patient,
-                    amount=amount,
-                    payment_method=payment_method,
-                    transaction_date__gte=recent_cutoff,
-                    is_deleted=False
-                ).first()
-                
-                if existing_transaction:
-                    # Duplicate found - return existing transaction
-                    logger.warning(
-                        f"Duplicate payment transaction detected. "
-                        f"Using existing transaction {existing_transaction.id}"
+
+                # Serialize concurrent POSTs (double-submit / refresh) so duplicate detection is reliable.
+                if invoice is not None:
+                    locked_inv = (
+                        Invoice.all_objects.select_for_update()
+                        .filter(pk=invoice.pk, is_deleted=False)
+                        .first()
                     )
-                    trans = existing_transaction
+                    if locked_inv is not None:
+                        invoice = locked_inv
+                elif patient is not None:
+                    Patient.objects.select_for_update().filter(pk=patient.pk).first()
+
+                recent_cutoff = timezone.now() - timedelta(minutes=2)
+
+                # Only match open transactions by amount/patient when we have a specific invoice; otherwise
+                # unrelated same-amount payments within the window would be merged incorrectly.
+                reuse_transaction = None
+                if invoice is not None:
+                    dup_filters = {
+                        'transaction_type': 'payment_received',
+                        'amount': amount,
+                        'payment_method': payment_method,
+                        'transaction_date__gte': recent_cutoff,
+                        'is_deleted': False,
+                        'invoice_id': invoice.pk,
+                    }
+                    if getattr(received_by_user, 'id', None):
+                        dup_filters['processed_by_id'] = received_by_user.id
+                    else:
+                        dup_filters['patient'] = patient
+                    reuse_transaction = (
+                        Transaction.objects.filter(**dup_filters).order_by('transaction_date').first()
+                    )
+
+                # Paths that start with invoice=None: match by service identity (double-submit on same service).
+                if reuse_transaction is None and invoice is None and service_details:
+                    anchor_key = None
+                    for key in (
+                        'sale_id',
+                        'prescription_id',
+                        'lab_result_id',
+                        'study_id',
+                        'admission_id',
+                        'encounter_id',
+                        'procedure_name',
+                    ):
+                        val = service_details.get(key)
+                        if val is not None and str(val) != '':
+                            anchor_key = key
+                            break
+                    if anchor_key:
+                        pr_dup = (
+                            PaymentReceipt.objects.filter(
+                                patient=patient,
+                                amount_paid=amount,
+                                payment_method=payment_method,
+                                received_by=received_by_user,
+                                receipt_date__gte=recent_cutoff,
+                                is_deleted=False,
+                                **{f'service_details__{anchor_key}': str(service_details[anchor_key])},
+                            )
+                            .select_related('transaction')
+                            .order_by('receipt_date')
+                            .first()
+                        )
+                        if pr_dup and pr_dup.transaction_id:
+                            reuse_transaction = pr_dup.transaction
+
+                if reuse_transaction:
+                    logger.warning(
+                        'Duplicate payment request coalesced to existing transaction %s',
+                        reuse_transaction.id,
+                    )
+                    trans = reuse_transaction
+                    pr_align = (
+                        PaymentReceipt.objects.filter(transaction=trans, is_deleted=False)
+                        .select_related('invoice')
+                        .first()
+                    )
+                    if pr_align and pr_align.invoice_id and invoice is None:
+                        invoice = pr_align.invoice
                 else:
-                    # 1. Create Transaction
                     trans = Transaction.objects.create(
                         transaction_type='payment_received',
                         invoice=invoice,
@@ -91,9 +229,9 @@ class UnifiedReceiptService:
                         payment_method=payment_method,
                         processed_by=received_by_user,
                         transaction_date=timezone.now(),
-                        notes=notes or f"Payment for {service_type or 'services'}"
+                        notes=notes or f"Payment for {service_type or 'services'}",
                     )
-                
+
                 # 2. Get or create invoice if not provided
                 if not invoice:
                     if bill:
@@ -150,16 +288,30 @@ class UnifiedReceiptService:
                             total_amount=amount,
                             balance=Decimal('0.00')
                         )
+
+                if trans.invoice_id is None and invoice is not None:
+                    trans.invoice = invoice
+                    trans.save(update_fields=['invoice'])
                 
                 # 3. Create PaymentReceipt
-                # Check for duplicate receipt before creating
                 existing_receipt = PaymentReceipt.objects.filter(
                     transaction=trans,
-                    invoice=invoice,
-                    is_deleted=False
+                    is_deleted=False,
                 ).first()
                 
+                created_new_receipt = False
+                sd = _make_json_safe(dict(service_details or {}))
                 if not existing_receipt:
+                    if invoice is not None and not (sd.get('services') or []):
+                        from hospital.services.receipt_revenue_allocation import (
+                            build_service_details_for_invoice,
+                        )
+
+                        built = build_service_details_for_invoice(
+                            invoice, amount, service_type=service_type
+                        )
+                        sd = _make_json_safe({**built, **sd})
+
                     receipt = PaymentReceipt.objects.create(
                         transaction=trans,
                         invoice=invoice,
@@ -170,16 +322,18 @@ class UnifiedReceiptService:
                         receipt_date=timezone.now(),
                         notes=notes,
                         service_type=service_type or 'other',
-                        service_details=service_details or {}
+                        service_details=sd,
                     )
+                    created_new_receipt = True
                 else:
                     receipt = existing_receipt
+                    sd = _make_json_safe(dict(receipt.service_details or sd))
                 
                 # 4. Generate QR Code Data
                 qr_data = UnifiedReceiptService._generate_qr_data(
                     receipt=receipt,
                     service_type=service_type,
-                    service_details=service_details
+                    service_details=sd
                 )
                 
                 # 5. Create QR Code (prevent duplicates)
@@ -228,38 +382,58 @@ class UnifiedReceiptService:
                     f"for {patient.full_name} - {service_type} - GHS {amount}"
                 )
                 
-                # 8. 🌿 PAPERLESS: Send digital receipt
-                from hospital.services.paperless_receipt_service import DigitalReceiptPreferences
-                try:
-                    digital_results = DigitalReceiptPreferences.send_by_preferences(receipt)
-                    logger.info(f"📧 Digital receipt sent: Email={digital_results.get('email', {}).get('sent')}, SMS={digital_results.get('sms', {}).get('sent')}")
-                except Exception as e:
-                    logger.error(f"Error sending digital receipt: {str(e)}")
-                    digital_results = {}
-                
-                # 9. 💰 ACCOUNTING: Auto-sync to accounting system
-                from hospital.services.accounting_sync_service import AccountingSyncService
-                try:
-                    accounting_result = AccountingSyncService.sync_payment_to_accounting(
-                        payment_receipt=receipt,
-                        service_type=service_type or 'general'
+                digital_results = {}
+                accounting_result = {'success': False, 'message': 'skipped'}
+                if created_new_receipt:
+                    # 8. 🌿 PAPERLESS: Send digital receipt
+                    from hospital.services.paperless_receipt_service import DigitalReceiptPreferences
+                    try:
+                        digital_results = DigitalReceiptPreferences.send_by_preferences(receipt)
+                        logger.info(f"📧 Digital receipt sent: Email={digital_results.get('email', {}).get('sent')}, SMS={digital_results.get('sms', {}).get('sent')}")
+                    except Exception as e:
+                        logger.error(f"Error sending digital receipt: {str(e)}")
+                        digital_results = {}
+                    
+                    # 9. 💰 ACCOUNTING: Auto-sync to accounting system
+                    from hospital.services.accounting_sync_service import AccountingSyncService
+                    try:
+                        accounting_result = AccountingSyncService.sync_payment_to_accounting(
+                            payment_receipt=receipt,
+                            service_type=service_type or 'general'
+                        )
+                        logger.info(f"💰 Accounting sync: {accounting_result.get('message')}")
+                    except Exception as e:
+                        logger.error(f"Error syncing to accounting: {str(e)}")
+                        accounting_result = {'success': False}
+                else:
+                    logger.info(
+                        'Idempotent payment: reusing receipt %s (no duplicate digital/accounting)',
+                        receipt.receipt_number,
                     )
-                    logger.info(f"💰 Accounting sync: {accounting_result.get('message')}")
-                except Exception as e:
-                    logger.error(f"Error syncing to accounting: {str(e)}")
-                    accounting_result = {'success': False}
                 
-                return {
+                result = {
                     'success': True,
                     'receipt': receipt,
                     'qr_code': qr_code_obj,
                     'transaction': trans,
                     'digital_receipt': digital_results,
                     'accounting_sync': accounting_result,
+                    'idempotent': not created_new_receipt,
                     'message': f'Receipt {receipt.receipt_number} generated successfully (Paperless + Accounting synced)'
+                    if created_new_receipt
+                    else f'Receipt {receipt.receipt_number} (already recorded; duplicate request ignored)',
                 }
+                if idem_user_id and idem_tok:
+                    from hospital.services.payment_idempotency import PaymentIdempotency
+
+                    PaymentIdempotency.complete(idem_user_id, idem_tok, receipt.pk)
+                return result
                 
         except Exception as e:
+            if idem_user_id and idem_tok:
+                from hospital.services.payment_idempotency import PaymentIdempotency
+
+                PaymentIdempotency.abort(idem_user_id, idem_tok)
             logger.error(f"❌ Error creating receipt: {str(e)}")
             return {
                 'success': False,
@@ -345,24 +519,23 @@ class UnifiedReceiptService:
     @staticmethod
     def _generate_qr_data(receipt, service_type=None, service_details=None):
         """
-        Generate QR code data with all necessary information
+        Compact payload for QR encoding and ReceiptQRCode.qr_code_data.
+
+        Full line breakdown lives on PaymentReceipt.service_details only — embedding it
+        in the QR image exceeds capacity (version > 40) for combined bills.
         """
-        data = {
-            'receipt_number': receipt.receipt_number,
-            'patient_mrn': receipt.patient.mrn,
-            'patient_name': receipt.patient.full_name,
-            'amount': str(receipt.amount_paid),
-            'payment_method': receipt.payment_method,
-            'date': receipt.receipt_date.isoformat(),
-            'service_type': service_type or 'general',
-            'verification_url': f'/hms/receipt/verify/{receipt.receipt_number}/'
-        }
-        
-        # Add service-specific details
-        if service_details:
-            data['service_details'] = service_details
-        
-        return json.dumps(data)
+        return json.dumps(
+            {
+                'receipt_number': receipt.receipt_number,
+                'patient_mrn': receipt.patient.mrn,
+                'amount': str(receipt.amount_paid),
+                'payment_method': receipt.payment_method,
+                'date': receipt.receipt_date.isoformat(),
+                'service_type': service_type or 'general',
+                'verification_url': f'/hms/receipt/verify/{receipt.receipt_number}/',
+            },
+            cls=DjangoJSONEncoder,
+        )
     
     @staticmethod
     def verify_receipt_by_qr(qr_data_string, verified_by_user):
@@ -476,7 +649,9 @@ class LabPaymentService:
     """Service for lab payment and receipt generation"""
     
     @staticmethod
-    def create_lab_payment_receipt(lab_result, amount, payment_method, received_by_user, notes='', invoice=None):
+    def create_lab_payment_receipt(
+        lab_result, amount, payment_method, received_by_user, notes='', invoice=None, idempotency_token=None
+    ):
         """Create receipt for lab test payment. Pass invoice when deposit was applied (use existing invoice)."""
         service_details = {
             'lab_result_id': str(lab_result.id),
@@ -493,7 +668,8 @@ class LabPaymentService:
             service_type='lab_test',
             service_details=service_details,
             notes=notes or f"Payment for {lab_result.test.name}",
-            invoice=invoice
+            invoice=invoice,
+            idempotency_token=idempotency_token,
         )
         
         if result['success']:
@@ -529,7 +705,9 @@ class PharmacyPaymentService:
     """Service for pharmacy payment and receipt generation"""
     
     @staticmethod
-    def create_pharmacy_payment_receipt(prescription, amount, payment_method, received_by_user, notes='', invoice=None):
+    def create_pharmacy_payment_receipt(
+        prescription, amount, payment_method, received_by_user, notes='', invoice=None, idempotency_token=None
+    ):
         """Create receipt for pharmacy prescription payment. Pass invoice when deposit was applied."""
         service_details = {
             'prescription_id': str(prescription.id),
@@ -548,7 +726,8 @@ class PharmacyPaymentService:
             service_type='pharmacy_prescription',
             service_details=service_details,
             notes=notes or f"Payment for {prescription.drug.name}",
-            invoice=invoice
+            invoice=invoice,
+            idempotency_token=idempotency_token,
         )
         
         if result['success']:
@@ -585,7 +764,9 @@ class ImagingPaymentService:
     """Service for imaging/radiology payment and receipt generation"""
     
     @staticmethod
-    def create_imaging_payment_receipt(imaging_study, amount, payment_method, received_by_user, notes='', invoice=None):
+    def create_imaging_payment_receipt(
+        imaging_study, amount, payment_method, received_by_user, notes='', invoice=None, idempotency_token=None
+    ):
         """Create receipt for imaging study payment. Pass invoice when deposit was applied."""
         service_details = {
             'study_id': str(imaging_study.id),
@@ -602,7 +783,8 @@ class ImagingPaymentService:
             service_type='imaging_study',
             service_details=service_details,
             notes=notes or f"Payment for {imaging_study.study_type}",
-            invoice=invoice
+            invoice=invoice,
+            idempotency_token=idempotency_token,
         )
         
         if result.get('success'):
@@ -646,7 +828,9 @@ class ConsultationPaymentService:
     """Service for consultation payment and receipt generation"""
     
     @staticmethod
-    def create_consultation_payment_receipt(encounter, amount, payment_method, received_by_user, notes=''):
+    def create_consultation_payment_receipt(
+        encounter, amount, payment_method, received_by_user, notes='', idempotency_token=None
+    ):
         """Create receipt for consultation fee. Links to encounter's invoice so payment clears the right bill and item disappears from pending list."""
         from hospital.utils_billing import get_or_create_encounter_invoice
         invoice = get_or_create_encounter_invoice(encounter)
@@ -665,7 +849,8 @@ class ConsultationPaymentService:
             invoice=invoice,
             service_type='consultation',
             service_details=service_details,
-            notes=notes or f"Consultation fee - {encounter.encounter_type}"
+            notes=notes or f"Consultation fee - {encounter.encounter_type}",
+            idempotency_token=idempotency_token,
         )
         if result and result.get('receipt') and invoice:
             try:
@@ -704,7 +889,7 @@ class BedPaymentService:
     """Service for bed charge payment and receipt generation"""
     
     @staticmethod
-    def create_bed_payment_receipt(admission, amount, payment_method, received_by_user, notes=''):
+    def create_bed_payment_receipt(admission, amount, payment_method, received_by_user, notes='', idempotency_token=None):
         """Create receipt for bed charges payment"""
         from hospital.services.bed_billing_service import bed_billing_service
         
@@ -731,7 +916,8 @@ class BedPaymentService:
             received_by_user=received_by_user,
             service_type='admission',
             service_details=service_details,
-            notes=notes or f"Bed charges - {admission.ward.name} - Bed {admission.bed.bed_number}"
+            notes=notes or f"Bed charges - {admission.ward.name} - Bed {admission.bed.bed_number}",
+            idempotency_token=idempotency_token,
         )
         
         return result

@@ -21,17 +21,22 @@ class Command(BaseCommand):
         fixed_count = 0
         for session in sessions:
             old_total = session.total_payments
+            old_deposit = getattr(session, 'deposit_received_total', None)
             old_transactions = session.total_transactions
-            
-            # Recalculate totals
+
             session.calculate_totals()
-            
-            # Check if values changed
-            if old_total != session.total_payments or old_transactions != session.total_transactions:
+            session.refresh_from_db()
+
+            if (
+                old_total != session.total_payments
+                or old_transactions != session.total_transactions
+                or old_deposit != session.deposit_received_total
+            ):
                 self.stdout.write(
                     self.style.WARNING(
                         f'  ✓ Fixed Session {session.session_number}: '
                         f'Payments: {old_total} → {session.total_payments}, '
+                        f'Deposit intake: {old_deposit} → {session.deposit_received_total}, '
                         f'Transactions: {old_transactions} → {session.total_transactions}'
                     )
                 )

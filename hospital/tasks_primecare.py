@@ -74,13 +74,9 @@ def auto_match_credit_revenue():
     Match insurance / corporate credit sales to revenue
     once entries are at least 48 hours old.
     """
-    from hospital.models_primecare_accounting import InsuranceReceivableEntry
+    from hospital.services.credit_revenue_service import credit_revenue_eligible_queryset
 
-    cutoff_date = timezone.now().date() - timedelta(days=2)
-    pending_entries = InsuranceReceivableEntry.objects.filter(
-        status='pending',
-        entry_date__lte=cutoff_date,
-    )
+    pending_entries = credit_revenue_eligible_queryset(backfill_all=False)
 
     if not pending_entries.exists():
         logger.info("auto_match_credit_revenue: no entries eligible for matching.")

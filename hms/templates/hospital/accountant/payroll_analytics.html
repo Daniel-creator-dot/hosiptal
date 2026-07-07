@@ -1,0 +1,236 @@
+{# Canonical copy: TEMPLATES DIRS loads hms/templates first. Sync with hospital/templates/hospital/accountant/payroll_analytics.html #}
+{% extends 'hospital/base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Payroll analytics — HMS{% endblock %}
+{% block page_title %}Payroll analytics{% endblock %}
+{% block page_subtitle %}Trends and rollups by payroll period start year. Click a month to see runs and staff for that period.{% endblock %}
+
+{% block extra_css %}
+<style>
+  .payroll-an-hero {
+    background: linear-gradient(135deg, #0f766e 0%, #0d9488 38%, #14b8a6 100%);
+    border-radius: 16px;
+    padding: 1.5rem 1.75rem;
+    color: #fff;
+    margin-bottom: 1.25rem;
+    box-shadow: 0 12px 40px rgba(15, 118, 110, 0.35);
+  }
+  .payroll-an-stat {
+    background: rgba(255,255,255,0.14);
+    border-radius: 12px;
+    padding: 0.85rem 1rem;
+    border: 1px solid rgba(255,255,255,0.2);
+  }
+  .payroll-an-stat .v { font-size: 1.25rem; font-weight: 700; }
+  .payroll-an-stat .l { font-size: 0.72rem; opacity: 0.88; text-transform: uppercase; letter-spacing: 0.06em; }
+  .an-card {
+    background: #fff;
+    border-radius: 14px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06);
+    margin-bottom: 1.25rem;
+    overflow: hidden;
+  }
+  .an-card .hd {
+    padding: 0.85rem 1.15rem;
+    border-bottom: 1px solid #eef2f7;
+    font-weight: 600;
+    background: linear-gradient(180deg, #fafbfc 0%, #fff 100%);
+  }
+  .an-card .bd { padding: 1rem 1.15rem; }
+  .month-strip {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 0.4rem;
+  }
+  @media (max-width: 992px) { .month-strip { grid-template-columns: repeat(6, 1fr); } }
+  @media (max-width: 576px) { .month-strip { grid-template-columns: repeat(4, 1fr); } }
+  .month-strip a {
+    display: block;
+    text-align: center;
+    padding: 0.5rem 0.25rem;
+    border-radius: 10px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-decoration: none;
+    border: 1px solid #e2e8f0;
+    color: #64748b;
+    background: #f8fafc;
+  }
+  .month-strip a.has-data {
+    background: linear-gradient(160deg, #ecfdf5 0%, #f0fdfa 100%);
+    border-color: #99f6e4;
+    color: #0f766e;
+  }
+  .month-strip a:hover { filter: brightness(0.97); }
+  .btn-teal { background: #0d9488; border-color: #0d9488; color: #fff; }
+  .btn-teal:hover { background: #0f766e; border-color: #0f766e; color: #fff; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="payroll-an-hero">
+    <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
+      <div>
+        <h2 class="h4 mb-2 fw-bold"><i class="bi bi-graph-up-arrow me-2"></i>Payroll analytics — {{ analytics_year }}</h2>
+        <p class="small mb-0 opacity-90">All figures use payroll runs whose <strong>period start</strong> falls in {{ analytics_year }}.</p>
+      </div>
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <form method="get" action="{% url 'accountant_payroll_analytics' %}" class="d-flex align-items-center gap-1">
+          <label class="small mb-0 opacity-90 me-1">Year</label>
+          <select name="year" class="form-select form-select-sm" style="width: auto; min-width: 5.5rem;" onchange="this.form.submit()">
+            {% for yy in years_for_select %}
+            <option value="{{ yy }}" {% if yy == analytics_year %}selected{% endif %}>{{ yy }}</option>
+            {% endfor %}
+          </select>
+        </form>
+        <a class="btn btn-light btn-sm" href="{% url 'accountant_payroll_analytics' %}?year={{ analytics_year_prev }}">&laquo; {{ analytics_year_prev }}</a>
+        <a class="btn btn-light btn-sm" href="{% url 'accountant_payroll_analytics' %}?year={{ analytics_year_next }}">{{ analytics_year_next }} &raquo;</a>
+        <a href="{% url 'accountant_payroll_list' %}?year={{ analytics_year }}" class="btn btn-warning btn-sm text-dark fw-semibold">All runs list</a>
+      </div>
+    </div>
+    <div class="row g-2 mt-2">
+      <div class="col-6 col-md-3">
+        <div class="payroll-an-stat"><div class="l">Runs (year)</div><div class="v">{{ year_total_runs|intcomma }}</div></div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="payroll-an-stat"><div class="l">Distinct staff</div><div class="v">{{ year_distinct_staff|intcomma }}</div></div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="payroll-an-stat"><div class="l">Gross (year)</div><div class="v">GHS {{ year_total_gross|floatformat:0|intcomma }}</div></div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="payroll-an-stat"><div class="l">Net (year)</div><div class="v">GHS {{ year_total_net|floatformat:0|intcomma }}</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="an-card">
+    <div class="hd"><i class="bi bi-calendar-week me-2 text-secondary"></i>Jump to month</div>
+    <div class="bd py-3">
+      <div class="month-strip">
+        {% for ml in month_links %}
+        {% if ml.has_data %}
+        <a class="has-data" href="{% url 'accountant_payroll_analytics_month' analytics_year ml.month %}">{{ ml.abbr }}</a>
+        {% else %}
+        <span class="d-block text-center py-2 small text-muted border rounded bg-light">{{ ml.abbr }}</span>
+        {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-8">
+      <div class="an-card mb-0 h-100">
+        <div class="hd">Monthly activity</div>
+        <div class="bd">
+          <p class="small text-muted mb-2">Staff paid (distinct), payroll runs, and total net per month.</p>
+          <canvas id="trendsChart" height="110"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="an-card mb-0 h-100">
+        <div class="hd">Runs by status</div>
+        <div class="bd">
+          <canvas id="statusChart" height="200"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="an-card">
+    <div class="hd"><i class="bi bi-building me-2 text-secondary"></i>Net &amp; gross by department <span class="text-muted fw-normal small">(from line import / snapshot)</span></div>
+    <div class="table-responsive bd p-0">
+      <table class="table table-sm table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Department</th>
+            <th class="text-end">Gross</th>
+            <th class="text-end">Net</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in dept_table %}
+          <tr>
+            <td class="small">{{ row.name }}</td>
+            <td class="text-end font-monospace small">GHS {{ row.gross|floatformat:2|intcomma }}</td>
+            <td class="text-end font-monospace fw-semibold">GHS {{ row.net|floatformat:2|intcomma }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="3" class="text-center text-muted py-4">No line data for this year.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+  const monthLabels = {{ month_labels_json|safe }};
+  const staffPaid = {{ staff_paid_json|safe }};
+  const runCounts = {{ run_counts_json|safe }};
+  const netSeries = {{ net_series_json|safe }};
+  const tctx = document.getElementById('trendsChart');
+  if (tctx && monthLabels.length) {
+    new Chart(tctx, {
+      type: 'bar',
+      data: {
+        labels: monthLabels,
+        datasets: [
+          { label: 'Staff paid (distinct)', data: staffPaid, yAxisID: 'y', backgroundColor: 'rgba(13, 148, 136, 0.55)', order: 2 },
+          { label: 'Runs', data: runCounts, yAxisID: 'y', backgroundColor: 'rgba(100, 116, 139, 0.45)', order: 3 },
+          { label: 'Net GHS', data: netSeries, yAxisID: 'y1', type: 'line', borderColor: '#0f766e', backgroundColor: 'rgba(15, 118, 110, 0.1)', tension: 0.25, fill: false, order: 1 },
+        ]
+      },
+      options: {
+        responsive: true,
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          y: { type: 'linear', position: 'left', title: { display: true, text: 'Count' }, ticks: { precision: 0 } },
+          y1: { type: 'linear', position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: 'Net (GHS)' } },
+        },
+        plugins: { legend: { position: 'bottom' } },
+      },
+    });
+  }
+  const sLabels = {{ status_labels_json|safe }};
+  const sCounts = {{ status_counts_json|safe }};
+  const sNet = {{ status_net_json|safe }};
+  const sctx = document.getElementById('statusChart');
+  if (sctx && sLabels.length) {
+    new Chart(sctx, {
+      type: 'doughnut',
+      data: {
+        labels: sLabels,
+        datasets: [{
+          data: sCounts,
+          backgroundColor: ['#fbbf24', '#94a3b8', '#38bdf8', '#34d399', '#a78bfa'],
+        }],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'bottom' },
+          tooltip: {
+            callbacks: {
+              afterLabel: function(ctx) {
+                const i = ctx.dataIndex;
+                const n = sNet[i];
+                return n != null ? 'Net GHS: ' + n.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '';
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+})();
+</script>
+{% endblock %}

@@ -53,6 +53,35 @@ def get_cached_lab_tests():
     return tests
 
 
+def lab_test_catalog_search_queryset(search_text, limit=50):
+    """
+    Active lab catalog rows for typeahead / cashier search.
+    Splits on whitespace so e.g. 'hv cs' matches code HV-CS (each token must hit
+    name, code, or specimen_type).
+    """
+    from .models import LabTest
+
+    raw = (search_text or '').strip()
+    if len(raw) < 2:
+        return LabTest.objects.none()
+    normalized = raw.replace('&', ' ')
+    tokens = [t for t in normalized.split() if t]
+    if not tokens:
+        return LabTest.objects.none()
+    qs = LabTest.objects.filter(
+        is_active=True,
+        is_deleted=False,
+    ).exclude(name__iexact='').exclude(name__icontains='INVALID')
+    for tok in tokens:
+        tok_q = (
+            Q(name__icontains=tok)
+            | Q(code__icontains=tok)
+            | Q(specimen_type__icontains=tok)
+        )
+        qs = qs.filter(tok_q)
+    return qs.order_by('name')[:limit]
+
+
 def get_cached_imaging_studies():
     """Get all active imaging studies with caching."""
     cache_key = 'hms:active_imaging_studies'
@@ -89,7 +118,9 @@ def get_cached_procedures():
             ProcedureCatalog = getattr(models_advanced_module, 'ProcedureCatalog', None)
             
             if ProcedureCatalog:
-                procedure_filter_q = Q(is_active=True) & Q(is_deleted=False) & Q(name__isnull=False) & ~Q(name__iexact='') & ~Q(name__icontains='INVALID')
+                from .procedure_catalog_visibility import billable_procedure_catalog_base_q
+
+                procedure_filter_q = billable_procedure_catalog_base_q()
                 procedures_qs = ProcedureCatalog.objects.filter(procedure_filter_q).order_by('category', 'name').only(
                     'id', 'name', 'code', 'category', 'price', 'cash_price', 'corporate_price', 'insurance_price'
                 )

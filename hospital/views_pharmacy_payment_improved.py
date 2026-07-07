@@ -3,6 +3,7 @@ IMPROVED Pharmacy Payment Verification System
 Simplified workflow for better usability
 """
 from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.http import JsonResponse
@@ -17,6 +18,10 @@ from .models_accounting import PaymentReceipt
 from .utils_billing import get_drug_price_for_prescription
 
 logger = logging.getLogger(__name__)
+
+
+def _redirect_pharmacy_pending_all():
+    return redirect(f"{reverse('hospital:pharmacy_pending_dispensing')}?queue=all")
 
 
 @login_required
@@ -108,7 +113,7 @@ def pharmacy_quick_payment(request, prescription_id):
                 if request.POST.get('dispense_now') == 'yes':
                     return redirect('hospital:pharmacy_quick_dispense', prescription_id=prescription.id)
                 
-                return redirect('hospital:pharmacy_pending_dispensing')
+                return _redirect_pharmacy_pending_all()
                 
             except Exception as e:
                 logger.error(f"Error recording payment: {str(e)}", exc_info=True)
@@ -139,7 +144,7 @@ def pharmacy_quick_payment(request, prescription_id):
                 else:
                     messages.error(request, '❌ Receipt not found. Please record payment first.')
                 
-                return redirect('hospital:pharmacy_pending_dispensing')
+                return _redirect_pharmacy_pending_all()
                 
             except Exception as e:
                 logger.error(f"Error marking as paid: {str(e)}", exc_info=True)
@@ -179,7 +184,7 @@ def pharmacy_quick_dispense(request, prescription_id):
         dispensing_record = prescription.dispensing_record
     except:
         messages.error(request, '❌ No dispensing record found. Create bill first.')
-        return redirect('hospital:pharmacy_pending_dispensing')
+        return _redirect_pharmacy_pending_all()
     
     # Check payment
     if not dispensing_record.can_dispense():
@@ -223,7 +228,7 @@ def pharmacy_quick_dispense(request, prescription_id):
                 try:
                     from .pharmacy_stock_utils import reduce_pharmacy_stock
                     drug_to_dispense = dispensing_record.drug_to_dispense or drug
-                    shortfall = reduce_pharmacy_stock(drug_to_dispense, quantity)
+                    shortfall = reduce_pharmacy_stock(drug_to_dispense, quantity)['shortfall']
                     if shortfall > 0:
                         messages.warning(request, f'⚠️ Insufficient stock. Short by {shortfall} units.')
                 except Exception as e:
@@ -252,7 +257,7 @@ def pharmacy_quick_dispense(request, prescription_id):
                 f'Receipt: {dispensing_record.payment_receipt.receipt_number}'
             )
             
-            return redirect('hospital:pharmacy_pending_dispensing')
+            return _redirect_pharmacy_pending_all()
             
         except Exception as e:
             logger.error(f"Error dispensing: {str(e)}", exc_info=True)
@@ -279,7 +284,13 @@ def pharmacy_payment_status_check(request, prescription_id):
         try:
             dispensing_record = prescription.dispensing_record
             has_payment = dispensing_record.payment_receipt is not None
-            
+            line_amt = None
+            if has_payment:
+                from .utils_pharmacy_dispensing_display import attributed_receipt_amounts_for_dispensing
+
+                ar = attributed_receipt_amounts_for_dispensing(dispensing_record)
+                if ar.get('line_amount') is not None:
+                    line_amt = str(ar['line_amount'])
             return JsonResponse({
                 'success': True,
                 'paid': has_payment,
@@ -287,7 +298,9 @@ def pharmacy_payment_status_check(request, prescription_id):
                 'status_display': dispensing_record.get_dispensing_status_display(),
                 'can_dispense': dispensing_record.can_dispense(),
                 'receipt_number': dispensing_record.payment_receipt.receipt_number if has_payment else None,
-                'amount': str(dispensing_record.payment_receipt.amount) if has_payment else None,
+                'amount': line_amt if line_amt is not None else (
+                    str(dispensing_record.payment_receipt.amount_paid) if has_payment else None
+                ),
             })
         except:
             return JsonResponse({

@@ -4,6 +4,9 @@ Measure HTTP query count and wall time for a URL (staging / profiling).
 Uses the same DEBUG query logging as verify_performance. Authenticate with
 --user to hit protected routes.
 
+For dashboard + patient list + bills list in one run (duplicate SQL fingerprints), see:
+  python manage.py profile_hot_paths --user USER
+
 Example:
   python manage.py measure_url_performance /hms/ --user admin
   python manage.py measure_url_performance /api/hospital/patients/ --user admin --method GET

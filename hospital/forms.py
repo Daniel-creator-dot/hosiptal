@@ -7,6 +7,7 @@ from .models import (
     Patient, Encounter, Admission, Invoice, InvoiceLine,
     VitalSign, Order, Prescription, Bed, Ward, Department, Staff
 )
+from .patient_payer import BILLING_REF_FIELD_NAMES
 from crispy_forms.helper import FormHelper
 from crispy_forms.layout import Layout, Row, Column, Submit, Fieldset, HTML, Div
 
@@ -88,6 +89,7 @@ class PatientForm(forms.ModelForm):
             'national_id',
             'next_of_kin_name', 'next_of_kin_phone', 'next_of_kin_relationship',
             'insurance_company', 'insurance_id', 'insurance_member_id',
+            'insurance_policy_number', 'insurance_group_number',
             'allergies', 'chronic_conditions', 'medications'
         ]
         widgets = {
@@ -95,15 +97,56 @@ class PatientForm(forms.ModelForm):
             'address': forms.Textarea(attrs={'rows': 3}),
             'national_id': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'National ID (optional)'}),
             'insurance_company': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Enter insurance company name (or select above)'}),
-            'insurance_id': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Insurance ID/Policy Number'}),
-            'insurance_member_id': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Member ID'}),
+            'insurance_id': forms.TextInput(attrs={
+                'class': 'form-control',
+                'id': 'id_insurance_id',
+                'placeholder': 'Policy / scheme number (insurance or corporate)',
+            }),
+            'insurance_member_id': forms.TextInput(attrs={
+                'class': 'form-control',
+                'id': 'id_insurance_member_id',
+                'placeholder': 'Member or dependent ID',
+            }),
+            'insurance_policy_number': forms.TextInput(attrs={
+                'class': 'form-control',
+                'id': 'id_insurance_policy_number',
+                'placeholder': 'Alternate policy # (if different)',
+            }),
+            'insurance_group_number': forms.TextInput(attrs={
+                'class': 'form-control',
+                'id': 'id_insurance_group_number',
+                'placeholder': 'Group / scheme code',
+            }),
             'allergies': forms.Textarea(attrs={'rows': 2}),
             'chronic_conditions': forms.Textarea(attrs={'rows': 2}),
             'medications': forms.Textarea(attrs={'rows': 2}),
         }
     
+    def save(self, commit=True):
+        """
+        Avoid wiping stored policy/member numbers when Payment Type is Cash: those inputs are
+        hidden and some clients post them empty even though the patient still has numbers on file.
+        """
+        instance = super().save(commit=False)
+        payer_type = ''
+        if self.data is not None:
+            payer_type = (self.data.get('payer_type') or '').strip()
+        if instance.pk and payer_type == 'cash':
+            for f in BILLING_REF_FIELD_NAMES:
+                new_v = (getattr(instance, f, None) or '').strip()
+                old_v = (self._billing_ref_backup.get(f) or '').strip()
+                if not new_v and old_v:
+                    setattr(instance, f, self._billing_ref_backup[f])
+        if commit:
+            instance.save()
+        return instance
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._billing_ref_backup = {}
+        if self.instance and getattr(self.instance, 'pk', None):
+            for f in BILLING_REF_FIELD_NAMES:
+                self._billing_ref_backup[f] = getattr(self.instance, f) or ''
         self.helper = FormHelper()
         # CRITICAL: Disable auto-save on patient registration form to prevent duplicate submissions
         self.helper.attrs = {'data-no-autosave': ''}
@@ -240,10 +283,24 @@ class PatientForm(forms.ModelForm):
                 HTML('<div class="alert alert-info mb-3"><i class="bi bi-info-circle"></i> <strong>How Billing Works:</strong> Select "Payment Type" below. This will set the patient\'s default payer and all bills will go to this payer.</div>'),
                 'payer_type',
                 Div(
-                    Row(Column('selected_insurance_company', css_class='form-group col-md-6'),
-                        Column('selected_insurance_plan', css_class='form-group col-md-6')),
+                    HTML(
+                        '<div class="alert alert-secondary border small mb-3">'
+                        '<i class="bi bi-card-text me-1"></i> <strong>Policy &amp; member numbers</strong> '
+                        '(required for <strong>insurance</strong> routing; strongly recommended for <strong>corporate</strong> '
+                        'so doctors, pharmacy, lab, and billing see the same details when sending bills to companies.)'
+                        '</div>'
+                    ),
                     Row(Column('insurance_id', css_class='form-group col-md-6'),
                         Column('insurance_member_id', css_class='form-group col-md-6')),
+                    Row(Column('insurance_policy_number', css_class='form-group col-md-6'),
+                        Column('insurance_group_number', css_class='form-group col-md-6')),
+                    css_id='payer_billing_ref_fields',
+                    css_class='mt-2',
+                    style='display:none;'
+                ),
+                Div(
+                    Row(Column('selected_insurance_company', css_class='form-group col-md-6'),
+                        Column('selected_insurance_plan', css_class='form-group col-md-6')),
                     HTML('<small class="text-muted d-block mb-2">Or enter manually below:</small>'),
                     Row(Column('insurance_company', css_class='form-group col-md-12')),
                     HTML('<div class="alert alert-warning mt-2 mb-0"><small><i class="bi bi-exclamation-triangle"></i> <strong>Note:</strong> When you select an insurance company above, the patient\'s default payer will be automatically set to that insurance. All bills will go to this insurance company.</small></div>'),
@@ -254,6 +311,10 @@ class PatientForm(forms.ModelForm):
                 Div(
                     Row(Column('selected_corporate_company', css_class='form-group col-md-6'),
                         Column('employee_id', css_class='form-group col-md-6')),
+                    HTML(
+                        '<p class="small text-muted mb-0">Use <strong>Policy &amp; member numbers</strong> above for corporate '
+                        'scheme / employee references (same fields as insurance — they appear on dashboards next to the patient name).</p>'
+                    ),
                     css_id='corporate_fields',
                     css_class='mt-3',
                     style='display:none;'
@@ -415,12 +476,23 @@ class PatientForm(forms.ModelForm):
 
         # If Payment Type stayed on "Select..." but insurance/corporate fields were filled, infer payer_type
         # (otherwise apply_patient_payer_from_form skips and everything stays cash / null)
+        from .patient_payer import normalize_patient_form_payer_cleaned_data
+
+        normalize_patient_form_payer_cleaned_data(self)
+
         pt = (cleaned_data.get('payer_type') or '').strip()
-        if not pt:
-            if cleaned_data.get('selected_insurance_company'):
-                cleaned_data['payer_type'] = 'insurance'
-            elif cleaned_data.get('selected_corporate_company'):
-                cleaned_data['payer_type'] = 'corporate'
+        is_new_patient = getattr(self.instance._state, 'adding', True)
+        # New patients only: require company when payment type is set (edits backfill from record)
+        if pt == 'insurance' and not cleaned_data.get('selected_insurance_company') and is_new_patient:
+            self.add_error(
+                'selected_insurance_company',
+                'Select an insurance company, or type a name that matches your insurance catalog.',
+            )
+        if pt == 'corporate' and not cleaned_data.get('selected_corporate_company') and is_new_patient:
+            self.add_error(
+                'selected_corporate_company',
+                'Select a corporate company.',
+            )
         
         return cleaned_data
 
@@ -642,6 +714,7 @@ class TabularLabReportForm(forms.Form):
             ('fbc', 'Full Blood Count'),
             ('lft', 'Liver Function Tests'),
             ('rft', 'Renal Function Tests'),
+            ('bue', 'Blood Urea & Electrolytes (BUE / U&E)'),
             ('lipid', 'Lipid Profile'),
             ('tft', 'Thyroid Function Tests'),
             ('glucose', 'Blood Glucose'),

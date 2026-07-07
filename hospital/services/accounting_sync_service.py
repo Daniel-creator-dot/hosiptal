@@ -36,15 +36,23 @@ class AccountingSyncService:
     @staticmethod
     def sync_payment_to_accounting(payment_receipt, service_type='general'):
         """
-        Automatically create accounting entries for payment
-        
-        Args:
-            payment_receipt: PaymentReceipt object
-            service_type: 'lab', 'pharmacy', 'imaging', 'consultation', 'procedure'
-        
-        Returns:
-            dict with accounting entry details
+        Legacy GeneralLedger sync — disabled; revenue posts via Advanced GL
+        (payment_revenue_gl_service on Transaction save, after PaymentReceipt exists).
         """
+        logger.info(
+            'AccountingSyncService: skipping legacy GL for receipt %s — Advanced GL handles revenue',
+            getattr(payment_receipt, 'receipt_number', ''),
+        )
+        return {
+            'success': True,
+            'posted': False,
+            'message': 'Revenue handled by Advanced GL (Primecare accounts)',
+            'service_type': service_type,
+        }
+
+    @staticmethod
+    def _sync_payment_to_accounting_legacy(payment_receipt, service_type='general'):
+        """Previous legacy GeneralLedger implementation (retained for reference)."""
         try:
             with transaction.atomic():
                 # 1. Get accounts
@@ -128,13 +136,26 @@ class AccountingSyncService:
         account_code_map = {
             'lab': AccountingSyncService.ACCOUNT_CODES['revenue_lab'],
             'lab_test': AccountingSyncService.ACCOUNT_CODES['revenue_lab'],
+            'lab_result': AccountingSyncService.ACCOUNT_CODES['revenue_lab'],
+            'laboratory': AccountingSyncService.ACCOUNT_CODES['revenue_lab'],
+            'laboratory_test': AccountingSyncService.ACCOUNT_CODES['revenue_lab'],
+            'blood_test': AccountingSyncService.ACCOUNT_CODES['revenue_lab'],
+            'pathology': AccountingSyncService.ACCOUNT_CODES['revenue_lab'],
+            'histology': AccountingSyncService.ACCOUNT_CODES['revenue_lab'],
             'pharmacy': AccountingSyncService.ACCOUNT_CODES['revenue_pharmacy'],
             'pharmacy_prescription': AccountingSyncService.ACCOUNT_CODES['revenue_pharmacy'],
+            'pharmacy_walkin': AccountingSyncService.ACCOUNT_CODES['revenue_pharmacy'],
+            'medication': AccountingSyncService.ACCOUNT_CODES['revenue_pharmacy'],
             'imaging': AccountingSyncService.ACCOUNT_CODES['revenue_imaging'],
             'imaging_study': AccountingSyncService.ACCOUNT_CODES['revenue_imaging'],
             'consultation': AccountingSyncService.ACCOUNT_CODES['revenue_consultation'],
+            'gynecology': AccountingSyncService.ACCOUNT_CODES['revenue_consultation'],
+            'antenatal': AccountingSyncService.ACCOUNT_CODES['revenue_consultation'],
+            'gynae_special': AccountingSyncService.ACCOUNT_CODES['revenue_consultation'],
+            'gynae': AccountingSyncService.ACCOUNT_CODES['revenue_consultation'],
             'procedure': AccountingSyncService.ACCOUNT_CODES['revenue_procedure'],
             'admission': AccountingSyncService.ACCOUNT_CODES['revenue_admission'],
+            'detainment': AccountingSyncService.ACCOUNT_CODES['revenue_admission'],
             'bed': AccountingSyncService.ACCOUNT_CODES['revenue_admission'],
             'combined': '4000',  # General Revenue for combined payments (individual services sync separately)
             'general': '4000',  # General Revenue
@@ -186,13 +207,26 @@ class AccountingSyncService:
         account_map = {
             'lab': ('4010', 'Laboratory Revenue', 'revenue'),
             'lab_test': ('4010', 'Laboratory Revenue', 'revenue'),
+            'lab_result': ('4010', 'Laboratory Revenue', 'revenue'),
+            'laboratory': ('4010', 'Laboratory Revenue', 'revenue'),
+            'laboratory_test': ('4010', 'Laboratory Revenue', 'revenue'),
+            'blood_test': ('4010', 'Laboratory Revenue', 'revenue'),
+            'pathology': ('4010', 'Laboratory Revenue', 'revenue'),
+            'histology': ('4010', 'Laboratory Revenue', 'revenue'),
             'pharmacy': ('4020', 'Pharmacy Revenue', 'revenue'),
             'pharmacy_prescription': ('4020', 'Pharmacy Revenue', 'revenue'),
+            'pharmacy_walkin': ('4020', 'Pharmacy Revenue', 'revenue'),
+            'medication': ('4020', 'Pharmacy Revenue', 'revenue'),
             'imaging': ('4030', 'Imaging Revenue', 'revenue'),
             'imaging_study': ('4030', 'Imaging Revenue', 'revenue'),
             'consultation': ('4040', 'Consultation Revenue', 'revenue'),
+            'gynecology': ('4040', 'Consultation Revenue', 'revenue'),
+            'antenatal': ('4040', 'Consultation Revenue', 'revenue'),
+            'gynae_special': ('4040', 'Consultation Revenue', 'revenue'),
+            'gynae': ('4040', 'Consultation Revenue', 'revenue'),
             'procedure': ('4050', 'Procedure Revenue', 'revenue'),
             'admission': ('4060', 'Admission Revenue', 'revenue'),
+            'detainment': ('4060', 'Admission Revenue', 'revenue'),
             'bed': ('4060', 'Admission Revenue', 'revenue'),
             'combined': ('4000', 'General Revenue', 'revenue'),  # Combined payments
             'general': ('4000', 'General Revenue', 'revenue'),

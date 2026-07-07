@@ -1,0 +1,216 @@
+{% extends 'hospital/base.html' %}
+{% load static %}
+
+{% block title %}New Bank Payment - HMS{% endblock %}
+{% block page_title %}New Bank Payment / Refund{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="row">
+        <div class="col-lg-10 mx-auto">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white py-3 border-0">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h4 class="mb-1"><i class="bi bi-arrow-left-right me-2"></i>Bank ↔ Expense Voucher</h4>
+                            <p class="text-muted small mb-0">
+                                Pass an entry between a bank account and one or more expense (or other GL) accounts.
+                                The voucher creates a balanced double-entry that flows into the
+                                <a href="{% url 'hospital:chart_of_accounts' %}">Chart of Accounts</a> and
+                                <a href="{% url 'hospital:trial_balance' %}">Trial Balance</a>.
+                            </p>
+                        </div>
+                        <a href="{% url 'hospital:bank_payment_list' %}" class="btn btn-sm btn-outline-secondary">
+                            <i class="bi bi-arrow-left me-1"></i>Back
+                        </a>
+                    </div>
+                </div>
+
+                <div class="card-body">
+                    <form method="post" id="bpvForm">
+                        {% csrf_token %}
+
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-4">
+                                <label class="form-label">Direction <span class="text-danger">*</span></label>
+                                <select name="direction" id="direction" class="form-select" required>
+                                    <option value="payment" selected>Bank Payment (DR Expense • CR Bank)</option>
+                                    <option value="refund">Refund Received (DR Bank • CR Expense)</option>
+                                </select>
+                                <small class="text-muted" id="directionHelp">Money goes <strong>out</strong> of the bank account.</small>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Bank Account <span class="text-danger">*</span></label>
+                                <select name="bank_account" id="bank_account" class="form-select" required>
+                                    <option value="">Select Bank Account</option>
+                                    {% for b in bank_accounts %}
+                                    <option value="{{ b.id }}" data-gl="{{ b.gl_account.account_code }} - {{ b.gl_account.account_name }}" data-balance="{{ b.current_balance|default:'0.00' }}" data-currency="{{ b.currency }}">
+                                        {{ b.bank_name }} — {{ b.account_name }} ({{ b.account_number }})
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                                <small class="text-muted" id="bankInfo">Linked GL: <em>—</em></small>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Date <span class="text-danger">*</span></label>
+                                <input type="date" name="entry_date" class="form-control" value="{{ today }}" required>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Payee / Counterparty</label>
+                                <input type="text" name="payee" class="form-control" placeholder="e.g. ECG, Vodafone, John Doe">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Reference</label>
+                                <input type="text" name="reference" class="form-control" placeholder="Cheque No / Bank Ref / Voucher">
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="form-label">Description / Memo</label>
+                            <textarea name="description" rows="2" class="form-control" placeholder="Reason for the payment / refund"></textarea>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h5 class="mb-0">Expense / Counter Lines</h5>
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addLine()">
+                                <i class="bi bi-plus-circle me-1"></i>Add Line
+                            </button>
+                        </div>
+                        <p class="text-muted small">
+                            Each line debits (or credits) a Chart-of-Accounts line. Total of all lines = bank amount.
+                        </p>
+                        <div id="lines"></div>
+                        <input type="hidden" name="line_count" id="line_count" value="0">
+
+                        <div class="row mt-3">
+                            <div class="col-md-6 ms-auto">
+                                <div class="card bg-light">
+                                    <div class="card-body py-2 d-flex justify-content-between align-items-center">
+                                        <strong>Total</strong>
+                                        <strong class="h5 mb-0" id="grandTotal">GHS 0.00</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-check mt-4">
+                            <input type="checkbox" class="form-check-input" id="auto_post" name="auto_post" checked>
+                            <label class="form-check-label" for="auto_post">
+                                Post immediately to General Ledger (recommended)
+                            </label>
+                            <div class="text-muted small">When unchecked the voucher is saved as a draft and can be posted later.</div>
+                        </div>
+
+                        <div class="d-flex justify-content-between mt-4">
+                            <a href="{% url 'hospital:bank_payment_list' %}" class="btn btn-outline-secondary">
+                                <i class="bi bi-x-circle me-1"></i>Cancel
+                            </a>
+                            <button type="submit" class="btn btn-primary" id="submitBtn">
+                                <i class="bi bi-check-circle me-1"></i>Create Voucher
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<template id="lineTemplate">
+    <div class="row g-2 align-items-end mb-2 line-row">
+        <div class="col-md-5">
+            <label class="form-label small mb-1">Account</label>
+            <select class="form-select form-select-sm line-account" required>
+                <option value="">Select Account</option>
+                <optgroup label="Expense Accounts">
+                    {% for a in expense_accounts %}
+                    <option value="{{ a.id }}">{{ a.account_code }} — {{ a.account_name }}</option>
+                    {% endfor %}
+                </optgroup>
+                <optgroup label="Other Accounts">
+                    {% for a in other_accounts %}
+                    <option value="{{ a.id }}">{{ a.account_code }} — {{ a.account_name }} ({{ a.get_account_type_display }})</option>
+                    {% endfor %}
+                </optgroup>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-1">Amount</label>
+            <input type="number" class="form-control form-control-sm line-amount" min="0" step="0.01" value="0.00">
+        </div>
+        <div class="col-md-4">
+            <label class="form-label small mb-1">Description</label>
+            <input type="text" class="form-control form-control-sm line-description" placeholder="Optional line memo">
+        </div>
+        <div class="col-md-1">
+            <button type="button" class="btn btn-sm btn-outline-danger w-100" onclick="removeLine(this)">
+                <i class="bi bi-trash"></i>
+            </button>
+        </div>
+    </div>
+</template>
+
+<script>
+(function () {
+    const bankSelect = document.getElementById('bank_account');
+    const bankInfo = document.getElementById('bankInfo');
+    const direction = document.getElementById('direction');
+    const dirHelp = document.getElementById('directionHelp');
+
+    bankSelect.addEventListener('change', function () {
+        const opt = bankSelect.options[bankSelect.selectedIndex];
+        const gl = opt.getAttribute('data-gl') || '—';
+        const bal = opt.getAttribute('data-balance') || '0.00';
+        const cur = opt.getAttribute('data-currency') || 'GHS';
+        bankInfo.innerHTML = 'Linked GL: <strong>' + gl + '</strong> · Current balance: <strong>' + cur + ' ' + bal + '</strong>';
+    });
+
+    direction.addEventListener('change', function () {
+        if (direction.value === 'payment') {
+            dirHelp.innerHTML = 'Money goes <strong>out</strong> of the bank account (DR Expense / CR Bank).';
+        } else {
+            dirHelp.innerHTML = 'Money comes <strong>into</strong> the bank account (DR Bank / CR Expense).';
+        }
+    });
+})();
+
+let lineCounter = 0;
+
+function addLine() {
+    const tpl = document.getElementById('lineTemplate');
+    const node = tpl.content.cloneNode(true);
+    const row = node.querySelector('.line-row');
+    lineCounter += 1;
+    const idx = lineCounter;
+    row.dataset.idx = idx;
+    row.querySelector('.line-account').name = `line_${idx}_account`;
+    row.querySelector('.line-amount').name = `line_${idx}_amount`;
+    row.querySelector('.line-description').name = `line_${idx}_description`;
+    row.querySelector('.line-amount').addEventListener('input', updateTotal);
+    document.getElementById('lines').appendChild(node);
+    document.getElementById('line_count').value = lineCounter;
+    updateTotal();
+}
+
+function removeLine(btn) {
+    const row = btn.closest('.line-row');
+    if (row) row.remove();
+    updateTotal();
+}
+
+function updateTotal() {
+    let t = 0;
+    document.querySelectorAll('.line-amount').forEach(i => { t += parseFloat(i.value) || 0; });
+    document.getElementById('grandTotal').textContent = 'GHS ' + t.toFixed(2);
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    addLine();
+});
+</script>
+{% endblock %}

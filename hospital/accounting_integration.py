@@ -126,8 +126,8 @@ def record_pharmacy_revenue(sale_amount, payment_method='cash', patient=None, re
         with transaction.atomic():
             # Get accounts
             cash_account, _ = Account.objects.get_or_create(
-                account_code='1000',
-                defaults={'account_name': 'Cash on Hand', 'account_type': 'asset'}
+                account_code='1010',
+                defaults={'account_name': 'Cash and Cash Equivalents', 'account_type': 'asset'}
             )
             
             pharmacy_revenue_account, _ = Account.objects.get_or_create(
@@ -209,8 +209,8 @@ def record_lab_revenue(test_amount, payment_method='cash', patient=None, referen
         with transaction.atomic():
             # Get accounts
             cash_account, _ = Account.objects.get_or_create(
-                account_code='1000',
-                defaults={'account_name': 'Cash on Hand', 'account_type': 'asset'}
+                account_code='1010',
+                defaults={'account_name': 'Cash and Cash Equivalents', 'account_type': 'asset'}
             )
             
             lab_revenue_account, _ = Account.objects.get_or_create(
@@ -311,8 +311,8 @@ def record_salary_expense(staff_name, amount, period, user=None):
 def get_or_create_default_accounts():
     """Ensure all default accounts exist"""
     default_accounts = {
-        'cash': ('1000', 'Cash on Hand', 'asset'),
-        'bank': ('1010', 'Bank Account - Main', 'asset'),
+        'cash': ('1010', 'Cash and Cash Equivalents', 'asset'),
+        'bank': ('1020', 'Bank Account - UMB', 'asset'),
         'ar': ('1100', 'Accounts Receivable', 'asset'),
         'ap': ('2000', 'Accounts Payable', 'liability'),
         'revenue_patient': ('4000', 'Patient Services Revenue', 'revenue'),

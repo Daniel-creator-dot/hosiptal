@@ -67,7 +67,7 @@ class PricingEngineService:
             # Auto-detect payer if not provided
             if not payer:
                 payer = patient.primary_insurance
-            
+
             # Get pricing record
             today = timezone.now().date()
             

@@ -10,6 +10,14 @@ import os
 import subprocess
 import shutil
 import logging
+from pathlib import Path
+
+from hospital.backup_retention import (
+    BACKUP_EXTENSIONS,
+    get_retention_days,
+    prune_backup_folders,
+    prune_directory,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +35,13 @@ class Command(BaseCommand):
         parser.add_argument(
             '--keep-days',
             type=int,
-            default=30,
-            help='Number of days to keep backups (default: 30)'
+            default=14,
+            help='Number of days to keep backups (default: 14)'
         )
 
     def handle(self, *args, **options):
         output_dir = options['output_dir']
-        keep_days = options['keep_days']
+        keep_days = options['keep_days'] or get_retention_days(default=14)
         
         # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
@@ -125,26 +133,32 @@ class Command(BaseCommand):
                 logger.warning(msg)
                 return
             
-            # Clean up old backups
+            # Clean up old backups in output dir and import/ retention targets
             self.cleanup_old_backups(output_dir, keep_days)
+            from hospital.backup_retention import prune_all_retention_targets
+
+            prune_all_retention_targets(keep_days=keep_days, dry_run=False)
             
         except Exception as e:
             self.stdout.write(self.style.ERROR(f'Error creating backup: {e}'))
             logger.error(f'Error creating backup: {e}', exc_info=True)
 
     def cleanup_old_backups(self, backup_dir, keep_days):
-        """Remove backups older than keep_days"""
+        """Remove backups older than keep_days in the given directory."""
         try:
-            cutoff_date = timezone.now() - timedelta(days=keep_days)
-            
-            for filename in os.listdir(backup_dir):
-                if filename.startswith('hms_backup_') and filename.endswith('.sql'):
-                    filepath = os.path.join(backup_dir, filename)
-                    file_time = timezone.datetime.fromtimestamp(os.path.getmtime(filepath), tz=timezone.utc)
-                    
-                    if file_time < cutoff_date:
-                        os.remove(filepath)
-                        self.stdout.write(f'Removed old backup: {filename}')
-                        logger.info(f'Removed old backup: {filename}')
+            if keep_days <= 0:
+                return
+            backup_path = Path(backup_dir)
+            deleted, _ = prune_directory(
+                backup_path,
+                keep_days=keep_days,
+                allowed_extensions=BACKUP_EXTENSIONS,
+                dry_run=False,
+            )
+            folder_deleted, _ = prune_backup_folders(backup_path.parent, keep_days=keep_days, dry_run=False)
+            if deleted or folder_deleted:
+                self.stdout.write(
+                    f'Removed {deleted} old backup file(s) and {folder_deleted} folder(s)'
+                )
         except Exception as e:
             logger.warning(f'Error cleaning up old backups: {e}')

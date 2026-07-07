@@ -1,0 +1,349 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize hospital_extras %}
+
+{% block title %}Diagnostics Overview — Front Desk{% endblock %}
+
+{% block extra_css %}
+<style>
+    .dx-hero {
+        background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 50%, #06b6d4 100%);
+        color: #fff;
+        border-radius: 20px;
+        padding: 2rem 2.5rem;
+        margin-bottom: 1.75rem;
+        box-shadow: 0 12px 40px rgba(37, 99, 235, 0.25);
+    }
+    .dx-kpi {
+        background: #fff;
+        border-radius: 16px;
+        padding: 1.25rem 1.5rem;
+        box-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
+        border: 1px solid rgba(226, 232, 240, 0.9);
+        height: 100%;
+        transition: transform 0.15s ease;
+    }
+    .dx-kpi:hover { transform: translateY(-2px); }
+    .dx-kpi .num {
+        font-size: 2.25rem;
+        font-weight: 800;
+        line-height: 1.1;
+    }
+    .dx-kpi.lab .num { color: #7c3aed; }
+    .dx-kpi.imaging .num { color: #0891b2; }
+    .dx-kpi.done .num { color: #059669; }
+    .dx-card {
+        background: #fff;
+        border-radius: 16px;
+        padding: 1.5rem;
+        box-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
+        border: 1px solid #e2e8f0;
+        height: 100%;
+    }
+    .dx-card h6 {
+        font-weight: 700;
+        color: #0f172a;
+        margin-bottom: 1rem;
+    }
+    .dx-table thead th {
+        background: #1e3a8a;
+        color: #fff;
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        border: none;
+        padding: 0.65rem 0.75rem;
+    }
+    .dx-table tbody td {
+        vertical-align: middle;
+        font-size: 0.9rem;
+    }
+    .dx-filter-bar {
+        background: #f8fafc;
+        border-radius: 12px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 1.5rem;
+        border: 1px solid #e2e8f0;
+    }
+    .chart-wrap { position: relative; height: 220px; }
+    .patient-link { font-weight: 600; color: #1e40af; text-decoration: none; }
+    .patient-link:hover { text-decoration: underline; }
+    @media (max-width: 768px) {
+        .dx-hero { padding: 1.5rem; }
+        .chart-wrap { height: 200px; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="dx-hero d-flex flex-wrap justify-content-between align-items-center gap-3">
+        <div>
+            <h1 class="h3 mb-2 fw-bold"><i class="bi bi-clipboard2-pulse me-2"></i>Diagnostics Overview</h1>
+            <p class="mb-0 opacity-90">Pending laboratory tests and imaging for front desk — {{ today|date:"l, F j, Y" }}</p>
+        </div>
+        <div class="text-end">
+            <a href="{% url 'hospital:reception_dashboard' %}" class="btn btn-light btn-sm">
+                <i class="bi bi-arrow-left"></i> Reception
+            </a>
+        </div>
+    </div>
+
+    <form method="get" class="dx-filter-bar d-flex flex-wrap align-items-center gap-3">
+        <span class="text-muted small fw-semibold">Show:</span>
+        <select name="days" class="form-select form-select-sm" style="width: auto;" onchange="this.form.submit()">
+            <option value="1" {% if lookback_days == 1 %}selected{% endif %}>Today only</option>
+            <option value="3" {% if lookback_days == 3 %}selected{% endif %}>Last 3 days</option>
+            <option value="7" {% if lookback_days == 7 %}selected{% endif %}>Last 7 days</option>
+            <option value="14" {% if lookback_days == 14 %}selected{% endif %}>Last 14 days</option>
+            <option value="30" {% if lookback_days == 30 %}selected{% endif %}>Last 30 days</option>
+        </select>
+        <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+        <span class="text-muted small ms-auto">Completed today: <strong>{{ lab_completed_today }}</strong> labs · <strong>{{ imaging_completed_today }}</strong> imaging reports</span>
+    </form>
+
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-lg-3">
+            <div class="dx-kpi lab">
+                <div class="text-muted small text-uppercase fw-semibold">Pending labs</div>
+                <div class="num">{{ lab_pending_total }}</div>
+                <div class="small text-muted">Tests awaiting result</div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="dx-kpi imaging">
+                <div class="text-muted small text-uppercase fw-semibold">Pending imaging</div>
+                <div class="num">{{ imaging_pending_total }}</div>
+                <div class="small text-muted">Scans / reports in progress</div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="dx-kpi done">
+                <div class="text-muted small text-uppercase fw-semibold">Labs completed</div>
+                <div class="num">{{ lab_completed_in_range }}</div>
+                <div class="small text-muted">In selected period</div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="dx-kpi done">
+                <div class="text-muted small text-uppercase fw-semibold">Imaging complete</div>
+                <div class="num">{{ imaging_completed_in_range }}</div>
+                <div class="small text-muted">Report ready in period</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-lg-6">
+            <div class="dx-card">
+                <h6><i class="bi bi-pie-chart me-2 text-primary"></i>Lab status breakdown</h6>
+                <div class="chart-wrap">
+                    <canvas id="chartLabStatus"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="dx-card">
+                <h6><i class="bi bi-pie-chart me-2 text-info"></i>Imaging status breakdown</h6>
+                <div class="chart-wrap">
+                    <canvas id="chartImagingStatus"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-lg-6">
+            <div class="dx-card">
+                <h6><i class="bi bi-bar-chart me-2 text-primary"></i>Pending vs complete</h6>
+                <div class="chart-wrap">
+                    <canvas id="chartPendingCompare"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="dx-card p-0 overflow-hidden">
+                <div class="p-3 border-bottom bg-light">
+                    <h6 class="mb-0"><i class="bi bi-info-circle me-2"></i>Status guide</h6>
+                </div>
+                <div class="p-3 small">
+                    <p class="mb-2"><strong class="text-primary">Laboratory</strong> — <span class="badge bg-warning text-dark">Pending</span> ordered, not run;
+                    <span class="badge bg-info">In progress</span> processing;
+                    <span class="badge bg-success">Completed</span> result available.</p>
+                    <p class="mb-0"><strong class="text-info">Imaging</strong> — progresses from scheduled → scan → report. 
+                    <span class="badge bg-success">Report complete / Verified</span> means ready for clinician and patient communication.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-xl-6">
+            <div class="dx-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h6 class="mb-0"><i class="bi bi-droplet me-2 text-primary"></i>Pending laboratory ({{ lab_pending_total }})</h6>
+                </div>
+                {% if lab_pending_results %}
+                <div class="table-responsive">
+                    <table class="table table-hover dx-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Patient</th>
+                                <th>Test</th>
+                                <th>Status</th>
+                                <th>Ordered</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for r in lab_pending_results %}
+                            <tr>
+                                <td>
+                                    {% if r.order.encounter.patient %}
+                                    <a class="patient-link" href="{% url 'hospital:patient_detail' r.order.encounter.patient.pk %}">
+                                        {{ r.order.encounter.patient.full_name }}
+                                    </a>
+                                    <br><small class="text-muted">{{ r.order.encounter.patient.mrn }}</small>
+                                    {% else %}—{% endif %}
+                                </td>
+                                <td>{{ r.test.name|default:"—" }}</td>
+                                <td><span class="badge {% if r.status == 'completed' %}bg-success{% elif r.status == 'in_progress' %}bg-info{% else %}bg-warning text-dark{% endif %}">{{ r.get_status_display }}</span></td>
+                                <td><small>{{ r.created|date:"M d, H:i" }}</small></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted text-center py-4 mb-0"><i class="bi bi-check-circle text-success fs-4 d-block mb-2"></i>No pending lab tests in this period.</p>
+                {% endif %}
+            </div>
+        </div>
+        <div class="col-xl-6">
+            <div class="dx-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h6 class="mb-0"><i class="bi bi-radioactive me-2 text-info"></i>Pending imaging ({{ imaging_pending_total }})</h6>
+                </div>
+                {% if imaging_pending_studies %}
+                <div class="table-responsive">
+                    <table class="table table-hover dx-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Patient</th>
+                                <th>Study</th>
+                                <th>Status</th>
+                                <th>When</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for s in imaging_pending_studies %}
+                            <tr>
+                                <td>
+                                    {% if s.patient %}
+                                    <a class="patient-link" href="{% url 'hospital:patient_detail' s.patient.pk %}">
+                                        {{ s.patient.full_name }}
+                                    </a>
+                                    <br><small class="text-muted">{{ s.patient.mrn }}</small>
+                                    {% else %}—{% endif %}
+                                </td>
+                                <td>
+                                    <strong>{{ s.body_part|default:"—" }}</strong>
+                                    <br><small class="text-muted">{{ s.get_modality_display }}</small>
+                                </td>
+                                <td><span class="badge {{ s.status|imaging_status_badge }}">{{ s.get_status_display }}</span></td>
+                                <td><small>{{ s.created|date:"M d, H:i" }}</small></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted text-center py-4 mb-0"><i class="bi bi-check-circle text-success fs-4 d-block mb-2"></i>No pending imaging in this period.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ lab_status_counts_json|json_script:"lab-status-data" }}
+{{ imaging_status_counts_json|json_script:"imaging-status-data" }}
+{{ lab_status_labels_json|json_script:"lab-labels-data" }}
+{{ imaging_status_labels_json|json_script:"imaging-labels-data" }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    const labCounts = JSON.parse(document.getElementById('lab-status-data').textContent);
+    const imagingCounts = JSON.parse(document.getElementById('imaging-status-data').textContent);
+    const labLabelsMap = JSON.parse(document.getElementById('lab-labels-data').textContent);
+    const imagingLabelsMap = JSON.parse(document.getElementById('imaging-labels-data').textContent);
+
+    function labelsFromMap(counts, labelMap) {
+        return Object.keys(counts).map(k => labelMap[k] || k.replace(/_/g, ' '));
+    }
+    function valuesFrom(counts) {
+        return Object.keys(counts).map(k => counts[k]);
+    }
+
+    const palette = ['#f59e0b', '#3b82f6', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#64748b', '#ec4899', '#84cc16', '#f97316'];
+
+    const labKeys = Object.keys(labCounts);
+    if (labKeys.length && document.getElementById('chartLabStatus')) {
+        new Chart(document.getElementById('chartLabStatus'), {
+            type: 'doughnut',
+            data: {
+                labels: labelsFromMap(labCounts, labLabelsMap),
+                datasets: [{ data: valuesFrom(labCounts), backgroundColor: palette, borderWidth: 2, borderColor: '#fff' }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } }
+            }
+        });
+    }
+
+    const imgKeys = Object.keys(imagingCounts);
+    if (imgKeys.length && document.getElementById('chartImagingStatus')) {
+        new Chart(document.getElementById('chartImagingStatus'), {
+            type: 'doughnut',
+            data: {
+                labels: labelsFromMap(imagingCounts, imagingLabelsMap),
+                datasets: [{ data: valuesFrom(imagingCounts), backgroundColor: palette.slice().reverse(), borderWidth: 2, borderColor: '#fff' }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } } }
+            }
+        });
+    }
+
+    new Chart(document.getElementById('chartPendingCompare'), {
+        type: 'bar',
+        data: {
+            labels: ['Laboratory', 'Imaging'],
+            datasets: [
+                {
+                    label: 'Pending',
+                    data: [{{ lab_pending_total }}, {{ imaging_pending_total }}],
+                    backgroundColor: ['rgba(124, 58, 237, 0.85)', 'rgba(8, 145, 178, 0.85)'],
+                    borderRadius: 8
+                },
+                {
+                    label: 'Complete (period)',
+                    data: [{{ lab_completed_in_range }}, {{ imaging_completed_in_range }}],
+                    backgroundColor: ['rgba(16, 185, 129, 0.75)', 'rgba(16, 185, 129, 0.55)'],
+                    borderRadius: 8
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+            plugins: { legend: { position: 'top' } }
+        }
+    });
+})();
+</script>
+{% endblock %}

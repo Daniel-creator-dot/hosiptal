@@ -2,10 +2,15 @@
 Middleware to restrict midwives from non-clinical areas (finance, pharmacy dispensing, HR admin, etc.)
 while allowing the same inpatient and nursing workflows as nurses: admissions, beds, vitals, orders, triage, etc.
 """
+import logging
+
 from django.contrib import messages
 from django.shortcuts import redirect
-from django.urls import reverse
+from django.urls import NoReverseMatch, reverse
+
 from .utils_roles import get_user_role
+
+logger = logging.getLogger(__name__)
 
 # URL patterns that midwives are allowed to access
 MIDWIFE_ALLOWED_PATTERNS = [
@@ -38,6 +43,7 @@ MIDWIFE_ALLOWED_PATTERNS = [
     '/hms/login',
     '/hms/static',
     '/hms/media',
+    '/hms/documents',  # Authenticated patient document files (lab/imaging PDFs)
     '/api/notifications',  # Allow notifications API
     '/api/hospital/patient',  # Patient API
     '/api/hospital/encounter',  # Encounter API
@@ -45,6 +51,7 @@ MIDWIFE_ALLOWED_PATTERNS = [
     '/hms/notifications/mark-all-read',  # Allow notification actions
     '/hms/notifications/clear-all',  # Clear all notifications
     '/hms/notifications/',  # Allow notifications list
+    '/hms/chat/',  # Staff direct messaging (available to all authenticated users)
 ]
 
 
@@ -52,65 +59,36 @@ class MidwifeRestrictionMiddleware:
     """
     Middleware to keep midwives out of finance, pharmacy, lab, imaging, and admin modules
     while allowing shared clinical paths with nurses (admissions, beds, vitals, triage, orders, etc.).
+    Default-deny: any path not in MIDWIFE_ALLOWED_PATTERNS is blocked.
     """
+
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
-        # Skip restriction for non-authenticated users
         if not request.user.is_authenticated:
             return self.get_response(request)
-        
-        # Get user role
-        user_role = get_user_role(request.user)
-        
-        # Only apply restriction to midwives
+
+        user_role = getattr(request, 'hms_user_role', None)
+        if user_role is None:
+            user_role = get_user_role(request.user, request)
+
         if user_role != 'midwife':
             return self.get_response(request)
-        
-        # Allow access to allowed patterns
+
         path = request.path
         if any(path.startswith(pattern) for pattern in MIDWIFE_ALLOWED_PATTERNS):
             return self.get_response(request)
-        
-        # Block access to admin, lab, pharmacy, accounting, HR features
-        blocked_patterns = [
-            '/hms/admin',
-            '/hms/lab',
-            '/hms/pharmacy',
-            '/hms/accounting',
-            '/hms/accountant',
-            '/hms/hr',
-            '/hms/inventory',
-            '/hms/procurement',
-            '/hms/cashier',
-            '/hms/reception',
-            '/hms/imaging',
-            '/hms/radiology',
-            '/hms/contracts',
-            '/hms/insurance',
-            '/hms/reports',  # General reports (maternity reports would be under /hms/midwife)
-            '/hms/settings',  # System settings
-            '/hms/backup',
-            '/hms/audit',
-            '/hms/system-health',
-            '/hms/it-operations',
-        ]
-        
-        # Check if path matches blocked patterns
-        if any(path.startswith(pattern) for pattern in blocked_patterns):
-            messages.warning(
-                request,
-                'Access denied. You only have access to clinical and maternity care features.'
-            )
-            # Redirect to midwife dashboard
-            try:
-                return redirect('hospital:midwife_dashboard')
-            except:
-                return redirect('/hms/dashboard/midwife/')
-        
-        # Allow other paths (like API endpoints that don't match blocked patterns)
-        return self.get_response(request)
 
-
-
+        messages.warning(
+            request,
+            'Access denied. You only have access to clinical and maternity care features.',
+        )
+        try:
+            return redirect('hospital:midwife_dashboard')
+        except NoReverseMatch:
+            logger.exception('midwife_dashboard URL not found; using fallback redirect')
+            return redirect('/hms/dashboard/midwife/')
+        except Exception:
+            logger.exception('Unexpected error redirecting midwife to dashboard')
+            return redirect('/hms/dashboard/midwife/')

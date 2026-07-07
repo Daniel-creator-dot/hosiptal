@@ -52,6 +52,7 @@ from . import views_hr_activities
 from . import views_hr_manager
 from . import views_locum_doctors
 from . import views_role_specific
+from . import views_admin_medical_analytics
 from . import views_telemedicine_enhanced
 from . import views_staff_dashboard
 from . import views_specialists
@@ -152,6 +153,8 @@ from . import views_prescription_assistant
 from . import views_patient_export
 from . import views_backup
 from . import views_accounting_advanced
+from . import views_management_reports
+from . import views_department_billed_revenue
 from . import views_accountant_comprehensive, views_billing_claims
 from . import views_accounting_management
 from . import views_doctor_performance
@@ -189,6 +192,11 @@ urlpatterns = [
     # Role-Specific Dashboards
     path('accountant-dashboard/', views_role_specific.accountant_dashboard, name='accountant_dashboard'),
     path('admin-dashboard/', views_role_specific.admin_dashboard, name='admin_dashboard'),
+    path(
+        'medical-analytics/',
+        views_admin_medical_analytics.admin_medical_analytics_report,
+        name='admin_medical_analytics_report',
+    ),
     path('medical-dashboard/', views_role_specific.medical_dashboard, name='medical_dashboard'),
     path('reception-dashboard/', views_role_specific.reception_dashboard, name='reception_dashboard'),
     
@@ -264,6 +272,8 @@ urlpatterns = [
     
     # Strategic Objectives API (Real-time)
     path('admin/strategic-objectives/api/', views_strategic_objectives_api.strategic_objectives_api, name='strategic_objectives_api'),
+
+    # Admin cashier quick services — canonical routes in urls_hms_priority (included from hms.urls first).
     
     # Notifications
     path('notifications/', views_notifications.notifications_list, name='notifications_list'),
@@ -335,12 +345,14 @@ urlpatterns = [
     path('admissions/old/', views.admission_list, name='admission_list_old'),
     path('admissions/create/', views_admission.admission_create_enhanced, name='admission_create'),
     path('admissions/<uuid:pk>/', views_admission.admission_detail, name='admission_detail'),
+    path('admissions/<uuid:admission_id>/transfer/', views_admission.admission_transfer, name='hms_admission_transfer'),
     path('admissions/<uuid:admission_id>/discharge/', views_admission.discharge_patient, name='discharge_patient'),
     
     # Invoice views
     path('invoices/', views.invoice_list, name='invoice_list'),
     path('invoices/patient/<uuid:patient_id>/combined/', views.invoice_combined_patient, name='invoice_combined_patient'),
     path('invoices/line/update-quantity/', views.update_invoice_line_quantity, name='update_invoice_line_quantity'),
+    path('invoices/line/update-discount/', views.update_invoice_line_discount, name='update_invoice_line_discount'),
     path('invoices/<uuid:pk>/', views.invoice_detail, name='invoice_detail'),
     path('invoices/<uuid:pk>/print/', views.invoice_print, name='invoice_print'),
     path('payments/', views_cashier.cashier_receipts_list, name='payments_redirect'),
@@ -401,6 +413,23 @@ urlpatterns = [
     path('pharmacy/stock/export/excel/', views_departments.pharmacy_stock_excel, name='pharmacy_stock_excel'),
     path('pharmacy/stock/add/', views_departments.pharmacy_stock_add, name='pharmacy_stock_add'),
     path('pharmacy/stock/<uuid:pk>/edit/', views_departments.pharmacy_stock_edit, name='pharmacy_stock_edit'),
+    path('pharmacy/stock/utilization/', views_departments.pharmacy_stock_utilization, name='pharmacy_stock_utilization'),
+    path(
+        'pharmacy/stock/utilization/export/pdf/',
+        views_departments.pharmacy_stock_utilization_pdf,
+        name='pharmacy_stock_utilization_pdf',
+    ),
+    path(
+        'pharmacy/stock/utilization/export/excel/',
+        views_departments.pharmacy_stock_utilization_excel,
+        name='pharmacy_stock_utilization_excel',
+    ),
+    path('pharmacy/stock/loss-log/', views_departments.pharmacy_stock_loss_log, name='pharmacy_stock_loss_log'),
+    path(
+        'pharmacy/stock/<uuid:pk>/record-loss/',
+        views_departments.pharmacy_stock_loss_record,
+        name='pharmacy_stock_loss_record',
+    ),
     path('pharmacy/requests/', views_procurement.procurement_requests_list, name='pharmacy_requests_list'),
     path('pharmacy/requests/new/', views_procurement.procurement_request_create, name='pharmacy_request_create'),
     path('pharmacy/add-consumables/', views_departments.pharmacy_add_consumables, name='pharmacy_add_consumables'),
@@ -414,6 +443,17 @@ urlpatterns = [
     path('api/pharmacy/order/<uuid:order_id>/payment-status/', views_departments.check_pharmacy_order_payment_status, name='check_pharmacy_order_payment_status'),
     path('api/pharmacy/order/<uuid:order_id>/send-to-cashier/', views_departments.send_pharmacy_order_to_cashier, name='send_pharmacy_order_to_cashier'),
     path('api/pharmacy/order/<uuid:order_id>/dispense/', views_departments.dispense_pharmacy_order, name='dispense_pharmacy_order'),
+    path(
+        'api/pharmacy/served/prescription/<uuid:prescription_id>/',
+        views_departments.pharmacy_served_prescription_detail,
+        name='pharmacy_served_prescription_detail',
+    ),
+    path(
+        'api/pharmacy/served/order/<uuid:order_id>/',
+        views_departments.pharmacy_served_order_detail,
+        name='pharmacy_served_order_detail',
+    ),
+    path('api/pharmacy/queue-pulse/', views_departments.pharmacy_queue_pulse, name='pharmacy_queue_pulse'),
     
     # 🔒 Pharmacy Dispensing - Payment Enforced (NEW)
     path('pharmacy/pending-dispensing/', views_pharmacy_dispensing_enforced.pharmacy_pending_dispensing, name='pharmacy_pending_dispensing'),
@@ -472,6 +512,9 @@ urlpatterns = [
     path('api/prescription/drugs/category/<str:category_code>/', views_prescription_enhanced.api_get_drugs_by_category, name='api_get_drugs_by_category'),
     
     path('laboratory/', views_departments.laboratory_dashboard, name='laboratory_dashboard'),
+    path('laboratory/report/', views_lab_export.laboratory_financial_report, name='laboratory_financial_report'),
+    path('laboratory/report/export/excel/', views_lab_export.export_laboratory_financial_excel, name='export_laboratory_financial_excel'),
+    path('laboratory/report/export/pdf/', views_lab_export.export_laboratory_financial_pdf, name='export_laboratory_financial_pdf'),
     path('laboratory/remove-overdue-lab/', views_departments.laboratory_remove_overdue_lab, name='laboratory_remove_overdue_lab'),
     path('laboratory/results/', views_departments.lab_results_list, name='lab_results_list'),
     path('lab-results/', views_departments.lab_results_list, name='lab_results_list_legacy'),
@@ -758,6 +801,11 @@ urlpatterns = [
     path('medical-records/patient/<uuid:patient_id>/', views_medical_records.comprehensive_medical_record, name='comprehensive_medical_record'),
     path('medical-records/encounter/<uuid:encounter_id>/', views_medical_records.encounter_documentation, name='encounter_documentation'),
     path('medical-records/timeline/<uuid:patient_id>/', views_medical_records.patient_timeline, name='patient_timeline'),
+    path(
+        'medical-records/documents/<uuid:document_id>/file/',
+        views_medical_records.patient_document_file,
+        name='patient_document_file',
+    ),
     path('theatre/', views_advanced.theatre_schedule, name='theatre_schedule'),
     path('mar/', views_advanced.mar_admin, name='mar_admin'),
     path('kpi-dashboard/', views_advanced.kpi_dashboard, name='kpi_dashboard'),
@@ -864,6 +912,7 @@ urlpatterns = [
     path('cashier/central/patient/<uuid:patient_id>/add-services-to-invoice/', views_centralized_cashier.cashier_add_services_to_invoice, name='cashier_add_services_to_invoice'),
     path('cashier/central/patient/<uuid:patient_id>/add-services/', views_centralized_cashier.cashier_add_services_select, name='cashier_add_services_select'),
     path('cashier/central/add-manual-payment/', views_centralized_cashier.cashier_add_manual_payment, name='cashier_add_manual_payment'),
+    path('cashier/non-patient-charge/', views_centralized_cashier.cashier_non_patient_charge, name='cashier_non_patient_charge'),
     path('cashier/central/patients/', views_centralized_cashier.cashier_patient_list, name='cashier_patient_list'),
     path('cashier/central/create-billing/', views_centralized_cashier.cashier_create_billing, name='cashier_create_billing'),
     path('cashier/central/process/<str:service_type>/<uuid:service_id>/', views_centralized_cashier.cashier_process_service_payment, name='cashier_process_service_payment'),
@@ -1155,14 +1204,12 @@ urlpatterns = [
     path('pricing/specialist/create/', views_pricing.create_specialist_service, name='create_specialist_service'),
     path('pricing/bulk-update/', views_pricing.bulk_price_update, name='bulk_price_update'),
     
-    # Staff Self-Service Portal (Old URLs - commented out, using new ones below)
-    # path('staff/profile/', views_staff_portal.staff_profile, name='staff_profile'),
-    # path('staff/leave/', views_staff_portal.staff_leave_list, name='staff_leave_list'),
-    # path('staff/leave/create/', views_staff_portal.staff_leave_request_create, name='staff_leave_request_create'),
-    # path('staff/leave/<uuid:pk>/', views_staff_portal.staff_leave_detail, name='staff_leave_detail'),
-    # path('staff/leave/<uuid:pk>/submit/', views_staff_portal.staff_leave_submit, name='staff_leave_submit'),
-    # path('staff/leave/<uuid:pk>/cancel/', views_staff_portal.staff_leave_cancel, name='staff_leave_cancel'),
-    # path('staff/training/', views_staff_portal.staff_training_history, name='staff_training_history'),
+    # Staff Self-Service Portal (aliases for older template URL names)
+    path('staff/profile/', RedirectView.as_view(pattern_name='hospital:my_profile', permanent=False), name='staff_profile'),
+    path('staff/leave/<uuid:pk>/', RedirectView.as_view(pattern_name='hospital:staff_leave_history', permanent=False), name='staff_leave_detail'),
+    path('staff/leave/<uuid:pk>/submit/', RedirectView.as_view(pattern_name='hospital:staff_leave_history', permanent=False), name='staff_leave_submit'),
+    path('staff/leave/<uuid:pk>/cancel/', RedirectView.as_view(pattern_name='hospital:staff_leave_history', permanent=False), name='staff_leave_cancel'),
+    path('staff/training/', RedirectView.as_view(pattern_name='hospital:staff_portal', permanent=False), name='staff_training_history'),
     path('performance-reviews/', views_staff_portal.staff_performance_reviews, name='staff_performance_reviews'),
     
     # Manager/Admin Leave Approval
@@ -1186,6 +1233,12 @@ urlpatterns = [
     
     # Lab Report Printing & Hospital Settings
     path('laboratory/result/<uuid:result_id>/print/', views.print_lab_report, name='print_lab_report'),
+    path('laboratory/result/<uuid:result_id>/pdf/', views.download_lab_report_pdf, name='download_lab_report_pdf'),
+    path(
+        'laboratory/result/<uuid:result_id>/attachment/',
+        views.lab_result_attachment_file,
+        name='lab_result_attachment_file',
+    ),
     path('settings/', views.hospital_settings_view, name='hospital_settings'),
     
     # 💾 Database Backup Management
@@ -1273,7 +1326,24 @@ urlpatterns = [
     # ==================== COMPREHENSIVE ACCOUNTANT FEATURES ====================
     # Comprehensive Accountant Dashboard
     path('accountant/comprehensive-dashboard/', views_accountant_comprehensive.accountant_comprehensive_dashboard, name='accountant_comprehensive_dashboard'),
+    path('accountant/management-reports/', views_management_reports.management_reports_hub, name='management_reports_hub'),
+    path(
+        'accountant/management-reports/service-revenue/',
+        views_management_reports.management_service_revenue_report,
+        name='management_service_revenue_report',
+    ),
+    path(
+        'accountant/department-billed-revenue/',
+        views_department_billed_revenue.department_billed_revenue_report,
+        name='department_billed_revenue_report',
+    ),
     path('accountant/stock-management-monitoring/', views_accountant_comprehensive.stock_management_monitoring, name='stock_management_monitoring'),
+    path('accountant/supplier-accounts/', views_accountant_comprehensive.supplier_accounts_list, name='supplier_accounts_list'),
+    path(
+        'accountant/supplier-accounts/<uuid:supplier_id>/',
+        views_accountant_comprehensive.supplier_account_detail,
+        name='supplier_account_detail',
+    ),
     
     # Accounting Management Views (HMS Interface for Admin Features)
     # Accounts Receivable
@@ -1343,6 +1413,13 @@ urlpatterns = [
     path('accountant/bank-transactions/create/', views_accounting_management.bank_transaction_create, name='bank_transaction_create'),
     path('accountant/bank-transactions/<uuid:transaction_id>/', views_accounting_management.bank_transaction_detail, name='bank_transaction_detail'),
     path('accountant/bank-transactions/<uuid:transaction_id>/edit/', views_accounting_management.bank_transaction_edit, name='bank_transaction_edit'),
+
+    # Bank payment vouchers (Bank ↔ Expense entries)
+    path('accountant/bank-payments/', views_accounting_management.bank_payment_list, name='bank_payment_list'),
+    path('accountant/bank-payments/create/', views_accounting_management.bank_payment_create, name='bank_payment_create'),
+    path('accountant/bank-payments/<uuid:entry_id>/', views_accounting_management.bank_payment_detail, name='bank_payment_detail'),
+    path('accountant/bank-payments/<uuid:entry_id>/post/', views_accounting_management.bank_payment_post, name='bank_payment_post'),
+    path('accountant/bank-payments/<uuid:entry_id>/void/', views_accounting_management.bank_payment_void, name='bank_payment_void'),
     # Handle invalid accountant URLs
     path('accountant/INVALID/', lambda request: redirect('hospital:accountant_comprehensive_dashboard'), name='accountant_invalid_redirect'),
     re_path(r'^accountant/(?P<feature>[a-z-]+)/INVALID/?$', lambda request, feature: redirect('hospital:accountant_comprehensive_dashboard'), name='accountant_feature_invalid_redirect'),
@@ -1365,6 +1442,8 @@ urlpatterns = [
     path('accountant/insurance-receivable/', views_accountant_comprehensive.insurance_receivable_list, name='insurance_receivable_list'),
     path('accountant/insurance-receivable/create/', views_accountant_comprehensive.insurance_receivable_create, name='insurance_receivable_create'),
     path('accountant/insurance-receivable/<uuid:receivable_id>/edit/', views_accountant_comprehensive.insurance_receivable_edit, name='insurance_receivable_edit'),
+
+    # Receivables hub routes live in hospital.urls_hms_priority (included first from hms.urls).
     
     # Procurement Purchases
     path('accountant/procurement-purchases/', views_accountant_comprehensive.procurement_purchase_list, name='procurement_purchase_list'),
@@ -1392,9 +1471,6 @@ urlpatterns = [
     
     # Corporate Accounts
     path('accountant/corporate-accounts/', views_accountant_comprehensive.corporate_account_list, name='corporate_account_list'),
-    
-    # Withholding Receivable
-    path('accountant/withholding-receivable/', views_accountant_comprehensive.withholding_receivable_list, name='withholding_receivable_list'),
     
     # Deposits
     path('accountant/deposits/', views_accountant_comprehensive.deposit_list, name='deposit_list'),
@@ -1455,6 +1531,7 @@ urlpatterns = [
     path('accounting/revenue-streams/', views_revenue_monitoring.revenue_streams_dashboard, name='revenue_streams_dashboard'),
     path('accounting/revenue-by-department/', views_revenue_monitoring.revenue_by_department_report, name='revenue_by_department'),
     path('accounting/api/revenue-streams/', views_revenue_monitoring.revenue_streams_api, name='revenue_streams_api'),
+    # Export/print routes registered in urls_hms_priority (prepended to this urlconf).
     
     # Locum Doctor Payment Management (Accountants)
     path('locum/doctors/', views_locum_doctors.locum_doctors_dashboard, name='locum_doctors_dashboard'),
@@ -1533,4 +1610,10 @@ urlpatterns = [
     path('orders/new/', views.order_create, name='order_create'),
     path('orders/<uuid:pk>/', views.order_detail, name='order_detail'),
 ]
+
+# Receivables hub, admin cashier catalogue, etc. — prepended so they share one
+# `hospital:` namespace with the rest of this urlconf (avoids duplicate-namespace reverse bugs).
+from .urls_hms_priority import urlpatterns as _hms_priority_urlpatterns
+
+urlpatterns = _hms_priority_urlpatterns + urlpatterns
 

@@ -1,0 +1,130 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}Receivables analytics — HMS{% endblock %}
+{% block page_title %}Receivables analytics{% endblock %}
+{% block page_subtitle %}Billing vs collections by month, top payers, aging{% endblock %}
+
+{% block extra_css %}
+<style>
+  .ra-hero {
+    background: linear-gradient(135deg, #312e81 0%, #1e40af 45%, #0f766e 100%);
+    border-radius: 16px;
+    padding: 1.35rem 1.5rem;
+    color: #fff;
+    margin-bottom: 1.25rem;
+    box-shadow: 0 12px 40px rgba(30, 64, 175, 0.25);
+  }
+  .ra-hero .tile {
+    background: rgba(255,255,255,0.12);
+    border-radius: 12px;
+    padding: 0.75rem 1rem;
+    border: 1px solid rgba(255,255,255,0.2);
+  }
+  .ra-hero .tile .v { font-size: 1.35rem; font-weight: 700; }
+  .ra-hero .tile .l { font-size: 0.7rem; opacity: 0.9; text-transform: uppercase; letter-spacing: 0.06em; }
+  .ra-card {
+    background: #fff;
+    border-radius: 14px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06);
+    margin-bottom: 1.25rem;
+    overflow: hidden;
+  }
+  .ra-card .hd {
+    padding: 0.85rem 1.1rem;
+    border-bottom: 1px solid #eef2f7;
+    font-weight: 600;
+    background: linear-gradient(180deg, #fafbfc 0%, #fff 100%);
+  }
+  .ra-card .bd { padding: 1rem 1.1rem; }
+  .chart-wrap { position: relative; height: 300px; max-width: 100%; }
+  .chart-wrap.tall { height: 340px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="ra-hero row g-3 align-items-center">
+    <div class="col-md-4 tile">
+      <div class="l">Outstanding now</div>
+      <div class="v">GHS {{ total_outstanding|floatformat:2|intcomma }}</div>
+    </div>
+    <div class="col-md-4 tile">
+      <div class="l">Open lines</div>
+      <div class="v">{{ open_lines|intcomma }}</div>
+    </div>
+    <div class="col-md-4 d-flex flex-wrap gap-2 justify-content-md-end">
+      <a class="btn btn-light btn-sm {% if category == 'all' %}active{% endif %}" href="?category=all">All</a>
+      <a class="btn btn-light btn-sm {% if category == 'insurance' %}active{% endif %}" href="?category=insurance">Insurance</a>
+      <a class="btn btn-light btn-sm {% if category == 'corporate' %}active{% endif %}" href="?category=corporate">Corporate</a>
+      <a class="btn btn-outline-light btn-sm" href="{% url 'hospital:receivables_hub' %}?category={{ category }}"><i class="bi bi-journal-text"></i> Hub</a>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-8">
+      <div class="ra-card">
+        <div class="hd">New billings vs bank collections (by month)</div>
+        <div class="bd"><div class="chart-wrap"><canvas id="trendChart"></canvas></div></div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="ra-card">
+        <div class="hd">Aging of outstanding</div>
+        <div class="bd"><div class="chart-wrap tall"><canvas id="agingChart"></canvas></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ra-card">
+    <div class="hd">Top payers by outstanding</div>
+    <div class="bd"><div class="chart-wrap"><canvas id="payerChart"></canvas></div></div>
+  </div>
+</div>
+
+{{ chart_json|json_script:"receivables-chart-data" }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+  const raw = document.getElementById('receivables-chart-data');
+  if (!raw) return;
+  const data = JSON.parse(raw.textContent);
+  const common = { responsive: true, maintainAspectRatio: false };
+  new Chart(document.getElementById('trendChart'), {
+    type: 'line',
+    data: {
+      labels: data.labels,
+      datasets: [
+        { label: 'New billings (IRE)', data: data.billing, borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.12)', fill: true, tension: 0.25 },
+        { label: 'Collections (IPR)', data: data.collections, borderColor: '#059669', backgroundColor: 'rgba(5,150,105,0.08)', fill: true, tension: 0.25 },
+      ],
+    },
+    options: { ...common, plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true } } },
+  });
+  new Chart(document.getElementById('agingChart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Current', '1–30', '31–60', '61–90', '90+'],
+      datasets: [{ data: [
+        data.aging.current, data.aging['0_30'], data.aging['31_60'], data.aging['61_90'], data.aging['90_plus'],
+      ], backgroundColor: ['#22c55e','#84cc16','#eab308','#f97316','#ef4444'] }],
+    },
+    options: { ...common, plugins: { legend: { position: 'right' } } },
+  });
+  new Chart(document.getElementById('payerChart'), {
+    type: 'bar',
+    data: {
+      labels: data.payerLabels,
+      datasets: [{ label: 'GHS outstanding', data: data.payerValues, backgroundColor: 'rgba(30,64,175,0.65)' }],
+    },
+    options: {
+      ...common,
+      indexAxis: 'y',
+      plugins: { legend: { display: false } },
+      scales: { x: { beginAtZero: true } },
+    },
+  });
+})();
+</script>
+{% endblock %}

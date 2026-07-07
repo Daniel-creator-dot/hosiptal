@@ -491,25 +491,32 @@ class Migration(migrations.Migration):
             model_name='appointment',
             index=models.Index(fields=['appointment_date', 'status'], name='hospital_ap_appoint_82af2e_idx'),
         ),
-        migrations.AddIndex(
-            model_name='patient',
-            index=models.Index(fields=['first_name', 'last_name', 'date_of_birth'], name='patient_name_dob_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='patient',
-            index=models.Index(fields=['first_name', 'last_name', 'phone_number'], name='patient_name_phone_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='patient',
-            index=models.Index(fields=['email'], name='patient_email_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='patient',
-            index=models.Index(fields=['national_id'], name='patient_national_id_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='patient',
-            index=models.Index(fields=['phone_number'], name='patient_phone_idx'),
+        # Patient indexes: already created idempotently in 1043_add_patient_duplicate_indexes.
+        # Keep only state so Django's model state matches models.py without duplicate CREATE INDEX.
+        migrations.SeparateDatabaseAndState(
+            state_operations=[
+                migrations.AddIndex(
+                    model_name='patient',
+                    index=models.Index(fields=['first_name', 'last_name', 'date_of_birth'], name='patient_name_dob_idx'),
+                ),
+                migrations.AddIndex(
+                    model_name='patient',
+                    index=models.Index(fields=['first_name', 'last_name', 'phone_number'], name='patient_name_phone_idx'),
+                ),
+                migrations.AddIndex(
+                    model_name='patient',
+                    index=models.Index(fields=['email'], name='patient_email_idx'),
+                ),
+                migrations.AddIndex(
+                    model_name='patient',
+                    index=models.Index(fields=['national_id'], name='patient_national_id_idx'),
+                ),
+                migrations.AddIndex(
+                    model_name='patient',
+                    index=models.Index(fields=['phone_number'], name='patient_phone_idx'),
+                ),
+            ],
+            database_operations=[],
         ),
         migrations.DeleteModel(
             name='BatchLotTracking',

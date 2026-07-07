@@ -1,0 +1,96 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}{{ entry.entry_number }} — Receivable{% endblock %}
+{% block page_title %}Receivable {{ entry.entry_number }}{% endblock %}
+{% block page_subtitle %}{{ entry.payer.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex flex-wrap gap-2 mb-3">
+    <a href="{% url 'hospital:receivables_hub' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left"></i> Hub</a>
+    <a href="{% url 'hospital:receivable_record_remittance' %}" class="btn btn-warning btn-sm text-dark"><i class="bi bi-bank"></i> Record remittance</a>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-header">Amounts</div>
+        <div class="card-body">
+          <dl class="row mb-0">
+            <dt class="col-sm-5">Payer</dt><dd class="col-sm-7">{{ entry.payer.name }}</dd>
+            <dt class="col-sm-5">Invoice</dt>
+            <dd class="col-sm-7">
+              {% if entry.invoice %}
+                <a href="{% url 'hospital:invoice_detail' entry.invoice.id %}">{{ entry.invoice.invoice_number }}</a>
+                {% if entry.invoice.patient %}<span class="text-muted"> · {{ entry.invoice.patient.full_name }}</span>{% endif %}
+              {% else %}<span class="text-muted">Not linked</span>{% endif %}
+            </dd>
+            <dt class="col-sm-5">Entry date</dt><dd class="col-sm-7">{{ entry.entry_date }}</dd>
+            <dt class="col-sm-5">Total</dt><dd class="col-sm-7">GHS {{ entry.total_amount|floatformat:2|intcomma }}</dd>
+            <dt class="col-sm-5">Received</dt><dd class="col-sm-7">GHS {{ entry.amount_received|floatformat:2|intcomma }}</dd>
+            <dt class="col-sm-5">Rejected</dt><dd class="col-sm-7">GHS {{ entry.amount_rejected|floatformat:2|intcomma }}</dd>
+            <dt class="col-sm-5">WHT</dt><dd class="col-sm-7">GHS {{ entry.withholding_tax|floatformat:2|intcomma }}</dd>
+            <dt class="col-sm-5">Outstanding</dt><dd class="col-sm-7 fw-bold text-primary">GHS {{ entry.outstanding_amount|floatformat:2|intcomma }}</dd>
+            <dt class="col-sm-5">Status</dt><dd class="col-sm-7"><span class="badge bg-secondary">{{ entry.get_status_display }}</span></dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-header">Notes</div>
+        <div class="card-body">
+          <p class="mb-0 text-muted small">{{ entry.notes|default:"—"|linebreaksbr }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mt-3">
+    <div class="card-header"><i class="bi bi-list-ul"></i> Remittances recorded against this line</div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Date</th>
+              <th>Reference</th>
+              <th class="text-end">Bank received</th>
+              <th class="text-end">Rejected</th>
+              <th class="text-end">WHT</th>
+              <th>Bank</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in payments %}
+            <tr>
+              <td>{{ p.entry_date }}</td>
+              <td><code>{{ p.entry_number }}</code> {% if p.payment_reference %}<span class="text-muted">{{ p.payment_reference }}</span>{% endif %}</td>
+              <td class="text-end">{{ p.amount_received|floatformat:2|intcomma }}</td>
+              <td class="text-end">{{ p.amount_rejected|floatformat:2|intcomma }}</td>
+              <td class="text-end">{{ p.withholding_tax|floatformat:2|intcomma }}</td>
+              <td>{{ p.bank_account.account_name }}</td>
+            </tr>
+            {% empty %}
+            {% if not batch_payments %}
+            <tr><td colspan="6" class="text-center text-muted py-3">No remittances linked yet.</td></tr>
+            {% endif %}
+            {% endfor %}
+            {% for p in batch_payments %}
+            <tr class="table-secondary">
+              <td>{{ p.entry_date }}</td>
+              <td><code>{{ p.entry_number }}</code> <span class="badge bg-secondary">Batch</span> {% if p.payment_reference %}<span class="text-muted">{{ p.payment_reference }}</span>{% endif %}</td>
+              <td class="text-end">{{ p.amount_received|floatformat:2|intcomma }}</td>
+              <td class="text-end">{{ p.amount_rejected|floatformat:2|intcomma }}</td>
+              <td class="text-end">{{ p.withholding_tax|floatformat:2|intcomma }}</td>
+              <td>{{ p.bank_account.account_name }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
