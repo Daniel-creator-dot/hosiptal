@@ -145,6 +145,11 @@ def pharmacy_pending_dispensing(request):
     pending_payment_qs = base_dispensing_qs.filter(
         dispensing_status='pending_payment',
         payment_receipt_id__isnull=True,
+    ).order_by(
+        '-prescription__order__requested_at',
+        '-prescription__modified',
+        '-prescription__created',
+        '-created',
     )
     # Paid – ready to dispense: built after date params (prescribed date vs paid/ready date)
     # Paid / ready: include partial fills until quantity_dispensed reaches quantity_ordered.

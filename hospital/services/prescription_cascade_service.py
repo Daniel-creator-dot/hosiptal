@@ -140,6 +140,37 @@ def cascade_prescription_updated(prescription, waived_by_user=None):
 
         msg = "Invoice and pharmacy updated to match prescription."
         logger.info("Prescription cascade update: rx=%s %s", prescription.pk, msg)
+
+        try:
+            from hospital.services.pharmacy_queue_service import (
+                bump_medication_order_queue_time,
+                notify_pharmacy_new_prescription,
+            )
+            from hospital.services.auto_billing_service import AutoBillingService
+
+            order = getattr(prescription, 'order', None)
+            encounter = getattr(order, 'encounter', None) if order else None
+            if order:
+                bump_medication_order_queue_time(order)
+            inpatient = (
+                AutoBillingService._encounter_is_inpatient_active(encounter)
+                if encounter
+                else False
+            )
+            notify_pharmacy_new_prescription(
+                prescription,
+                encounter,
+                getattr(prescription, 'prescribed_by', None),
+                inpatient=inpatient,
+                changed=True,
+            )
+        except Exception as notify_exc:
+            logger.warning(
+                "Pharmacy notify after prescription update failed for %s: %s",
+                prescription.pk,
+                notify_exc,
+            )
+
         return {"invoice_updated": invoice_updated, "dispensing_updated": dispensing_updated, "message": msg}
     except Exception as e:
         logger.exception("Error cascading prescription update for %s: %s", prescription.pk, e)

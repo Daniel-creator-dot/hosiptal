@@ -16,28 +16,12 @@ from django.shortcuts import redirect
 from django.utils import timezone
 
 from .consultation_batch import set_skip_prescription_encounter_note
+from .consultation_status import encounter_has_diagnosis
 from .lab_order_diagnosis import encounter_diagnosis_summary
 from .models import Drug, LabResult, LabTest, Order, Prescription
 from .services.auto_billing_service import AutoBillingService
 
 logger = logging.getLogger(__name__)
-
-
-def consultation_has_diagnosis(encounter):
-    """True when the visit has at least one coded diagnosis (required before lab orders)."""
-    if not encounter:
-        return False
-    try:
-        from hospital.models_advanced import Diagnosis, ProblemList
-    except ImportError:
-        return False
-    if Diagnosis.objects.filter(encounter=encounter, is_deleted=False).exists():
-        return True
-    return ProblemList.objects.filter(
-        patient=encounter.patient,
-        status='active',
-        is_deleted=False,
-    ).exists()
 
 
 def _parse_start_dose_post(request, drug_id, fallback=False):
@@ -183,7 +167,7 @@ def handle_order_lab_test_post(request, encounter, doctor, encounter_id):
         messages.error(request, 'Please select at least one test.')
         return redirect(lab_redirect)
 
-    if not consultation_has_diagnosis(encounter):
+    if not encounter_has_diagnosis(encounter):
         messages.error(
             request,
             'Add at least one diagnosis before ordering lab tests (use the Diagnosis section on this consultation).',
@@ -539,7 +523,12 @@ def handle_prescribe_drug_post(request, encounter, doctor, encounter_id):
                 try:
                     from .services.pharmacy_queue_service import queue_prescription_for_pharmacy
 
-                    queue_prescription_for_pharmacy(prescription, encounter, doctor)
+                    queue_prescription_for_pharmacy(
+                        prescription,
+                        encounter,
+                        doctor,
+                        changed=(prescription_event == 'changed'),
+                    )
                 except Exception:
                     logger.warning(
                         'Could not ensure pharmacy queue row for prescription %s',

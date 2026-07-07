@@ -429,6 +429,27 @@ class AutoBillingService:
                     result = AutoBillingService.create_pharmacy_dispensing_record_only(rx, force=True)
                     if result.get('success'):
                         released += 1
+                        try:
+                            from hospital.services.pharmacy_queue_service import (
+                                bump_medication_order_queue_time,
+                                notify_pharmacy_new_prescription,
+                            )
+
+                            order = rx.order
+                            enc = order.encounter if order else None
+                            bump_medication_order_queue_time(order)
+                            notify_pharmacy_new_prescription(
+                                rx,
+                                enc,
+                                getattr(rx, 'prescribed_by', None),
+                                inpatient=AutoBillingService._encounter_is_inpatient_active(enc),
+                            )
+                        except Exception as notify_exc:
+                            logger.warning(
+                                "Pharmacy notify on consultation release failed for rx %s: %s",
+                                getattr(rx, 'id', '?'),
+                                notify_exc,
+                            )
                     else:
                         errors += 1
                         logger.warning(

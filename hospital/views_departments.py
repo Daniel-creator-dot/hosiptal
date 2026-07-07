@@ -375,11 +375,19 @@ def pharmacy_dashboard(request):
     
     pending_medication_orders_total = pending_orders_qs.count()
 
-    # Sort by priority, then by creation time
+    from hospital.services.pharmacy_queue_service import (
+        enrich_pending_medication_orders,
+        pending_pharmacy_alert_items,
+    )
+
+    # Sort by priority (STAT first), then newest activity within each priority group
+    pending_orders = enrich_pending_medication_orders(list(pending_orders_qs[:100]))
     pending_orders = sorted(
-        pending_orders_qs[:50],
-        key=lambda x: (priority_order.get(x.priority, 2), x.requested_at),
-        reverse=False
+        pending_orders,
+        key=lambda x: (
+            priority_order.get(x.priority, 2),
+            -(x.queue_sort_at.timestamp() if x.queue_sort_at else 0),
+        ),
     )[:20]
     
     # Attach payer info so pharmacy knows insurance/corporate vs cash
@@ -927,6 +935,7 @@ def pharmacy_dashboard(request):
         'recent_medical_records': recent_medical_records,
         'pharmacy_payer_channels': pharmacy_payer_channels,
         'pharmacy_page_loaded_at': timezone.now().isoformat(),
+        'pharmacy_pending_alerts': pending_pharmacy_alert_items(limit=25),
     }
     return render(request, 'hospital/pharmacy_dashboard_worldclass.html', context)
 

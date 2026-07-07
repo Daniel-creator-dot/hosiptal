@@ -13,7 +13,7 @@ from hospital.consultation_status import (
     encounter_consultation_complete,
     encounter_has_diagnosis,
 )
-from hospital.models import Department, Encounter, Order, Patient, Prescription, Staff
+from hospital.models import Department, Encounter, LabResult, LabTest, Order, Patient, Prescription, Staff
 from hospital.models_advanced import Diagnosis, ProblemList
 from hospital.services.pharmacy_queue_service import enrich_pending_medication_orders
 from hospital.signals_login_tracking import track_successful_login
@@ -253,3 +253,80 @@ class EnrichPendingMedicationOrdersTests(TestCase):
         order = self._make_order(enc)
         enrich_pending_medication_orders([order])
         self.assertFalse(order.consultation_pending)
+
+
+class LabOrderDiagnosisGateTests(TestCase):
+    def setUp(self):
+        suf = uuid.uuid4().hex[:8]
+        self.dept = Department.objects.create(name=f'LabDept{suf}', code=f'L{suf[:4]}')
+        self.user = User.objects.create_user(
+            username=f'doc_lab_{suf}',
+            password='test-pass-123',
+        )
+        self.staff = Staff.objects.create(
+            user=self.user,
+            profession='doctor',
+            department=self.dept,
+        )
+        self.patient = Patient.objects.create(
+            first_name='Lab',
+            last_name=f'Patient{suf}',
+            mrn=f'PMC-LAB-{suf}',
+        )
+        self.encounter = Encounter.objects.create(
+            patient=self.patient,
+            encounter_type='outpatient',
+            status='active',
+            chief_complaint='Fever',
+            provider=self.staff,
+        )
+        self.lab_test = LabTest.objects.create(
+            name=f'Full Blood Count {suf}',
+            code=f'FBC{suf[:4]}',
+            specimen_type='Blood',
+            is_active=True,
+        )
+        self.client = Client()
+        _force_login_without_login_signals(self.client, self.user)
+        self.url = reverse('hospital:consultation_view', kwargs={'encounter_id': self.encounter.id})
+
+    def test_lab_order_blocked_without_diagnosis(self):
+        response = self.client.post(
+            self.url,
+            {
+                'action': 'order_lab_test',
+                'test_ids': [str(self.lab_test.id)],
+                'priority': 'routine',
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(
+            Order.objects.filter(
+                encounter=self.encounter,
+                order_type='lab',
+                is_deleted=False,
+            ).exists()
+        )
+
+    def test_lab_order_allowed_with_encounter_diagnosis_text(self):
+        self.encounter.diagnosis = 'Malaria'
+        self.encounter.save(update_fields=['diagnosis'])
+        response = self.client.post(
+            self.url,
+            {
+                'action': 'order_lab_test',
+                'test_ids': [str(self.lab_test.id)],
+                'priority': 'routine',
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        lab_order = Order.objects.filter(
+            encounter=self.encounter,
+            order_type='lab',
+            is_deleted=False,
+        ).first()
+        self.assertIsNotNone(lab_order)
+        self.assertEqual(
+            LabResult.objects.filter(order=lab_order, test=self.lab_test, is_deleted=False).count(),
+            1,
+        )

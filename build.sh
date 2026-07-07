@@ -8,17 +8,15 @@ set -o nounset  # Exit on undefined variable
 
 echo "🏗️  Starting HMS build process..."
 
-# Upgrade pip
+# Upgrade pip and install all project dependencies
 echo "📦 Upgrading pip..."
-pip install --upgrade pip
+python -m pip install --upgrade pip setuptools wheel
 
-# Install Python dependencies
-echo "📦 Installing Python dependencies..."
-pip install -r requirements.txt
+echo "📦 Installing Python dependencies from requirements.txt..."
+python -m pip install --no-cache-dir -r requirements.txt
 
-# Install additional production dependencies if not in requirements.txt
-echo "📦 Ensuring production dependencies..."
-pip install gunicorn whitenoise psycopg2-binary dj-database-url
+echo "📦 Verifying production server packages..."
+python -m pip install --no-cache-dir gunicorn whitenoise psycopg2-binary dj-database-url
 
 # Collect static files
 echo "🎨 Collecting static files..."

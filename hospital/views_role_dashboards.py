@@ -341,6 +341,7 @@ def doctor_order_lab_tests(request):
                 
                 # Create lab results for each test
                 reagent_warnings = []
+                created_results = []
                 for test in tests:
                     # Check for duplicate before creating
                     existing_result = LabResult.objects.filter(
@@ -350,11 +351,12 @@ def doctor_order_lab_tests(request):
                     ).first()
                     
                     if not existing_result:
-                        LabResult.objects.create(
+                        lr = LabResult.objects.create(
                             order=lab_order,
                             test=test,
                             status='pending'
                         )
+                        created_results.append(lr)
                     
                     # Check reagent availability
                     required_reagents = test.required_reagents.filter(is_deleted=False)
@@ -363,6 +365,24 @@ def doctor_order_lab_tests(request):
                             reagent_warnings.append(f'{reagent.name} (low stock)')
                         if reagent.is_expired:
                             reagent_warnings.append(f'{reagent.name} (expired)')
+
+                from hospital.lab_order_diagnosis import encounter_diagnosis_summary
+                from hospital.services.auto_billing_service import AutoBillingService
+
+                diagnosis_text = encounter_diagnosis_summary(encounter)
+                if diagnosis_text:
+                    lab_order.clinical_indication = diagnosis_text
+                    lab_order.save(update_fields=['clinical_indication', 'modified'])
+
+                for lr in created_results:
+                    try:
+                        AutoBillingService.create_lab_bill(lr, notify_patient=False)
+                    except Exception as bill_exc:
+                        logger.warning(
+                            'create_lab_bill failed for lab result %s: %s',
+                            getattr(lr, 'id', '?'),
+                            bill_exc,
+                        )
                 
                 from django.contrib import messages
                 if reagent_warnings:

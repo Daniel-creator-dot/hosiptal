@@ -48,7 +48,7 @@ def _pharmacy_recipient_user_ids():
     return recipient_ids
 
 
-def notify_pharmacy_new_prescription(prescription, encounter, doctor, *, inpatient=False):
+def notify_pharmacy_new_prescription(prescription, encounter, doctor, *, inpatient=False, changed=False):
     """
     Alert pharmacy staff when a doctor adds a medication. Notifications stay unread
     until the prescription is fully dispensed (see resolve_prescription_pharmacy_alerts).
@@ -72,12 +72,19 @@ def notify_pharmacy_new_prescription(prescription, encounter, doctor, *, inpatie
         added_at = timezone.localtime(getattr(prescription, 'created', timezone.now())).strftime('%H:%M')
 
         if inpatient:
-            title = 'New Inpatient Medication — Dispense Required'
-            message = (
-                f'{drug_name} added for {patient_name}{mrn_bit}{doctor_bit} at {added_at}. '
-                'Open the pharmacy dispensing queue to verify and dispense. '
-                'This alert clears when the medication is fully dispensed.'
-            )
+            if changed:
+                title = 'Inpatient Prescription Changed — Review Required'
+                message = (
+                    f'{drug_name} changed for {patient_name}{mrn_bit}{doctor_bit} at {added_at}. '
+                    'Open the pharmacy dispensing queue to review and dispense.'
+                )
+            else:
+                title = 'New Inpatient Medication — Dispense Required'
+                message = (
+                    f'{drug_name} added for {patient_name}{mrn_bit}{doctor_bit} at {added_at}. '
+                    'Open the pharmacy dispensing queue to verify and dispense. '
+                    'This alert clears when the medication is fully dispensed.'
+                )
             notif_type = 'order_urgent'
         else:
             consultation_completed = bool(
@@ -85,7 +92,7 @@ def notify_pharmacy_new_prescription(prescription, encounter, doctor, *, inpatie
                 or getattr(encounter, 'ended_at', None)
             )
             is_start_dose = bool(getattr(prescription, 'is_start_dose', False))
-            if consultation_completed:
+            if consultation_completed or changed:
                 title = 'Prescription Updated — Dispense Required'
                 message = (
                     f'{drug_name} updated for {patient_name}{mrn_bit}{doctor_bit} at {added_at}. '
@@ -137,7 +144,7 @@ def notify_pharmacy_new_prescription(prescription, encounter, doctor, *, inpatie
         logger.warning('Pharmacy new-prescription notification failed: %s', exc, exc_info=True)
 
 
-def queue_prescription_for_pharmacy(prescription, encounter, doctor, *, inpatient=None):
+def queue_prescription_for_pharmacy(prescription, encounter, doctor, *, inpatient=None, changed=False):
     """
     After a prescription is created: ensure dispensing row, bump order queue time, notify pharmacy.
     """
@@ -165,6 +172,7 @@ def queue_prescription_for_pharmacy(prescription, encounter, doctor, *, inpatien
         encounter,
         doctor,
         inpatient=inpatient,
+        changed=changed,
     )
     return result
 
@@ -219,9 +227,16 @@ def enrich_pending_medication_orders(orders):
             _undispensed_prescription_filter()
             .filter(order_id__in=order_ids, order__is_deleted=False)
             .values('order_id')
-            .annotate(latest=Max('created'))
+            .annotate(
+                latest_created=Max('created'),
+                latest_modified=Max('modified'),
+            )
         ):
-            latest_map[row['order_id']] = row['latest']
+            candidates = [row['latest_created'], row['latest_modified']]
+            latest_map[row['order_id']] = max(
+                (t for t in candidates if t is not None),
+                default=None,
+            )
         start_dose_order_ids = set(
             Prescription.objects.filter(
                 order_id__in=order_ids,
@@ -232,9 +247,12 @@ def enrich_pending_medication_orders(orders):
 
     now = timezone.now()
     for order in orders:
-        latest = latest_map.get(order.id) or getattr(order, 'requested_at', None) or getattr(order, 'created', None)
+        latest_rx = latest_map.get(order.id)
+        requested_at = getattr(order, 'requested_at', None)
+        candidates = [t for t in (latest_rx, requested_at) if t is not None]
+        latest = max(candidates, default=None) or getattr(order, 'created', None)
         order.latest_prescription_at = latest
-        order.queue_sort_at = latest or order.requested_at or order.created
+        order.queue_sort_at = latest
         if latest:
             order.is_new_pharmacy_item = (now - latest) <= timedelta(minutes=45)
         else:
@@ -266,10 +284,14 @@ def pending_pharmacy_alert_items(*, since=None, limit=40):
             'order__encounter__patient',
             'order__encounter__admission__ward',
         )
-        .order_by('-created')
+        .order_by('-modified', '-created')
     )
     if since:
-        qs = qs.filter(created__gt=since)
+        qs = qs.filter(
+            Q(created__gt=since)
+            | Q(modified__gt=since)
+            | Q(order__requested_at__gt=since)
+        )
 
     items = []
     for rx in qs[:limit]:
@@ -286,7 +308,12 @@ def pending_pharmacy_alert_items(*, since=None, limit=40):
                 'patient_name': getattr(patient, 'full_name', '') or '',
                 'patient_mrn': getattr(patient, 'mrn', '') or '',
                 'drug_name': rx.drug.name if rx.drug_id else '',
-                'added_at': timezone.localtime(rx.created).isoformat() if rx.created else '',
+                'added_at': timezone.localtime(
+                    max(
+                        (t for t in (rx.modified, rx.created, getattr(order, 'requested_at', None)) if t),
+                        default=rx.created,
+                    )
+                ).isoformat() if rx.created else '',
                 'inpatient': bool(
                     enc
                     and getattr(enc, 'admission', None)
