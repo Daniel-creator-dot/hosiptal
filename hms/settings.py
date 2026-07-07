@@ -109,6 +109,11 @@ else:
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default=default_hosts, cast=lambda v: [s.strip() for s in v.split(',') if s.strip()])
 
+# Automatically add Render's external hostname if running on Render
+render_external_hostname = config('RENDER_EXTERNAL_HOSTNAME', default=None)
+if render_external_hostname and render_external_hostname not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(render_external_hostname)
+
 # Django validates the Host header, but doesn't include port numbers
 # So '192.168.2.97:8000' is validated as '192.168.2.97'
 # In DEBUG mode, we need to ensure IP addresses work properly
@@ -344,6 +349,14 @@ if db_engine == 'django.db.backends.postgresql':
         if ssl_key:
             base_options['sslkey'] = ssl_key
     
+    # External cloud Postgres (Supabase, Neon, etc.) requires SSL in production
+    db_host = (DATABASES['default'].get('HOST') or '').lower()
+    if not DEBUG and any(
+        marker in db_host
+        for marker in ('supabase.co', 'supabase.com', 'neon.tech', 'aws.amazon.com')
+    ):
+        base_options['sslmode'] = config('DATABASE_SSL_MODE', default='require')
+
     DATABASES['default']['OPTIONS'].update(base_options)
     DATABASES['default']['ATOMIC_REQUESTS'] = False  # Disable for better performance (use transactions explicitly)
     # Increased connection pool for better performance
@@ -577,6 +590,7 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_ALWAYS_EAGER = config('CELERY_TASK_ALWAYS_EAGER', default=False, cast=bool)
 # Throughput: lower prefetch avoids long tasks blocking other work; tune per deployment.
 CELERY_WORKER_PREFETCH_MULTIPLIER = config('CELERY_WORKER_PREFETCH_MULTIPLIER', default=4, cast=int)
 CELERY_TASK_ACKS_LATE = config('CELERY_TASK_ACKS_LATE', default=True, cast=bool)
