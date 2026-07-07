@@ -986,8 +986,8 @@ def _bills_list_print_rows_from_invoices(invoices_qs, limit=500):
         patient = inv.patient
         rows.append({
             'bill_number': adapted.get('bill_number') or getattr(inv, 'invoice_number', '') or str(inv.pk)[:8],
-            'patient_name': patient.full_name if patient else '—',
-            'mrn': getattr(patient, 'mrn', '') or '—',
+            'patient_name': (patient.full_name if patient else None) or '—',
+            'mrn': getattr(patient, 'mrn', '') or '—' if patient else '—',
             'member_id': getattr(patient, 'insurance_id', '') or '',
             'type_label': adapted.get('bill_type_display') or _invoice_bill_type_display(inv),
             'payer': adapted.get('payer_display') or (inv.payer.name if inv.payer else '—'),

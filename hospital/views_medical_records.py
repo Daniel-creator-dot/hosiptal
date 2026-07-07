@@ -11,7 +11,7 @@ from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.http import FileResponse, Http404
 from django.utils import timezone
-from django.db.models import Q, Prefetch
+from django.db.models import Q, Prefetch, Count, Max
 from datetime import timedelta
 
 from .models import Patient, Encounter, Staff, VitalSign, LabResult, Order, Admission
@@ -185,6 +185,44 @@ def comprehensive_medical_record(request, patient_id):
     }
     
     return render(request, 'hospital/medical_records/comprehensive_record.html', context)
+
+
+@login_required
+def patient_complete_record(request, pk):
+    """Alias for comprehensive_medical_record (templates use patient_complete_record)."""
+    return comprehensive_medical_record(request, patient_id=pk)
+
+
+@login_required
+def patient_records_search(request):
+    """Search patients and open complete medical records."""
+    from django.core.paginator import Paginator
+
+    from .models import Encounter, Patient
+    from .patient_search import patient_filter_q
+
+    search_query = (request.GET.get('q') or '').strip()
+    patients = Patient.objects.filter(is_deleted=False).exclude(id__isnull=True).order_by('last_name', 'first_name')
+    if search_query:
+        patients = patients.filter(patient_filter_q(search_query, include_email=True))
+
+    patients = patients.annotate(
+        visit_count=Count('encounters', filter=Q(encounters__is_deleted=False), distinct=True),
+        last_visit=Max('encounters__started_at', filter=Q(encounters__is_deleted=False)),
+    )[:200]
+
+    paginator = Paginator(list(patients), 50)
+    page = paginator.get_page(request.GET.get('page'))
+
+    return render(
+        request,
+        'hospital/patient_records_search.html',
+        {
+            'title': 'Patient Records Search',
+            'search_query': search_query,
+            'patients': page,
+        },
+    )
 
 
 @login_required

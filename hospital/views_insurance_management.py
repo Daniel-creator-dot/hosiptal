@@ -457,6 +457,13 @@ def verify_patient_insurance_api(request, patient_pk):
 
 
 @login_required
+def patient_insurance_detail(request, pk):
+    """Patient insurance enrollment detail — redirects to patient chart."""
+    pi = get_object_or_404(PatientInsurance, pk=pk, is_deleted=False)
+    return redirect('hospital:patient_detail', pk=pi.patient_id)
+
+
+@login_required
 def calculate_insurance_coverage_api(request):
     """API endpoint to calculate insurance coverage for a service"""
     try:

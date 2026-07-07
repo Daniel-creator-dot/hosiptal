@@ -104,6 +104,208 @@ def _get_encounter_invoice_for_pharmacy(encounter, request=None):
     }
 
 
+def _explicit_json_quantities_provided(body_data):
+    if not isinstance(body_data, dict):
+        return False
+    quantities = body_data.get('quantities')
+    return isinstance(quantities, dict) and len(quantities) > 0
+
+
+def _resolved_pharmacy_rx_quantity(prescription, quantities_data, request, explicit_json):
+    """Resolve dispense qty from JSON body (explicit keys only) or legacy POST."""
+    rx_id = str(prescription.id)
+    if explicit_json:
+        if rx_id in quantities_data:
+            return Decimal(str(quantities_data[rx_id]))
+        return Decimal('0')
+    return Decimal(str(request.POST.get(f'quantity_{prescription.id}', prescription.quantity or 0)))
+
+
+def _invoice_is_financially_settled(inv):
+    if not inv or getattr(inv, 'is_deleted', False):
+        return False
+    status = (getattr(inv, 'status', '') or '').lower()
+    if status in ('cancelled', 'draft'):
+        return False
+    total = inv.total_amount or Decimal('0')
+    if total <= Decimal('0'):
+        return False
+    balance = inv.balance or Decimal('0')
+    return status == 'paid' or balance <= Decimal('0')
+
+
+def _sync_pharmacy_order_payment_state(order):
+    """Safety net: align PharmacyDispensing with settled encounter invoices."""
+    try:
+        from .services.pharmacy_invoice_payment_link import (
+            link_pharmacy_dispensing_when_invoice_paid,
+            reconcile_pending_pharmacy_dispensing_with_invoices,
+        )
+
+        reconcile_pending_pharmacy_dispensing_with_invoices()
+        if order and getattr(order, 'encounter_id', None):
+            inv = Invoice.objects.filter(
+                encounter=order.encounter,
+                is_deleted=False,
+            ).order_by('-created').first()
+            if inv:
+                link_pharmacy_dispensing_when_invoice_paid(inv, refresh_invoice=True)
+    except Exception:
+        logger.exception('Pharmacy payment sync failed for order %s', getattr(order, 'pk', None))
+
+
+def _evaluate_pharmacy_order_dispense(order, prescriptions=None):
+    """
+    Server-side dispense eligibility for a medication order.
+    Matches pharmacy_dashboard_worldclass.html (can_dispense, badges, payment check).
+    """
+    prescriptions = list(
+        prescriptions
+        if prescriptions is not None
+        else order.prescriptions.filter(is_deleted=False).select_related('drug')
+    )
+    patient = order.encounter.patient if order.encounter else None
+    payer_info = _get_patient_payer_info(patient, order.encounter) if patient else {}
+    is_insurance_or_corporate = bool(payer_info.get('is_insurance_or_corporate'))
+
+    rx_ids_with_active_bill = set(
+        InvoiceLine.objects.filter(
+            prescription__order=order,
+            is_deleted=False,
+            waived_at__isnull=True,
+        ).values_list('prescription_id', flat=True)
+    )
+    dispensings_by_rx = {
+        str(d.prescription_id): d
+        for d in PharmacyDispensing.objects.filter(
+            prescription__in=prescriptions,
+            is_deleted=False,
+        ).select_related('payment_receipt', 'substitute_drug')
+    }
+
+    encounter_invoice = None
+    if order.encounter_id:
+        encounter_invoice = Invoice.objects.filter(
+            encounter=order.encounter,
+            is_deleted=False,
+        ).order_by('-created').first()
+    encounter_invoice_settled = _invoice_is_financially_settled(encounter_invoice)
+
+    active_rx = []
+    for rx in prescriptions:
+        disp = dispensings_by_rx.get(str(rx.id))
+        try:
+            qty = int(disp.quantity_ordered) if disp and disp.quantity_ordered is not None else int(rx.quantity or 0)
+        except (TypeError, ValueError):
+            qty = int(rx.quantity or 0)
+        if disp and disp.dispensing_status == 'cancelled':
+            continue
+        if qty <= 0:
+            continue
+        active_rx.append((rx, disp, qty))
+
+    cannot_dispense_reason = ''
+    payment_receipt = None
+
+    if not active_rx:
+        return {
+            'can_dispense': False,
+            'cannot_dispense_reason': 'no_medications',
+            'encounter_invoice_settled': encounter_invoice_settled,
+            'payment_receipt': None,
+            'sent_to_insurance': False,
+            'rx_ids_with_active_bill': rx_ids_with_active_bill,
+            'dispensings_by_rx': dispensings_by_rx,
+        }
+
+    if is_insurance_or_corporate:
+        sent_to_insurance = True
+        for rx, disp, _ in active_rx:
+            if not disp or disp.dispensing_status == 'pending_payment':
+                sent_to_insurance = False
+                cannot_dispense_reason = 'send_to_insurance_required'
+                break
+            if disp.payment_receipt_id and payment_receipt is None:
+                payment_receipt = disp.payment_receipt
+    else:
+        sent_to_insurance = False
+        if any(rx.id not in rx_ids_with_active_bill for rx, _, _ in active_rx):
+            cannot_dispense_reason = 'send_to_cashier_required'
+        else:
+            for rx, disp, _ in active_rx:
+                paid_for_line = bool(
+                    disp
+                    and (
+                        disp.payment_receipt_id
+                        or (
+                            disp.dispensing_status in ('ready_to_dispense', 'partially_dispensed', 'fully_dispensed')
+                            and disp.payment_verified_at
+                        )
+                    )
+                )
+                if not paid_for_line:
+                    cannot_dispense_reason = 'payment_or_cashier_required'
+                    break
+                if disp and disp.payment_receipt_id and payment_receipt is None:
+                    payment_receipt = disp.payment_receipt
+            if (
+                not cannot_dispense_reason
+                and encounter_invoice
+                and not encounter_invoice_settled
+            ):
+                cannot_dispense_reason = 'invoice_not_settled'
+
+    can_dispense = not bool(cannot_dispense_reason)
+    if can_dispense and payment_receipt is None and encounter_invoice_settled and encounter_invoice:
+        try:
+            from .services.pharmacy_invoice_payment_link import resolve_receipt_for_invoice_payment
+
+            payment_receipt = resolve_receipt_for_invoice_payment(encounter_invoice)
+        except Exception:
+            payment_receipt = None
+
+    return {
+        'can_dispense': can_dispense,
+        'cannot_dispense_reason': cannot_dispense_reason,
+        'encounter_invoice_settled': encounter_invoice_settled,
+        'payment_receipt': payment_receipt,
+        'sent_to_insurance': sent_to_insurance if is_insurance_or_corporate else False,
+        'rx_ids_with_active_bill': rx_ids_with_active_bill,
+        'dispensings_by_rx': dispensings_by_rx,
+        'is_insurance_or_corporate': is_insurance_or_corporate,
+    }
+
+
+def _pharmacy_rx_payment_fields(rx, disp, has_active_bill, is_insurance_or_corporate):
+    """Per-prescription payment flags for the dispense modal."""
+    dispensing_status = disp.dispensing_status if disp else 'pending_payment'
+    has_payment_receipt = bool(disp and disp.payment_receipt_id)
+
+    if is_insurance_or_corporate:
+        has_payment_receipt_for_rx = bool(
+            disp
+            and dispensing_status not in ('pending_payment', 'cancelled')
+        )
+    else:
+        has_payment_receipt_for_rx = bool(
+            has_active_bill
+            and disp
+            and (
+                disp.payment_receipt_id
+                or (
+                    dispensing_status in ('ready_to_dispense', 'partially_dispensed', 'fully_dispensed')
+                    and disp.payment_verified_at
+                )
+            )
+        )
+
+    return {
+        'dispensing_status': dispensing_status,
+        'has_payment_receipt': has_payment_receipt,
+        'has_payment_receipt_for_rx': has_payment_receipt_for_rx,
+    }
+
+
 @login_required
 def pharmacy_dashboard(request):
     """World-Class Pharmacy Dashboard - Direct patient service with accounting integration"""
@@ -3807,31 +4009,28 @@ def get_pharmacy_order_prescriptions(request, order_id):
     """
     try:
         order = get_object_or_404(Order, pk=order_id, order_type='medication', is_deleted=False)
-        
+        _sync_pharmacy_order_payment_state(order)
+
         # Prescriptions that already have an active (non-waived) bill - for UI badge only
         rx_ids_with_active_bill = set(InvoiceLine.objects.filter(
             prescription__order=order,
             is_deleted=False,
             waived_at__isnull=True
         ).values_list('prescription_id', flat=True))
-        
+
         # Return ALL order prescriptions so data-prescription-ids includes every id;
         # then when pharmacy removes one and sends, we receive quantity 0 for that id.
-        prescriptions = order.prescriptions.filter(is_deleted=False).select_related('drug')
-        
+        prescriptions = list(order.prescriptions.filter(is_deleted=False).select_related('drug'))
+
         from .models_payment_verification import (
             PharmacyDispensing,
             PharmacyDispenseHistory,
             PharmacyStockDeductionLog,
         )
-        dispensings_by_rx = {
-            str(d.prescription_id): d
-            for d in PharmacyDispensing.objects.filter(
-                prescription__in=prescriptions,
-                is_deleted=False
-            ).select_related('substitute_drug')
-        }
-        
+        evaluation = _evaluate_pharmacy_order_dispense(order, prescriptions=prescriptions)
+        dispensings_by_rx = evaluation['dispensings_by_rx']
+        is_insurance_or_corporate = evaluation['is_insurance_or_corporate']
+
         prescriptions_data = []
         patient_for_rx = order.encounter.patient
         payer_rx = getattr(patient_for_rx, 'primary_insurance', None)
@@ -3843,16 +4042,24 @@ def get_pharmacy_order_prescriptions(request, order_id):
                 qty_to_show = int(disp.quantity_ordered) if disp and getattr(disp, 'quantity_ordered', None) is not None else int(rx.quantity or 0)
             except (TypeError, ValueError):
                 qty_to_show = int(rx.quantity or 0)
-            
+
             drug_price = get_drug_price_for_prescription(drug_to_show, payer=payer_rx)
-            
+
             # Check stock availability for the drug being shown
             stock_available = PharmacyStock.objects.filter(
                 drug=drug_to_show,
                 is_deleted=False,
                 quantity_on_hand__gt=0
             ).aggregate(total=Sum('quantity_on_hand'))['total'] or 0
-            
+
+            has_active_bill = rx.id in rx_ids_with_active_bill
+            payment_fields = _pharmacy_rx_payment_fields(
+                rx,
+                disp,
+                has_active_bill,
+                is_insurance_or_corporate,
+            )
+
             prescriptions_data.append({
                 'id': str(rx.id),
                 'drug_id': str(drug_to_show.id),
@@ -3868,59 +4075,51 @@ def get_pharmacy_order_prescriptions(request, order_id):
                 'total_price': float(drug_price * qty_to_show),
                 'instructions': rx.instructions,
                 'stock_available': int(stock_available),
-                'has_active_bill': rx.id in rx_ids_with_active_bill,
+                'has_active_bill': has_active_bill,
                 'prescribed_on': timezone.localtime(rx.created).strftime('%Y-%m-%d %H:%M') if getattr(rx, 'created', None) else '',
+                **payment_fields,
             })
-        
+
         patient = order.encounter.patient
-        
+
         # Payer info for insurance/corporate vs cash workflow (comprehensive check)
         payer_info = _get_patient_payer_info(patient, order.encounter)
         payer_display_labels = patient_payer_display_labels(patient, order.encounter)
-        payer = payer_info.get('payer')
         payer_type = payer_info.get('type', 'cash')
         is_insurance_or_corporate = payer_info.get('is_insurance_or_corporate', False)
         payer_name = payer_info.get('name', 'Cash')
         if payer_display_labels and not is_insurance_or_corporate:
             is_insurance_or_corporate = True
-        
+
         # Check insurance exclusion for each drug (insurance/corporate only)
         for rx_data in prescriptions_data:
             rx_data['is_insurance_excluded'] = False
-            if is_insurance_or_corporate and payer:
+            if is_insurance_or_corporate and payer_info.get('payer'):
                 try:
                     from .models import Drug
                     from .services.insurance_exclusion_service import InsuranceExclusionService
                     drug = Drug.objects.filter(pk=rx_data['drug_id']).first()
                     if drug:
                         result = InsuranceExclusionService(
-                            patient=patient, payer=payer, drug=drug
+                            patient=patient, payer=payer_info['payer'], drug=drug
                         ).evaluate()
                         rx_data['is_insurance_excluded'] = result.requires_patient_pay or result.should_block
                 except Exception:
                     pass
-        
+
         # Invoice for pharmacy verification (combine view)
         invoice_data = _get_encounter_invoice_for_pharmacy(order.encounter, request=request)
+        sent_to_insurance = evaluation['sent_to_insurance']
 
-        # When insurance/corporate: bill already sent if all dispensing records are ready_to_dispense (not pending payment)
-        sent_to_insurance = False
-        if is_insurance_or_corporate and prescriptions_data:
-            from .models_payment_verification import PharmacyDispensing
-            rx_ids = [p['id'] for p in prescriptions_data]
-            pending = PharmacyDispensing.objects.filter(
-                prescription_id__in=rx_ids,
-                is_deleted=False,
-                dispensing_status='pending_payment',
-            ).exists()
-            sent_to_insurance = not pending
-
-        all_order_rx_ids = [str(rx.id) for rx in order.prescriptions.filter(is_deleted=False)]
+        all_order_rx_ids = [str(rx.id) for rx in prescriptions]
         return JsonResponse({
             'success': True,
             'prescriptions': prescriptions_data,
             'all_prescription_ids': all_order_rx_ids,
             'sent_to_insurance': sent_to_insurance,
+            'encounter_invoice_settled': evaluation['encounter_invoice_settled'],
+            'can_dispense': evaluation['can_dispense'],
+            'cannot_dispense_reason': evaluation['cannot_dispense_reason'],
             'patient': {
                 'id': str(patient.id),
                 'full_name': patient.full_name,
@@ -3944,59 +4143,33 @@ def get_pharmacy_order_prescriptions(request, order_id):
                 'requested_at': order.requested_at.strftime('%Y-%m-%d %H:%M'),
             }
         })
-        
+
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)})
 
 
 @login_required
 def check_pharmacy_order_payment_status(request, order_id):
-    """Check if payment has been made for pharmacy order (or bill sent to insurance)"""
+    """Check if payment has been made for pharmacy order (or bill sent to insurance)."""
     try:
         order = get_object_or_404(Order, pk=order_id, order_type='medication', is_deleted=False)
-        
-        # Get all prescriptions for this order
         prescriptions = order.prescriptions.filter(is_deleted=False)
-        
         if not prescriptions.exists():
             return JsonResponse({'success': False, 'error': 'No prescriptions found'})
-        
-        patient = order.encounter.patient if order.encounter else None
-        payment_verified = False
-        
-        # Insurance/Corporate: Verified when pharmacy dispensing records exist (bill sent to insurer)
-        payer_info = _get_patient_payer_info(patient, order.encounter) if patient else {}
-        if payer_info.get('is_insurance_or_corporate'):
-            from .models_payment_verification import PharmacyDispensing
-            if PharmacyDispensing.objects.filter(
-                prescription__order=order,
-                is_deleted=False,
-                dispensing_status='pending_payment'
-            ).exists():
-                payment_verified = True
-        
-        # Cash: Check for payment receipt
-        if not payment_verified:
-            from .models_accounting import PaymentReceipt
-            for prescription in prescriptions:
-                if not patient:
-                    patient = prescription.order.encounter.patient
-                receipt_exists = PaymentReceipt.objects.filter(
-                    is_deleted=False,
-                    patient=patient,
-                    service_type='pharmacy_prescription',
-                    receipt_date__gte=prescription.created.date()
-                ).exists()
-                if receipt_exists:
-                    payment_verified = True
-                    break
-        
+
+        _sync_pharmacy_order_payment_state(order)
+        evaluation = _evaluate_pharmacy_order_dispense(order, prescriptions=list(prescriptions))
+
+        reason = evaluation['cannot_dispense_reason']
         return JsonResponse({
             'success': True,
-            'payment_verified': payment_verified,
-            'prescriptions_count': prescriptions.count()
+            'payment_verified': evaluation['can_dispense'],
+            'can_dispense': evaluation['can_dispense'],
+            'send_to_cashier_required': reason == 'send_to_cashier_required',
+            'cannot_dispense_reason': reason,
+            'prescriptions_count': prescriptions.count(),
         })
-        
+
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)})
 
@@ -4240,65 +4413,41 @@ def dispense_pharmacy_order(request, order_id):
         
         if not patient:
             return JsonResponse({
-                'success': False, 
+                'success': False,
                 'error': 'Patient not found for this order'
             }, status=400)
-        
-        # Check if there's a receipt for these prescriptions
-        has_payment = False
-        payment_receipt = None
-        
-        # Check each prescription for payment
-        for prescription in prescriptions:
-            # Check if there's a PharmacyDispensing record with payment
-            existing_dispensing = PharmacyDispensing.objects.filter(
-                prescription=prescription,
-                is_deleted=False
-            ).first()
-            
-            if existing_dispensing and existing_dispensing.payment_receipt:
-                has_payment = True
-                payment_receipt = existing_dispensing.payment_receipt
-                break
-        
-        # If no payment found, check if there's a receipt for this encounter
-        if not has_payment:
-            from .models import Receipt
-            payment_receipts = Receipt.objects.filter(
-                patient=patient,
-                is_deleted=False,
-                is_cancelled=False
-            ).filter(
-                Q(encounter=order.encounter) if order.encounter else Q(id__isnull=False)
-            ).order_by('-created')
-            
-            if payment_receipts.exists():
-                payment_receipt = payment_receipts.first()
-                has_payment = True
-        
-        # Insurance/Corporate: Allow dispensing when bill has been created (sent to insurer).
-        # No cashier payment required - insurer will be billed.
-        if not has_payment:
-            payer_info = _get_patient_payer_info(patient, order.encounter) if patient else {}
-            if payer_info.get('is_insurance_or_corporate'):
-                # Check that pharmacy dispensing records exist (bill was created via Send to Insurance)
-                dispensing_count = PharmacyDispensing.objects.filter(
-                    prescription__order=order,
-                    is_deleted=False,
-                    dispensing_status__in=['ready_to_dispense', 'partially_dispensed', 'fully_dispensed']
-                ).count()
-                if dispensing_count > 0:
-                    has_payment = True  # Bill sent to insurer = OK to dispense
-        
-        # ENFORCE PAYMENT: Don't allow dispensing without payment (cash patients) or bill creation (insurance)
-        if not has_payment:
+
+        _sync_pharmacy_order_payment_state(order)
+        evaluation = _evaluate_pharmacy_order_dispense(order, prescriptions=list(prescriptions))
+        if not evaluation['can_dispense']:
+            reason = evaluation['cannot_dispense_reason']
+            messages_by_reason = {
+                'send_to_cashier_required': (
+                    'Send this order to cashier first so medications are added to the invoice, '
+                    'then collect payment before dispensing.'
+                ),
+                'send_to_insurance_required': (
+                    'Send this order to insurance/payer first before dispensing.'
+                ),
+                'payment_or_cashier_required': (
+                    'Ensure payment is recorded at the cashier for each medication line.'
+                ),
+                'invoice_not_settled': (
+                    'The encounter invoice must be fully settled before dispensing.'
+                ),
+            }
             return JsonResponse({
                 'success': False,
                 'error': 'Payment required before dispensing',
-                'message': 'Pharmacy must first push this order to payer/cashier before dispensing.',
-                'payment_required': True
+                'message': messages_by_reason.get(
+                    reason,
+                    'Pharmacy must first push this order to payer/cashier before dispensing.',
+                ),
+                'payment_required': True,
+                'cannot_dispense_reason': reason,
             }, status=403)
-        
+
+        payment_receipt = evaluation.get('payment_receipt')
         # Get current staff
         current_staff = None
         try:
@@ -4308,14 +4457,16 @@ def dispense_pharmacy_order(request, order_id):
         
         # Get quantities from JSON body (for AJAX requests) or POST data
         quantities_data = {}
+        explicit_json_quantities = False
         if request.content_type == 'application/json':
             import json as json_module
             try:
                 body_data = json_module.loads(request.body)
                 quantities_data = body_data.get('quantities', {})
-            except:
+                explicit_json_quantities = _explicit_json_quantities_provided(body_data)
+            except Exception:
                 pass
-        
+
         # Create dispensing records for each prescription
         dispensed_count = 0
         for prescription in prescriptions:
@@ -4324,14 +4475,13 @@ def dispense_pharmacy_order(request, order_id):
                 prescription=prescription,
                 is_deleted=False
             ).first()
-            
-            # Get actual quantity to dispense (may be edited by pharmacy)
-            # Try JSON first, then POST, then default to prescription quantity
-            prescription_id_str = str(prescription.id)
-            if prescription_id_str in quantities_data:
-                actual_quantity = Decimal(str(quantities_data[prescription_id_str]))
-            else:
-                actual_quantity = Decimal(str(request.POST.get(f'quantity_{prescription.id}', prescription.quantity)))
+
+            actual_quantity = _resolved_pharmacy_rx_quantity(
+                prescription,
+                quantities_data,
+                request,
+                explicit_json_quantities,
+            )
             
             # Skip prescriptions with 0 quantity (removed from dispensing list by pharmacist)
             if actual_quantity <= 0:

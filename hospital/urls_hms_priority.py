@@ -5,6 +5,7 @@ hospital.urls on a deployed server lags behind templates.
 Reverse as: hospital:receivables_hub, hospital:admin_cashier_quick_services, etc.
 """
 from django.urls import path
+from django.views.generic import RedirectView
 
 from . import views_accountant_receivables
 from . import views_admin_cashier_services
@@ -14,11 +15,14 @@ from . import views_billing_claims
 from . import views_centralized_cashier
 from . import views_frontdesk_diagnostics
 from . import views_frontdesk_pricing
+from . import views_insurance_management
 from . import views_medical_records
 from . import views_accounting_management
 from . import views_management_reports
 from . import views_department_billed_revenue
 from . import views_revenue_monitoring
+from . import views_screening
+from . import views_telemedicine
 from . import views
 
 urlpatterns = [
@@ -156,4 +160,43 @@ urlpatterns = [
     ),
     # Legacy AR report name used by accounts_receivable.html
     path('accounting/ar/', views_accounting.accounts_receivable, name='accounts_receivable'),
+    # Medical records (templates use these names)
+    path(
+        'medical-records/search/',
+        views_medical_records.patient_records_search,
+        name='patient_records_search',
+    ),
+    path(
+        'medical-records/patient/<uuid:pk>/complete/',
+        views_medical_records.patient_complete_record,
+        name='patient_complete_record',
+    ),
+    # Patient insurance enrollment detail (global search)
+    path(
+        'insurance/enrollment/<uuid:pk>/',
+        views_insurance_management.patient_insurance_detail,
+        name='insurance_detail',
+    ),
+    # Screening apply (hospital: namespace — templates reference hospital:apply_screening_template)
+    path(
+        'screening/apply/<uuid:encounter_id>/<uuid:template_id>/',
+        views_screening.apply_screening_template,
+        name='apply_screening_template',
+    ),
+    # Telemedicine shortcuts (worldclass dashboard uses hospital: names)
+    path(
+        'telemedicine/schedule/',
+        views_telemedicine.schedule_consultation,
+        name='telemedicine_schedule',
+    ),
+    path(
+        'telemedicine/settings/',
+        RedirectView.as_view(pattern_name='hospital:hospital_settings', permanent=False),
+        name='telemedicine_settings',
+    ),
+    path(
+        'telemedicine/start/',
+        RedirectView.as_view(pattern_name='telemedicine:schedule_consultation', permanent=False),
+        name='start_consultation',
+    ),
 ]

@@ -9,7 +9,11 @@ from django.db import transaction, connections
 from django.utils import timezone
 from datetime import datetime, date
 from decimal import Decimal
-import pymysql
+
+try:
+    import pymysql
+except ImportError:  # optional — only needed when running this command against MySQL
+    pymysql = None
 
 from hospital.models import (
     Patient, Encounter, Prescription, LabResult, Order, LabTest, Drug, Staff
@@ -132,6 +136,10 @@ class Command(BaseCommand):
                 return timezone.now()
     
     def handle(self, *args, **options):
+        if pymysql is None:
+            raise CommandError(
+                'This command requires pymysql. Install with: pip install pymysql'
+            )
         dry_run = options['dry_run']
         limit = options['limit']
         patients_only = options['patients_only']
