@@ -9,6 +9,7 @@ from django.db.models import Q, Sum, F, Count
 from django.utils import timezone
 from django.http import JsonResponse
 from decimal import Decimal
+import logging
 
 from .models import Staff, Department
 from .models_procurement import (
@@ -16,6 +17,8 @@ from .models_procurement import (
     StoreTransfer
 )
 from .models_missing_features import Supplier
+
+logger = logging.getLogger(__name__)
 
 
 def is_pharmacy_staff(user):
@@ -306,6 +309,25 @@ def mark_request_received_worldclass(request, pk):
                 supplier_name=item.preferred_supplier.name if item.preferred_supplier else '',
                 notes=f"Received via procurement request {proc_request.request_number}"
             )
+
+            if item.drug_id:
+                try:
+                    from hospital.pharmacy_stock_utils import add_or_increase_pharmacy_stock
+
+                    add_or_increase_pharmacy_stock(
+                        item.drug,
+                        item.quantity,
+                        unit_cost=item.estimated_unit_price,
+                        supplier=item.preferred_supplier,
+                        created_by=request.user,
+                        reference=proc_request.request_number,
+                    )
+                except Exception as stock_exc:
+                    logger.warning(
+                        "PharmacyStock sync on worldclass receive failed for %s: %s",
+                        item.pk,
+                        stock_exc,
+                    )
             
             # Update received quantity on request item
             item.received_quantity = item.quantity
@@ -352,8 +374,8 @@ def post_procurement_accounting_entry(proc_request):
 @user_passes_test(is_procurement_staff, login_url='/admin/login/')
 def release_to_pharmacy(request, pk):
     """
-    Release items from Main Store to Pharmacy
-    Creates store transfer and updates both inventories
+    Release items from Drug Store / Main Store to Pharmacy.
+    Updates store inventory and mirrors drug quantities into PharmacyStock.
     """
     proc_request = get_object_or_404(ProcurementRequest, pk=pk, is_deleted=False)
     
@@ -364,34 +386,45 @@ def release_to_pharmacy(request, pk):
     try:
         staff = Staff.objects.get(user=request.user, is_deleted=False)
         
-        # Get stores
-        main_store = Store.objects.filter(store_type='main', is_deleted=False).first()
+        # Prefer DRUGS (where modern receive puts pharmacy items), then MAIN
+        source_store = Store.objects.filter(code='DRUGS', is_deleted=False).first()
+        if not source_store:
+            source_store = Store.objects.filter(store_type='pharmacy', code='DRUGS', is_deleted=False).first()
+        if not source_store:
+            source_store = Store.objects.filter(store_type='main', is_deleted=False).first()
         pharmacy_store = proc_request.requested_by_store
         
-        if not main_store or not pharmacy_store:
+        if not source_store or not pharmacy_store:
             messages.error(request, 'Store configuration error.')
             return redirect('hospital:procurement_requests_list')
         
         # Create store transfer
         transfer = StoreTransfer.objects.create(
-            from_store=main_store,
+            from_store=source_store,
             to_store=pharmacy_store,
             requested_by=staff,
             notes=f'Release of Procurement Request {proc_request.request_number}'
         )
         
-        # Transfer each item
+        # Transfer each item (PharmacyStock was already updated at receive time)
+        released = 0
         for req_item in proc_request.items.filter(is_deleted=False):
-            # Find item in main store
+            qty = int(req_item.received_quantity or req_item.quantity or 0)
+            if qty <= 0:
+                continue
+            # Find item in source store
             main_inv_item = InventoryItem.objects.filter(
-                store=main_store,
-                item_name=req_item.item_name,
-                is_deleted=False
+                store=source_store,
+                is_deleted=False,
+            ).filter(
+                Q(item_name=req_item.item_name)
+                | Q(item_code=req_item.item_code)
+                | Q(drug_id=req_item.drug_id)
             ).first()
             
-            if main_inv_item and main_inv_item.quantity_on_hand >= req_item.quantity:
-                # Reduce from main store
-                main_inv_item.quantity_on_hand -= req_item.quantity
+            if main_inv_item and main_inv_item.quantity_on_hand >= qty:
+                # Reduce from source store
+                main_inv_item.quantity_on_hand -= qty
                 main_inv_item.save()
                 
                 # Add to pharmacy store
@@ -412,8 +445,9 @@ def release_to_pharmacy(request, pk):
                     }
                 )
                 
-                pharmacy_inv_item.quantity_on_hand += req_item.quantity
+                pharmacy_inv_item.quantity_on_hand += qty
                 pharmacy_inv_item.save()
+                released += 1
         
         # Mark transfer as completed
         transfer.status = 'completed'
@@ -421,7 +455,11 @@ def release_to_pharmacy(request, pk):
         transfer.completed_by = staff
         transfer.save()
         
-        messages.success(request, f'Items from {proc_request.request_number} released to {pharmacy_store.name}. Transfer #{transfer.pk} completed.')
+        messages.success(
+            request,
+            f'Items from {proc_request.request_number} released to {pharmacy_store.name} '
+            f'({released} line(s) from {source_store.name}). Transfer #{transfer.pk} completed.',
+        )
         
         return redirect('hospital:procurement_requests_list')
         

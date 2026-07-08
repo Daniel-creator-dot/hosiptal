@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Sum
 
 logger = logging.getLogger(__name__)
 
@@ -316,6 +316,166 @@ def reduce_pharmacy_stock_once(drug, quantity, source_type, source_id, user=None
             source_id,
         )
         return 0, False
+
+
+def add_or_increase_pharmacy_stock(
+    drug,
+    quantity,
+    *,
+    unit_cost=None,
+    batch_number=None,
+    expiry_date=None,
+    location='Main Pharmacy',
+    supplier=None,
+    created_by=None,
+    reference=None,
+):
+    """
+    Add quantity into PharmacyStock so pharmacy dispense/served stock reflects
+    procurement receiving and inventory edits linked to a formulary drug.
+
+    Prefer increasing an existing non-expired batch with matching unit_cost;
+    otherwise create a new batch.
+    Returns PharmacyStock instance or None.
+    """
+    if not drug or quantity is None:
+        return None
+    try:
+        qty = int(quantity)
+    except (TypeError, ValueError):
+        return None
+    if qty <= 0:
+        return None
+
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from .models import PharmacyStock
+
+    unit_cost_dec = _quantize_money(unit_cost)
+    today = timezone.localdate()
+    if expiry_date is None:
+        expiry_date = today + timedelta(days=365 * 2)
+    if not batch_number:
+        prefix = f"RECV-{today.strftime('%Y%m%d')}"
+        if reference:
+            safe_ref = ''.join(c for c in str(reference) if c.isalnum())[:10].upper()
+            prefix = f"RECV-{safe_ref}" if safe_ref else prefix
+        same = PharmacyStock.objects.filter(
+            batch_number__startswith=prefix, is_deleted=False
+        ).count()
+        batch_number = f"{prefix}-{same + 1:04d}"
+
+    try:
+        with transaction.atomic():
+            existing = (
+                PharmacyStock.objects.filter(
+                    drug=drug,
+                    is_deleted=False,
+                    expiry_date__gte=today,
+                    quantity_on_hand__gte=0,
+                )
+                .order_by('expiry_date', 'created')
+                .first()
+            )
+            if existing and (
+                unit_cost is None
+                or _quantize_money(existing.unit_cost) == unit_cost_dec
+                or unit_cost_dec == _ZERO
+            ):
+                PharmacyStock.objects.filter(pk=existing.pk).update(
+                    quantity_on_hand=F('quantity_on_hand') + qty,
+                )
+                if unit_cost is not None and unit_cost_dec > _ZERO:
+                    if not existing.unit_cost or existing.unit_cost == 0:
+                        PharmacyStock.objects.filter(pk=existing.pk).update(
+                            unit_cost=unit_cost_dec
+                        )
+                existing.refresh_from_db()
+                logger.info(
+                    "Increased PharmacyStock %s for %s by %s (now %s)",
+                    existing.pk,
+                    getattr(drug, 'name', drug),
+                    qty,
+                    existing.quantity_on_hand,
+                )
+                return existing
+
+            stock = PharmacyStock.objects.create(
+                drug=drug,
+                batch_number=batch_number,
+                expiry_date=expiry_date,
+                location=location or 'Main Pharmacy',
+                initial_quantity=qty,
+                quantity_on_hand=qty,
+                unit_cost=unit_cost_dec,
+                supplier=supplier,
+                created_by=created_by,
+            )
+            logger.info(
+                "Created PharmacyStock %s for %s qty=%s batch=%s",
+                stock.pk,
+                getattr(drug, 'name', drug),
+                qty,
+                batch_number,
+            )
+            return stock
+    except Exception as exc:
+        logger.warning(
+            "add_or_increase_pharmacy_stock failed for drug %s: %s",
+            getattr(drug, 'pk', drug),
+            exc,
+            exc_info=True,
+        )
+        return None
+
+
+def sync_inventory_item_quantity_to_pharmacy_stock(inventory_item, previous_quantity=None):
+    """
+    When procurement edits an InventoryItem linked to a Drug, mirror the quantity
+    delta into PharmacyStock so pharmacy sees the updated on-hand.
+    """
+    if not inventory_item or not getattr(inventory_item, 'drug_id', None):
+        return None
+    try:
+        new_qty = int(inventory_item.quantity_on_hand or 0)
+    except (TypeError, ValueError):
+        return None
+    try:
+        old_qty = int(previous_quantity) if previous_quantity is not None else None
+    except (TypeError, ValueError):
+        old_qty = None
+
+    if old_qty is None:
+        from .models import PharmacyStock
+
+        total = (
+            PharmacyStock.objects.filter(drug_id=inventory_item.drug_id, is_deleted=False).aggregate(
+                t=Sum('quantity_on_hand')
+            )['t']
+            or 0
+        )
+        # Set absolute: add delta between desired inventory qty and current pharmacy total
+        delta = new_qty - int(total)
+    else:
+        delta = new_qty - old_qty
+
+    if delta == 0:
+        return None
+    if delta > 0:
+        return add_or_increase_pharmacy_stock(
+            inventory_item.drug,
+            delta,
+            unit_cost=getattr(inventory_item, 'unit_cost', None),
+            supplier=getattr(inventory_item, 'preferred_supplier', None),
+            reference=getattr(inventory_item, 'item_code', None)
+            or getattr(inventory_item, 'item_name', None),
+        )
+
+    # Quantity reduced — reduce PharmacyStock FIFO
+    result = reduce_pharmacy_stock(inventory_item.drug, abs(delta))
+    return result
 
 
 def drug_is_sold_per_tablet(drug) -> bool:

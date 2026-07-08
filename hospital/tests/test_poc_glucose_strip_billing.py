@@ -38,7 +38,7 @@ class PocGlucoseStripBillingTests(TestCase):
             chief_complaint='vitals',
         )
 
-    @override_settings(POC_GLUCOSE_STRIP_GHS=Decimal('20.00'))
+    @override_settings(POC_GLUCOSE_STRIP_GHS=Decimal('30.00'))
     def test_rbs_creates_invoice_line(self):
         vital = VitalSign.objects.create(encounter=self.encounter, pulse=72, recorded_by=self.staff)
         result = AutoBillingService.bill_poc_glucose_strip(self.encounter, 'rbs', vital_sign=vital)
@@ -50,11 +50,11 @@ class PocGlucoseStripBillingTests(TestCase):
         ).first()
         self.assertIsNotNone(line)
         self.assertEqual(line.quantity, Decimal('1'))
-        self.assertEqual(line.unit_price, Decimal('20.00'))
+        self.assertEqual(line.unit_price, Decimal('30.00'))
         self.assertTrue(line.patient_pay_cash)
         self.assertTrue(line.is_insurance_excluded)
 
-    @override_settings(POC_GLUCOSE_STRIP_GHS=Decimal('20.00'))
+    @override_settings(POC_GLUCOSE_STRIP_GHS=Decimal('30.00'))
     def test_second_strip_merges_quantity(self):
         v1 = VitalSign.objects.create(encounter=self.encounter, pulse=70, recorded_by=self.staff)
         v2 = VitalSign.objects.create(encounter=self.encounter, pulse=71, recorded_by=self.staff)
@@ -70,7 +70,7 @@ class PocGlucoseStripBillingTests(TestCase):
         self.assertIsNotNone(line)
         self.assertEqual(line.quantity, Decimal('2'))
 
-    @override_settings(POC_GLUCOSE_STRIP_GHS=Decimal('20.00'))
+    @override_settings(POC_GLUCOSE_STRIP_GHS=Decimal('30.00'))
     def test_billing_closed_skips_line(self):
         self.encounter.billing_closed_at = timezone.now()
         self.encounter.save(update_fields=['billing_closed_at'])
@@ -85,7 +85,7 @@ class PocGlucoseStripBillingTests(TestCase):
         ).exists()
         self.assertFalse(exists)
 
-    @override_settings(POC_GLUCOSE_STRIP_GHS=Decimal('20.00'))
+    @override_settings(POC_GLUCOSE_STRIP_GHS=Decimal('30.00'))
     def test_invalid_strip_type(self):
         vital = VitalSign.objects.create(encounter=self.encounter, pulse=80, recorded_by=self.staff)
         result = AutoBillingService.bill_poc_glucose_strip(self.encounter, 'xyz', vital_sign=vital)
@@ -109,7 +109,7 @@ class PocGlucoseStripBillingTests(TestCase):
             initial_quantity=10,
         )
         with override_settings(
-            POC_GLUCOSE_STRIP_GHS=Decimal('20.00'),
+            POC_GLUCOSE_STRIP_GHS=Decimal('30.00'),
             POC_GLUCOSE_STRIP_DRUG_ID=str(drug.pk),
         ):
             vital = VitalSign.objects.create(encounter=self.encounter, pulse=68, recorded_by=self.staff)
@@ -123,3 +123,23 @@ class PocGlucoseStripBillingTests(TestCase):
         ).first()
         self.assertIsNotNone(log)
         self.assertEqual(log.quantity, 1)
+
+    @override_settings(POC_GLUCOSE_STRIP_GHS=Decimal('30.00'))
+    def test_insurance_patient_still_billed_ghs_30_cash(self):
+        """RBS strip is always patient-pay cash at the fixed fee, even for insured patients."""
+        from hospital.models import Payer
+
+        payer = Payer.objects.create(
+            name=f'NHIS-{uuid.uuid4().hex[:6]}',
+            payer_type='nhis',
+            is_active=True,
+        )
+        self.patient.primary_insurance = payer
+        self.patient.save(update_fields=['primary_insurance'])
+        vital = VitalSign.objects.create(encounter=self.encounter, pulse=72, recorded_by=self.staff)
+        result = AutoBillingService.bill_poc_glucose_strip(self.encounter, 'rbs', vital_sign=vital)
+        self.assertTrue(result['success'], msg=result.get('message'))
+        line = result['invoice_line']
+        self.assertEqual(line.unit_price, Decimal('30.00'))
+        self.assertTrue(line.patient_pay_cash)
+        self.assertTrue(line.is_insurance_excluded)

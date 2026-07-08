@@ -1,0 +1,128 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}Receive Items — {{ proc_request.request_number }}{% endblock %}
+{% block page_title %}Receive Procurement Items{% endblock %}
+{% block page_subtitle %}{{ proc_request.request_number }} · update quantities received from supplier{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+        <div>
+            <a href="{% url 'hospital:procurement_receiving_dashboard' %}" class="btn btn-outline-secondary btn-sm mb-2">
+                <i class="bi bi-arrow-left"></i> Receiving dashboard
+            </a>
+            <h4 class="mb-1">{{ proc_request.request_number }}</h4>
+            <p class="text-muted mb-0 small">
+                Store: {{ proc_request.requested_by_store.name|default:"—" }}
+                · Status: <span class="badge bg-secondary">{{ proc_request.status }}</span>
+            </p>
+        </div>
+        <div class="text-end small text-muted">
+            <div>Ordered qty: <strong>{{ total_quantity }}</strong></div>
+            <div>Already received: <strong>{{ total_received }}</strong></div>
+            <div>Still pending: <strong>{{ pending_quantity }}</strong></div>
+        </div>
+    </div>
+
+    {% if fully_received %}
+    <div class="alert alert-success">
+        <i class="bi bi-check-circle me-1"></i> All line items are fully received.
+    </div>
+    {% endif %}
+
+    <div class="modern-card">
+        <form method="post" action="{% url 'hospital:receive_procurement_modern' proc_request.pk %}">
+            {% csrf_token %}
+            <div class="mb-3">
+                <label class="form-label fw-semibold" for="received_date">Received date</label>
+                <input type="date" class="form-control" style="max-width: 220px;" name="received_date"
+                       id="received_date" value="{{ default_received_date|date:'Y-m-d' }}" required>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead>
+                        <tr>
+                            <th>Item</th>
+                            <th>Drug</th>
+                            <th class="text-center">Ordered</th>
+                            <th class="text-center">Already received</th>
+                            <th class="text-center">Outstanding</th>
+                            <th style="min-width: 140px;">Receive now</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in proc_request.items.all %}
+                        {% if not item.is_deleted %}
+                        <tr>
+                            <td>
+                                <strong>{{ item.item_name }}</strong>
+                                {% if item.item_code %}<div class="small text-muted">{{ item.item_code }}</div>{% endif %}
+                                <input type="hidden" name="item_id[]" value="{{ item.pk }}">
+                            </td>
+                            <td class="small">
+                                {% if item.drug %}{{ item.drug.name }}{% else %}<span class="text-muted">—</span>{% endif %}
+                            </td>
+                            <td class="text-center">{{ item.quantity }}</td>
+                            <td class="text-center">{{ item.received_quantity|default:0 }}</td>
+                            <td class="text-center fw-semibold js-outstanding"
+                                data-ordered="{{ item.quantity }}"
+                                data-received="{{ item.received_quantity|default:0 }}">—</td>
+                            <td>
+                                <input type="number" class="form-control receive-qty"
+                                       name="received_quantity[]"
+                                       min="0"
+                                       value="0"
+                                       data-ordered="{{ item.quantity }}"
+                                       data-already="{{ item.received_quantity|default:0 }}">
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% empty %}
+                        <tr><td colspan="6" class="text-center text-muted py-4">No items on this request.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="d-flex flex-wrap gap-2 mt-3">
+                <button type="submit" class="btn btn-primary"{% if fully_received %} disabled{% endif %}>
+                    <i class="bi bi-box-arrow-in-down me-1"></i> Confirm receiving
+                </button>
+                <a href="{% url 'hospital:procurement_request_detail' proc_request.pk %}" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+            <p class="small text-muted mt-3 mb-0">
+                Drug-linked lines also update <strong>Pharmacy Stock</strong> so pharmacy can dispense the received quantity.
+                Enter only the quantity arriving in this delivery (partial receives are supported).
+            </p>
+        </form>
+    </div>
+</div>
+<script>
+(function () {
+    document.querySelectorAll('.js-outstanding').forEach(function (el) {
+        var ordered = parseInt(el.getAttribute('data-ordered') || '0', 10);
+        var received = parseInt(el.getAttribute('data-received') || '0', 10);
+        el.textContent = Math.max(0, ordered - received);
+    });
+    document.querySelectorAll('.receive-qty').forEach(function (input) {
+        var ordered = parseInt(input.getAttribute('data-ordered') || '0', 10);
+        var already = parseInt(input.getAttribute('data-already') || '0', 10);
+        var left = Math.max(0, ordered - already);
+        input.max = left;
+        input.value = left > 0 ? left : 0;
+        if (left <= 0) {
+            input.disabled = true;
+            input.value = 0;
+            // Keep array length aligned with item_id[] (disabled inputs are not posted)
+            var hidden = document.createElement('input');
+            hidden.type = 'hidden';
+            hidden.name = 'received_quantity[]';
+            hidden.value = '0';
+            input.parentNode.appendChild(hidden);
+        }
+    });
+})();
+</script>
+{% endblock %}

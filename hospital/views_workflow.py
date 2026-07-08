@@ -252,6 +252,10 @@ def record_vitals(request, encounter_id):
             current_staff = request.user.staff
 
         strip_type = (request.POST.get('poc_glucose_strip_type') or '').strip().lower()
+        blood_glucose_val = safe_decimal(request.POST.get('blood_glucose'))
+        # If nurse enters a glucose reading but forgets strip type, default to RBS so GHS fee is billed.
+        if strip_type not in ('rbs', 'fbs') and blood_glucose_val is not None:
+            strip_type = 'rbs'
         poc_glucose_strip_type = strip_type if strip_type in ('rbs', 'fbs') else ''
 
         # Create vital sign record with enhanced fields
@@ -267,7 +271,7 @@ def record_vitals(request, encounter_id):
             # Extended vitals
             weight=safe_decimal(request.POST.get('weight')),
             height=safe_decimal(request.POST.get('height')),
-            blood_glucose=safe_decimal(request.POST.get('blood_glucose')),
+            blood_glucose=blood_glucose_val,
             poc_glucose_strip_type=poc_glucose_strip_type,
             # Clinical assessment
             consciousness_level=request.POST.get('consciousness_level', 'alert'),

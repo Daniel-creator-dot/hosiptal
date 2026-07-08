@@ -1136,9 +1136,12 @@ class AutoBillingService:
             return {'success': False, 'error': 'no_patient', 'message': 'Encounter has no patient.'}
 
         payer = AutoBillingService._ensure_payer(patient, encounter)
-        base_price = getattr(dj_settings, 'POC_GLUCOSE_STRIP_GHS', Decimal('20'))
+        # Fixed patient-pay fee (default GHS 30); not insurance/corporate priced.
+        base_price = getattr(dj_settings, 'POC_GLUCOSE_STRIP_GHS', Decimal('30'))
         if not isinstance(base_price, Decimal):
             base_price = Decimal(str(base_price))
+        if base_price <= 0:
+            base_price = Decimal('30.00')
 
         code_str = 'VITAL-POC-RBS' if strip_type == 'rbs' else 'VITAL-POC-FBS'
         label = 'POC glucose strip (RBS)' if strip_type == 'rbs' else 'POC glucose strip (FBS)'
@@ -1152,9 +1155,8 @@ class AutoBillingService:
                     category='Nursing Consumables',
                     default_price=base_price,
                 )
-                unit_price = AutoBillingService._resolve_price(
-                    patient, payer, service_code, base_price, catalog_tier_applied=False
-                )
+                # Always bill the configured strip fee (patient cash); do not use insurance pricing engine.
+                unit_price = base_price
                 invoice_line, _ = create_or_merge_invoice_line(
                     invoice=invoice,
                     service_code=service_code,

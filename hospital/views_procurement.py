@@ -11,6 +11,7 @@ from django.http import JsonResponse
 from django.forms import inlineformset_factory
 from datetime import date, timedelta
 from decimal import Decimal
+import logging
 from .models_procurement import (
     Store, InventoryItem, StoreTransfer, StoreTransferLine,
     ProcurementRequest, ProcurementRequestItem, InventoryCategory
@@ -23,6 +24,8 @@ from .forms_procurement import (
 )
 from .models import Drug, Staff
 from .models_supplier_payables import SupplierPayableLine
+
+logger = logging.getLogger(__name__)
 
 
 def _maybe_record_supplier_opening_invoice(supplier, form, user):
@@ -744,11 +747,28 @@ def inventory_item_create(request):
 def inventory_item_edit(request, pk):
     """Edit an existing inventory item (procurement staff can update stock/cost)."""
     item = get_object_or_404(InventoryItem, pk=pk, is_deleted=False)
+    previous_quantity = item.quantity_on_hand
     
     if request.method == 'POST':
         form = InventoryItemForm(request.POST, instance=item)
         if form.is_valid():
             item = form.save()
+            # When linked to a formulary drug, mirror quantity changes into PharmacyStock
+            # so pharmacy dispense/stock screens reflect procurement edits.
+            try:
+                from hospital.pharmacy_stock_utils import (
+                    sync_inventory_item_quantity_to_pharmacy_stock,
+                )
+
+                sync_inventory_item_quantity_to_pharmacy_stock(
+                    item, previous_quantity=previous_quantity
+                )
+            except Exception as sync_exc:
+                logger.warning(
+                    "PharmacyStock sync after inventory edit failed for %s: %s",
+                    item.pk,
+                    sync_exc,
+                )
             messages.success(request, f'Inventory item "{item.item_name}" updated successfully!')
             return redirect('hospital:store_detail', pk=item.store.pk)
     else:

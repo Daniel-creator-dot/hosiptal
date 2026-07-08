@@ -525,6 +525,9 @@ def admission_review(request, encounter_id):
             notes_text = (request.POST.get('notes') or '').strip()
             blood_glucose = _safe_decimal(request.POST.get('blood_glucose'))
             strip_type = (request.POST.get('poc_glucose_strip_type') or '').strip().lower()
+            # Entering a glucose value without strip type defaults to RBS so fee is billed.
+            if strip_type not in ('rbs', 'fbs') and blood_glucose is not None:
+                strip_type = 'rbs'
             poc_glucose_strip_type = strip_type if strip_type in ('rbs', 'fbs') else ''
             has_any_core = any(
                 v is not None

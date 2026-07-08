@@ -1085,6 +1085,11 @@ def consultation_view(request, encounter_id):
                 weight = request.POST.get('weight', '').strip()
                 height = request.POST.get('height', '').strip()
                 blood_glucose = request.POST.get('blood_glucose', '').strip()
+                strip_type = (request.POST.get('poc_glucose_strip_type') or '').strip().lower()
+                # Entering a glucose value without strip type defaults to RBS so fee is billed.
+                if strip_type not in ('rbs', 'fbs') and blood_glucose:
+                    strip_type = 'rbs'
+                poc_glucose_strip_type = strip_type if strip_type in ('rbs', 'fbs') else ''
                 consciousness_level = request.POST.get('consciousness_level', 'alert')
                 pain_score = request.POST.get('pain_score', '').strip()
                 supplemental_oxygen = request.POST.get('supplemental_oxygen') == 'on'
@@ -1096,7 +1101,8 @@ def consultation_view(request, encounter_id):
                 # Validate that at least one vital is provided
                 vitals_provided = any([
                     systolic_bp, diastolic_bp, pulse, temperature, spo2, 
-                    respiratory_rate, weight, height, blood_glucose, pain_score
+                    respiratory_rate, weight, height, blood_glucose, pain_score,
+                    poc_glucose_strip_type,
                 ])
                 
                 if not vitals_provided:
@@ -1116,6 +1122,7 @@ def consultation_view(request, encounter_id):
                     weight=float(weight) if weight else None,
                     height=float(height) if height else None,
                     blood_glucose=float(blood_glucose) if blood_glucose else None,
+                    poc_glucose_strip_type=poc_glucose_strip_type,
                     consciousness_level=consciousness_level,
                     pain_score=int(pain_score) if pain_score else None,
                     supplemental_oxygen=supplemental_oxygen,
@@ -1129,8 +1136,27 @@ def consultation_view(request, encounter_id):
                 try:
                     vital_sign.calculate_news2_score()
                     vital_sign.save()
-                except:
+                except Exception:
                     pass
+
+                if poc_glucose_strip_type:
+                    try:
+                        from .services.auto_billing_service import AutoBillingService
+                        bill_result = AutoBillingService.bill_poc_glucose_strip(
+                            encounter, poc_glucose_strip_type, vital_sign=vital_sign
+                        )
+                        if bill_result.get('success'):
+                            messages.success(
+                                request,
+                                bill_result.get('message', 'POC glucose strip added to patient bill.'),
+                            )
+                        else:
+                            messages.warning(
+                                request,
+                                bill_result.get('message') or 'POC glucose strip could not be added to the bill.',
+                            )
+                    except Exception as bill_exc:
+                        _logger.warning('POC glucose billing from consultation failed: %s', bill_exc)
                 
                 messages.success(request, '✅ Vital signs recorded successfully!')
                 return redirect('hospital:consultation_view', encounter_id=encounter_id)

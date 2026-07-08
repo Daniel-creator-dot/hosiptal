@@ -3246,6 +3246,18 @@ class InvoiceLine(BaseModel):
         if not invoice or not invoice.payer or invoice.payer.payer_type == 'cash':
             return
 
+        # Point-of-care glucose strips are always patient-pay cash (never claim to insurer).
+        code = ''
+        if getattr(self, 'service_code', None):
+            code = (getattr(self.service_code, 'code', None) or '').strip().upper()
+        if code.startswith('VITAL-POC-'):
+            self.is_insurance_excluded = True
+            self.patient_pay_cash = True
+            self.insurance_exclusion_rule = None
+            self.insurance_enforcement_action = 'patient_pay'
+            self.insurance_exclusion_reason = 'POC glucose strip is patient-pay (not covered).'
+            return
+
         self.is_insurance_excluded = False
         self.patient_pay_cash = False
         self.insurance_exclusion_rule = None

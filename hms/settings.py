@@ -408,7 +408,7 @@ DEFAULT_LOGIN_TIMEZONE = config('DEFAULT_LOGIN_TIMEZONE', default='Africa/Accra'
 BILLS_LIST_GO_LIVE_DATE = config('BILLS_LIST_GO_LIVE_DATE', default='2026-03-10')
 
 # Nurse vitals: point-of-care glucose strip (RBS/FBS) — GHS charged per strip when type is selected on vitals form.
-POC_GLUCOSE_STRIP_GHS = Decimal(str(config('POC_GLUCOSE_STRIP_GHS', default='20')))
+POC_GLUCOSE_STRIP_GHS = Decimal(str(config('POC_GLUCOSE_STRIP_GHS', default='30')))
 # Optional UUID of a Drug (formulary) representing glucose test strips; when set, one unit is deducted
 # from pharmacy/store per billed strip (same flow as dispensing). Leave empty to bill only without stock move.
 POC_GLUCOSE_STRIP_DRUG_ID = config('POC_GLUCOSE_STRIP_DRUG_ID', default='').strip()

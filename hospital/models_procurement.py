@@ -741,7 +741,7 @@ class ProcurementRequest(BaseModel):
         self.save()
     
     def mark_as_received(self, staff):
-        """Mark items as received and update inventory"""
+        """Mark items as received and update inventory (+ PharmacyStock for drugs)."""
         if self.status not in ['ordered', 'payment_processed']:
             raise ValueError("Request must be ordered or payment processed before receiving")
         
@@ -775,6 +775,24 @@ class ProcurementRequest(BaseModel):
                     unit_of_measure=item.unit_of_measure,
                     preferred_supplier=item.preferred_supplier,
                 )
+
+            if item.drug_id:
+                try:
+                    from hospital.pharmacy_stock_utils import add_or_increase_pharmacy_stock
+                    user = getattr(getattr(staff, 'user', None), 'pk', None) and staff.user
+                    add_or_increase_pharmacy_stock(
+                        item.drug,
+                        item.quantity,
+                        unit_cost=item.estimated_unit_price,
+                        supplier=item.preferred_supplier,
+                        created_by=user,
+                        reference=self.request_number,
+                    )
+                except Exception:
+                    pass
+
+            item.received_quantity = item.quantity
+            item.save(update_fields=['received_quantity', 'modified'])
         
         self.status = 'received'
         self.save()

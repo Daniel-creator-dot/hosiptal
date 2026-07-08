@@ -65,6 +65,7 @@ def receive_procurement_modern(request, pk):
                 
                 total_received = 0
                 items_processed = 0
+                last_target_store = None
                 
                 from hospital.services.inventory_accountability_service import InventoryAccountabilityService
                 
@@ -79,15 +80,22 @@ def receive_procurement_modern(request, pk):
                         received_qty = int(received_qty) if received_qty else 0
                         if received_qty <= 0:
                             continue
+
+                        already_received = int(item.received_quantity or 0)
+                        remaining = max(0, int(item.quantity or 0) - already_received)
+                        if remaining <= 0:
+                            continue
                         
-                        # Don't allow receiving more than ordered
-                        if received_qty > item.quantity:
+                        # Don't allow receiving more than still outstanding
+                        if received_qty > remaining:
                             messages.warning(
                                 request,
                                 f'Cannot receive {received_qty} units of {item.item_name}. '
-                                f'Ordered quantity is {item.quantity}.'
+                                f'Only {remaining} still outstanding (ordered {item.quantity}).'
                             )
-                            continue
+                            received_qty = remaining
+                            if received_qty <= 0:
+                                continue
                         
                         # Determine target store based on item type
                         if item.drug or (proc_request.requested_by_store and proc_request.requested_by_store.store_type == 'pharmacy'):
@@ -143,13 +151,34 @@ def receive_procurement_modern(request, pk):
                             supplier_name=item.preferred_supplier.name if item.preferred_supplier else '',
                             notes=f"Received via procurement request {proc_request.request_number} on {received_date}"
                         )
+
+                        # Mirror drug quantities into PharmacyStock (dispense source of truth)
+                        if item.drug_id:
+                            try:
+                                from hospital.pharmacy_stock_utils import add_or_increase_pharmacy_stock
+
+                                add_or_increase_pharmacy_stock(
+                                    item.drug,
+                                    received_qty,
+                                    unit_cost=item.estimated_unit_price,
+                                    supplier=item.preferred_supplier,
+                                    created_by=request.user,
+                                    reference=proc_request.request_number,
+                                )
+                            except Exception as stock_exc:
+                                logger.warning(
+                                    "PharmacyStock sync on receive failed for item %s: %s",
+                                    item_id,
+                                    stock_exc,
+                                )
                         
-                        # Update received quantity
-                        item.received_quantity = received_qty
-                        item.save()
+                        # Accumulate received quantity (partial receives)
+                        item.received_quantity = (item.received_quantity or 0) + received_qty
+                        item.save(update_fields=['received_quantity', 'modified'])
                         
                         total_received += received_qty
                         items_processed += 1
+                        last_target_store = target_store
                         
                     except (ValueError, ProcurementRequestItem.DoesNotExist) as e:
                         logger.error(f"Error processing item {item_id}: {e}")
@@ -162,7 +191,7 @@ def receive_procurement_modern(request, pk):
                 # Check if all items fully received
                 all_items = proc_request.items.filter(is_deleted=False)
                 fully_received = all(
-                    item.received_quantity >= item.quantity
+                    (item.received_quantity or 0) >= item.quantity
                     for item in all_items
                 )
                 
@@ -192,12 +221,17 @@ def receive_procurement_modern(request, pk):
                         post_procurement_accounting_entry(proc_request)
                     except Exception as e:
                         logger.warning(f"Could not post accounting entry: {e}")
-                
+
+                store_label = (
+                    last_target_store.name
+                    if last_target_store is not None
+                    else 'inventory'
+                )
                 messages.success(
                     request,
                     f'Successfully received {items_processed} item(s), '
                     f'total {total_received} units on {received_date}. '
-                    f'Items added to {main_store.name} inventory.'
+                    f'Items added to {store_label}.'
                 )
                 
                 return redirect('hospital:procurement_request_detail', pk=pk)

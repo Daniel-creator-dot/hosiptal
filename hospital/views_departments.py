@@ -412,15 +412,58 @@ def pharmacy_dashboard(request):
             is_deleted=False,
             waived_at__isnull=False
         ).values_list('prescription_id', flat=True)
-    ).select_related('order__encounter__patient', 'drug', 'prescribed_by', 'dispensing_record').defer('order__encounter__current_activity')
+    ).select_related(
+        'order__encounter__patient',
+        'drug',
+        'prescribed_by',
+        'dispensing_record__dispensed_by__user',
+    ).defer('order__encounter__current_activity')
     if filter_name:
         today_prescriptions_qs = today_prescriptions_qs.filter(
             Q(order__encounter__patient__first_name__icontains=filter_name) |
             Q(order__encounter__patient__last_name__icontains=filter_name) |
             Q(order__encounter__patient__mrn__icontains=filter_name)
         )
-    today_prescriptions = list(today_prescriptions_qs.order_by('-dispensing_record__dispensed_at')[:20])
-    
+    today_prescriptions = list(
+        today_prescriptions_qs.order_by('-dispensing_record__dispensed_at')[:100]
+    )
+
+    # Group dispensed Rxs by medication order for the Served tab (worldclass template)
+    from collections import OrderedDict
+    from types import SimpleNamespace
+
+    served_groups_map = OrderedDict()
+    for rx in today_prescriptions:
+        order = rx.order
+        if not order:
+            continue
+        oid = order.pk
+        if oid not in served_groups_map:
+            served_groups_map[oid] = {
+                'order': order,
+                'prescriptions': [],
+                'last_served_at': None,
+                'served_by_display': '',
+            }
+        grp = served_groups_map[oid]
+        grp['prescriptions'].append(rx)
+        disp = getattr(rx, 'dispensing_record', None)
+        served_at = getattr(disp, 'dispensed_at', None) if disp else None
+        if served_at and (
+            grp['last_served_at'] is None or served_at > grp['last_served_at']
+        ):
+            grp['last_served_at'] = served_at
+            by_staff = getattr(disp, 'dispensed_by', None) if disp else None
+            if by_staff and getattr(by_staff, 'user', None):
+                grp['served_by_display'] = (
+                    by_staff.user.get_full_name() or by_staff.user.username or ''
+                )
+    today_served_groups = [
+        SimpleNamespace(**g) for g in list(served_groups_map.values())[:40]
+    ]
+    today_served_total = len(served_groups_map)
+    served_list_date = target_date
+
     # Stock alerts (low stock and expiring soon - exclude already expired)
     expiring_soon = today + timedelta(days=PHARMACY_EXPIRY_FOCUS_DAYS)
     low_stock = list(PharmacyStock.objects.filter(
@@ -878,6 +921,9 @@ def pharmacy_dashboard(request):
         'pending_orders': pending_orders,
         'pending_medication_orders_total': pending_medication_orders_total,
         'today_prescriptions': today_prescriptions,
+        'today_served_groups': today_served_groups,
+        'today_served_total': today_served_total,
+        'served_list_date': served_list_date,
         'filter_date': filter_date_str or '',
         'filter_name': filter_name,
         'low_stock': low_stock,
