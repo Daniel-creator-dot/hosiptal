@@ -576,16 +576,23 @@ def patient_list(request):
     from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
     from datetime import datetime
     from django.core.cache import cache
+    from django.db import connection
     
     # Try to import LegacyPatient, but handle gracefully if it doesn't exist
     LegacyPatient = None
     legacy_table_exists = False
     try:
         from .models_legacy_patients import LegacyPatient
-        # Check if the table actually exists in the database
+        # Cheap existence check — avoid COUNT(*) which can lock/timeout
         try:
-            LegacyPatient.objects.count()  # This will fail if table doesn't exist
-            legacy_table_exists = True
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT to_regclass(%s) IS NOT NULL",
+                    [f"public.{LegacyPatient._meta.db_table}"],
+                )
+                legacy_table_exists = bool(cursor.fetchone()[0])
+            if not legacy_table_exists:
+                LegacyPatient = None
         except Exception:
             legacy_table_exists = False
             LegacyPatient = None
@@ -601,7 +608,20 @@ def patient_list(request):
     cache_key = f'patient_counts_{source_filter}_{query}'
     counts = cache.get(cache_key)
     if not counts:
-        new_count = Patient.objects.filter(is_deleted=False).exclude(id__isnull=True).count()
+        # COUNT can block behind long patient imports; fail soft so the list still loads
+        try:
+            new_count = Patient.objects.filter(is_deleted=False).exclude(id__isnull=True).count()
+        except Exception as e:
+            logger.warning(f"Could not count patients (using estimate): {e}")
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT COALESCE(reltuples, 0)::bigint FROM pg_class WHERE relname = 'hospital_patient'"
+                    )
+                    row = cursor.fetchone()
+                    new_count = int(row[0]) if row else 0
+            except Exception:
+                new_count = 0
         # Safely get legacy count - handle if table doesn't exist
         legacy_count = 0
         if LegacyPatient and legacy_table_exists:
