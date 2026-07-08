@@ -1811,6 +1811,18 @@ def patient_detail(request, pk):
         ).select_related('drug', 'order__encounter').order_by('-created')[:ORDERS_LIMIT]
     except:
         all_prescriptions = []
+
+    # Imaging studies (limited) — template expects all_imaging_studies
+    try:
+        from .models_advanced import ImagingStudy
+        all_imaging_studies = list(
+            ImagingStudy.objects.filter(
+                patient=patient,
+                is_deleted=False,
+            ).select_related('encounter', 'order').order_by('-performed_at', '-created')[:RESULTS_LIMIT]
+        )
+    except Exception:
+        all_imaging_studies = []
     
     # Get invoices (limited for list display)
     all_invoices = Invoice.objects.filter(
@@ -1909,6 +1921,7 @@ def patient_detail(request, pk):
         'all_orders': all_orders,
         'all_lab_results': all_lab_results,
         'all_prescriptions': all_prescriptions,
+        'all_imaging_studies': all_imaging_studies,
         'invoices': all_invoices,
         # Statistics
         'total_encounters': total_encounters,
